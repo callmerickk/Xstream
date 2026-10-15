@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Xstream TV additions: no touchscreen needed, shows in the TV launcher with a wide banner. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <application android:banner="@drawable/tv_banner" tools:ignore="MissingTvBanner">
+        <!-- Merges with main's MainActivity; listed here so it comes BEFORE the alias in the merged manifest
+             (an activity-alias must follow its target activity, or the package fails to install). -->
+        <activity android:name=".MainActivity" />
+        <activity-alias
+            android:name=".TvLauncher"
+            android:targetActivity=".MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:banner="@drawable/tv_banner"
+            android:icon="@mipmap/ic_launcher_red">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+    </application>
+</manifest>
