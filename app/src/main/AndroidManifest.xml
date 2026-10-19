@@ -61,6 +61,8 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
             android:theme="@style/Theme.Xstream" />
         <!-- Home screen widget: Continue watching (ContinueWidget.kt). -->
+        <!-- Watch together: reminders for planned watches (Social.kt). -->
+        <receiver android:name=".PlanAlarmReceiver" android:exported="false" />
         <receiver
             android:name=".ContinueWidget"
             android:exported="false"

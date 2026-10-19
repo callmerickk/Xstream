@@ -212,7 +212,7 @@ fun PluginsPage(onBack: () -> Unit) {
         SectionLabel("Install")
         SettingsCard {
             Column(Modifier.padding(16.dp)) {
-                OutlinedTextField(link, { link = it.trim() }, Modifier.fillMaxWidth().tvOkKeyboard(), singleLine = true, label = { Text("Plugin link (.js)") },
+                OutlinedTextField(link, { link = it.trim() }, Modifier.fillMaxWidth().tvOkKeyboard(top = 8.dp), singleLine = true, label = { Text("Plugin link (.js)") },
                     shape = RoundedCornerShape(12.dp), keyboardOptions = tvKeyboard())
                 Row(Modifier.padding(top = 6.dp)) {
                     TextButton({ busy = true; scope.launch { msg = Plugins.installFromUrl(link) ?: "Installed"; busy = false; if (msg == "Installed") link = "" } },
@@ -220,7 +220,7 @@ fun PluginsPage(onBack: () -> Unit) {
                     TextButton({ pasting = !pasting }) { Text(if (pasting) "Hide" else "Paste code") }
                 }
                 if (pasting) {
-                    OutlinedTextField(paste, { paste = it }, Modifier.fillMaxWidth().heightIn(min = 140.dp, max = 260.dp).tvOkKeyboard(),
+                    OutlinedTextField(paste, { paste = it }, Modifier.fillMaxWidth().heightIn(min = 140.dp, max = 260.dp).tvOkKeyboard(top = 8.dp),
                         textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp), label = { Text("Plugin code") }, keyboardOptions = tvKeyboard())
                     TextButton({ busy = true; scope.launch { msg = Plugins.install(paste) ?: "Installed"; busy = false; if (msg == "Installed") { paste = ""; pasting = false } } },
                         enabled = !busy && paste.isNotBlank()) { Text("Install pasted code") }

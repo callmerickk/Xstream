@@ -144,6 +144,8 @@ fun DetailScreen(
     var pick by remember { mutableStateOf<SourceTarget?>(null) }
     var actions by remember { mutableStateOf(false) }
     var showVideos by remember { mutableStateOf(false) }
+    var shareFriends by remember { mutableStateOf(false) }
+    var planWatch by remember { mutableStateOf(false) }
     var openedSources by remember { mutableStateOf(false) }
     val subsJob = remember(pick?.videoId) { pick?.let { pk -> scope.async { runCatching { vm.subtitles(meta.type, pk.videoId) }.getOrDefault(emptyList()) } } }
 
@@ -566,9 +568,15 @@ fun DetailScreen(
                     }) else add(TitleAction("Remove download", Icons.Default.Delete) { Downloads.remove(ctx, dl); Snack.show("Download removed") })
                 }
                 add(TitleAction("Share", Icons.Default.Share) { share() })
+                if (!BuildConfig.IS_TV) {
+                    add(TitleAction("Share with friends", Icons.Default.Groups) { shareFriends = true })
+                    add(TitleAction("Plan a watch", Icons.Default.Event) { planWatch = true })
+                }
             },
             onDismiss = { actions = false },
         )
+        if (shareFriends) ShareWithFriends(meta, Social.friends.collectAsState().value) { shareFriends = false }
+        if (planWatch) PlanFlow(meta, null, Social.friends.collectAsState().value, null, onDone = { planWatch = false })
 
         if (showVideos) VideosSheet(meta.name, videos, anyOfficial, onDismiss = { showVideos = false }) { list, i -> openTrailers(list, i) }
 

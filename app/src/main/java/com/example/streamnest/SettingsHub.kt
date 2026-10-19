@@ -276,8 +276,8 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
             title = { Text("Custom theme") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(a, { a = it }, singleLine = true, label = { Text("Main colour (hex)") }, shape = RoundedCornerShape(12.dp), modifier = Modifier.tvOkKeyboard(), keyboardOptions = tvKeyboard())
-                    OutlinedTextField(b, { b = it }, singleLine = true, label = { Text("Second colour (hex)") }, shape = RoundedCornerShape(12.dp), modifier = Modifier.tvOkKeyboard(), keyboardOptions = tvKeyboard())
+                    OutlinedTextField(a, { a = it }, singleLine = true, label = { Text("Main colour (hex)") }, shape = RoundedCornerShape(12.dp), modifier = Modifier.tvOkKeyboard(top = 8.dp), keyboardOptions = tvKeyboard())
+                    OutlinedTextField(b, { b = it }, singleLine = true, label = { Text("Second colour (hex)") }, shape = RoundedCornerShape(12.dp), modifier = Modifier.tvOkKeyboard(top = 8.dp), keyboardOptions = tvKeyboard())
                     val c1 = parseColor(a); val c2 = parseColor(b)
                     Box(Modifier.fillMaxWidth().height(36.dp).clip(RoundedCornerShape(18.dp))
                         .background(if (c1 != null && c2 != null) Brush.horizontalGradient(listOf(c1, c2)) else Brush.horizontalGradient(listOf(Color.DarkGray, Color.DarkGray))))
@@ -752,7 +752,7 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
                             text = {
                                 Column {
                                     Text("Only this addon. Its name everywhere in Xstream; a name with Pengu makes it a quick server, with HdHub the HD step.", fontSize = 13.sp, color = Muted)
-                                    OutlinedTextField(nm, { nm = it.take(40) }, Modifier.fillMaxWidth().padding(top = 10.dp).tvOkKeyboard(), singleLine = true, label = { Text("Name") }, keyboardOptions = tvKeyboard())
+                                    OutlinedTextField(nm, { nm = it.take(40) }, Modifier.fillMaxWidth().padding(top = 10.dp).tvOkKeyboard(top = 8.dp), singleLine = true, label = { Text("Name") }, keyboardOptions = tvKeyboard())
                                 }
                             },
                             confirmButton = { TextButton({ saveName(nm.trim()) }) { Text("Save") } },
@@ -1279,7 +1279,7 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
                         Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             OutlinedTextField(
                                 pat, { pats[i] = it },
-                                Modifier.weight(1f).onFocusChanged { f -> if (f.isFocused) sel = i }.tvOkKeyboard(),
+                                Modifier.weight(1f).onFocusChanged { f -> if (f.isFocused) sel = i }.tvOkKeyboard(top = 8.dp),
                                 singleLine = true, isError = !ok, shape = RoundedCornerShape(12.dp),
                                 label = { Text(if (i == 0) "1 · Primary" else "${i + 1} · Fallback") },
                                 colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = if (sel == i) Accent.copy(alpha = 0.6f) else Color(0x33FFFFFF)), keyboardOptions = tvKeyboard())

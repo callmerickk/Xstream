@@ -74,7 +74,7 @@ sealed interface TvRoute {
     data class Settings(val start: String) : TvRoute
 }
 
-private tailrec fun Context.tvActivity(): Activity? = when (this) {
+internal tailrec fun Context.tvActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.tvActivity()
     else -> null

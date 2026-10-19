@@ -147,7 +147,7 @@ fun AddonBackupCard(vm: AppViewModel) {
                             FilterChip(fromCloud, { fromCloud = true; pending = null; error = null }, { Text("From cloud") })
                             FilterChip(!fromCloud, { fromCloud = false; pending = null; error = null }, { Text("From file") })
                         }
-                        if (fromCloud) OutlinedTextField(codeIn, { codeIn = it.uppercase().take(8) }, Modifier.fillMaxWidth().tvOkKeyboard(), singleLine = true,
+                        if (fromCloud) OutlinedTextField(codeIn, { codeIn = it.uppercase().take(8) }, Modifier.fillMaxWidth().tvOkKeyboard(top = 8.dp), singleLine = true,
                             placeholder = { Text("K7Q-4ZP") }, label = { Text("Code") }, keyboardOptions = tvKeyboard())
                         else OutlinedButton({ pick.launch(arrayOf("application/json", "text/plain", "*/*")) }, Modifier.fillMaxWidth()) { Text("Pick Xstream-addons.json") }
                         pending?.let { p ->

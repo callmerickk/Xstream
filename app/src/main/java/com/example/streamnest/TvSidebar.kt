@@ -117,8 +117,9 @@ fun TvRail(
                 when (e.key) {
                     Key.DirectionRight -> { close(); true }
                     Key.DirectionLeft -> true
-                    Key.DirectionUp -> focusedIdx[0] == 0
-                    Key.DirectionDown -> focusedIdx[0] == items.size
+                    // ▲ ▼ move only between the menu's own items (never onto the page behind, e.g. the search keypad).
+                    Key.DirectionUp -> { val i = focusedIdx[0]; if (i > 0) requesters[i - 1].tryFocus(); true }
+                    Key.DirectionDown -> { val i = focusedIdx[0]; if (i in 0 until items.size) requesters[i + 1].tryFocus(); true }
                     else -> false
                 }
             },

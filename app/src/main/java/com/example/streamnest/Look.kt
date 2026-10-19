@@ -187,7 +187,8 @@ fun SignalMark(size: Dp, anim: String, paused: Boolean = false, standalone: Bool
         val k = this.size.minDimension / 100f
         drawRoundRect(Color(0xFF121216), size = this.size, cornerRadius = CornerRadius(23f * k))
         val white = Color(0xFFF4F4F6)
-        fun line(a: Offset, b: Offset, p: Float) { if (p > 0f) drawLine(white, a * k, (a + (b - a) * p) * k, 9f * k, StrokeCap.Round) }
+        // Xstream: a red X with white signal waves (StreamX's colours swapped).
+        fun line(a: Offset, b: Offset, p: Float) { if (p > 0f) drawLine(red, a * k, (a + (b - a) * p) * k, 9f * k, StrokeCap.Round) }
         line(Offset(22f, 36f), Offset(46f, 64f), x1.value)
         line(Offset(22f, 64f), Offset(46f, 36f), x2.value)
         val radii = listOf(20f, 29f, 38f); val alphas = listOf(1f, 0.7f, 0.4f)
@@ -198,7 +199,7 @@ fun SignalMark(size: Dp, anim: String, paused: Boolean = false, standalone: Bool
             val al = (alphas[i] * appear + (1f - alphas[i]) * pulse.value * 0.6f).coerceIn(0f, 1f)
             scale(sc, pivot = Offset(34f * k, 50f * k)) {
                 val r = radii[i] * k
-                drawArc(red.copy(alpha = al), -40f, 80f, false, topLeft = Offset(40f * k - r, 50f * k - r), size = Size(r * 2, r * 2),
+                drawArc(white.copy(alpha = al), -40f, 80f, false, topLeft = Offset(40f * k - r, 50f * k - r), size = Size(r * 2, r * 2),
                     style = Stroke(6f * k, cap = StrokeCap.Round))
             }
         }

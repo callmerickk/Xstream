@@ -1,21 +1,22 @@
 package com.example.streamnest
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -24,16 +25,61 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
+
+private val HubMuted = Color(0xFF9AA3B5)
+private val HubCard = Color(0xFF14171D)
+private val HubLine = Color(0xFF262A34)
+
+/** Numbers about you, worked out from your history (shared by My Space and its detail lists). */
+private data class MyStats(val tracked: String, val finished: Int, val loved: Int, val streak: Int, val tags: List<String>)
 
 @Composable
-private fun SpaceTitle(text: String, modifier: Modifier = Modifier) =
-    Text(text, modifier, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E9F2))
+private fun rememberStats(vm: AppViewModel): MyStats {
+    val profile by vm.current.collectAsStateWithLifecycle()
+    val progress by vm.progress.collectAsStateWithLifecycle()
+    val myList by vm.myList.collectAsStateWithLifecycle()
+    val doneKeys by vm.doneKeys.collectAsStateWithLifecycle()
+    val doneMs by vm.doneMs.collectAsStateWithLifecycle()
+    val votes by vm.votes.collectAsStateWithLifecycle()
+    return remember(progress, myList, doneKeys, doneMs, votes, profile) {
+        val day = 86_400_000L
+        val trackedMs = doneMs + progress.sumOf { it.positionMs }
+        val hours = trackedMs / 3_600_000L
+        val days = progress.map { it.updated / day }.toSet()
+        var streak = 0
+        run { var d = System.currentTimeMillis() / day; if (d !in days) d -= 1; while (d in days) { streak++; d-- } }
+        val genres = myList.flatMap { it.genres.orEmpty() }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }
+        val series = myList.count { it.type == "series" } + progress.count { it.isSeries() }
+        val movies = myList.count { it.type != "series" } + progress.count { !it.isSeries() }
+        val tags = buildList {
+            if (profile?.kids == true) add("Kids profile")
+            else add(when { series + movies == 0 -> "Just getting started"; series > movies * 1.5 -> "Series lover"; movies > series * 1.5 -> "Movie buff"; else -> "Balanced taste" })
+            genres.firstOrNull()?.let { add("${it.key} fan") }
+            if (progress.count { val h = Calendar.getInstance().apply { timeInMillis = it.updated }.get(Calendar.HOUR_OF_DAY); h >= 23 || h < 4 } >= 2) add("Night owl")
+        }
+        MyStats(if (hours >= 1) "${hours}h" else "${trackedMs / 60_000L}m", doneKeys.size, votes.values.count { it.v > 0 }, streak, tags)
+    }
+}
 
+/**
+ * My Space: only the profile you're using — picture, name, tags and your numbers; then Library and Watch together, and
+ * Watchlist (with its calendar), Notifications and Clear Continue Watching. Switch profiles with "Switch" (or a long
+ * press on My Space in the bar).
+ */
 @Composable
 fun MySpaceScreen(
     vm: AppViewModel,
@@ -43,20 +89,24 @@ fun MySpaceScreen(
     onOpen: (Meta) -> Unit,
     onPlay: (Screen.Player) -> Unit,
     onManual: (Meta, String) -> Unit = { _, _ -> },
+    onLibrary: () -> Unit = {},
+    onTogether: () -> Unit = {},
+    onWatchlist: () -> Unit = {},
+    onNotifications: () -> Unit = {},
 ) {
+    val ctx = LocalContext.current
     val profile by vm.current.collectAsStateWithLifecycle()
-    val profiles by vm.profiles.collectAsStateWithLifecycle()
     val progress by vm.progress.collectAsStateWithLifecycle()
     val myList by vm.myList.collectAsStateWithLifecycle()
-    var editMode by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf<Profile?>(null) }
-    var adding by remember { mutableStateOf(false) }
-    var actionsFor by remember { mutableStateOf<Progress?>(null) }
+    val pending by Social.pending.collectAsStateWithLifecycle()
+    val st = rememberStats(vm)
+    var confirmClear by remember { mutableStateOf(false) }
+    var statOpen by remember { mutableStateOf<String?>(null) }
+    val alerts = remember { EpisodeAlerts.inbox(ctx).size }
 
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxWidth().height(520.dp).background(Brush.verticalGradient(listOf(Color(0xFF14091E), Palette.tint.copy(alpha = 0.55f), Bg))))
         LazyColumn(Modifier.fillMaxSize()) {
-            // Logo + Help & Settings
             item {
                 Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 16.dp, end = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     AppLogo(vm, 40.dp)
@@ -71,127 +121,396 @@ fun MySpaceScreen(
                     }
                 }
             }
-            // Current profile card
+            // You
             item {
-                val shape = RoundedCornerShape(20.dp)
-                Row(
-                    Modifier.padding(16.dp).fillMaxWidth().clip(shape).background(Color(0xCC161B26)).border(1.dp, Color(0x14FFFFFF), shape).padding(18.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    ProfileAvatar(vm, profile, 58.dp, Modifier.clickable(onClick = onProfile))
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(profile?.name ?: "", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${progress.size} in progress  ·  ${myList.size} in watchlist", fontSize = 14.sp, color = Color(0xFF9AA3B5))
-                    }
-                    Row(
-                        Modifier.clip(RoundedCornerShape(14.dp)).background(Accent).clickable(onClick = onSwitchProfile).padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Default.SwapHoriz, null, Modifier.size(18.dp), tint = OnAccent)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Switch", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = OnAccent)
-                    }
-                }
-            }
-            // Profiles row
-            item {
-                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    SpaceTitle("Profiles", Modifier.weight(1f))
-                    Row(Modifier.clip(RoundedCornerShape(12.dp)).clickable { editMode = !editMode }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(if (editMode) Icons.Default.Check else Icons.Default.Edit, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (editMode) "Done" else "Edit", fontSize = 16.sp)
-                    }
-                }
-            }
-            item {
-                LazyRow(Modifier.tourTarget("profiles"), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                    items(profiles, key = { it.id }) { p ->
-                        Column(
-                            Modifier.width(80.dp).clip(RoundedCornerShape(14.dp)).clickable { if (editMode) editing = p else ProfileLock.ask(p) { vm.selectProfile(p) } },
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            val selected = p.id == profile?.id
-                            Box {
-                                ProfileAvatar(vm, p, 72.dp, if (selected) Modifier.border(2.dp, Color.White, CircleShape) else Modifier)
-                                if (editMode) Box(Modifier.size(72.dp).clip(CircleShape).background(Color(0x88000000)), Alignment.Center) {
-                                    Icon(Icons.Default.Edit, "Edit ${p.name}", Modifier.size(24.dp))
-                                }
+                val shape = RoundedCornerShape(22.dp)
+                Column(Modifier.padding(16.dp).fillMaxWidth().clip(shape).background(Color(0xCC161B26)).border(1.dp, Color(0x14FFFFFF), shape).padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ProfileAvatar(vm, profile, 64.dp, Modifier.clickable(onClick = onProfile))
+                        Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                            Text(profile?.name ?: "", fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                st.tags.forEach { Text(it, Modifier.clip(RoundedCornerShape(50)).background(Color(0x1AFFFFFF)).padding(horizontal = 9.dp, vertical = 3.dp), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
                             }
-                            Text(p.name, Modifier.padding(top = 8.dp), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+                        }
+                        Row(
+                            Modifier.clip(RoundedCornerShape(14.dp)).background(Accent).clickable(onClick = onSwitchProfile).padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Default.SwapHoriz, null, Modifier.size(18.dp), tint = OnAccent)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Switch", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = OnAccent)
                         }
                     }
-                    if (profiles.size < 5) item {
-                        Column(Modifier.width(80.dp).clip(RoundedCornerShape(14.dp)).clickable { adding = true }, horizontalAlignment = Alignment.CenterHorizontally) {
-                            Box(Modifier.size(72.dp).clip(CircleShape).background(Color(0xFF2A2030)), Alignment.Center) { Icon(Icons.Default.Add, "Add profile", Modifier.size(32.dp)) }
-                            Text("Add", Modifier.padding(top = 8.dp), fontSize = 14.sp)
-                        }
+                    Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StatBox(st.tracked, "Time watched", Modifier.weight(1f)) { statOpen = "time" }
+                        StatBox("${st.finished}", "Finished", Modifier.weight(1f)) { statOpen = "done" }
+                    }
+                    Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StatBox("${st.loved}", "Titles you love", Modifier.weight(1f)) { statOpen = "love" }
+                        StatBox("${st.streak} ${if (st.streak == 1) "day" else "days"}", "Watch streak", Modifier.weight(1f)) { statOpen = "time" }
                     }
                 }
             }
-            // Watchlist
-            item { SpaceTitle("Watchlist", Modifier.padding(start = 16.dp, top = 18.dp, bottom = 12.dp)) }
-            if (myList.isEmpty()) {
-                item {
-                    Text("Nothing here yet. Tap + on any title to save it.", Modifier.padding(horizontal = 16.dp), color = Color(0xFF9AA3B5), fontSize = 15.sp)
-                }
-            } else {
-                // TV: six posters a row (three made each poster screen-high).
-                val cols = if (BuildConfig.IS_TV) 6 else 3
-                items(myList.chunked(cols)) { row ->
-                    Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(if (BuildConfig.IS_TV) 16.dp else 10.dp)) {
-                        row.forEach { m -> Poster(m, Modifier.weight(1f), onOpen) }
-                        repeat(cols - row.size) { Spacer(Modifier.weight(1f)) }
-                    }
+            // Library · Watch together
+            item {
+                Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    BigHubButton("Library", "Continue · downloads · history", Icons.Default.VideoLibrary, Brush.linearGradient(listOf(Color(0xFF2B3550), Color(0xFF1A2032))), Modifier.weight(1f), onClick = onLibrary)
+                    BigHubButton("Watch together", if (pending.isNotEmpty()) "${pending.size} waiting for you" else "Friends · plans · chats", Icons.Default.Groups,
+                        Brush.linearGradient(listOf(Color(0xFF7A1420), Color(0xFF3A0B12))), Modifier.weight(1f).tourTarget("together"), onClick = onTogether)
                 }
             }
-            // Continue watching
-            if (progress.isNotEmpty()) {
-                item { SpaceTitle(t("continueWatching").replace("{name}", profile?.name ?: ""), Modifier.padding(start = 16.dp, top = 26.dp, bottom = 12.dp)) }
-                item {
-                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(progress, key = { it.key }) { p ->
-                            ContinueCard(p, onClick = { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs)) }, onRemove = { vm.removeProgress(p.key) },
-                                onLongClick = { actionsFor = p })
-                        }
-                    }
+            item {
+                Column(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).border(1.dp, HubLine, RoundedCornerShape(18.dp))) {
+                    HubRow(Icons.Default.Bookmark, Color(0xFF1E2A44), "Watchlist", "${myList.size} titles · calendar", onClick = onWatchlist)
+                    HubRow(Icons.Default.Notifications, Color(0xFF2A2440), "Notifications", if (alerts > 0) "$alerts" else "", onClick = onNotifications)
+                    HubRow(Icons.Default.DeleteSweep, Color(0xFF3A1418), "Clear Continue Watching", "${progress.size} titles", danger = true, last = true) { if (progress.isNotEmpty()) confirmClear = true }
                 }
-            }
-            if (!BuildConfig.IS_TV) item {
-                var joining by remember { mutableStateOf(false) }
-                Row(
-                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 22.dp).tourTarget("together").clip(RoundedCornerShape(14.dp)).background(Color(0xFF15161C))
-                        .clickable { joining = true }.padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Default.Groups, null, Modifier.size(24.dp))
-                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                        Text("Watch together", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                        Text("Join a friend's room with its code. To start one: play something › More › Together.", fontSize = 12.sp, color = Color(0xFF9AA3B5))
-                    }
-                }
-                if (joining) JoinRoomDialog(onJoined = { st ->
-                    joining = false
-                    val expected = st.pos + if (st.playing) (System.currentTimeMillis() - st.receivedAt + 300) else 0L
-                    onPlay(Screen.Player(st.title, st.url, emptyList(), key = st.key, image = st.image, resumeMs = expected, type = st.type))
-                }, onDismiss = { joining = false })
             }
             if (!BuildConfig.IS_TV) item { DownloadsSection(onPlay) }
             item { Spacer(Modifier.navigationBarsPadding().height(120.dp)) }
         }
     }
-    editing?.let { p -> ProfileEditor(vm, p) { editing = null } }
-    if (adding) ProfileEditor(vm, null) { adding = false }
-    actionsFor?.let { p ->
-        ContinueActions(
-            p,
-            onDetails = { onOpen(p.toMeta()) },
-            onManual = { onManual(p.toMeta(), p.key) },
-            onStartOver = { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, 0L)) },
-            onRemove = { vm.removeProgress(p.key) },
-            onDismiss = { actionsFor = null },
-        )
+    if (confirmClear) PremiumAlert(onDismissRequest = { confirmClear = false }, title = { Text("Clear Continue Watching?") },
+        text = { Text("All ${progress.size} titles leave the row on your phones and TV. Your history and numbers stay.", fontSize = 13.sp) },
+        confirmButton = { androidx.compose.material3.TextButton({ vm.clearContinue(); confirmClear = false; Snack.show("Continue Watching cleared") }) { Text("Clear", color = Color(0xFFFF8A80)) } },
+        dismissButton = { androidx.compose.material3.TextButton({ confirmClear = false }) { Text("Cancel") } })
+    statOpen?.let { which -> StatDetails(vm, which) { statOpen = null } }
+}
+
+@Composable
+private fun StatBox(value: String, label: String, modifier: Modifier, onClick: () -> Unit) {
+    Column(modifier.clip(RoundedCornerShape(14.dp)).background(Color(0xFF12151C)).border(1.dp, HubLine, RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Text(value, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+        Text(label, fontSize = 11.sp, color = HubMuted, maxLines = 1)
+    }
+}
+
+@Composable
+private fun BigHubButton(title: String, sub: String, icon: ImageVector, bg: Brush, modifier: Modifier, onClick: () -> Unit) {
+    Column(modifier.height(84.dp).clip(RoundedCornerShape(18.dp)).background(bg).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        Icon(icon, null, Modifier.size(22.dp))
+        Column {
+            Text(title, fontSize = 14.5.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+            Text(sub, fontSize = 10.5.sp, color = Color(0xCCFFFFFF), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun HubRow(icon: ImageVector, tint: Color, title: String, end: String, danger: Boolean = false, last: Boolean = false, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().background(HubCard).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(tint), Alignment.Center) { Icon(icon, null, Modifier.size(17.dp)) }
+        Text(title, Modifier.weight(1f).padding(start = 12.dp), fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold, color = if (danger) Color(0xFFFF8A80) else Color.White)
+        if (end.isNotBlank()) Text(end, fontSize = 12.sp, color = HubMuted)
+        Icon(Icons.Default.ChevronRight, null, Modifier.size(18.dp), tint = HubMuted)
+    }
+    if (!last) Box(Modifier.fillMaxWidth().height(1.dp).background(HubLine))
+}
+
+/** What's behind a My Space number. */
+@Composable
+private fun StatDetails(vm: AppViewModel, which: String, onClose: () -> Unit) {
+    val progress by vm.progress.collectAsStateWithLifecycle()
+    val votes by vm.votes.collectAsStateWithLifecycle()
+    val doneKeys by vm.doneKeys.collectAsStateWithLifecycle()
+    val day = 86_400_000L
+    val rows: List<Pair<String, String>> = when (which) {
+        "time" -> (6 downTo 0).map { back ->
+            val d = System.currentTimeMillis() / day - back
+            val m = progress.filter { it.updated / day == d }.sumOf { (it.positionMs / 60_000L).coerceAtMost(240) }
+            SimpleDateFormat("EEEE", Locale.getDefault()).format(java.util.Date(d * day)) to (if (m > 0) "${m / 60}h ${m % 60}m" else "—")
+        } + progress.sortedByDescending { it.positionMs }.take(5).map { it.title.substringBefore("  S") to "${it.positionMs / 3_600_000L}h ${(it.positionMs / 60_000L) % 60}m" }
+        "done" -> votes.values.filter { v -> doneKeys.any { it.substringBefore(":") == v.id } }.sortedByDescending { it.at }
+            .map { it.name to SimpleDateFormat("d MMM", Locale.getDefault()).format(java.util.Date(it.at)) }
+            .ifEmpty { listOf("${doneKeys.size} titles watched to the end" to "") }
+        else -> votes.values.filter { it.v > 0 }.sortedByDescending { it.at }.map { it.name to (if (it.type == "series") "Series" else "Movie") }
+            .ifEmpty { listOf("Nothing yet · give a title a thumbs up after watching" to "") }
+    }
+    PremiumAlert(onDismissRequest = onClose, title = { Text(when (which) { "time" -> "Time watched"; "done" -> "Titles finished"; else -> "Titles you love" }) }, text = {
+        Column(Modifier.heightIn(max = 420.dp).verticalScrollCompat()) {
+            rows.forEach { (a, b) ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                    Text(a, Modifier.weight(1f), fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(b, fontSize = 12.5.sp, color = HubMuted)
+                }
+            }
+        }
+    }, confirmButton = { androidx.compose.material3.TextButton(onClose) { Text("Close") } })
+}
+
+@Composable
+private fun Modifier.verticalScrollCompat(): Modifier = this.then(Modifier.verticalScroll(rememberScrollState()))
+
+// ───────────── Library ─────────────
+
+/** Library: Continue Watching (remove one / clear all), downloads, and your history (finished, loved). */
+@Composable
+fun LibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit, onPlay: (Screen.Player) -> Unit) {
+    val progress by vm.progress.collectAsStateWithLifecycle()
+    val votes by vm.votes.collectAsStateWithLifecycle()
+    var confirmClear by remember { mutableStateOf(false) }
+    if (onBack != null) BackHandler { onBack() }
+    LazyColumn(Modifier.fillMaxSize().background(Bg), contentPadding = PaddingValues(bottom = 140.dp)) {
+        item { PageHead("Library", onBack) }
+        item {
+            Row(Modifier.padding(start = 16.dp, end = 12.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Continue Watching", Modifier.weight(1f), fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+                if (progress.isNotEmpty()) Text("Clear all", Modifier.clip(RoundedCornerShape(50)).clickable { confirmClear = true }.padding(horizontal = 10.dp, vertical = 6.dp), fontSize = 12.5.sp, color = Color(0xFFFF8A80), fontWeight = FontWeight.Bold)
+            }
+        }
+        if (progress.isEmpty()) item { Text("Nothing in progress.", Modifier.padding(16.dp), fontSize = 13.sp, color = HubMuted) }
+        else item {
+            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(progress, key = { it.key }) { p ->
+                    ContinueCard(p, onClick = { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs)) }, onRemove = { vm.removeProgress(p.key) })
+                }
+            }
+        }
+        if (!BuildConfig.IS_TV) item { DownloadsSection(onPlay) }
+        val loved = votes.values.filter { it.v > 0 }.sortedByDescending { it.at }
+        if (loved.isNotEmpty()) {
+            item { Text("Titles you love", Modifier.padding(start = 16.dp, top = 18.dp, bottom = 8.dp), fontSize = 17.sp, fontWeight = FontWeight.ExtraBold) }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(loved, key = { "l" + it.id }) { v -> Poster(Meta(id = v.id, type = v.type, name = v.name, poster = v.poster, genres = v.genres), Modifier.width(110.dp), onOpen) }
+                }
+            }
+        }
+        val history = votes.values.sortedByDescending { it.at }.take(30)
+        if (history.isNotEmpty()) {
+            item { Text("Recently watched", Modifier.padding(start = 16.dp, top = 18.dp, bottom = 8.dp), fontSize = 17.sp, fontWeight = FontWeight.ExtraBold) }
+            items(history, key = { "h" + it.id }) { v ->
+                Row(Modifier.fillMaxWidth().clickable { onOpen(Meta(id = v.id, type = v.type, name = v.name, poster = v.poster)) }.padding(horizontal = 16.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AsyncImage(v.poster, null, Modifier.size(38.dp, 56.dp).clip(RoundedCornerShape(7.dp)).background(HubCard), contentScale = ContentScale.Crop)
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text(v.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(SimpleDateFormat("d MMM", Locale.getDefault()).format(java.util.Date(v.at)) + (if (v.v > 0) " · loved" else if (v.v < 0) " · not for you" else ""), fontSize = 11.5.sp, color = HubMuted)
+                    }
+                }
+            }
+        }
+    }
+    if (confirmClear) PremiumAlert(onDismissRequest = { confirmClear = false }, title = { Text("Clear Continue Watching?") },
+        text = { Text("All ${progress.size} titles leave the row on your phones and TV.", fontSize = 13.sp) },
+        confirmButton = { androidx.compose.material3.TextButton({ vm.clearContinue(); confirmClear = false }) { Text("Clear", color = Color(0xFFFF8A80)) } },
+        dismissButton = { androidx.compose.material3.TextButton({ confirmClear = false }) { Text("Cancel") } })
+}
+
+@Composable
+private fun PageHead(title: String, onBack: (() -> Unit)?) {
+    Row(Modifier.statusBarsPadding().padding(start = if (onBack != null) 6.dp else 16.dp, end = 16.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (onBack != null) Box(Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onBack), Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+        Text(title, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+    }
+}
+
+// ───────────── Watchlist + calendar ─────────────
+
+private data class CalEvent(val day: Long, val kind: String, val title: String, val sub: String, val poster: String?, val meta: Meta?, val item: SharedItem? = null)
+
+/**
+ * Watchlist with a calendar: new episodes of the shows you follow, release days of movies in your watchlist, and the
+ * watches you planned (alone or with friends). Tap a day, then "Plan a watch".
+ */
+@Composable
+fun WatchlistPage(vm: AppViewModel, onBack: () -> Unit, onOpen: (Meta) -> Unit, startCalendar: Boolean = false) {
+    val myList by vm.myList.collectAsStateWithLifecycle()
+    val progress by vm.progress.collectAsStateWithLifecycle()
+    val items by Social.items.collectAsStateWithLifecycle()
+    val friends by Social.friends.collectAsStateWithLifecycle()
+    var cal by remember { mutableStateOf(startCalendar) }
+    var share by remember { mutableStateOf<Meta?>(null) }
+    BackHandler { onBack() }
+    val day = 86_400_000L
+    val today = remember { localDay(System.currentTimeMillis()) }
+    var month by remember { mutableStateOf(Calendar.getInstance().apply { set(Calendar.DAY_OF_MONTH, 1) }.timeInMillis) }
+    var selDay by remember { mutableLongStateOf(today) }
+    var planFor by remember { mutableStateOf<Meta?>(null) }
+    var pickTitle by remember { mutableStateOf(false) }
+    var openItem by remember { mutableStateOf<SharedItem?>(null) }
+
+    // Episodes and releases (looked up once when the calendar opens).
+    var found by remember { mutableStateOf<List<CalEvent>>(emptyList()) }
+    LaunchedEffect(cal, myList) {
+        if (!cal) return@LaunchedEffect
+        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+        val out = ArrayList<CalEvent>()
+        val shows = (myList.filter { it.type == "series" } + progress.filter { it.isSeries() }.map { it.asMeta() }).distinctBy { it.id }.take(30)
+        for (s in shows) {
+            val m = runCatching { vm.seriesMeta(s.id) }.getOrNull() ?: continue
+            m.videos.orEmpty().forEach { v ->
+                val d = v.released?.take(10)?.let { runCatching { fmt.parse(it)?.time }.getOrNull() } ?: return@forEach
+                val dd = localDay(d)
+                if (dd >= today - 7 && dd <= today + 120 && (v.season ?: 0) > 0)
+                    out += CalEvent(dd, "EPISODE", m.name, "S${v.season} E${v.episode}" + ((v.title ?: v.name)?.let { " · $it" } ?: ""), m.poster ?: s.poster, m)
+            }
+            found = out.toList()
+        }
+        for (mv in myList.filter { it.type != "series" }.take(30)) {
+            val r = runCatching { vm.tmdbInfo(mv.id, "movie")?.release }.getOrNull()?.take(10) ?: continue
+            val d = runCatching { fmt.parse(r)?.time }.getOrNull() ?: continue
+            val dd = localDay(d)
+            if (dd >= today - 7) out += CalEvent(dd, "RELEASE", mv.name, "Release day", mv.poster, mv)
+            found = out.toList()
+        }
+        found = out.toList()
+    }
+    val planned = remember(items) {
+        items.flatMap { it0 -> it0.plans.map { p ->
+            val others = p.with.filterKeys { it != Social.me }.values
+            CalEvent(localDay(p.at), "PLANNED", it0.meta.name, SimpleDateFormat("h:mm a", Locale.getDefault()).format(java.util.Date(p.at)) + if (others.isEmpty()) " · only you" else " · with ${others.joinToString(", ")}", it0.meta.poster, it0.meta, it0)
+        } }
+    }
+    val all = found + planned
+
+    Column(Modifier.fillMaxSize().background(Bg)) {
+        PageHead("Watchlist", onBack)
+        Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(HubCard).padding(4.dp)) {
+            listOf("Titles" to false, "Calendar" to true).forEach { (n, c) ->
+                Text(n, Modifier.weight(1f).clip(RoundedCornerShape(9.dp)).background(if (cal == c) Color(0xFFF2F4F8) else Color.Transparent).clickable { cal = c }.padding(vertical = 9.dp),
+                    fontSize = 13.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, color = if (cal == c) Color(0xFF0E1014) else HubMuted)
+            }
+        }
+        if (!cal) {
+            if (myList.isEmpty()) Text("Nothing here yet. Tap + on any title to save it.", Modifier.padding(16.dp), color = HubMuted, fontSize = 14.sp)
+            LazyColumn(contentPadding = PaddingValues(bottom = 140.dp, top = 10.dp)) {
+                items(myList.chunked(3)) { row ->
+                    Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        row.forEach { m ->
+                            Column(Modifier.weight(1f)) {
+                                Poster(m, Modifier.fillMaxWidth(), onOpen)
+                                Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("Plan", Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(HubCard).clickable { planFor = m }.padding(vertical = 5.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                    Text("Share", Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(HubCard).clickable { share = m }.padding(vertical = 5.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                }
+                            }
+                        }
+                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+            }
+        } else LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
+            item { MonthGrid(month, selDay, today, all, onMonth = { month = it }, onDay = { selDay = it }) }
+            val dayEvents = all.filter { it.day == selDay }.sortedBy { it.kind }
+            item {
+                Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(SimpleDateFormat("EEEE d MMMM", Locale.getDefault()).format(java.util.Date(selDay * day)), Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(if (dayEvents.isEmpty()) "Nothing yet" else "${dayEvents.size}", fontSize = 12.sp, color = HubMuted)
+                }
+            }
+            items(dayEvents) { e ->
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(HubCard)
+                    .clickable { if (e.item != null) openItem = e.item else e.meta?.let(onOpen) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AsyncImage(e.poster, null, Modifier.size(38.dp, 56.dp).clip(RoundedCornerShape(7.dp)), contentScale = ContentScale.Crop)
+                    Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                        Text(e.title, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(e.sub, fontSize = 11.5.sp, color = HubMuted, maxLines = 2)
+                    }
+                    val c = kindColor(e.kind)
+                    Text(e.kind, Modifier.clip(RoundedCornerShape(6.dp)).background(c.copy(alpha = 0.15f)).padding(horizontal = 6.dp, vertical = 3.dp), fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = c)
+                }
+            }
+            item {
+                Text("＋ Plan a watch on this day", Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(50)).background(Accent).clickable { pickTitle = true }.padding(vertical = 13.dp),
+                    fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center, color = OnAccent)
+            }
+        }
+    }
+    if (pickTitle) PremiumAlert(onDismissRequest = { pickTitle = false }, title = { Text("Plan which title?") }, text = {
+        Column(Modifier.heightIn(max = 400.dp).verticalScrollCompat()) {
+            if (myList.isEmpty()) Text("Add titles to your watchlist first.", fontSize = 13.sp, color = HubMuted)
+            myList.forEach { m ->
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(10.dp)).clickable { pickTitle = false; planFor = m }.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AsyncImage(m.poster, null, Modifier.size(34.dp, 50.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Crop)
+                    Text(m.name, Modifier.padding(start = 10.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                }
+            }
+        }
+    }, confirmButton = {}, dismissButton = { androidx.compose.material3.TextButton({ pickTitle = false }) { Text("Cancel") } })
+    planFor?.let { m ->
+        val start = if (cal) Calendar.getInstance().apply { timeInMillis = selDay * day; set(Calendar.HOUR_OF_DAY, 21); set(Calendar.MINUTE, 0) }.timeInMillis.takeIf { it > System.currentTimeMillis() } else null
+        PlanFlow(m, items.firstOrNull { it.meta.id == m.id && it.by == Social.me }, friends, start, onDone = { planFor = null })
+    }
+    share?.let { m -> ShareWithFriends(m, friends) { share = null } }
+    openItem?.let { it0 -> SharedItemSheet(vm, it0, friends, onClose = { openItem = null }, onOpen = { m -> openItem = null; onOpen(m) },
+        onJoin = { code -> openItem = null; JoinIntent.asked = true; JoinIntent.code.value = code }) }
+}
+
+private fun localDay(ms: Long): Long { val tz = TimeZone.getDefault(); return (ms + tz.getOffset(ms)) / 86_400_000L }
+private fun kindColor(k: String) = when (k) { "EPISODE" -> Color(0xFF7BE0FF); "RELEASE" -> Color(0xFFFFB13B); else -> Color(0xFF3DD68C) }
+
+@Composable
+private fun MonthGrid(month: Long, sel: Long, today: Long, events: List<CalEvent>, onMonth: (Long) -> Unit, onDay: (Long) -> Unit) {
+    val cal = Calendar.getInstance().apply { timeInMillis = month }
+    val title = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(cal.time)
+    val firstDow = (cal.get(Calendar.DAY_OF_WEEK) + 5) % 7 // Monday first
+    val days = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+    val byDay = events.groupBy { it.day }
+    Column(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(HubCard).border(1.dp, HubLine, RoundedCornerShape(18.dp)).padding(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(title, Modifier.weight(1f).padding(start = 4.dp), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+            Icon(Icons.Default.ChevronLeft, "Previous month", Modifier.size(36.dp).clip(CircleShape).clickable { onMonth(Calendar.getInstance().apply { timeInMillis = month; add(Calendar.MONTH, -1) }.timeInMillis) }.padding(6.dp))
+            Icon(Icons.Default.ChevronRight, "Next month", Modifier.size(36.dp).clip(CircleShape).clickable { onMonth(Calendar.getInstance().apply { timeInMillis = month; add(Calendar.MONTH, 1) }.timeInMillis) }.padding(6.dp))
+        }
+        Row(Modifier.padding(top = 6.dp)) { listOf("M", "T", "W", "T", "F", "S", "S").forEach { Text(it, Modifier.weight(1f), fontSize = 10.sp, color = HubMuted, textAlign = TextAlign.Center, fontWeight = FontWeight.Bold) } }
+        val cells = List(firstDow) { 0 } + (1..days).toList()
+        cells.chunked(7).forEach { week ->
+            Row(Modifier.padding(top = 4.dp)) {
+                week.forEach { d ->
+                    if (d == 0) Spacer(Modifier.weight(1f).height(38.dp)) else {
+                        val c2 = Calendar.getInstance().apply { timeInMillis = month; set(Calendar.DAY_OF_MONTH, d); set(Calendar.HOUR_OF_DAY, 12) }
+                        val key = localDay(c2.timeInMillis)
+                        val on = key == sel
+                        Column(Modifier.weight(1f).height(38.dp).padding(1.dp).clip(RoundedCornerShape(10.dp)).background(if (on) Color(0xFFF2F4F8) else Color.Transparent)
+                            .then(if (key == today && !on) Modifier.border(1.5.dp, Accent, RoundedCornerShape(10.dp)) else Modifier).clickable { onDay(key) },
+                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Text("$d", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (on) Color(0xFF0E1014) else Color.White)
+                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                byDay[key].orEmpty().map { it.kind }.distinct().take(3).forEach { k -> Box(Modifier.padding(top = 2.dp).size(4.dp).clip(CircleShape).background(kindColor(k))) }
+                            }
+                        }
+                    }
+                }
+                repeat(7 - week.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+        Row(Modifier.padding(top = 8.dp, start = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            listOf("New episode" to "EPISODE", "Release" to "RELEASE", "Your plan" to "PLANNED").forEach { (n, k) ->
+                Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(6.dp).clip(CircleShape).background(kindColor(k))); Text(" $n", fontSize = 10.sp, color = HubMuted) }
+            }
+        }
+    }
+}
+
+// ───────────── Notifications ─────────────
+
+/** New-episode alerts (and a link to Watch together when someone is waiting for your answer). */
+@Composable
+fun NotificationsPage(onBack: () -> Unit, onTogether: () -> Unit) {
+    val ctx = LocalContext.current
+    var alerts by remember { mutableStateOf(EpisodeAlerts.inbox(ctx)) }
+    val pending by Social.pending.collectAsStateWithLifecycle()
+    BackHandler { onBack() }
+    LazyColumn(Modifier.fillMaxSize().background(Bg), contentPadding = PaddingValues(bottom = 120.dp)) {
+        item { PageHead("Notifications", onBack) }
+        if (pending.isNotEmpty()) item {
+            Row(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF3A0B12)).clickable(onClick = onTogether).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Groups, null)
+                Text("${pending.size} waiting for your answer in Watch together", Modifier.weight(1f).padding(start = 12.dp), fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                Icon(Icons.Default.ChevronRight, null)
+            }
+        }
+        if (alerts.isEmpty()) item { Text("No notifications yet. New episodes of shows you follow show up here.", Modifier.padding(16.dp), fontSize = 13.sp, color = HubMuted) }
+        items(alerts) { a ->
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(HubCard).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                AsyncImage(a.poster, null, Modifier.size(38.dp, 56.dp).clip(RoundedCornerShape(7.dp)), contentScale = ContentScale.Crop)
+                Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                    Text(a.show, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text(a.text, fontSize = 12.sp, color = HubMuted, maxLines = 2)
+                    Text(SimpleDateFormat("d MMM · h:mm a", Locale.getDefault()).format(java.util.Date(a.at)), fontSize = 10.5.sp, color = HubMuted)
+                }
+            }
+        }
     }
 }

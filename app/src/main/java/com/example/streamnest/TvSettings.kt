@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableIntState
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -89,6 +90,8 @@ fun TvSettingsScreen(vm: AppViewModel, lastIdx: MutableIntState, onOpen: (String
     val frs = remember { List(TvSetCats.size) { FocusRequester() } }
     var openKey by rememberSaveable { mutableStateOf<String?>(null) }
     var paneFocused by remember { mutableStateOf(false) }
+    // When the remote leaves the opened section with ◀, focus lands back on that section (not on whichever row is nearest).
+    var paneLeftAt by remember { mutableLongStateOf(0L) }
     val paneFr = remember { FocusRequester() }
     val openTick = remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
@@ -111,7 +114,11 @@ fun TvSettingsScreen(vm: AppViewModel, lastIdx: MutableIntState, onOpen: (String
                 itemsIndexed(TvSetCats, key = { _, c -> c.key }) { i, c ->
                     if (c.section != null) Text(c.section, Modifier.padding(start = 14.dp, top = 12.dp, bottom = 4.dp), fontSize = 10.sp,
                         fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, color = Color(0xFF7C8394))
-                    TvSetRow(c, frs[i], selected = openKey == c.key, onFocused = { lastIdx.intValue = i }, onLeft = { onLeftEdge(frs[i]) }) {
+                    TvSetRow(c, frs[i], selected = openKey == c.key, onFocused = {
+                        val open = TvSetCats.indexOfFirst { it.key == openKey }
+                        if (open >= 0 && open != i && android.os.SystemClock.uptimeMillis() - paneLeftAt < 400) { paneLeftAt = 0L; frs[open].tryFocus() }
+                        else lastIdx.intValue = i
+                    }, onLeft = { onLeftEdge(frs[i]) }) {
                         openKey = c.key; openTick.intValue++
                     }
                 }
@@ -120,7 +127,7 @@ fun TvSettingsScreen(vm: AppViewModel, lastIdx: MutableIntState, onOpen: (String
         // Right side: the opened section, or what the app is.
         Box(
             Modifier.padding(start = 18.dp, end = 24.dp).fillMaxSize()
-                .onFocusChanged { paneFocused = it.hasFocus },
+                .onFocusChanged { if (paneFocused && !it.hasFocus) paneLeftAt = android.os.SystemClock.uptimeMillis(); paneFocused = it.hasFocus },
         ) {
             val k = openKey
             if (k == null) {

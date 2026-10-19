@@ -80,8 +80,8 @@ val HomeTour = listOf(
     TourStep("cw", "Continue Watching", "Pick up where you stopped. Long-press a card for details, choosing a source, starting over or removing it."),
     TourStep("capsule", "Filters", "Show only Movies or Series. The arrow takes you back to the top."),
     TourStep("ai", "Talk to X", "Your AI movie buddy: say or type what you're in the mood for. Add a free key first in Settings › Integrations."),
-    TourStep("deck", "Cards glide on their own", "The cards move by themselves every few seconds; swipe to take over — they start again when you leave them alone.", since = 27),
-    TourStep("deck", "Trailer mode", "Hold a card: every card's trailer plays one after another (the screen stays on), then it turns itself off. Hold again to stop.", TourGesture.Hold, since = 29),
+    TourStep("deck", "Cards glide on their own", "The cards move by themselves every few seconds; swipe to take over — they start again when you leave them alone."),
+    TourStep("deck", "Trailer mode", "Hold a card: every card's trailer plays one after another (the screen stays on), then it turns itself off. Hold again to stop.", TourGesture.Hold),
     TourStep("nav", "Home · Search · My Space", "Search has moods and Surprise me. My Space has your profiles, watchlist, downloads and Watch together. Long-press My Space to switch profiles."),
 )
 
@@ -99,10 +99,10 @@ val PlayerTour = listOf(
     TourStep(null, "Brightness", "Swipe up or down on the left side.", TourGesture.SwipeUpDownLeft),
     TourStep(null, "Volume", "Swipe up or down on the right side.", TourGesture.SwipeUpDownRight),
     TourStep(null, "Zoom", "Pinch out to fill the screen, pinch in for the original size.", TourGesture.Pinch),
-    TourStep(null, "Age rating and real quality", "When a video starts, its age rating and the real picture size of the file show for a few seconds at the top left (also in ⓘ).", since = 27),
-    TourStep(null, "Audio & Subtitles", "Opens as a bubble from its button. ⓘ beside a language shows its details; subtitles from the internet come in your language, already downloaded; drag Size to see it on the video. Close it with the back button.", since = 27),
-    TourStep(null, "Upgrade to 4K", "Videos can start on a fast stream; when a sharper file is ready, a small \"Upgrade\" button counts down at the bottom right — one tap switches at once.", since = 28),
-    TourStep(null, "Invite friends", "Watch together (people icon, top right) › Share / Invite copies a link for any chat. Friends who joined you before are listed — ring 🔔 them to call them in.", since = 28),
+    TourStep(null, "Age rating and real quality", "When a video starts, its age rating and the real picture size of the file show for a few seconds at the top left (also in ⓘ)."),
+    TourStep(null, "Audio & Subtitles", "Opens as a bubble from its button. ⓘ beside a language shows its details; subtitles from the internet come in your language, already downloaded; drag Size to see it on the video. Close it with the back button."),
+    TourStep(null, "Upgrade to 4K", "Videos can start on a fast stream; when a sharper file is ready, a small \"Upgrade\" button counts down at the bottom right — one tap switches at once."),
+    TourStep(null, "Invite friends", "Watch together (people icon, top right) › Share / Invite copies a link for any chat. Friends who joined you before are listed — ring 🔔 them to call them in."),
     TourStep(null, "The buttons", "Tap the video to see them: Watch Next, Audio & Subtitles (with Audio boost and Night mode), Episodes, Next Episode and › for Sleep timer, Picture-in-picture, Sources, Aspect, Speed and Info. Top right: Watch together, lock and quality."),
 )
 

@@ -71,7 +71,8 @@ data class RoomState(
 )
 
 /** Someone in the room: [seen] in server time; [mic]/[cam] on; [rtc] = their Xstream can do voice/video. */
-@Serializable data class RoomMember(val name: String = "", val seen: Long = 0, val mic: Boolean = false, val cam: Boolean = false, val rtc: Boolean = false)
+/** [by]: who brought this person into the room (their inviter), used to show "+N" on that person for the others. */
+@Serializable data class RoomMember(val name: String = "", val seen: Long = 0, val mic: Boolean = false, val cam: Boolean = false, val rtc: Boolean = false, val by: String = "")
 @Serializable data class RoomReact(val k: String = "", val by: String = "", val at: Long = 0)
 @Serializable data class ChatMsg(val by: String = "", val name: String = "", val text: String = "", val at: Long = 0)
 
@@ -164,8 +165,10 @@ object Together {
         return sat
     }
 
+    /** Who invited this phone into the current room (the host when it was a plain code). */
+    @Volatile var invitedBy = ""
     private fun memberJson(): JsonObject = Api.json.encodeToJsonElement(RoomMember.serializer(),
-        RoomMember(myName.ifBlank { "Guest" }, 0, Call.micOn.value, Call.camOn.value, rtc = true)).jsonObject
+        RoomMember(myName.ifBlank { "Guest" }, 0, Call.micOn.value, Call.camOn.value, rtc = true, by = invitedBy)).jsonObject
 
     /** Tell the room this phone is here (and its mic / camera). */
     fun announce() { val c = code.value ?: return; io.launch { stamped("${base(c)}/members/$me", memberJson(), "seen") } }
@@ -198,6 +201,10 @@ object Together {
         if (body == "null") return null to "No room with code $c."
         val st = runCatching { Api.json.decodeFromString<RoomState>(body) }.getOrNull() ?: return null to "That room looks broken."
         isHost = st.host == me
+        // You and whoever invited you (the link / ring sender, else the room's host) become watch friends.
+        invitedBy = JoinIntent.by.takeIf { it.isNotBlank() && it != me } ?: st.host.takeIf { it != me }.orEmpty()
+        JoinIntent.by = ""
+        if (invitedBy.isNotBlank()) Social.befriend(invitedBy, JoinIntent.from.value.takeIf { st.host == invitedBy || JoinIntent.from.value.isNotBlank() }.orEmpty())
         // Learn the server clock before the video opens (so it starts at the right second).
         stamped("${base(c)}/members/$me", memberJson(), "seen")
         start(c)
@@ -230,7 +237,13 @@ object Together {
             }
         }
         val m = (o["members"] as? JsonObject)?.mapValues { (_, v) -> runCatching { Api.json.decodeFromJsonElement(RoomMember.serializer(), v) }.getOrDefault(RoomMember()) } ?: emptyMap()
-        if (m != members.value) { members.value = m; Buddies.note(m.mapValues { (_, v) -> v.copy(seen = System.currentTimeMillis()) }, me); Call.onMembers(m) }
+        if (m != members.value) {
+            members.value = m
+            // People who came in through you become your watch friends (both ways).
+            m.forEach { (uid, mm) -> if (uid != me && mm.by == me) Social.befriend(uid, mm.name) }
+            // Voice / video only with people who approved each other.
+            Call.onMembers(m.filterKeys { Social.approved(it) })
+        }
         (o["reacts"] as? JsonObject)?.forEach { (k, v) ->
             if (seenReacts.add(k)) {
                 val r = runCatching { Api.json.decodeFromJsonElement(RoomReact.serializer(), v) }.getOrNull()
@@ -240,7 +253,7 @@ object Together {
         (o["chat"] as? JsonObject)?.let { c ->
             val all = c.entries.mapNotNull { (k, v) -> runCatching { k to Api.json.decodeFromJsonElement(ChatMsg.serializer(), v) }.getOrNull() }.sortedBy { it.second.at }
             chat.value = all.map { it.second }.takeLast(200)
-            all.forEach { (k, m) -> if (seenChat.add(k) && m.by != me && m.at >= joinedAt - 60_000) { chatIn.tryEmit(m); if (!chatOpen) unread.value = unread.value + 1 } }
+            all.forEach { (k, m) -> if (seenChat.add(k) && m.by != me && m.at >= joinedAt - 60_000 && Social.approved(m.by)) { chatIn.tryEmit(m); if (!chatOpen) unread.value = unread.value + 1 } }
         }
         buf.value = (o["buf"] as? JsonObject)?.mapNotNull { (k, v) -> v.jsonPrimitive.longOrNull?.let { k to it } }?.toMap() ?: emptyMap()
         ((o["sig"] as? JsonObject)?.get(me) as? JsonObject)?.forEach { (k, v) ->
@@ -459,7 +472,7 @@ fun TogetherPanel(current: () -> RoomState, onJoined: (RoomState) -> Unit) {
                 busy = true
                 scope.launch { msg = Together.create(current()); busy = false; msg?.let { Snack.show(it) } }
             }, enabled = !busy, modifier = Modifier.padding(top = 8.dp)) { Text("Start a room with this video") }
-            OutlinedTextField(input, { input = it.uppercase().filter { ch -> ch.isLetterOrDigit() }.take(4) }, Modifier.fillMaxWidth().padding(top = 8.dp).tvOkKeyboard(),
+            OutlinedTextField(input, { input = it.uppercase().filter { ch -> ch.isLetterOrDigit() }.take(4) }, Modifier.fillMaxWidth().padding(top = 8.dp).tvOkKeyboard(top = 8.dp),
                 singleLine = true, label = { Text("Room code") }, shape = RoundedCornerShape(12.dp), keyboardOptions = tvKeyboard())
             TextButton({
                 busy = true
@@ -523,7 +536,8 @@ private fun ChatSection() {
     Column(Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF15161C)).verticalScroll(rememberScrollState(Int.MAX_VALUE)).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (msgs.isEmpty()) Text("No messages yet. Say hi 👋", fontSize = 12.5.sp, color = Color(0xFF9AA3B5))
-        msgs.forEach { m ->
+        // Only messages from people you approved (and who approved you) show.
+        msgs.filter { Social.approved(it.by) }.forEach { m ->
             val mine = m.by == Together.me
             Column(Modifier.fillMaxWidth(), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
                 if (!mine) Text(m.name.ifBlank { "Friend" }, fontSize = 11.sp, color = Color(0xFFFF9AA1), fontWeight = FontWeight.Bold)
@@ -596,10 +610,21 @@ private fun TogetherRoomControls(c: String, mem: Map<String, RoomMember>) {
 
     // Who's watching
     val now = Together.serverNow()
-    val here = mem.filterValues { now - it.seen < 40_000 }
-    Text("Watching now · ${here.size}", Modifier.padding(top = 14.dp, bottom = 6.dp), fontSize = 12.sp, color = grey, fontWeight = FontWeight.SemiBold)
+    val everyone = mem.filterValues { now - it.seen < 40_000 }
+    // You see your friends and the people who chose to be visible to you; everyone else shows as "+N" on the person
+    // who brought them (tap to see their names only).
+    val here = everyone.filterKeys { Social.visible(it) }
+    val hidden = everyone.filterKeys { !Social.visible(it) }
+    val hiddenBy = hidden.entries.groupBy { (_, m) -> m.by.takeIf { it in here } ?: here.keys.firstOrNull { it != Together.me } ?: Together.me }
+    var namesFor by remember { mutableStateOf<String?>(null) }
+    Text("Watching now · ${everyone.size}", Modifier.padding(top = 14.dp, bottom = 6.dp), fontSize = 12.sp, color = grey, fontWeight = FontWeight.SemiBold)
+    namesFor?.let { k -> hiddenBy[k]?.let { l ->
+        Text("Also here with ${here[k]?.name?.ifBlank { "your friend" } ?: "your friend"}: " + l.joinToString(", ") { it.value.name.ifBlank { "Guest" } },
+            Modifier.fillMaxWidth().padding(bottom = 6.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF191A20)).clickable { namesFor = null }.padding(10.dp), fontSize = 12.sp, color = grey)
+    } }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         here.entries.sortedBy { if (it.key == Together.me) 0 else 1 }.forEach { (uid, m) ->
+            val extra = hiddenBy[uid]?.size ?: 0
             val mine = uid == Together.me
             val mOn = if (mine) mic else m.mic
             val cOn = if (mine) cam else m.cam
@@ -612,6 +637,8 @@ private fun TogetherRoomControls(c: String, mem: Map<String, RoomMember>) {
                     }
                     Text((if (mOn) "🎙" else "🔇") + if (cOn) " 📷" else "", Modifier.align(Alignment.BottomEnd).offset(x = 6.dp, y = 3.dp)
                         .clip(RoundedCornerShape(50)).background(Color.Black).border(1.dp, Color(0xFF333333), RoundedCornerShape(50)).padding(horizontal = 3.dp), fontSize = 8.sp)
+                    if (extra > 0) Text("+$extra", Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-4).dp).clip(RoundedCornerShape(50)).background(Color(0xFFE50914))
+                        .clickable { namesFor = if (namesFor == uid) null else uid }.padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
                 Text(if (mine) "You" else m.name.ifBlank { "Guest" }, Modifier.padding(top = 4.dp), fontSize = 11.sp, maxLines = 1)
             }
@@ -698,7 +725,7 @@ fun JoinRoomDialog(onJoined: (RoomState) -> Unit, onDismiss: () -> Unit) {
         text = {
             Column {
                 Text("Enter the 4-letter room code your friend sees in their player (More › Together).", fontSize = 13.sp, color = Color(0xFF9AA3B5))
-                OutlinedTextField(input, { input = it.uppercase().filter { ch -> ch.isLetterOrDigit() }.take(4) }, Modifier.fillMaxWidth().padding(top = 12.dp).tvOkKeyboard(),
+                OutlinedTextField(input, { input = it.uppercase().filter { ch -> ch.isLetterOrDigit() }.take(4) }, Modifier.fillMaxWidth().padding(top = 12.dp).tvOkKeyboard(top = 8.dp),
                     singleLine = true, label = { Text("Room code") }, shape = RoundedCornerShape(12.dp), keyboardOptions = tvKeyboard())
                 msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Color(0xFFFFB4A8)) }
             }
@@ -731,6 +758,8 @@ object JoinIntent {
     val title = MutableStateFlow("")
     /** "Who's watching?" was already shown for this invite. */
     @Volatile var asked = false
+    /** Who sent the invite (link ?by=…, a ring or a "waiting for you"): you two become watch friends. */
+    @Volatile var by = ""
     fun take(intent: android.content.Intent?) {
         // streamx://join/CODE (old invites) or https://streamx-watch.pages.dev/join/CODE (WhatsApp links)
         val c = intent?.getStringExtra("joinCode") ?: intent?.data?.let { u ->
@@ -742,6 +771,7 @@ object JoinIntent {
         }
         val code = c?.trim()?.uppercase()?.filter { it.isLetterOrDigit() }?.takeIf { it.length == 4 } ?: return
         from.value = intent?.getStringExtra("joinFrom").orEmpty(); title.value = intent?.getStringExtra("joinTitle").orEmpty(); asked = false
+        by = intent?.getStringExtra("joinBy") ?: intent?.data?.getQueryParameter("by").orEmpty()
         ActLog.add("TOGETHER", "invite opened: $code")
         JoinIntent.code.value = code
         // Used once: a recreated screen must not ask "Who's watching?" again for the same invite.
@@ -776,7 +806,7 @@ object Invites {
 
     /** The text shared by "Share / Invite" (also copied to the clipboard). */
     fun shareText(code: String, title: String): String =
-        "🎬 Watch \"$title\" with me on Xstream!\nhttps://streamx-watch.pages.dev/join/$code\nRoom code: $code"
+        "🎬 Watch \"$title\" with me on Xstream!\nhttps://streamx-watch.pages.dev/join/$code" + (Together.me.takeIf { it.isNotBlank() }?.let { "?by=$it" } ?: "") + "\nRoom code: $code"
 
     /** Rings a buddy: their Xstream shows "<you> started watching <title> — tap to join". */
     suspend fun ring(b: Buddy, code: String, title: String): String? = withContext(Dispatchers.IO) {
@@ -792,6 +822,8 @@ object Invites {
     suspend fun check(ctx: android.content.Context): Int = withContext(Dispatchers.IO) {
         Cloud.init(ctx)
         val uid = Cloud.user.value?.uid ?: return@withContext 0
+        // Watch together: friend requests, introductions, plans, messages (phone only).
+        if (!BuildConfig.IS_TV) runCatching { Social.check(ctx) }
         val t = Cloud.token() ?: return@withContext 0
         val body = runCatching { Api.get("${CloudConfig.DB_URL}/invites/$uid.json?auth=$t") }.getOrNull() ?: return@withContext 0
         if (body.trim() == "null") return@withContext 0
@@ -809,7 +841,7 @@ object Invites {
         val nm = ctx.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
         if (android.os.Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(CHANNEL) == null)
             nm.createNotificationChannel(android.app.NotificationChannel(CHANNEL, "Watch together invites", android.app.NotificationManager.IMPORTANCE_HIGH))
-        val open = android.content.Intent(ctx, MainActivity::class.java).putExtra("joinCode", inv.code).putExtra("joinFrom", inv.fromName).putExtra("joinTitle", inv.title)
+        val open = android.content.Intent(ctx, MainActivity::class.java).putExtra("joinCode", inv.code).putExtra("joinFrom", inv.fromName).putExtra("joinTitle", inv.title).putExtra("joinBy", inv.from)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val pi = android.app.PendingIntent.getActivity(ctx, inv.code.hashCode(), open, android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
         val n = androidx.core.app.NotificationCompat.Builder(ctx, CHANNEL)

@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -163,6 +164,9 @@ fun SourcesScreen(
     val fusion = isOn(v("fusionBadges"))
     val showAddon = isOn(v("showAddonName"))
 
+    // TV: the remote starts on Resume (or "All"), so every chip and source can be reached with the arrows.
+    val firstFr = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) { if (BuildConfig.IS_TV) repeat(12) { kotlinx.coroutines.delay(80); if (firstFr.tryFocus()) return@LaunchedEffect } }
     Box(Modifier.fillMaxSize().background(Color(0xFF07070A))) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 40.dp)) {
             item {
@@ -181,7 +185,7 @@ fun SourcesScreen(
             }
             if (resumeMs > 0) item {
                 Row(Modifier.padding(start = 18.dp, top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Pill("Resume from ${fmtTime(resumeMs)}", resume) { resume = true }
+                    Pill("Resume from ${fmtTime(resumeMs)}", resume, mod = Modifier.focusRequester(firstFr)) { resume = true }
                     Pill("Start over", !resume) { resume = false }
                 }
             }
@@ -192,7 +196,7 @@ fun SourcesScreen(
                             Icon(Icons.Default.Refresh, "Refresh", Modifier.size(22.dp))
                         }
                     }
-                    item { Pill("All", addon == null, big = true) { addon = null } }
+                    item { Pill("All", addon == null, big = true, mod = if (resumeMs > 0) Modifier else Modifier.focusRequester(firstFr)) { addon = null } }
                     items(addons) { a -> Pill(Public.serverName(a), addon == a, big = true) { addon = a } }
                 }
             }
@@ -275,10 +279,10 @@ private fun RatingChip(label: String, value: String, c: Color) {
 }
 
 @Composable
-private fun Pill(text: String, on: Boolean, big: Boolean = false, onClick: () -> Unit) {
+private fun Pill(text: String, on: Boolean, big: Boolean = false, mod: Modifier = Modifier, onClick: () -> Unit) {
     Text(
         text,
-        Modifier.clip(RoundedCornerShape(24.dp)).background(if (on) Accent else Color(0xFF1A1A1F)).clickable(onClick = onClick)
+        mod.clip(RoundedCornerShape(24.dp)).background(if (on) Accent else Color(0xFF1A1A1F)).clickable(onClick = onClick)
             .padding(horizontal = if (big) 20.dp else 18.dp, vertical = if (big) 12.dp else 11.dp),
         fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = if (on) OnAccent else Color.White, maxLines = 1,
     )

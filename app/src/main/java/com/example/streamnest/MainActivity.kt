@@ -31,6 +31,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         )
         WidgetOpen.take(intent)
         JoinIntent.take(intent)
+        SocialIntent.take(intent)
         enableEdgeToEdge()
         // Xstream TV (tv flavor) gets the remote-friendly TV interface; the phone app keeps its own.
         setContent {
@@ -72,6 +73,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         super.onNewIntent(intent)
         WidgetOpen.take(intent)
         JoinIntent.take(intent)
+        SocialIntent.take(intent)
     }
 
     /** Going Home while a video plays: keep watching in a small window (Playback › Picture-in-picture). */

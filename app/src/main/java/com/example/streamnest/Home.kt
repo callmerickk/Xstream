@@ -41,7 +41,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -248,15 +247,18 @@ fun HomeScreen(
     val onTop: () -> Unit = remember(listState, scope) { { scope.launch { listState.animateScrollToItem(0) }; Unit } }
 
     Box(Modifier.fillMaxSize()) {
-        // Xstream: the front Spotlight title lights the page (its poster, blurred and faded).
-        if (showHero && filter != "live") SpotlightGlow(deck.getOrNull(deckPager.currentPage)?.meta,
-            Modifier.graphicsLayer { alpha = if (listState.firstVisibleItemIndex <= 2) 1f else 0.35f })
-        else Box(Modifier.fillMaxWidth().height(600.dp).background(topBrush))
+        Box(Modifier.fillMaxWidth().height(600.dp).background(topBrush))
 
         LazyColumn(Modifier.fillMaxSize().then(if (homeBlur > 0.dp) Modifier.blur(homeBlur) else Modifier), state = listState) {
             item(key = "header", contentType = "header") {
                 Row(Modifier.statusBarsPadding().padding(start = 16.dp, end = 16.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    val pill = RoundedCornerShape(50)
+                    Row(
+                        Modifier.clip(pill).background(Color(0x99101420))
+                            .border(1.dp, brandRim, pill)
+                            .padding(start = 6.dp, end = if (showBrand) 16.dp else 6.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         // Signal X logo with its animation (Developer's Corner › Logo & animation); the hanging X stays an option.
                         val lookLogo by AppLook.logo.collectAsStateWithLifecycle()
                         val lookAnim by AppLook.anim.collectAsStateWithLifecycle()
@@ -265,16 +267,21 @@ fun HomeScreen(
                         val signalAnim = !customLogo && lookLogo == "signal" && lookAnim != "hanging" && lookAnim != "none"
                         var wordIn by remember { mutableStateOf(!signalAnim || !(lookAnim == "broadcast" || lookAnim == "broadcast_living") ) }
                         val wordA by androidx.compose.animation.core.animateFloatAsState(if (wordIn) 1f else 0f, androidx.compose.animation.core.tween(500), label = "wordIn")
-                        if (signalAnim) SignalMark(30.dp, lookAnim, paused = listState.isScrollInProgress) { wordIn = true }
-                        else AppLogo(vm, 30.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Box(Modifier.graphicsLayer { alpha = wordA; translationX = (1f - wordA) * -24f }) {
-                            Wordmark(appName, 22.sp, animated = lookAnim == "hanging")
+                        if (signalAnim) SignalMark(28.dp, lookAnim, paused = listState.isScrollInProgress) { wordIn = true }
+                        else AppLogo(vm, 28.dp)
+                        if (showBrand) {
+                            Spacer(Modifier.width(8.dp))
+                            Box(Modifier.graphicsLayer { alpha = wordA; translationX = (1f - wordA) * -24f }) {
+                                Wordmark(appName, animated = lookAnim == "hanging")
+                            }
                         }
                     }
                 }
             }
-            item(key = "forYou", contentType = "forYou") { Spacer(Modifier.height(10.dp)) }
+            item(key = "forYou", contentType = "forYou") {
+                Text(t("forYou"), fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFEDEFF7),
+                    modifier = Modifier.padding(start = 16.dp, top = 18.dp, bottom = 16.dp))
+            }
             if (shelves.isEmpty()) {
                 item(key = "empty", contentType = "empty") {
                     Box(Modifier.fillMaxWidth().height(420.dp), Alignment.Center) {
@@ -283,7 +290,7 @@ fun HomeScreen(
                 }
             } else {
                 if (showHero) item(key = DeckKey, contentType = DeckKey) {
-                    Box(Modifier.tourTarget("deck")) { SpotlightStage(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, onOpen) { vm.toggleList(it) } }
+                    Box(Modifier.tourTarget("deck")) { Deck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { vm.toggleList(it) } }
                 }
             }
             if (progress.isNotEmpty() && filter == null && cwShow) {
@@ -916,33 +923,7 @@ private fun FloatingFilters(
     val pill = RoundedCornerShape(50)
     val maxCapsule = (LocalConfiguration.current.screenWidthDp - 2 * (12 + 52 + 8)).dp
     Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-        Row(
-            Modifier.align(Alignment.Center).tourTarget("capsule").widthIn(max = maxCapsule)
-                // Scrolling down slides the capsule away (behind the bottom bar); the AI button stays as a small mic.
-                // Before: alpha + Modifier.shadow on this layer forced an offscreen buffer and shadow re-render every
-                // frame. Now the fade uses ModulateAlpha (alpha applied per draw, no offscreen buffer) and is fully
-                // skipped (alpha 0) once hidden. Everything here is read in the draw phase: no recomposition.
-                .graphicsLayer {
-                    val v = hide.value
-                    translationY = v * 150.dp.toPx()
-                    alpha = if (v >= 0.999f) 0f else 1f - v
-                    compositingStrategy = CompositingStrategy.ModulateAlpha
-                }
-                // Static, pre-recorded halo instead of Modifier.shadow (elevation shadows re-render as the pill moves).
-                .softHalo(100.dp, spread = 12.dp, strength = 0.5f, dy = 4.dp)
-                .clip(pill)
-                .background(CapsuleBrush)
-                .border(1.dp, Color(0x33FFFFFF), pill).padding(horizontal = 3.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            labels.forEach { (label, type) ->
-                Text(label, Modifier.clip(pill).clickable { onFilter(type) }.padding(horizontal = 11.dp, vertical = 12.dp),
-                    fontSize = 15.sp, fontWeight = if (filter == type) FontWeight.Bold else FontWeight.Medium, maxLines = 1,
-                    color = if (filter == type) Color.White else Color(0xC8FFFFFF))
-                Box(Modifier.width(1.dp).height(18.dp).background(Color(0x44FFFFFF)))
-            }
-            Icon(Icons.Default.KeyboardArrowUp, "Back to top", Modifier.clip(CircleShape).clickable(onClick = onTop).padding(horizontal = 8.dp, vertical = 10.dp).size(24.dp))
-        }
+        // Xstream: no TV / Movies / Live capsule — only the AI voice button.
         Box(Modifier.align(Alignment.CenterEnd).tourTarget("ai")) { AiOrbButton(vm, 52.dp, hide, onAi) }
     }
 }
@@ -1035,155 +1016,3 @@ fun hiResArt(url: String?): String? = url
     ?.replace(Regex("/poster/(small|medium)/"), "/poster/large/")
     ?.replace(Regex("/background/(small|medium)/"), "/background/large/")
     ?.replace(Regex("/t/p/w(92|154|185|300|342|500)/"), "/t/p/w780/")
-
-// ───────────── Xstream · Spotlight Stage ─────────────
-
-/** The screen's ambient light: the front title's own poster, blurred huge and faded into the page colour. */
-@Composable
-private fun SpotlightGlow(m: Meta?, modifier: Modifier = Modifier) {
-    val bg = Bg
-    Box(modifier.fillMaxWidth().height(720.dp)) {
-        androidx.compose.animation.Crossfade(m?.poster ?: m?.let { backdropOf(it) }, animationSpec = tween(900), label = "glow") { art ->
-            if (art != null) AsyncImage(
-                art, null,
-                Modifier.fillMaxSize().graphicsLayer { alpha = if (android.os.Build.VERSION.SDK_INT >= 31) 0.62f else 0.30f }
-                    .then(if (android.os.Build.VERSION.SDK_INT >= 31) Modifier.blur(90.dp) else Modifier),
-                contentScale = ContentScale.Crop,
-            )
-        }
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to bg.copy(alpha = 0.35f), 0.55f to bg.copy(alpha = 0.55f), 1f to bg)))
-    }
-}
-
-/**
- * One title owns the screen: a big rounded poster in the middle with the next ones peeking at the sides (smaller,
- * dimmed). Below it: Watch now, + My List, Info and the page dots. Glides on its own until you swipe.
- */
-@Composable
-private fun SpotlightStage(
-    vm: AppViewModel, items: List<DeckItem>, pager: PagerState, onScreen: State<Boolean>, myList: List<Meta>,
-    auto: Boolean, secs: Int, onOpen: (Meta) -> Unit, onToggle: (Meta) -> Unit,
-) {
-    if (items.isEmpty()) return
-    val cfg = LocalConfiguration.current
-    val cardW = minOf(cfg.screenWidthDp * 0.67f, cfg.screenHeightDp * 0.46f / 1.5f).coerceAtLeast(200f)
-    val side = ((cfg.screenWidthDp - cardW) / 2f).coerceAtLeast(16f)
-    val visible = onScreen.value
-    val dragged by pager.interactionSource.collectIsDraggedAsState()
-    var userTook by remember { mutableStateOf(false) }
-    LaunchedEffect(dragged) {
-        if (dragged) userTook = true
-        else if (userTook) { delay(8_000); userTook = false }
-    }
-    LaunchedEffect(auto, secs, dragged, userTook, items.size, visible) {
-        if (!auto || dragged || userTook || !visible || items.size < 2) return@LaunchedEffect
-        while (true) {
-            delay(secs * 1000L)
-            pager.animateScrollToPage((pager.currentPage + 1) % items.size,
-                animationSpec = tween(850, easing = androidx.compose.animation.core.CubicBezierEasing(0.22f, 1f, 0.36f, 1f)))
-        }
-    }
-    // The title that stays in front for 2 s has its links looked up quietly, so Watch now starts at once.
-    LaunchedEffect(pager.settledPage, items.size) {
-        delay(2_000)
-        val m = items.getOrNull(pager.settledPage)?.meta ?: return@LaunchedEffect
-        if (m.type == "movie" && vm.qsActive()) runCatching { vm.quickStreams("movie", m.id) }
-    }
-    val front = items.getOrNull(pager.currentPage)?.meta
-    val accent = Accent
-    Column(Modifier.fillMaxWidth()) {
-        HorizontalPager(
-            state = pager,
-            pageSize = PageSize.Fixed(cardW.dp),
-            contentPadding = PaddingValues(horizontal = side.dp),
-            pageSpacing = 14.dp,
-            beyondViewportPageCount = 1,
-            flingBehavior = androidx.compose.foundation.pager.PagerDefaults.flingBehavior(
-                state = pager,
-                pagerSnapDistance = androidx.compose.foundation.pager.PagerSnapDistance.atMost(1),
-                snapAnimationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 200f),
-            ),
-            key = { items.getOrNull(it)?.meta?.id ?: "s$it" },
-            modifier = Modifier.fillMaxWidth().height((cardW * 1.5f + 28f).dp),
-        ) { page ->
-            val d = items[page]
-            SpotlightCard(
-                d.meta, page + 1, d.catalog,
-                Modifier.padding(vertical = 14.dp).graphicsLayer {
-                    val r = abs(page - pager.currentPage - pager.currentPageOffsetFraction).coerceAtMost(1f)
-                    val s = 1f - 0.14f * r
-                    scaleX = s; scaleY = s
-                }.drawWithContent {
-                    drawContent()
-                    val r = abs(page - pager.currentPage - pager.currentPageOffsetFraction).coerceAtMost(1f)
-                    if (r > 0.01f) drawRoundRect(Color.Black, alpha = 0.5f * r, cornerRadius = CornerRadius(28.dp.toPx(), 28.dp.toPx()))
-                },
-            ) { onOpen(d.meta) }
-        }
-        Spacer(Modifier.height(4.dp))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(
-                Modifier.weight(1f).height(52.dp).clip(RoundedCornerShape(50)).background(accent)
-                    .clickable { front?.let { pendingDetailPlay.value = it.id; onOpen(it) } },
-                horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Default.PlayArrow, null, Modifier.size(26.dp), tint = OnAccent)
-                Spacer(Modifier.width(6.dp))
-                Text(t("watchNow"), fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = OnAccent)
-            }
-            val saved = front != null && myList.any { it.id == front.id }
-            SpotlightCircle(if (saved) Icons.Default.Check else Icons.Default.Add, if (saved) "In Watchlist" else "Add to Watchlist") { front?.let(onToggle) }
-            SpotlightCircle(Icons.Outlined.Info, "Details") { front?.let(onOpen) }
-        }
-        // Page dots: the front one stretches into a pill.
-        Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.Center) {
-            val n = items.size.coerceAtMost(12)
-            repeat(n) { i ->
-                val on = i == pager.currentPage % n
-                val w by androidx.compose.animation.core.animateDpAsState(if (on) 22.dp else 6.dp, tween(300), label = "dot")
-                Box(Modifier.padding(horizontal = 3.dp).size(w, 6.dp).clip(RoundedCornerShape(3.dp)).background(if (on) Color(0xFFF2F4F8) else Color(0xFF4A5060)))
-            }
-        }
-    }
-}
-
-@Composable
-private fun SpotlightCircle(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
-    Box(Modifier.size(52.dp).clip(CircleShape).background(Color(0xCC1C2029)).border(1.dp, Color(0x22FFFFFF), CircleShape).clickable(onClick = onClick), Alignment.Center) {
-        Icon(icon, label, Modifier.size(22.dp), tint = Color(0xFFF2F4F8))
-    }
-}
-
-@Composable
-private fun SpotlightCard(m: Meta, rank: Int, catalog: String, modifier: Modifier, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(28.dp)
-    val chip = when {
-        catalog == "Picked for you" -> "PICKED FOR YOU"
-        listOf("new", "latest", "fresh", "release", "arriv").any { catalog.contains(it, true) } -> "NEW"
-        else -> "#$rank ${catalog.uppercase()}"
-    }
-    var logoFailed by remember(m.id) { mutableStateOf(false) }
-    Box(modifier.fillMaxSize().shadow(24.dp, shape, ambientColor = Color.Black, spotColor = Color.Black).clip(shape).background(Color(0xFF14161C)).clickable(onClick = onClick)) {
-        val art = if (m.posterShape.equals("landscape", true) || m.posterShape.equals("square", true)) backdropOf(m) ?: m.poster else m.poster ?: backdropOf(m)
-        AsyncImage(hiResArt(art), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 0.85f to Color(0xCC000000), 1f to Color(0xF2000000))))
-        Text(chip, Modifier.padding(14.dp).clip(RoundedCornerShape(50)).background(Color(0xFFF2F4F8)).padding(horizontal = 10.dp, vertical = 5.dp),
-            fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF0E1014), maxLines = 1, overflow = TextOverflow.Ellipsis, letterSpacing = 0.5.sp)
-        m.imdbRating?.toDoubleOrNull()?.takeIf { it >= 7 }?.let { r ->
-            Row(Modifier.align(Alignment.TopEnd).padding(14.dp).clip(RoundedCornerShape(50)).background(Color(0x99000000)).padding(horizontal = 9.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Star, null, Modifier.size(13.dp), tint = Color(0xFFF5C518)); Spacer(Modifier.width(4.dp))
-                Text("%.1f".format(r), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            }
-        }
-        Column(Modifier.align(Alignment.BottomStart).padding(18.dp)) {
-            val logo = logoOf(m)
-            if (logo != null && !logoFailed) AsyncImage(logo, m.name, Modifier.fillMaxWidth(0.9f).height(64.dp), contentScale = ContentScale.Fit,
-                alignment = Alignment.BottomStart, onError = { logoFailed = true })
-            else Text(m.name, fontSize = 28.sp, lineHeight = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.8).sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(8.dp))
-            Text((m.genres.orEmpty().take(1) + listOfNotNull(m.releaseInfo?.take(4))).joinToString(" · "),
-                fontSize = 12.sp, color = Color(0xFFC8CCD6), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}

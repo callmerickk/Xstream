@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -76,6 +77,7 @@ fun TvMySpaceScreen(vm: AppViewModel, onSwitchProfile: () -> Unit, onPlay: (Scre
     val p = profile ?: return
     var editing by remember { mutableStateOf(false) }
     var joining by remember { mutableStateOf(false) }
+    var stat by remember { mutableStateOf<String?>(null) }
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { withFrameNanos { }; repeat(6) { if (first.tryFocus()) return@LaunchedEffect; delay(60) } }
 
@@ -119,8 +121,9 @@ fun TvMySpaceScreen(vm: AppViewModel, onSwitchProfile: () -> Unit, onPlay: (Scre
             Column(Modifier.weight(1f).padding(horizontal = 24.dp)) {
                 Text(p.name, fontFamily = BrandFont, fontSize = 34.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("${myList.size} in your watchlist · ${progress.size} in progress", fontSize = 13.sp, color = Color(0xFFD0D4DD))
-                Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    tags.forEach { Text(it, Modifier.clip(RoundedCornerShape(50)).background(Color(0x1AFFFFFF)).padding(horizontal = 12.dp, vertical = 4.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                // Tags stay one line each (never squeezed into a tall column); a tag that doesn't fit is left out.
+                FitRow(Modifier.padding(top = 10.dp).fillMaxWidth(), gap = 8.dp) {
+                    tags.forEach { Text(it, Modifier.clip(RoundedCornerShape(50)).background(Color(0x1AFFFFFF)).padding(horizontal = 12.dp, vertical = 4.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false) }
                 }
             }
             HeaderBtn(Icons.Default.Edit, "Edit profile", true, Modifier.focusRequester(first).tvLeftEdge { onLeftEdge(first) }) { editing = true }
@@ -130,10 +133,10 @@ fun TvMySpaceScreen(vm: AppViewModel, onSwitchProfile: () -> Unit, onPlay: (Scre
             HeaderBtn(Icons.Default.SwitchAccount, "Switch", false) { onSwitchProfile() }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            BigStat(tracked, "Time watched", if (weekMin > 0) "${weekMin / 60}h ${weekMin % 60}m this week" else "Nothing yet this week", Modifier.weight(1f).tvLeftEdge { onLeftEdge(first) })
-            BigStat("${doneKeys.size}", "Titles finished", if (doneKeys.size >= 10) "10+ to the end" else "${10 - doneKeys.size} more to reach 10", Modifier.weight(1f))
-            BigStat("$streak", if (streak == 1) "Day streak" else "Days in a row", if (weekMin > lastWeekMin) "▲ more than last week" else "Keep it going", Modifier.weight(1f))
-            BigStat("$liked", "Titles you loved", if (liked > 0) "From your votes" else "Vote after watching", Modifier.weight(1f))
+            BigStat(tracked, "Time watched", if (weekMin > 0) "${weekMin / 60}h ${weekMin % 60}m this week" else "Nothing yet this week", Modifier.weight(1f).tvLeftEdge { onLeftEdge(first) }) { stat = "time" }
+            BigStat("${doneKeys.size}", "Titles finished", if (doneKeys.size >= 10) "10+ to the end" else "${10 - doneKeys.size} more to reach 10", Modifier.weight(1f)) { stat = "done" }
+            BigStat("$streak", if (streak == 1) "Day streak" else "Days in a row", if (weekMin > lastWeekMin) "▲ more than last week" else "Keep it going", Modifier.weight(1f)) { stat = "time" }
+            BigStat("$liked", "Titles you loved", if (liked > 0) "From your votes" else "Vote after watching", Modifier.weight(1f)) { stat = "love" }
         }
         Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             FocusTile(Modifier.weight(1.25f).fillMaxHeight().tvLeftEdge { onLeftEdge(first) }, pad = 18.dp) {
@@ -186,6 +189,18 @@ fun TvMySpaceScreen(vm: AppViewModel, onSwitchProfile: () -> Unit, onPlay: (Scre
         }
     }
     if (editing) TvProfileEditor(vm, p) { editing = false; first.tryFocus() }
+    stat?.let { which ->
+        val rows: List<Pair<String, String>> = when (which) {
+            "time" -> week.reversed().map { (d, m) -> d to (if (m > 0) "${m / 60}h ${m % 60}m" else "—") } +
+                listOf("Most watched" to "") + progress.sortedByDescending { it.positionMs }.take(6).map { it.title to "${it.positionMs / 3_600_000L}h ${(it.positionMs / 60_000L) % 60}m" }
+            "done" -> votes.values.filter { v -> doneKeys.any { it.substringBefore(":") == v.id } }.sortedByDescending { it.at }
+                .map { it.name to SimpleDateFormat("d MMM", Locale.getDefault()).format(java.util.Date(it.at)) }
+                .ifEmpty { listOf("${doneKeys.size} titles watched to the end" to "Vote after a title to see it here") }
+            else -> votes.values.filter { it.v > 0 }.sortedByDescending { it.at }.map { it.name to (if (it.type == "series") "Series" else "Movie") }
+                .ifEmpty { listOf("Nothing yet" to "Give a title a thumbs up after watching") }
+        }
+        TvStatDetail(when (which) { "time" -> "Time watched · $tracked"; "done" -> "Titles finished · ${doneKeys.size}"; else -> "Titles you love · $liked" }, rows) { stat = null }
+    }
     if (joining) TvJoinDialog(onDismiss = { joining = false; first.tryFocus() }) { st ->
         joining = false
         val expected = st.pos + if (st.playing) (System.currentTimeMillis() - st.receivedAt + 300) else 0L
@@ -208,7 +223,7 @@ private fun HeaderBtn(icon: ImageVector, label: String, primary: Boolean, modifi
     }
 
 @Composable
-private fun BigStat(value: String, label: String, note: String, modifier: Modifier) = FocusTile(modifier, pad = 18.dp) {
+private fun BigStat(value: String, label: String, note: String, modifier: Modifier, onClick: () -> Unit = {}) = FocusTile(modifier, pad = 18.dp, onClick = onClick) {
     Text(value, fontFamily = BrandFont, fontSize = 36.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     Text(label, fontSize = 13.sp, color = SpMuted, fontWeight = FontWeight.SemiBold, maxLines = 1)
     Text(note, Modifier.padding(top = 4.dp), fontSize = 11.sp, color = Color(0xFF7FE7AB), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -222,13 +237,13 @@ private fun StatTile(value: String, label: String, modifier: Modifier) = FocusTi
 
 /** A dashboard tile the remote can move onto (so every part of the page is reachable and readable). */
 @Composable
-private fun FocusTile(modifier: Modifier, pad: androidx.compose.ui.unit.Dp = 14.dp, content: @Composable ColumnScope.() -> Unit) {
+private fun FocusTile(modifier: Modifier, pad: androidx.compose.ui.unit.Dp = 14.dp, onClick: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     var f by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(18.dp)
     Column(
         modifier.onFocusChanged { f = it.isFocused }
             .clip(shape).background(if (f) TvFocusFill else Color(0x0DFFFFFF)).border(if (f) 2.dp else 1.dp, if (f) TvFocusEdge else Color(0x14FFFFFF), shape)
-            .focusable()
+            .then(if (onClick != null) Modifier.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, onClick = onClick) else Modifier.focusable())
             .padding(pad),
         content = content,
     )
@@ -243,8 +258,7 @@ fun TvJoinDialog(onDismiss: () -> Unit, onJoined: (RoomState) -> Unit) {
     var busy by remember { mutableStateOf(false) }
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { repeat(10) { delay(60); if (first.tryFocus()) return@LaunchedEffect } }
-    BackHandler { onDismiss() }
-    Box(Modifier.fillMaxSize().background(Color(0xA6000000)), Alignment.Center) {
+    TvModal(onDismiss) {
         val shape = RoundedCornerShape(26.dp)
         Column(Modifier.width(480.dp).clip(shape).background(Color(0xF5111216)).border(1.dp, Color(0x47E50914), shape).padding(22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Join a watch party", fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -252,7 +266,7 @@ fun TvJoinDialog(onDismiss: () -> Unit, onJoined: (RoomState) -> Unit) {
             var nf by remember { mutableStateOf(false) }
             androidx.compose.foundation.text.BasicTextField(
                 input, { input = it.uppercase().filter { ch -> ch.isLetterOrDigit() }.take(4) },
-                Modifier.fillMaxWidth().focusRequester(first).onFocusChanged { nf = it.isFocused }.tvOkKeyboard()
+                Modifier.fillMaxWidth().focusRequester(first).onFocusChanged { nf = it.isFocused }.tvOkKeyboard(ring = false)
                     .clip(RoundedCornerShape(14.dp)).background(if (nf) TvFocusFill else Color(0x14FFFFFF))
                     .border(2.dp, if (nf) TvFocusEdge else Color.Transparent, RoundedCornerShape(14.dp)).padding(horizontal = 16.dp, vertical = 12.dp),
                 singleLine = true, keyboardOptions = tvKeyboard(),
@@ -476,8 +490,7 @@ private fun CalendarWeek(list: List<CalEp>, onPick: (CalEp) -> Unit) {
 fun TvConfirm(title: String, text: String, yes: String, onYes: () -> Unit, onNo: () -> Unit) {
     val no = remember { FocusRequester() }
     LaunchedEffect(Unit) { repeat(10) { delay(60); if (no.tryFocus()) return@LaunchedEffect } }
-    BackHandler { onNo() }
-    Box(Modifier.fillMaxSize().background(Color(0xA6000000)), Alignment.Center) {
+    TvModal(onNo) {
         val shape = RoundedCornerShape(24.dp)
         Column(Modifier.width(460.dp).clip(shape).background(Color(0xF7111216)).border(1.dp, Color(0x66E50914), shape).padding(22.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
@@ -491,6 +504,53 @@ fun TvConfirm(title: String, text: String, yes: String, onYes: () -> Unit, onNo:
                     Text("Keep them", Modifier.fillMaxWidth().padding(vertical = 11.dp), fontSize = 14.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                 }
             }
+        }
+    }
+}
+
+
+/** Lays its children out in one line and leaves out the ones that don't fit (nothing is squeezed or wrapped). */
+@Composable
+private fun FitRow(modifier: Modifier = Modifier, gap: androidx.compose.ui.unit.Dp = 8.dp, content: @Composable () -> Unit) {
+    androidx.compose.ui.layout.Layout(content, modifier) { ms, c ->
+        val g = gap.roundToPx()
+        val loose = c.copy(minWidth = 0, maxWidth = androidx.compose.ui.unit.Constraints.Infinity)
+        val placed = mutableListOf<androidx.compose.ui.layout.Placeable>()
+        var w = 0
+        for (m in ms) {
+            val pl = m.measure(loose)
+            val next = w + (if (placed.isEmpty()) 0 else g) + pl.width
+            if (next > c.maxWidth) break
+            placed += pl; w = next
+        }
+        val h = placed.maxOfOrNull { it.height } ?: 0
+        layout(if (c.hasBoundedWidth) c.maxWidth else w, h) {
+            var x = 0
+            placed.forEach { it.placeRelative(x, 0); x += it.width + g }
+        }
+    }
+}
+
+/** The details behind a My Space number: one row per line, the remote scrolls through them, Back closes. */
+@Composable
+private fun TvStatDetail(title: String, rows: List<Pair<String, String>>, onClose: () -> Unit) {
+    val first = remember { FocusRequester() }
+    LaunchedEffect(Unit) { repeat(10) { delay(60); if (first.tryFocus()) return@LaunchedEffect } }
+    TvModal(onClose) {
+        val shape = RoundedCornerShape(26.dp)
+        Column(Modifier.width(560.dp).heightIn(max = 460.dp).clip(shape).background(Color(0xF5111216)).border(1.dp, Color(0x47E50914), shape).padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            androidx.compose.foundation.lazy.LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(rows.size) { i -> val (a, b) = rows[i]
+                    if (b.isEmpty()) Text(a, Modifier.padding(top = 10.dp, start = 4.dp), fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = SpMuted, letterSpacing = 1.5.sp)
+                    else TxButton(Modifier.fillMaxWidth().then(if (i == 0) Modifier.focusRequester(first) else Modifier), idle = Color(0x0FFFFFFF), onClick = {}) { _ ->
+                        Text(a, Modifier.weight(1f).padding(horizontal = 14.dp, vertical = 12.dp), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(b, Modifier.padding(end = 14.dp), fontSize = 13.sp, color = SpMuted, maxLines = 1)
+                    }
+                }
+            }
+            Text("Back to close", fontSize = 11.sp, color = SpMuted)
         }
     }
 }

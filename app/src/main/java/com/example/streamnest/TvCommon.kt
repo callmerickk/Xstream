@@ -419,7 +419,11 @@ fun tvKeyboard(base: androidx.compose.foundation.text.KeyboardOptions = androidx
  * TV: a text box the remote can move onto WITHOUT the keyboard opening. The box itself can't take focus until you press
  * OK on it — then it does, and the keyboard opens. Moving away makes it a plain stop again. (Phones: unchanged.)
  */
-fun Modifier.tvOkKeyboard(): Modifier = if (!BuildConfig.IS_TV) this else composed {
+/**
+ * [top]: the gap a labelled outlined field keeps above its box (its ring starts there), [corner]: the field's corner,
+ * [ring] = false when the field draws its own focus edge.
+ */
+fun Modifier.tvOkKeyboard(top: Dp = 0.dp, corner: Dp = 12.dp, ring: Boolean = true): Modifier = if (!BuildConfig.IS_TV) this else composed {
     var editing by remember { mutableStateOf(false) }
     var outer by remember { mutableStateOf(false) }
     val inner = remember { FocusRequester() }
@@ -439,7 +443,12 @@ fun Modifier.tvOkKeyboard(): Modifier = if (!BuildConfig.IS_TV) this else compos
         .onFocusChanged { outer = it.isFocused }
         .drawWithContent {
             drawContent()
-            if (outer) drawRoundRect(TvFocusEdge, cornerRadius = CornerRadius(12.dp.toPx()), style = Stroke(2.dp.toPx()))
+            // The ring sits just outside the field's own box with the same rounded corners.
+            if (outer && ring) {
+                val g = 3.dp.toPx(); val t = top.toPx()
+                drawRoundRect(TvFocusEdge, topLeft = Offset(-g, t - g), size = Size(size.width + 2 * g, size.height - t + 2 * g),
+                    cornerRadius = CornerRadius(corner.toPx() + g), style = Stroke(2.dp.toPx()))
+            }
         }
         .focusable()
         .focusProperties { canFocus = editing }

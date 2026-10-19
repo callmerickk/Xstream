@@ -13,11 +13,16 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
-    Release("1.0", "16 Oct 2026", "Meet Xstream", listOf(
-        "Spotlight home: one title fills the stage, the next ones peek from the sides, and the screen glows in its poster's colours",
-        "Watch now, My List and Details right under the spotlight",
-        "A floating dock for Home, Search and My Space",
-        "New opening animation: the red X, then \"stream\"",
+    Release("0.1 beta", "20 Oct 2026", "Meet Xstream", listOf(
+        "Ticket Booth: pick your profile as a cinema ticket; the stub tears off and \"Admit one\" takes you in",
+        "After signing in, your profiles, pictures and settings come over from your account before \"Who's watching?\"",
+        "Home has the StreamX card deck; the bottom dock has Home, Search, Library and My Space",
+        "Player buttons are plain icons and words, no glass",
+        "Red X logo with white signal waves",
+        "Watch together: friends, friend requests, introductions you approve, shared watchlists with plans, chats",
+        "Library: Watchlist with a calendar of new episodes, releases and your plans; Continue Watching; alerts",
+        "GIF profile pictures: search without a key, or paste any GIF link",
+        "Tips now finish for good when you tap Skip or Done",
     )),
     Release("0.9.46", "15 Oct 2026", "Invites open the watch party", listOf(
         "Tapping a watch together link or a ring notification now takes you straight into the room and starts the video after you pick your profile",
@@ -158,11 +163,13 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
-    Release("1.0", "16 Oct 2026", "Xstream: StreamX 0.9.46 code with the Spotlight Stage UI", listOf(
-        "applicationId com.example.xstream (installs next to StreamX); name Xstream everywhere; updates from callmerickk/Xstream releases",
-        "Home.kt: SpotlightStage (pager, centre poster 67 % width, sides scaled 0.86 + dimmed), SpotlightGlow (front poster blurred 90 dp on API 31+), plain logo header, no For you title",
-        "Screens.kt: BottomNav is a floating dock (250 dp pill, white circle on the chosen tab)",
-        "Theme.kt Wordmark: red X + white stream (an old \"StreamX\" name shows as Xstream); Startup.kt: X pops first, then stream slides out",
+    Release("0.1 beta", "20 Oct 2026", "Xstream 0.1 beta: StreamX 0.9.47 code with the Xstream look", listOf(
+        "applicationId com.example.xstream; versionCode 2 (installs over 1.0); updates from callmerickk/Xstream releases",
+        "StreamX 0.9.47 ported (Social.kt Watch together, LibraryPage, calendar, keyless GIFs, upgrade pill fix); TV files carried along unused",
+        "Home: StreamX Deck; FloatingFilters keeps only the AI orb; BottomNav dock with Library (tab 3)",
+        "PlayerScreen GlassBtn: text and icon only, press brightens/glows; logo X red, waves white (Look.kt + drawables)",
+        "Startup: Ticket Booth WhoIsWatchingScreen; Tour: no version-gated steps (versionCode restarted at 2)",
+        "Cloud: restoring/restoredProfiles flags + RestoreScreen before Who's watching; SYNC log lines on phone (sign-in, link errors, profiles found)",
     )),
     Release("0.9.46", "15 Oct 2026", "Invite links and rings join the room", listOf(
         "Screens.kt: the invite effect cleared JoinIntent.code before Together.join, which restarted the LaunchedEffect and cancelled the join mid-request; the join now runs in the screen scope",

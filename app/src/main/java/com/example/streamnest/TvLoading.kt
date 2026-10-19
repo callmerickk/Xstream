@@ -24,6 +24,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -78,36 +81,42 @@ fun loadingFacts(info: TmdbInfo?, story: String?, title: String): List<String> {
     return out.distinct().take(8)
 }
 
-/** The background moment: scene stills, each slowly zooming / drifting for ~9 s, crossfading every 5 s. */
+/**
+ * The background moment: at most two scene stills, loaded once at screen size. The first slowly zooms in, then (every
+ * 12 s) a soft crossfade to the other one zooming out, and back. Only the graphics chip moves them (no redraws), so the
+ * remote and the player keep full speed on a Fire TV Stick.
+ */
 @Composable
 private fun MomentBackground(stills: List<String>) {
     val ctx = LocalContext.current
-    var i by remember(stills) { mutableIntStateOf(0) }
-    LaunchedEffect(stills) {
-        if (stills.size < 2) return@LaunchedEffect
-        while (true) {
-            stills.getOrNull((i + 1) % stills.size)?.let { ctx.imageLoader.enqueue(tvRequest(ctx, it, 1280, 720)) }
-            delay(5_000); i = (i + 1) % stills.size
-        }
+    val two = remember(stills) { stills.take(2) }
+    var i by remember(two) { mutableIntStateOf(0) }
+    LaunchedEffect(two) {
+        two.getOrNull(1)?.let { ctx.imageLoader.enqueue(tvRequest(ctx, it, 960, 540)) }
+        if (two.size < 2) return@LaunchedEffect
+        while (true) { delay(12_000); i = 1 - i }
     }
-    Crossfade(targetState = i, animationSpec = tween(1600), label = "moment", modifier = Modifier.fillMaxSize()) { k ->
-        val url = stills.getOrNull(k) ?: return@Crossfade
+    Crossfade(targetState = i, animationSpec = tween(1400), label = "moment", modifier = Modifier.fillMaxSize()) { k ->
+        val url = two.getOrNull(k) ?: return@Crossfade
         val t = remember(k) { Animatable(0f) }
-        LaunchedEffect(k) { t.animateTo(1f, tween(9_000, easing = LinearEasing)) }
-        // Three gentle camera moves (zoom in / out, drift) so it feels like slow-motion footage, not a slideshow.
-        val (s0, s1, dx, dy) = when (k % 3) { 0 -> listOf(1.06f, 1.2f, -0.03f, -0.015f); 1 -> listOf(1.18f, 1.06f, 0.02f, 0.01f); else -> listOf(1.08f, 1.22f, 0f, -0.02f) }
+        LaunchedEffect(k) { t.animateTo(1f, tween(13_500, easing = LinearEasing)) }
+        // Zoom in on the first picture, zoom out on the second: a slow cinematic push and pull.
+        val (s0, s1, dx) = if (k == 0) Triple(1.04f, 1.16f, -0.02f) else Triple(1.16f, 1.04f, 0.02f)
         AsyncImage(
-            tvRequest(ctx, url, 1280, 720), null,
+            tvRequest(ctx, url, 960, 540), null,
             Modifier.fillMaxSize().graphicsLayer {
                 val v = t.value
                 val sc = s0 + (s1 - s0) * v
                 scaleX = sc; scaleY = sc
-                translationX = size.width * dx * v; translationY = size.height * dy * v
+                translationX = size.width * dx * v
             },
             contentScale = ContentScale.Crop,
         )
     }
 }
+
+/** True when this TV draws the loading screen too slowly (over ~35 ms a frame): the plain progress bar is used then. */
+private object LoaderPerf { @Volatile var slow: Boolean? = null }
 
 /**
  * TV loading screen. [percent] 0..100 (real: finding a source, connecting, loading the first minutes), [stage] what is
@@ -142,20 +151,25 @@ fun TvMomentLoader(
                 Box(Modifier.fillMaxSize().padding(7.dp).shadow(24.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp)).background(Surface1)) {
                     AsyncImage(tvRequest(ctx, poster ?: info?.poster ?: fallbackArt ?: "", 360, 540), title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 }
-                Canvas(Modifier.fillMaxSize()) {
+                // The border path and its measure are built once per size; only the segment follows [p].
+                androidx.compose.foundation.layout.Spacer(Modifier.fillMaxSize().drawWithCache {
                     val sw = 3.dp.toPx()
                     val inset = sw / 2f + 1.dp.toPx()
                     val r = 19.dp.toPx()
                     val path = Path().apply { addRoundRect(RoundRect(inset, inset, size.width - inset, size.height - inset, CornerRadius(r, r))) }
-                    drawPath(path, Color(0x1FFFFFFF), style = Stroke(sw))
-                    if (p > 0.002f) {
-                        val pm = PathMeasure().apply { setPath(path, false) }
-                        val seg = Path()
-                        pm.getSegment(0f, pm.length * p.coerceIn(0f, 1f), seg, true)
-                        drawPath(seg, MomentRed, style = Stroke(sw + 4.dp.toPx(), cap = StrokeCap.Round), alpha = 0.25f)
-                        drawPath(seg, MomentRed, style = Stroke(sw, cap = StrokeCap.Round))
+                    val pm = PathMeasure().apply { setPath(path, false) }
+                    val seg = Path()
+                    val track = Stroke(sw); val glow = Stroke(sw + 4.dp.toPx(), cap = StrokeCap.Round); val line = Stroke(sw, cap = StrokeCap.Round)
+                    onDrawBehind {
+                        drawPath(path, Color(0x1FFFFFFF), style = track)
+                        if (p > 0.002f) {
+                            seg.reset()
+                            pm.getSegment(0f, pm.length * p.coerceIn(0f, 1f), seg, true)
+                            drawPath(seg, MomentRed, style = glow, alpha = 0.25f)
+                            drawPath(seg, MomentRed, style = line)
+                        }
                     }
-                }
+                })
             }
             Spacer(Modifier.width(44.dp))
             Column(Modifier.widthIn(max = 470.dp)) {
@@ -169,7 +183,19 @@ fun TvMomentLoader(
                     Text(f, fontFamily = BrandFont, fontWeight = FontWeight.SemiBold, fontSize = 22.sp, lineHeight = 29.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
                 }
                 Spacer(Modifier.height(14.dp))
-                HeartbeatBar(p, Modifier.fillMaxWidth().height(44.dp))
+                // Measures how fast this TV draws the first ~40 frames; slow TVs get the plain bar.
+                var slow by remember { mutableStateOf(LoaderPerf.slow == true) }
+                LaunchedEffect(Unit) {
+                    if (LoaderPerf.slow != null) return@LaunchedEffect
+                    val t0 = withFrameNanos { it }; var n = 0; var last = t0
+                    while (n < 40) { last = withFrameNanos { it }; n++ }
+                    val avgMs = (last - t0) / 1_000_000f / n
+                    LoaderPerf.slow = avgMs > 35f
+                    slow = LoaderPerf.slow == true
+                    if (slow) ActLog.add("APP", "loading screen: plain bar (%.0f ms a frame)".format(avgMs))
+                }
+                if (slow) PlainBar(p, Modifier.fillMaxWidth().padding(top = 18.dp).height(6.dp))
+                else HeartbeatBar(p, Modifier.fillMaxWidth().height(44.dp))
                 Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.Bottom) {
                     Text("$stage…", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFFC9CED8))
                     Text("$shown%", fontFamily = BrandFont, fontSize = 24.sp, fontWeight = FontWeight.Light)
@@ -184,15 +210,15 @@ fun TvMomentLoader(
     }
 }
 
-/** The heartbeat progress line: the trace is written up to [p]; the beat at its head pulses. */
+/**
+ * The heartbeat progress line. The whole trace is built once per size and only revealed up to [p] (a clip), so nothing
+ * is recomputed per frame; a small dot marks the head.
+ */
 @Composable
 private fun HeartbeatBar(p: Float, modifier: Modifier) {
-    val tr = rememberInfiniteTransition(label = "hb")
-    val pulse by tr.animateFloat(0f, 1f, infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart), label = "pulse")
-    Canvas(modifier) {
+    androidx.compose.foundation.layout.Spacer(modifier.drawWithCache {
         val w = size.width; val h = size.height
         val y0 = h * 0.62f; val amp = h * 0.5f; val per = w / 7f
-        val head = w * p.coerceIn(0f, 1f)
         fun beat(t0: Float): Float {
             val t = ((t0 % 1f) + 1f) % 1f * 100f
             return when {
@@ -202,21 +228,31 @@ private fun HeartbeatBar(p: Float, modifier: Modifier) {
                 t < 34f -> -0.16f * sin((t - 23f) / 11f * Math.PI.toFloat()); else -> 0f
             }
         }
-        drawLine(Color(0x24FFFFFF), Offset(head, y0), Offset(w, y0), 1.5f)
-        if (head < 2f) return@Canvas
-        val live = 1f + 0.25f * sin(pulse * 2f * Math.PI.toFloat())
         val path = Path()
         var x = 0f
-        while (x <= head) {
-            val near = (1f - (head - x) / (per * 0.9f)).coerceAtLeast(0f)
-            val y = y0 + beat(x / per) * amp * (1f + (live - 1f) * near)
-            if (x == 0f) path.moveTo(x, y) else path.lineTo(x, y)
-            x += 3f
+        while (x <= w) { val y = y0 + beat(x / per) * amp; if (x == 0f) path.moveTo(x, y) else path.lineTo(x, y); x += 3f }
+        val glow = Stroke(5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val line = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val brush = Brush.horizontalGradient(listOf(Color(0x40E50914), Color(0xE6FF464F), Color.White), startX = 0f, endX = w)
+        onDrawBehind {
+            val head = w * p.coerceIn(0f, 1f)
+            drawLine(Color(0x24FFFFFF), Offset(head, y0), Offset(w, y0), 1.5f)
+            if (head < 2f) return@onDrawBehind
+            clipRect(right = head) {
+                drawPath(path, MomentRed, style = glow, alpha = 0.22f)
+                drawPath(path, brush, style = line)
+            }
+            val hy = y0 + beat(head / per) * amp
+            drawCircle(Color(0x66FF5A5F), 6.dp.toPx(), Offset(head, hy))
+            drawCircle(Color.White, 3.dp.toPx(), Offset(head, hy))
         }
-        drawPath(path, MomentRed, style = Stroke(5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round), alpha = 0.22f)
-        drawPath(path, Brush.horizontalGradient(listOf(Color(0x40E50914), Color(0xE6FF464F), Color.White), startX = 0f, endX = head),
-            style = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-        drawCircle(Color(0x66FF5A5F), 6.dp.toPx(), Offset(head, y0 + beat(head / per) * amp * live))
-        drawCircle(Color.White, 3.dp.toPx(), Offset(head, y0 + beat(head / per) * amp * live))
+    })
+}
+
+/** Plain progress bar (used on TVs that draw the heartbeat too slowly). */
+@Composable
+private fun PlainBar(p: Float, modifier: Modifier) {
+    Box(modifier.clip(RoundedCornerShape(3.dp)).background(Color(0x24FFFFFF))) {
+        Box(Modifier.fillMaxHeight().fillMaxWidth(p.coerceIn(0f, 1f)).background(MomentRed))
     }
 }

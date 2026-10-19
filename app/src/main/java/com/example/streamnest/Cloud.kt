@@ -74,6 +74,10 @@ object Cloud {
     val user = MutableStateFlow<CloudUser?>(null)
     /** Short status line for the account page ("Synced 10:42", "Offline — will retry"…). */
     val status = MutableStateFlow("")
+    /** Xstream: true right after a sign-in until the account's first copy has arrived (or failed). "Who's watching?" waits. */
+    val restoring = MutableStateFlow(false)
+    /** Profiles found in the account on the last restore (-1 = not known yet). */
+    val restoredProfiles = MutableStateFlow(-1)
     val autoSync = MutableStateFlow(true)
     /** The sign-in screen was answered (signed in, or "Skip for now"). */
     val decided = MutableStateFlow(false)
@@ -190,6 +194,9 @@ object Cloud {
         synchronized(dirtyLock) { dirty.clear() }
         waitingForCloud = true
         prefs.edit().putBoolean("waitCloud", true).apply()
+        restoredProfiles.value = -1
+        restoring.value = true
+        ActLog.add("SYNC", "signed in · bringing the account over")
         prefs.edit().putString("rt", refreshToken?.let { Vault.enc(it) }).putString("uid", uid).putString("email", email)
             .putBoolean("verified", verified).putBoolean("google", google).putBoolean("decided", true).apply()
         user.value = CloudUser(uid, email, verified, google)
@@ -325,7 +332,7 @@ object Cloud {
             !autoSync.value -> "Auto sync is off"
             else -> "Connecting…"
         }
-        if (!canSync) return
+        if (!canSync) { if (u != null) ActLog.add("SYNC", "not syncing · ${status.value.ifBlank { "app not ready" }}"); return }
         streamJob = scope.launch { streamLoop() }
         schedulePush(300)
     }
@@ -414,7 +421,7 @@ object Cloud {
             }
         }
         val ok = patch(u.uid, t, body)
-        if (BuildConfig.IS_TV) ActLog.add("SYNC", (if (ok) "sent " else "send failed · ") + paths.joinToString(", ") { it.substringAfterLast('/') })
+        ActLog.add("SYNC", (if (ok) "sent " else "send failed · ") + paths.joinToString(", ") { it.substringAfterLast('/') })
         return ok
     }
 
@@ -457,10 +464,11 @@ object Cloud {
                 "reauth" -> tokenLock.withLock { idExp = 0L }
                 "denied" -> {
                     status.value = "Sync blocked — verify your email (or check the database rules)"
+                    ActLog.add("SYNC", "blocked by the account (verify the email, or the database rules)")
                     tokenLock.withLock { idExp = 0L }
                     delay(30_000)
                 }
-                else -> { status.value = "Offline — will retry"; delay(backoff); backoff = (backoff * 2).coerceAtMost(60_000L) }
+                else -> { status.value = "Offline — will retry"; ActLog.add("SYNC", "link $result · retry in ${backoff / 1000}s"); delay(backoff); backoff = (backoff * 2).coerceAtMost(60_000L) }
             }
         }
     }
@@ -501,6 +509,11 @@ object Cloud {
             }
         }
         if (waitingForCloud) { waitingForCloud = false; prefs.edit().putBoolean("waitCloud", false).apply() }
+        val n = (app?.get("profiles") as? JsonObject)?.let { runCatching { (it["v"] as? JsonPrimitive)?.contentOrNull?.let { v -> Api.json.parseToJsonElement(v) } }.getOrNull() }
+            ?.let { (it as? kotlinx.serialization.json.JsonArray)?.size } ?: 0
+        restoredProfiles.value = n
+        ActLog.add("SYNC", "account copy arrived · $n profiles in the cloud")
+        restoring.value = false
         schedulePush(200)
     }
 

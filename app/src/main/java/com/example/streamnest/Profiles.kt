@@ -174,7 +174,7 @@ fun ProfileEditor(vm: AppViewModel, p: Profile?, onDone: () -> Unit) {
                 }
                 Text("JPEG, PNG, GIF, or a video up to 15 seconds (plays silently on a loop). Or paste a link to an image or GIF.", fontSize = 12.sp, color = Color(0xFF9AA3B5), textAlign = TextAlign.Center)
                 Spacer(Modifier.height(12.dp))
-                OutlinedTextField(name, { name = it.take(20) }, Modifier.fillMaxWidth().tvOkKeyboard(), singleLine = true, label = { Text("Name") }, shape = RoundedCornerShape(12.dp), keyboardOptions = tvKeyboard())
+                OutlinedTextField(name, { name = it.take(20) }, Modifier.fillMaxWidth().tvOkKeyboard(top = 8.dp), singleLine = true, label = { Text("Name") }, shape = RoundedCornerShape(12.dp), keyboardOptions = tvKeyboard())
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Kids profile", fontWeight = FontWeight.Medium)

@@ -98,6 +98,11 @@ sealed interface Screen {
     data class Trailer(val videos: List<String>, val titles: List<String>, val start: Int, val title: String, val meta: Meta?) : Screen
     /** A Nuvio-style collection, opened on one of its folders. */
     data class Collection(val collectionId: String, val folderId: String) : Screen
+    /** Watch together page (optionally straight into a chat or a shared title). */
+    data class Together(val chat: String? = null, val item: String? = null) : Screen
+    data object Library : Screen
+    data class Watchlist(val calendar: Boolean = false) : Screen
+    data object Notes : Screen
 }
 
 @Composable
@@ -159,10 +164,20 @@ fun App(vm: AppViewModel = viewModel()) {
     // First start: "Sign in to Xstream" (or Skip) before "Who's watching?".
     var gateOpen by rememberSaveable { mutableStateOf(!Cloud.decided.value) }
 
+    // Xstream: right after signing in, wait for the account (profiles, pictures, addons) before "Who's watching?".
+    val restoringCloud by Cloud.restoring.collectAsState()
+    val restoredN by Cloud.restoredProfiles.collectAsState()
+    var emptyAccount by remember { mutableStateOf(false) }
+    var sawRestore by remember { mutableStateOf(false) }
+    LaunchedEffect(restoringCloud, restoredN) {
+        if (restoringCloud) sawRestore = true
+        else if (sawRestore) { sawRestore = false; emptyAccount = restoredN == 0 }
+    }
     CompositionLocalProvider(LocalTexts provides texts) {
         LaunchedEffect(profile == null) { if (profile == null) stack.clear() }
         val open: (Meta) -> Unit = { stack.add(Screen.Detail(it)) }
         if (profile == null && gateOpen) CloudGate(onDone = { gateOpen = false })
+        else if (profile == null && (restoringCloud || emptyAccount)) RestoreScreen(restoringCloud, onDifferent = { Cloud.signOut(); Cloud.restoring.value = false; emptyAccount = false; gateOpen = true }) { Cloud.restoring.value = false; emptyAccount = false }
         else if (profile == null && texts["streamMode"] == null) ModeChooser(vm) {}
         else if (profile == null) WhoIsWatchingScreen(vm, active = !showSplash) { tab = 0; scrolledDown = false }
         else when (val top = stack.lastOrNull()) {
@@ -195,6 +210,15 @@ fun App(vm: AppViewModel = viewModel()) {
             is Screen.Collection -> key(top) {
                 Box(Modifier.fillMaxSize().background(Bg)) { CollectionScreen(vm, top.collectionId, top.folderId, onBack = pop, onOpen = open) }
             }
+            is Screen.Together -> key(top) {
+                WatchTogetherPage(vm, onBack = pop, onOpen = open, startChat = top.chat, startItem = top.item, onPlayRoom = { st ->
+                    val expected = st.pos + if (st.playing) (System.currentTimeMillis() - st.receivedAt + 300) else 0L
+                    stack.add(Screen.Player(st.title, st.url, emptyList(), key = st.key, image = st.image, resumeMs = expected, type = st.type))
+                })
+            }
+            Screen.Library -> LibraryPage(vm, onBack = pop, onOpen = open, onPlay = { stack.add(it) })
+            is Screen.Watchlist -> key(top) { WatchlistPage(vm, onBack = pop, onOpen = open, startCalendar = top.calendar) }
+            Screen.Notes -> NotificationsPage(onBack = pop, onTogether = { stack.add(Screen.Together()) })
             null -> Box(Modifier.fillMaxSize().background(Bg).nestedScroll(scrollWatcher)) {
                 when (tab) {
                     0 -> HomeScreen(
@@ -205,6 +229,7 @@ fun App(vm: AppViewModel = viewModel()) {
                         onOpenCollection = { c, f -> stack.add(Screen.Collection(c.id, f.id)) },
                     )
                     1 -> SearchScreen(vm, "", open)
+                    3 -> LibraryPage(vm, onBack = null, onOpen = open, onPlay = { stack.add(it) })
                     else -> MySpaceScreen(
                         vm,
                         onSettings = { stack.add(Screen.Settings()) },
@@ -213,6 +238,10 @@ fun App(vm: AppViewModel = viewModel()) {
                         onOpen = open,
                         onPlay = { stack.add(it) },
                         onManual = { m, k -> stack.add(Screen.Detail(m, k)) },
+                        onLibrary = { stack.add(Screen.Library) },
+                        onTogether = { stack.add(Screen.Together()) },
+                        onWatchlist = { stack.add(Screen.Watchlist()) },
+                        onNotifications = { stack.add(Screen.Notes) },
                     )
                 }
                 BottomNav(
@@ -261,6 +290,29 @@ fun App(vm: AppViewModel = viewModel()) {
             }
         }
         if (profile == null && joinAsk != null) InviteBanner()
+        // Watch together: your name card and lists, and what a notification asked to open (a chat, a plan).
+        LaunchedEffect(profile?.id) {
+            if (profile == null || BuildConfig.IS_TV) return@LaunchedEffect
+            Together.myName = profile?.name ?: ""
+            Social.publishCard(); runCatching { Social.refresh() }
+        }
+        val socialChat by SocialIntent.chat.collectAsState()
+        val socialPlan by SocialIntent.plan.collectAsState()
+        val socialOpen by SocialIntent.open.collectAsState()
+        LaunchedEffect(socialChat, socialPlan, socialOpen, profile?.id) {
+            if (profile == null || BuildConfig.IS_TV || (!socialOpen && socialChat == null && socialPlan == null)) return@LaunchedEffect
+            val c = socialChat; val pl = socialPlan
+            SocialIntent.chat.value = null; SocialIntent.plan.value = null; SocialIntent.open.value = false
+            // A plan reminder without a room yet: you start it (opens the title and plays; the room starts by itself).
+            if (pl != null) {
+                val it0 = Social.item(pl.first)
+                val p = it0?.plans?.firstOrNull { it.id == pl.second }
+                if (it0 != null && p != null && p.room == null && p.at - System.currentTimeMillis() < 3 * 3600_000L) {
+                    Social.watchNow(it0, p); pendingDetailPlay.value = it0.meta.id; stack.add(Screen.Detail(it0.meta)); return@LaunchedEffect
+                }
+            }
+            stack.add(Screen.Together(chat = c, item = pl?.first))
+        }
         // Home screen widget: open the title and press Play (it resumes where you stopped).
         val widgetAsk = WidgetOpen.pending.value
         LaunchedEffect(widgetAsk, profile) {
@@ -312,12 +364,13 @@ fun BottomNav(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) ->
     Box(modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 14.dp).graphicsLayer { translationY = compact.value * 10.dp.toPx() }, Alignment.Center) {
         val shape = RoundedCornerShape(50)
         Row(
-            Modifier.width(250.dp).height(64.dp).shadow(20.dp, shape).clip(shape).background(Color(0xF01C2029)).border(1.dp, Color(0xFF2C3240), shape)
+            Modifier.width(300.dp).height(64.dp).shadow(20.dp, shape).clip(shape).background(Color(0xF01C2029)).border(1.dp, Color(0xFF2C3240), shape)
                 .padding(horizontal = 9.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
         ) {
             DockItem(tab == 0, t("navHome"), { onTab(0) }) { c -> Icon(Icons.Default.Home, t("navHome"), Modifier.size(24.dp), tint = c) }
             DockItem(tab == 1, t("navSearch"), { onTab(1) }) { c -> Icon(Icons.Default.Search, t("navSearch"), Modifier.size(24.dp), tint = c) }
+            DockItem(tab == 3, "Library", { onTab(3) }) { c -> Icon(Icons.Default.VideoLibrary, "Library", Modifier.size(24.dp), tint = c) }
             Box {
                 DockItem(tab == 2, t("navMySpace"), { onTab(2) }, onLongClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress); switcher = true
@@ -396,4 +449,40 @@ fun Poster(m: Meta, modifier: Modifier = Modifier, onClick: (Meta) -> Unit) {
 @Composable
 fun SearchScreen(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
     PremiumSearch(vm, initial, onOpen)
+}
+
+
+/** Xstream: "Bringing everything over from your account" after signing in, and a clear note if the account is empty. */
+@Composable
+private fun RestoreScreen(busy: Boolean, onDifferent: () -> Unit, onContinue: () -> Unit) {
+    val status by Cloud.status.collectAsState()
+    val user by Cloud.user.collectAsState()
+    var slow by remember { mutableStateOf(false) }
+    LaunchedEffect(busy) { slow = false; if (busy) { kotlinx.coroutines.delay(20_000); slow = true } }
+    Box(Modifier.fillMaxSize().background(Color(0xFF0B0B10)).statusBarsPadding().navigationBarsPadding().padding(28.dp), Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(AppLook.logoRes(AppLook.logo.value)), null, Modifier.size(40.dp))
+                Spacer(Modifier.width(10.dp)); Wordmark("Xstream", 26.sp)
+            }
+            if (busy) {
+                Text("Bringing your profiles, pictures and settings from your account", fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                    color = Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                androidx.compose.material3.CircularProgressIndicator(color = Accent, strokeWidth = 3.dp, modifier = Modifier.size(34.dp))
+                Text(status.ifBlank { "Connecting…" }, fontSize = 13.sp, color = Color(0xFF9AA3B5))
+                if (slow) {
+                    Text("This is taking longer than usual. Signed in as ${user?.email.orEmpty()}.", fontSize = 13.sp, color = Color(0xFFFFC27A),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    androidx.compose.material3.TextButton(onContinue) { Text("Continue without waiting") }
+                    androidx.compose.material3.TextButton(onDifferent) { Text("Use a different account") }
+                }
+            } else {
+                Text("This account has no profiles saved yet", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("You're signed in as ${user?.email.orEmpty()}. If StreamX uses a different email, sign in with that one to bring your profiles over.",
+                    fontSize = 13.sp, color = Color(0xFF9AA3B5), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                androidx.compose.material3.TextButton(onDifferent) { Text("Use a different account") }
+                androidx.compose.material3.TextButton(onContinue) { Text("Continue with this account") }
+            }
+        }
+    }
 }

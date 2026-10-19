@@ -17,6 +17,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -181,7 +183,7 @@ fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPicked: () -
     }
     LaunchedEffect(leaving) {
         val id = leaving ?: return@LaunchedEffect
-        leave.animateTo(1f, tween(520))
+        leave.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
         profiles.firstOrNull { it.id == id }?.let { vm.selectProfile(it) }
         onPicked()
     }
@@ -201,146 +203,107 @@ fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPicked: () -
     val h = LocalConfiguration.current.screenHeightDp.dp
     val arcY = h * 0.62f
 
+    // Xstream "Box office": every profile is a cinema ticket. Tap yours: the stub tears off along the perforation and
+    // drops away, "Admit one" lights up and you're in. The last profile keeps the auto-open ring on its stub.
+    val cream = Color(0xFFF4E6C8); val ink = Color(0xFF1A1208); val gold = Color(0xFFF2B544)
     Box(
-        Modifier.fillMaxSize().background(Color(0xFF0B0B10))
-            .graphicsLayer { alpha = (1f - leave.value * 0.9f) }
-            // Touching the screen anywhere stops the auto-open timer.
+        Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0xFF2A1D10), Color(0xFF0B0806)), center = Offset(500f, 0f), radius = 1600f))
+            .graphicsLayer { alpha = 1f - (leave.value - 0.7f).coerceAtLeast(0f) * 2f }
             .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); if (countdown.value > 0f) cancelled = true } },
     ) {
-        // Poster wall drifting slowly behind everything.
-        if (posters.isNotEmpty()) {
-            Column(
-                Modifier.fillMaxWidth().requiredWidth(LocalConfiguration.current.screenWidthDp.dp + 40.dp).padding(top = 24.dp)
-                    .graphicsLayer { alpha = 0.8f * enter.value; translationY = -wallY * 70.dp.toPx() },
-                verticalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                posters.chunked(5).take(6).forEach { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                        row.forEach { url ->
-                            AsyncImage(url, null, Modifier.weight(1f).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF1A1A22)), contentScale = ContentScale.Crop)
-                        }
-                    }
-                }
-            }
-        }
-        // Dim + fade the wall into the background (darker at the top and towards the profiles).
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-            0f to Color(0xB30B0B10), 0.3f to Color(0x330B0B10), 0.55f to Color(0xBF0B0B10), 0.7f to Color(0xFF0B0B10), 1f to Color(0xFF0B0B10))))
-        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0x990B0B10), 0.25f to Color.Transparent, 0.75f to Color.Transparent, 1f to Color(0x990B0B10))))
-
-        // Blue → pink glow and the curved line the profiles sit on.
-        Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = enter.value }) {
-            val y = arcY.toPx()
-            drawCircle(Brush.radialGradient(listOf(Color(0x8C2896FF), Color.Transparent), Offset(size.width * 0.28f, y + 50.dp.toPx()), size.width * 0.5f),
-                size.width * 0.5f, Offset(size.width * 0.28f, y + 50.dp.toPx()))
-            drawCircle(Brush.radialGradient(listOf(Color(0x80FF2882), Color.Transparent), Offset(size.width * 0.74f, y + 60.dp.toPx()), size.width * 0.5f),
-                size.width * 0.5f, Offset(size.width * 0.74f, y + 60.dp.toPx()))
-            val path = Path().apply {
-                moveTo(-20f, y + 32.dp.toPx()); quadraticBezierTo(size.width / 2f, y, size.width + 20f, y + 32.dp.toPx())
-            }
-            val line = Brush.horizontalGradient(listOf(Color(0x332AA0FF), Color(0xFF3FB4FF), Color(0xFFFF3B8D), Color(0x33FF2A6A)))
-            val reveal = enter.value
-            clipRect(left = size.width / 2f * (1f - reveal), right = size.width / 2f * (1f + reveal)) {
-                drawPath(path, line, alpha = 0.25f, style = Stroke(10.dp.toPx(), cap = StrokeCap.Round))
-                drawPath(path, line, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
-            }
-        }
-
-        // Top bar: small logo, Edit.
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 18.dp, end = 10.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Image(painterResource(AppLook.logoRes(AppLook.logo.value)), null, Modifier.size(30.dp))
             Spacer(Modifier.weight(1f))
-            Row(
-                Modifier.clip(RoundedCornerShape(12.dp)).clickable { editMode = !editMode; cancelled = true }.padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(if (editMode) Icons.Default.Check else Icons.Default.Edit, null, Modifier.size(18.dp), tint = Color(0xFFB6BDCC))
+            Row(Modifier.clip(RoundedCornerShape(12.dp)).clickable { editMode = !editMode; cancelled = true }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(if (editMode) Icons.Default.Check else Icons.Default.Edit, null, Modifier.size(18.dp), tint = Color(0xFFD9C39A))
                 Spacer(Modifier.width(6.dp))
-                Text(if (editMode) "Done" else "Edit", color = Color(0xFFB6BDCC), fontSize = 16.sp)
+                Text(if (editMode) "Done" else "Edit", color = Color(0xFFD9C39A), fontSize = 16.sp)
             }
         }
-        Text(
-            t("whoWatching"),
-            Modifier.fillMaxWidth().statusBarsPadding().padding(top = 64.dp).graphicsLayer { alpha = enter.value; translationY = (1f - enter.value) * 10.dp.toPx() },
-            fontSize = 26.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
-        )
-
-        // Profiles on the line.
+        Column(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 60.dp).graphicsLayer { alpha = enter.value }, horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("BOX OFFICE", fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 28.sp, letterSpacing = 4.sp, color = gold)
+            Text(if (editMode) "TAP A TICKET TO EDIT" else "PICK YOUR TICKET", Modifier.padding(top = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.5.sp, color = Color(0x99D9C39A))
+        }
         val cells: List<Profile?> = profiles + (if (profiles.size < 5) listOf(null) else emptyList())
-        LazyRow(
-            Modifier.fillMaxWidth().padding(top = arcY - 4.dp),
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
+        Column(
+            Modifier.fillMaxSize().statusBarsPadding().padding(top = 140.dp, bottom = 24.dp).verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            items(cells.size) { i ->
-                val p = cells[i]
+            cells.forEachIndexed { i, p ->
                 val pop = remember { Animatable(0f) }
-                LaunchedEffect(active) { if (active) { delay(350L + i * 110L); pop.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 300f)) } }
+                LaunchedEffect(active) { if (active) { delay(250L + i * 110L); pop.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 260f)) } }
                 val focused = p != null && p.id == focusId && !editMode && leaving == null
                 val isLeaving = p != null && p.id == leaving
-                val sc by androidx.compose.animation.core.animateFloatAsState(if (focused || isLeaving) 1.22f else 1f, spring(dampingRatio = 0.6f, stiffness = 350f), label = "sc")
-                Column(
-                    Modifier.width(92.dp).graphicsLayer {
-                        alpha = pop.value.coerceIn(0f, 1f) * (if (leaving != null && !isLeaving) 1f - leave.value else 1f)
-                        translationY = (1f - pop.value) * 16.dp.toPx()
+                val tilt = listOf(-2f, 1.5f, -1f, 2f, -1.5f, 1f)[i % 6]
+                Row(
+                    Modifier.width(290.dp).height(96.dp).graphicsLayer {
+                        val v = pop.value
+                        alpha = v.coerceIn(0f, 1f) * (if (leaving != null && !isLeaving) 1f - leave.value else 1f)
+                        translationY = (1f - v) * 30.dp.toPx() + (if (leaving != null && !isLeaving) leave.value * 60.dp.toPx() else 0f)
+                        rotationZ = if (isLeaving) tilt - 3f * leave.value else tilt
+                        val k = if (isLeaving) 1f + 0.12f * leave.value else if (focused) 1.04f else 1f
+                        scaleX = k; scaleY = k
                     }.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {
-                        when {
-                            p == null -> { cancelled = true; adding = true }
-                            editMode -> editing = p
-                            else -> pick(p)
-                        }
+                        when { p == null -> { cancelled = true; adding = true }; editMode -> editing = p; else -> pick(p) }
                     },
-                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Box(
-                        Modifier.size(96.dp).graphicsLayer {
-                            val l = if (isLeaving) 1f + leave.value * 0.8f else 1f
-                            scaleX = sc * l; scaleY = sc * l
-                            alpha = if (isLeaving) 1f - leave.value * 0.7f else 1f
-                        },
-                        Alignment.Center,
+                    // Main part of the ticket.
+                    Row(
+                        Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp))
+                            .background(if (p == null) Color(0x14F4E6C8) else cream)
+                            .then(if (p == null) Modifier.border(1.5.dp, Color(0x66F4E6C8), RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp)) else Modifier)
+                            .padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         if (p == null) {
-                            Box(Modifier.size(74.dp).clip(CircleShape).background(Color(0x2EFFFFFF)), Alignment.Center) {
-                                Icon(Icons.Default.Add, "Add profile", Modifier.size(32.dp))
-                            }
+                            Icon(Icons.Default.Add, "Add profile", Modifier.size(30.dp), tint = cream)
+                            Text("ADD A PROFILE", Modifier.padding(start = 12.dp), fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 17.sp, letterSpacing = 1.sp, color = cream)
                         } else {
-                            ProfileAvatar(vm, p, 74.dp, if (focused || isLeaving) Modifier.border(3.dp, Color.White, CircleShape) else Modifier)
-                            if (editMode) Box(Modifier.size(74.dp).clip(CircleShape).background(Color(0x88000000)), Alignment.Center) {
-                                Icon(Icons.Default.Edit, "Edit ${p.name}", Modifier.size(26.dp))
+                            Box(contentAlignment = Alignment.Center) {
+                                ProfileAvatar(vm, p, 54.dp, Modifier.border(2.dp, ink, CircleShape))
+                                if (editMode) Box(Modifier.size(54.dp).clip(CircleShape).background(Color(0x88000000)), Alignment.Center) { Icon(Icons.Default.Edit, "Edit ${p.name}", Modifier.size(22.dp)) }
                             }
-                            if (focused && countdown.value > 0f && !cancelled) Canvas(Modifier.size(90.dp)) {
-                                val sw = 3.5.dp.toPx()
-                                drawArc(Color(0x2EFFFFFF), 0f, 360f, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw))
-                                drawArc(BrandRed, -90f, 360f * countdown.value, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw, cap = StrokeCap.Round))
+                            Column(Modifier.padding(start = 12.dp)) {
+                                Text(p.name.uppercase(), fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 22.sp, letterSpacing = 1.sp, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(if (p.kids) "KIDS · FAMILY SHOWS" else "ADMIT ONE · ALL SHOWS", fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, color = Color(0xAA1A1208))
                             }
                         }
                     }
-                    Text(
-                        p?.name ?: "Add", Modifier.padding(top = if (focused) 10.dp else 4.dp), fontSize = 13.sp,
-                        fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal, color = if (focused) Color.White else Color(0xFFC9CDD6),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
-                    )
+                    // Perforation, then the stub (it tears off and drops when you pick this ticket).
+                    Canvas(Modifier.width(2.dp).fillMaxHeight().background(if (p == null) Color.Transparent else cream)) {
+                        var y = 4.dp.toPx()
+                        while (y < size.height) { drawLine(ink.copy(alpha = 0.5f), Offset(1f, y), Offset(1f, y + 4.dp.toPx()), 2f); y += 8.dp.toPx() }
+                    }
+                    Column(
+                        Modifier.width(64.dp).fillMaxHeight().graphicsLayer {
+                            if (isLeaving) { val v = leave.value; translationX = v * 30.dp.toPx(); translationY = v * 140.dp.toPx(); rotationZ = v * 28f; alpha = 1f - v }
+                        }.clip(RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp)).background(if (p == null) Color(0x14F4E6C8) else cream),
+                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                    ) {
+                        if (p != null) {
+                            Text("SEAT", fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = Color(0xAA1A1208))
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("${"AKGDMR"[i % 6]}${i + 1}", fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = ink)
+                                if (focused && countdown.value > 0f && !cancelled) Canvas(Modifier.size(42.dp)) {
+                                    val sw = 3.dp.toPx()
+                                    drawArc(Color(0x22000000), 0f, 360f, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw))
+                                    drawArc(BrandRed, -90f, 360f * countdown.value, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw, cap = StrokeCap.Round))
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-
-        // "Opening Rick in 5"
+        // "Admit one" as the ticket is torn; "Opening Rick in 5" while the auto-open ring runs.
         val focusName = profiles.firstOrNull { it.id == focusId }?.name ?: ""
-        val showCount = countdown.value > 0f && !cancelled && !editMode
-        Column(
-            Modifier.fillMaxWidth().padding(top = arcY + 150.dp).graphicsLayer { alpha = if (showCount || leaving != null) 1f else 0f },
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                buildAnnotatedString {
-                    append("Opening ")
-                    withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append(focusName) }
-                    if (leaving == null) { append(" in "); withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append("$remaining") } } else append("…")
-                },
-                fontSize = 14.sp, color = Color(0xFFC9CDD6),
-            )
-            if (leaving == null) Text("Tap another profile to switch", Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Color(0xFF7C8394))
+        val showCount = countdown.value > 0f && !cancelled && !editMode && leaving == null
+        Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (leaving != null) Text("ADMIT ONE", Modifier.graphicsLayer { alpha = (leave.value * 2f).coerceAtMost(1f) }, fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 34.sp, letterSpacing = 4.sp, color = cream)
+            else if (showCount) Text(buildAnnotatedString {
+                append("Opening "); withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append(focusName) }
+                append(" in "); withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append("$remaining") }
+            }, fontSize = 14.sp, color = Color(0xFFD9C39A))
         }
     }
     editing?.let { p -> ProfileEditor(vm, p) { editing = null } }

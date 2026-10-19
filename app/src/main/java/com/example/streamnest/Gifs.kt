@@ -25,6 +25,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.horizontalScroll
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -54,6 +57,45 @@ object Giphy {
 }
 
 /**
+ * GIF search without any key: a web image search limited to animated GIFs (safe search on), like Nuvio's picker.
+ * Unofficial — if it ever stops answering, pasting a link and GIPHY (with a key) still work.
+ */
+object WebGifs {
+    private val mRe = Regex("""\sm="(\{[^"]*\})"""")
+    suspend fun search(q: String): List<GifHit>? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val qq = java.net.URLEncoder.encode((q.ifBlank { "movie reaction" }) + " gif", "UTF-8")
+            val req = okhttp3.Request.Builder()
+                .url("https://www.bing.com/images/async?q=$qq&first=0&count=40&qft=+filterui:photo-animatedgif&adlt=strict&mmasync=1")
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36")
+                .header("Accept-Language", "en-US,en;q=0.9").build()
+            val html = Api.http.newCall(req).execute().use { r -> if (!r.isSuccessful) return@runCatching null; r.body?.string().orEmpty() }
+            mRe.findAll(html).mapNotNull { mr ->
+                val js = mr.groupValues[1].replace("&quot;", "\"").replace("&amp;", "&")
+                val o = runCatching { Api.json.parseToJsonElement(js).jsonObject }.getOrNull() ?: return@mapNotNull null
+                val full = o["murl"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val thumb = o["turl"]?.jsonPrimitive?.contentOrNull ?: full
+                if (!full.startsWith("https://")) return@mapNotNull null
+                GifHit(full, thumb, full)
+            }.distinctBy { it.full }.take(36).toList()
+        }.getOrNull()
+    }
+
+    /** A pasted link as a picture link: Tenor / GIPHY pages become their GIF file; direct links stay as they are. */
+    suspend fun resolve(link: String): String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val u = link.trim()
+        if (!u.startsWith("http")) return@withContext null
+        val path = u.substringBefore('?').lowercase()
+        if (path.endsWith(".gif") || path.endsWith(".webp") || path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".jpeg") || path.endsWith(".mp4")) return@withContext u
+        runCatching {
+            val html = Api.http.newCall(okhttp3.Request.Builder().url(u).header("User-Agent", "Mozilla/5.0").build()).execute().use { it.body?.string().orEmpty() }
+            Regex("""https://media[0-9]*\.(?:tenor|giphy)\.com/[^"'\s<>]+?\.gif""").find(html)?.value
+                ?: Regex("""<meta[^>]+property="og:image"[^>]+content="([^"]+)"""").find(html)?.groupValues?.get(1)
+        }.getOrNull()
+    }
+}
+
+/**
  * Profile picture from a GIF search: type or tap a suggestion, tap a GIF to see it inside the round frame, then
  * "Use this GIF". Needs a free GIPHY key (Settings › Integrations), shared with your settings.
  */
@@ -67,13 +109,16 @@ fun GifPicker(vm: AppViewModel, onPick: (String) -> Unit, onDismiss: () -> Unit)
     var loading by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
     var sel by remember { mutableStateOf<GifHit?>(null) }
+    var link by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(q, key) {
-        if (key.isEmpty()) return@LaunchedEffect
         delay(if (q.isBlank()) 0 else 450) // wait for typing to pause
         loading = true
-        val r = Giphy.search(key, q)
-        failed = r == null
-        hits = r.orEmpty()
+        // No key needed: the built-in GIF search; GIPHY results are added when you have a key.
+        val web = WebGifs.search(q)
+        val gi = if (key.isNotEmpty()) Giphy.search(key, q) else null
+        failed = web == null && gi == null
+        hits = (gi.orEmpty() + web.orEmpty()).distinctBy { it.full }
         loading = false
     }
     PremiumAlert(
@@ -81,12 +126,7 @@ fun GifPicker(vm: AppViewModel, onPick: (String) -> Unit, onDismiss: () -> Unit)
         title = { Text("Choose a GIF") },
         text = {
             Column(Modifier.fillMaxWidth()) {
-                if (key.isEmpty()) {
-                    Text("GIF search needs a free GIPHY key (one minute to get). Add it in Settings › Integrations › GIPHY — it is saved with your settings for all your devices.",
-                        fontSize = 14.sp, color = Color(0xFFC9CDD6))
-                    TextButton({ uri.openUri("https://developers.giphy.com/dashboard/") }) { Text("Get a free key") }
-                    return@Column
-                }
+
                 // Preview in the round profile frame.
                 Box(Modifier.fillMaxWidth().padding(bottom = 10.dp), Alignment.Center) {
                     Box(Modifier.size(104.dp).clip(CircleShape).background(Color(0xFF22252E)).border(2.dp, Color.White, CircleShape), Alignment.Center) {
@@ -97,8 +137,14 @@ fun GifPicker(vm: AppViewModel, onPick: (String) -> Unit, onDismiss: () -> Unit)
                 }
                 OutlinedTextField(q, { q = it.take(40) }, Modifier.fillMaxWidth().tvOkKeyboard(), singleLine = true, placeholder = { Text("Search GIFs") },
                     shape = RoundedCornerShape(12.dp), keyboardOptions = tvKeyboard())
-                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("anime", "cats", "reaction", "cars", "dance").forEach { c ->
+                // Or paste any GIF link (Tenor, GIPHY or a direct .gif link).
+                Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(link, { link = it.trim() }, Modifier.weight(1f).tvOkKeyboard(), singleLine = true, placeholder = { Text("…or paste a GIF link", fontSize = 13.sp) },
+                        shape = RoundedCornerShape(12.dp), keyboardOptions = tvKeyboard())
+                    TextButton({ scope.launch { val r = WebGifs.resolve(link); if (r != null) sel = GifHit(r, r, r) else Snack.show("That link isn't a picture") } }, enabled = link.startsWith("http")) { Text("Preview") }
+                }
+                Row(Modifier.padding(top = 8.dp).horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("avengers", "anime", "cats", "reaction", "cars", "dance").forEach { c ->
                         Text(c, Modifier.clip(RoundedCornerShape(14.dp)).background(if (q == c) Color.White else Color(0x1FFFFFFF)).clickable { q = c }
                             .padding(horizontal = 10.dp, vertical = 5.dp), fontSize = 12.sp, color = if (q == c) Color.Black else Color.White)
                     }
@@ -106,7 +152,7 @@ fun GifPicker(vm: AppViewModel, onPick: (String) -> Unit, onDismiss: () -> Unit)
                 Box(Modifier.fillMaxWidth().height(300.dp).padding(top = 10.dp)) {
                     when {
                         loading && hits.isEmpty() -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                        failed -> Text("Couldn't reach GIPHY (check the key in Integrations).", Modifier.align(Alignment.Center), fontSize = 13.sp, color = Color(0xFFFF8A80))
+                        failed -> Text("Couldn't search right now. Paste a GIF link instead.", Modifier.align(Alignment.Center), fontSize = 13.sp, color = Color(0xFFFF8A80))
                         else -> LazyVerticalGrid(GridCells.Fixed(3), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             items(hits, key = { it.id }) { h ->
                                 AsyncImage(h.preview, null,
@@ -118,7 +164,7 @@ fun GifPicker(vm: AppViewModel, onPick: (String) -> Unit, onDismiss: () -> Unit)
                         }
                     }
                 }
-                Text("Powered by GIPHY", Modifier.fillMaxWidth().padding(top = 6.dp), fontSize = 11.sp, color = Color(0xFF9AA3B5))
+                Text(if (key.isNotEmpty()) "GIFs from the web and GIPHY" else "GIFs from the web · add a GIPHY key in Integrations for more", Modifier.fillMaxWidth().padding(top = 6.dp), fontSize = 11.sp, color = Color(0xFF9AA3B5))
             }
         },
         confirmButton = { TextButton({ sel?.let { onPick(it.full) } }, enabled = sel != null) { Text("Use this GIF") } },

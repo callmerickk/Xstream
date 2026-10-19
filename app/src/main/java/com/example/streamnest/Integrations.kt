@@ -108,7 +108,7 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit) {
                 Text(provider.note, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Muted)
 
                 OutlinedTextField(
-                    keyText, { keyText = it.trim(); testResult = null }, Modifier.fillMaxWidth().padding(top = 12.dp).tvOkKeyboard(),
+                    keyText, { keyText = it.trim(); testResult = null }, Modifier.fillMaxWidth().padding(top = 12.dp).tvOkKeyboard(top = 8.dp),
                     singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("${provider.label} API key") },
                     visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = tvKeyboard(KeyboardOptions(keyboardType = KeyboardType.Password)),
@@ -116,7 +116,7 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit) {
                         IconButton({ showKey = !showKey }) { Icon(if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Show key") }
                     })
                 OutlinedTextField(
-                    modelText, { modelText = it.trim() }, Modifier.fillMaxWidth().padding(top = 8.dp).tvOkKeyboard(),
+                    modelText, { modelText = it.trim() }, Modifier.fillMaxWidth().padding(top = 8.dp).tvOkKeyboard(top = 8.dp),
                     singleLine = true, shape = RoundedCornerShape(12.dp), label = { Text("Model (optional)") }, placeholder = { Text(provider.model) }, keyboardOptions = tvKeyboard())
                 Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button({
@@ -204,7 +204,7 @@ private fun KeyField(vm: AppViewModel, key: String, label: String, desc: String,
     Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
         Text(desc, fontSize = 13.sp, color = Muted)
         OutlinedTextField(
-            text, { text = it.trim() }, Modifier.fillMaxWidth().padding(top = 10.dp).tvOkKeyboard(), singleLine = true, shape = RoundedCornerShape(12.dp),
+            text, { text = it.trim() }, Modifier.fillMaxWidth().padding(top = 10.dp).tvOkKeyboard(top = 8.dp), singleLine = true, shape = RoundedCornerShape(12.dp),
             label = { Text(label) }, visualTransformation = PasswordVisualTransformation(),
             trailingIcon = { if (text != (texts[key] ?: "")) TextButton({ vm.setText(key, text) }) { Text("Save") } }, keyboardOptions = tvKeyboard())
         TextButton({ runCatching { uri.openUri(link) } }) { Text("Get a free key", color = Color.White) }

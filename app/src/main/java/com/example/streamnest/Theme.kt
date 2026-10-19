@@ -120,12 +120,11 @@ private object TvFocusIndication : IndicationNodeFactory {
             // Everything else: a soft light wash over the WHOLE item. It is clipped by the item's own shape (rounded card,
             // pill, circle…), so it always follows its exact curve — no separate edge that could sit at another radius.
             val cr = androidx.compose.ui.geometry.CornerRadius(radius())
-            if (focused) {
-                drawRoundRect(Color(0xFF2A2C35), cornerRadius = cr)
-                drawRoundRect(Color.White.copy(alpha = 0.16f), cornerRadius = cr)
-            }
+            // No dark base under it any more: an item that is already coloured (a red "selected" button) keeps its colour
+            // and simply brightens, instead of turning grey under the highlight.
+            if (focused) drawRoundRect(Color.White.copy(alpha = 0.2f), cornerRadius = cr)
             drawContent()
-            if (focused) drawRoundRect(Color.White.copy(alpha = 0.05f), cornerRadius = cr)
+            if (focused) drawRoundRect(Color.White.copy(alpha = 0.06f), cornerRadius = cr)
         }
     }
 }

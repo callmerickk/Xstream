@@ -452,8 +452,7 @@ fun TvProfileEditor(vm: AppViewModel, p: Profile, onClose: () -> Unit) {
     var kids by remember { mutableStateOf(p.kids) }
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { repeat(10) { delay(60); if (first.tryFocus()) return@LaunchedEffect } }
-    BackHandler { onClose() }
-    Box(Modifier.fillMaxSize().background(Color(0xA6000000)), Alignment.Center) {
+    TvModal(onClose) {
         val shape = RoundedCornerShape(26.dp)
         Column(Modifier.width(520.dp).clip(shape).background(TxPanel).border(1.dp, TxRim, shape).padding(22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Edit profile", fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -461,7 +460,7 @@ fun TvProfileEditor(vm: AppViewModel, p: Profile, onClose: () -> Unit) {
             var nf by remember { mutableStateOf(false) }
             androidx.compose.foundation.text.BasicTextField(
                 name, { name = it.take(20) },
-                Modifier.fillMaxWidth().focusRequester(first).onFocusChanged { nf = it.isFocused }.tvOkKeyboard()
+                Modifier.fillMaxWidth().focusRequester(first).onFocusChanged { nf = it.isFocused }.tvOkKeyboard(ring = false)
                     .txFocusBox(nf, TxShape, Color(0x14FFFFFF)).padding(horizontal = 14.dp, vertical = 12.dp),
                 singleLine = true, keyboardOptions = tvKeyboard(),
                 textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
@@ -483,6 +482,20 @@ fun TvProfileEditor(vm: AppViewModel, p: Profile, onClose: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+/**
+ * A TV pop-up in its own window: the remote can only move between the pop-up's own items (it never falls onto the page
+ * behind), and Back closes it.
+ */
+@Composable
+fun TvModal(onDismiss: () -> Unit, content: @Composable BoxScope.() -> Unit) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        Box(Modifier.fillMaxSize().background(Color(0xA6000000)), Alignment.Center, content = content)
     }
 }
 

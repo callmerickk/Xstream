@@ -106,9 +106,16 @@ fun TvSearchScreen(vm: AppViewModel, query: MutableState<String>, onOpen: (Meta)
         leftFr[0].tryFocus()
     }
     // The hidden text field only becomes focusable when the search bar is pressed (system / voice keyboard).
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(textActive) {
         if (!textActive) return@LaunchedEffect
-        // Open the Fire TV keyboard on the real text box (hold the Alexa button there to speak).
+        // The Fire TV keyboard (with its mic: hold the remote's voice button to speak) in its own small window, so it
+        // always gets the focus. What you type or say shows in the results straight away.
+        if (BuildConfig.IS_TV) {
+            tvTextPrompt(ctx, query.value, onText = { setQuery(it.take(60)) }) { addRecent(query.value); textActive = false; barFr.tryFocus() }
+            ActLog.add("APP", "search: keyboard window opened")
+            return@LaunchedEffect
+        }
         editRef[0]?.let { et ->
             et.isFocusable = true; et.isFocusableInTouchMode = true
             et.requestFocus()
@@ -124,9 +131,9 @@ fun TvSearchScreen(vm: AppViewModel, query: MutableState<String>, onOpen: (Meta)
 
     Box(Modifier.fillMaxSize()) {
         // ── Keyboard ──
-        Column(Modifier.padding(start = TvEdge, top = 35.dp).width(220.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Column(Modifier.padding(start = TvEdge, top = 30.dp).width(318.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             KeyRows.forEachIndexed { r, keys ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     keys.forEachIndexed { c, ch ->
                         val mod = if (c == 0) Modifier.focusRequester(leftFr[r]).tvLeftEdge { onLeftEdge(leftFr[r]) } else Modifier
                         TvKey(ch.toString(), 1, mod) { type(ch.toString()) }
@@ -134,17 +141,17 @@ fun TvSearchScreen(vm: AppViewModel, query: MutableState<String>, onOpen: (Meta)
                 }
             }
             val last = KeyRows.size
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 TvKey("space", 2, Modifier.focusRequester(leftFr[last]).tvLeftEdge { onLeftEdge(leftFr[last]) }) { if (query.value.isNotEmpty()) type(" ") }
                 TvKey("⌫", 2, Modifier) { if (query.value.isNotEmpty()) setQuery(query.value.dropLast(1)) }
                 TvKey("clear", 2, Modifier) { setQuery("") }
             }
-            Text("Press OK on the search bar to use the remote's keyboard or voice.", Modifier.padding(top = 10.dp),
-                fontSize = 8.5.sp, lineHeight = 12.sp, color = TvSubText)
+            Text("OK on the search bar opens the Fire TV keyboard. Hold the remote's voice button there to speak.", Modifier.padding(top = 10.dp),
+                fontSize = 11.sp, lineHeight = 15.sp, color = TvSubText)
         }
 
         // ── Query, recent searches, results ──
-        Column(Modifier.padding(start = 300.dp, top = 35.dp, end = 40.dp)) {
+        Column(Modifier.padding(start = 400.dp, top = 30.dp, end = 30.dp)) {
             Box {
                 Row(
                     Modifier.fillMaxWidth().height(38.dp).focusRequester(barFr)
@@ -214,8 +221,8 @@ fun TvSearchScreen(vm: AppViewModel, query: MutableState<String>, onOpen: (Meta)
                 hits.isEmpty() && (loading || shownQuery != tq) -> TvSearchNote("Searching…")
                 hits.isEmpty() -> TvSearchNote("No results for “$tq”.")
                 else -> LazyVerticalGrid(
-                    GridCells.Fixed(4),
-                    Modifier.width(613.dp).offset(x = (-10).dp),
+                    GridCells.Fixed(3),
+                    Modifier.fillMaxWidth().offset(x = (-10).dp),
                     contentPadding = PaddingValues(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 40.dp),
                     horizontalArrangement = Arrangement.spacedBy(11.dp),
                     verticalArrangement = Arrangement.spacedBy(11.dp),
@@ -231,12 +238,12 @@ fun TvSearchScreen(vm: AppViewModel, query: MutableState<String>, onOpen: (Meta)
 private fun RowScope.TvKey(label: String, span: Int, modifier: Modifier, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Box(
-        Modifier.weight(span.toFloat()).height(31.dp).then(modifier)
+        Modifier.weight(span.toFloat()).height(42.dp).then(modifier)
             .tvCard(6.dp, scale = 1.08f, ring = false, onFocus = { focused = it }, onClick = onClick)
             .clip(KeyShape).background(if (focused) Color.White else Color(0x12FFFFFF)),
         Alignment.Center,
     ) {
-        Text(label, fontSize = if (label.length > 1) 10.sp else 12.sp, fontWeight = FontWeight.SemiBold,
+        Text(label, fontSize = if (label.length > 1) 13.sp else 19.sp, fontWeight = FontWeight.Bold,
             color = if (focused) Color.Black else Color(0xFFD6D9E1), maxLines = 1)
     }
 }
@@ -289,4 +296,42 @@ private fun TvSearchCard(h: SearchHit, onClick: () -> Unit) {
             fontSize = 7.sp, fontWeight = FontWeight.Bold,
         )
     }
+}
+
+
+/**
+ * Fire TV keyboard in a small window of its own (a separate window always gets the focus, so the keyboard and its voice
+ * typing really open). [onText] follows every change; [onDone] when it closes.
+ */
+fun tvTextPrompt(ctx: android.content.Context, initial: String, onText: (String) -> Unit, onDone: () -> Unit) {
+    val act = ctx.tvActivity() ?: return onDone()
+    val et = android.widget.EditText(act).apply {
+        setSingleLine(); setText(initial); setSelection(initial.length)
+        hint = "Type, or hold the voice button to speak"
+        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_NORMAL
+        imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+        textSize = 22f
+        setTextColor(android.graphics.Color.WHITE); setHintTextColor(0x99FFFFFF.toInt())
+        addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(e: android.text.Editable?) { onText(e?.toString().orEmpty()) }
+        })
+    }
+    val pad = (24 * act.resources.displayMetrics.density).toInt()
+    val box = android.widget.FrameLayout(act).apply { setPadding(pad, pad / 2, pad, pad / 2); addView(et) }
+    val d = android.app.AlertDialog.Builder(act, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        .setTitle("Search").setView(box)
+        .setPositiveButton("Done") { di, _ -> di.dismiss() }
+        .create()
+    et.setOnEditorActionListener { _, _, _ -> d.dismiss(); true }
+    d.setOnDismissListener { onDone() }
+    d.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+    d.setOnShowListener {
+        et.requestFocus()
+        et.postDelayed({
+            (act.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(et, 0)
+        }, 120)
+    }
+    d.show()
 }

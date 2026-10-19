@@ -762,6 +762,15 @@ fun PlayerScreen(
     }
     // The room ended (its creator left): this video closes too.
     LaunchedEffect(Unit) { Together.ended.collect { onBack() } }
+    // A planned watch ("Watch now" or its reminder): once the picture is up, the room starts by itself and everyone in
+    // the plan is told you're waiting.
+    LaunchedEffect(firstFrame) {
+        if (!firstFrame || BuildConfig.IS_TV || Social.hostPlan == null || Together.active()) return@LaunchedEffect
+        delay(800)
+        val err = Together.create(roomState(isPlayingNow()))
+        if (err == null) Together.code.value?.let { Social.planRoomStarted(it); Snack.show("Room started · your friends are told you're waiting") }
+        else { Social.hostPlan = null; Snack.show(err) }
+    }
     var appliedRev by remember { mutableLongStateOf(Together.remote.value?.rev ?: 0L) }
     LaunchedEffect(Unit) {
         Together.remote.collect { st ->
@@ -1624,7 +1633,8 @@ fun PlayerScreen(
         if (!everPictured || BuildConfig.IS_TV || usingVlc || !isOn(opt("qsUpgrade")) || !vm.upgradeAllowed()) return@LaunchedEffect
         val nowUrl = now?.url ?: return@LaunchedEffect
         val cur = itemFor(nowUrl) ?: StreamItem(now?.addon ?: "", StreamInfo(url = nowUrl, name = now?.source))
-        if (!cur.isMovieBox() || hdReady.isNotEmpty()) return@LaunchedEffect
+        // Searched while what plays is a quick / lower-quality file (MovieBox, a playlist, or under Full HD).
+        if (!cur.belowFullHd() || hdReady.isNotEmpty()) return@LaunchedEffect
         val pool = java.util.concurrent.ConcurrentHashMap<String, StreamItem>()
         fun add(l: List<StreamItem>) = l.forEach { s0 -> s0.stream.url?.let { u -> pool.putIfAbsent(u, s0) } }
         // From the first picture: CNCVerse every 2 s (only CNCVerse) until a Vegamovies file comes, at most 20 s. No
@@ -1700,7 +1710,7 @@ fun PlayerScreen(
             while (SystemClock.elapsedRealtime() - t0 < 150_000) {
                 // Saving in the background only while the quick playlist plays and nothing is buffering (the file you
                 // watch gets the whole connection).
-                if (now?.url?.let { itemFor(it) }?.isMovieBox() != true) break
+                if (now?.url?.let { itemFor(it) }?.belowFullHd() != true) break
                 if (buffering) { delay(1_000); continue }
                 val fhd = hdReady["fhd"].orEmpty(); val uhd = hdReady["4k"].orEmpty()
                 if (fhd.size >= 2 && uhd.isNotEmpty()) break
@@ -1834,11 +1844,15 @@ fun PlayerScreen(
     }
     // The offer: as soon as a Full HD (or, with 4K chosen, a 4K) file is ready — 30 s count down; after any jump, 5 s of
     // playing at the new place, then 30 s again. One tap switches to it (its start and index are already saved).
-    LaunchedEffect(hdReady.isNotEmpty(), now?.url) {
+    // Keyed on the picture too: an HD file that got ready while the picture was briefly away still gets its offer.
+    LaunchedEffect(hdReady.isNotEmpty(), now?.url, firstFrame) {
         upgrade = null
         if (hdReady.isEmpty() || !firstFrame) return@LaunchedEffect
         val cur = now?.url?.let { itemFor(it) } ?: StreamItem(now?.addon ?: "", StreamInfo(url = now?.url))
-        if (!cur.isMovieBox()) return@LaunchedEffect
+        // Offered whenever what plays is lower quality than the ready file (it used to need a MovieBox file playing,
+        // so after other quick sources started first, the pill never came).
+        val best = (hdReady["4k"].orEmpty() + hdReady["fhd"].orEmpty()).maxOfOrNull { it.effectiveRes() } ?: 0
+        if (!cur.belowFullHd() && cur.effectiveRes() >= best) { PlayTiming.late("HD: offer skipped — already playing ${cur.effectiveRes()}p"); return@LaunchedEffect }
         (upCooldownUntil - SystemClock.elapsedRealtime()).takeIf { it > 0 }?.let { delay(it) }
         suspend fun playedInARow(ms: Long) {
             var acc = 0L; var last = curPos(); var lastT = SystemClock.elapsedRealtime()
@@ -1856,6 +1870,7 @@ fun PlayerScreen(
             // After a jump: a few MB of the HD file saved at the new spot first, so the tap is instant there too.
             if (round++ > 0) pick.stream.url?.let { u -> saveAround(ctx, u, curPos(), dur) }
             upgrade = UpgradeOffer(pick, pick.effectiveRes() >= 2160)
+            PlayTiming.late("HD: Upgrade quality shown (${Prepare.qualityName(pick.effectiveRes())})")
             var left = 30
             var jumped = false
             while (left > 0) {
@@ -2224,7 +2239,7 @@ fun PlayerScreen(
         }
     }
     /** TV: the green "better quality is ready" pill is on screen (for 30 s, or while the controls show). */
-    fun tvUpVisible(): Boolean = BuildConfig.IS_TV && tvUp != null && !tvUpHidden && (controls || SystemClock.elapsedRealtime() - tvUpAt < 30_000)
+    fun tvUpVisible(): Boolean = BuildConfig.IS_TV && tvUp != null && !tvUpHidden && SystemClock.elapsedRealtime() - tvUpAt < 30_000
     /** The pills on screen now, top to bottom. */
     fun tvPills(): List<String> = buildList { if (tvSkipOn) add("skip"); if (tvUpVisible()) add("upg"); if (tvNextOn) add("next") }
     fun tvTakeUpgrade() {
@@ -2234,7 +2249,8 @@ fun PlayerScreen(
         switchTo(u, "${tvQualityOf(u)} · same moment")
     }
     /** TV bottom row: Watch Next · Next · Episodes (series) · More. */
-    fun tvBotKeys(): List<String> = buildList { add("wn"); add("next"); if (type == "series" && episodes.isNotEmpty()) add("eps"); add("more") }
+    // Movies: only Watch Next and ❯ More (Next title lives inside More). Series: Watch Next · Next episode · Episodes · More.
+    fun tvBotKeys(): List<String> = buildList { add("wn"); if (type == "series") add("next"); if (type == "series" && episodes.isNotEmpty()) add("eps"); add("more") }
     /** TV Next: the next episode, or (movies) the first title like this one. */
     fun tvNext() {
         if (type == "series") { if (nextEp != null) playNext() else Snack.show("This is the last episode for now"); return }
@@ -2881,10 +2897,10 @@ fun PlayerScreen(
                 if (pills.isNotEmpty()) Column(Modifier.align(Alignment.BottomEnd).padding(end = side, bottom = if (controls) 160.dp else 32.dp),
                     horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     pills.forEach { k ->
-                        TvPillFrame(focusedPill == k) {
+                        TvPillFrame(focusedPill == k, top = if (k == "upg") 0.dp else 10.dp, bottom = if (k == "upg") 10.dp else 0.dp) {
                             when (k) {
                                 "skip" -> PillButton(if (inIntro) "Skip Intro" else "Skip Recap", Icons.Default.FastForward) {}
-                                "upg" -> { val u = tvUp; if (u != null) UpgradePill(tvQualityOf(u) == "4K", upLeftTv.coerceAtLeast(1)) {} }
+                                "upg" -> { val u = tvUp; if (u != null && upLeftTv > 0) UpgradePill(tvQualityOf(u) == "4K", upLeftTv) {} }
                                 else -> { val windowStart = s?.outro?.start_ms ?: (dur - 120_000)
                                     NextEpisodePill(left = (dur - pos).coerceAtLeast(0L), window = (dur - windowStart).coerceAtLeast(1L)) {} }
                             }
@@ -3120,7 +3136,7 @@ fun PlayerScreen(
                             val keys = tvBotKeys()
                             fun on(k: String) = tvZone == "bot" && keys.getOrNull(tvBot) == k
                             TvPill(on("wn"), Icons.Outlined.Explore, "Watch Next", null, at("watchnext"))
-                            TvIconPill(on("next"), Icons.Default.SkipNext, if (type == "series") "Next episode" else "Next title")
+                            if ("next" in keys) TvIconPill(on("next"), Icons.Default.SkipNext, "Next episode")
                             if ("eps" in keys) TvIconPill(on("eps"), Icons.Default.VideoLibrary, "Episodes")
                             val rot by animateFloatAsState(if (more) -90f else 0f, spring(dampingRatio = 0.6f, stiffness = 400f), label = "moreRot")
                             TvPill(on("more"), Icons.Default.ChevronRight, null, null, at("more"), iconRotation = rot)
@@ -3177,6 +3193,7 @@ fun PlayerScreen(
                                 add(Triple(Icons.Default.Groups, "Watch together") { pick { panel = "together" } })
                                 if (type == "series" && episodes.isNotEmpty()) add(Triple(Icons.Default.VideoLibrary, "Episodes") { pick { showEpisodes = true; controls = false } })
                                 if (nextEp != null) add(Triple(Icons.Default.SkipNext, "Next episode") { pick { playNext() } })
+                                if (type != "series") add(Triple(Icons.Default.SkipNext, "Next title") { pick { tvNext() } })
                                 add(Triple(Icons.Default.OpenInNew, "Other player") { pick { pauseNow(); now?.let { openExternal(ctx, it.url, p.title) } } })
                                 add(Triple(Icons.Outlined.Info, "Info") { pick { infoManual = true; showInfo = true; controls = false } })
                             }
@@ -3737,16 +3754,17 @@ private val AspectModes = listOf(
 
 /** TV: wraps a pill so it can't take focus itself (the remote's ▲ selects it) and shows the white edge when selected. */
 @Composable
-private fun TvPillFrame(selected: Boolean, content: @Composable () -> Unit) {
+private fun TvPillFrame(selected: Boolean, top: Dp = 10.dp, bottom: Dp = 0.dp, content: @Composable () -> Unit) {
     val sc by animateFloatAsState(if (selected) 1.06f else 1f, spring(dampingRatio = 0.6f, stiffness = 500f), label = "pillSel")
     Box(
         Modifier.graphicsLayer { scaleX = sc; scaleY = sc }
             .drawWithContent {
                 drawContent()
                 if (selected) {
-                    val g = 4.dp.toPx(); val top = 10.dp.toPx() // the pills keep a 10 dp gap above themselves
-                    val h = size.height - top
-                    drawRoundRect(TvFocusEdge, topLeft = Offset(-g, top - g), size = Size(size.width + 2 * g, h + 2 * g),
+                    // The ring wraps the pill itself: [top] / [bottom] are the gaps each pill keeps outside its shape.
+                    val g = 4.dp.toPx(); val t = top.toPx()
+                    val h = size.height - t - bottom.toPx()
+                    drawRoundRect(TvFocusEdge, topLeft = Offset(-g, t - g), size = Size(size.width + 2 * g, h + 2 * g),
                         cornerRadius = CornerRadius(h / 2f + g), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
                 }
             }
@@ -3814,43 +3832,36 @@ private fun endsAt(leftMs: Long, rate: Float): String {
 private fun GlassBtn(
     icon: ImageVector, label: String?, desc: String, modifier: Modifier = Modifier, big: Boolean = false, iconFirst: Boolean = true, onClick: () -> Unit,
 ) {
+    // Xstream: text-only player buttons — no fill, no border, no glass. A soft shadow keeps them readable on bright
+    // scenes; touching one makes it pure white with a short glow and a little bigger.
     var focused by remember { mutableStateOf(false) }
     val src = remember { MutableInteractionSource() }
-    val sc by animateFloatAsState(if (focused) 1.08f else 1f, tween(140), label = "glass")
-    val shape = if (label == null) CircleShape else RoundedCornerShape(50)
-    val iconSize = if (big) 44.dp else if (BuildConfig.IS_TV) 22.dp else 22.dp
-    // Labelled buttons get a little depth: a soft shadow under them, lit from the top (brighter edge and fill on top).
-    val depth = label != null && !focused
+    val pressed by src.collectIsPressedAsState()
+    val hot = pressed || focused
+    val sc by animateFloatAsState(if (hot) 1.1f else 1f, spring(dampingRatio = 0.55f, stiffness = 600f), label = "txtBtn")
+    val iconSize = if (big) 44.dp else 22.dp
+    val glow = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(if (hot) Color(0xCCFFFFFF) else Color(0xCC000000), blurRadius = if (hot) 18f else 8f))
+    val tint = if (hot) Color.White else Color(0xFFEDEFF4)
     Row(
         modifier
             .graphicsLayer { scaleX = sc; scaleY = sc }
             .onFocusChanged { focused = it.isFocused }
-            .then(if (depth) Modifier.softHalo(22.dp, spread = 6.dp, strength = 0.32f, dy = 3.dp) else Modifier)
-            .clip(shape)
-            .then(
-                if (depth) Modifier.background(Brush.verticalGradient(listOf(Color(0x33FFFFFF), Color(0x14FFFFFF))))
-                else Modifier.background(
-                    when {
-                        focused -> Color(0x40FFFFFF)
-                        big -> Color(0x33000000)
-                        else -> Color.Transparent
-                    },
-                ),
-            )
-            .then(
-                if (depth) Modifier.border(1.dp, Brush.verticalGradient(listOf(Color(0x40FFFFFF), Color(0x0DFFFFFF))), shape)
-                else Modifier.border(1.dp, if (focused) Color(0x99FFFFFF) else Color.Transparent, shape),
-            )
             .clickable(interactionSource = src, indication = null, onClick = onClick)
             .semantics { contentDescription = desc }
-            .padding(horizontal = if (label == null) (if (big) 18.dp else 9.dp) else 14.dp, vertical = if (big) 18.dp else 9.dp),
+            .padding(horizontal = if (label == null) (if (big) 18.dp else 9.dp) else 10.dp, vertical = if (big) 18.dp else 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (iconFirst) Icon(icon, null, Modifier.size(iconSize), tint = Color.White)
+        if (iconFirst) Icon(icon, null, Modifier.size(iconSize).softGlow(hot), tint = tint)
         if (label != null) Text(label, Modifier.padding(start = if (iconFirst) 8.dp else 0.dp, end = if (iconFirst) 2.dp else 4.dp),
-            fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-        if (!iconFirst) Icon(icon, null, Modifier.size(iconSize), tint = Color.White)
+            fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, color = tint, style = glow)
+        if (!iconFirst) Icon(icon, null, Modifier.size(iconSize).softGlow(hot), tint = tint)
     }
+}
+
+/** A soft round glow behind an icon while it's touched (and a faint shadow otherwise, for bright scenes). */
+private fun Modifier.softGlow(on: Boolean): Modifier = drawBehind {
+    val r = size.minDimension * 0.9f
+    drawCircle(Brush.radialGradient(listOf(if (on) Color(0x55FFFFFF) else Color(0x33000000), Color.Transparent), center = center, radius = r), r)
 }
 
 /** The TV focus box (from Rick's photo): dark glass, a cool off-white edge, soft round corners. */
@@ -5097,11 +5108,10 @@ private fun CenterPlayPause(playing: Boolean, modifier: Modifier = Modifier, onC
     val pressed by press.collectIsPressedAsState()
     val scale by androidx.compose.animation.core.animateFloatAsState(if (pressed) 0.9f else 1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 600f), label = "ppScale")
     Box(
+        // Xstream: no circle behind it — just the icon (brighter with a glow while pressed).
         modifier.size(76.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(CircleShape)
-            .background(Color(0x59000000))
-            .border(1.5.dp, Color(0x40FFFFFF), CircleShape)
+            .graphicsLayer { val k = if (pressed) 1.12f else scale; scaleX = k; scaleY = k }
+            .softGlow(pressed)
             .clickable(interactionSource = press, indication = null, onClickLabel = if (playing) "Pause" else "Play", onClick = onClick),
         Alignment.Center,
     ) {
@@ -5274,3 +5284,7 @@ private fun SoundToggle(title: String, sub: String, on: Boolean, onChange: (Bool
         androidx.compose.material3.Switch(on, onChange)
     }
 }
+
+
+/** A quick / lower-quality file worth upgrading from: MovieBox, a streaming playlist, or a file under Full HD. */
+private fun StreamItem.belowFullHd(): Boolean = isMovieBox() || isPlaylist() || effectiveRes() in 1..1079 || effectiveRes() <= 0

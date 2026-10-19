@@ -368,7 +368,7 @@ internal fun DevGate(vm: AppViewModel, onUnlocked: () -> Unit, onBack: () -> Uni
                 Text("Developer's Corner", fontSize = 28.sp, fontWeight = FontWeight.Bold)
                 Text("Restricted area. Enter the password to continue.", fontSize = 15.sp, color = Muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp, bottom = 22.dp))
                 OutlinedTextField(
-                    pw, { pw = it; denied = false }, Modifier.fillMaxWidth().tvOkKeyboard(), singleLine = true,
+                    pw, { pw = it; denied = false }, Modifier.fillMaxWidth().tvOkKeyboard(top = 8.dp), singleLine = true,
                     label = { Text("Password") }, shape = RoundedCornerShape(16.dp), isError = denied,
                     visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = tvKeyboard(KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done)),
@@ -690,7 +690,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                 Column(Modifier.padding(20.dp)) {
                     key(resetN) {
                         var name by remember { mutableStateOf(texts["appName"] ?: Defaults["appName"] ?: "") }
-                        OutlinedTextField(name, { name = it; vm.setText("appName", it) }, Modifier.fillMaxWidth().tvOkKeyboard(), singleLine = true, label = { Text("App name") }, shape = RoundedCornerShape(14.dp), keyboardOptions = tvKeyboard())
+                        OutlinedTextField(name, { name = it; vm.setText("appName", it) }, Modifier.fillMaxWidth().tvOkKeyboard(top = 8.dp), singleLine = true, label = { Text("App name") }, shape = RoundedCornerShape(14.dp), keyboardOptions = tvKeyboard())
                     }
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -718,9 +718,9 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Change password", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                     val kb = KeyboardOptions(keyboardType = KeyboardType.Password)
-                    OutlinedTextField(curPw, { curPw = it }, Modifier.fillMaxWidth().tvOkKeyboard(), singleLine = true, label = { Text("Current password") }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = tvKeyboard(kb), shape = RoundedCornerShape(14.dp))
-                    OutlinedTextField(newPw, { newPw = it }, Modifier.fillMaxWidth().tvOkKeyboard(), singleLine = true, label = { Text("New password") }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = tvKeyboard(kb), shape = RoundedCornerShape(14.dp))
-                    OutlinedTextField(newPw2, { newPw2 = it }, Modifier.fillMaxWidth().tvOkKeyboard(), singleLine = true, label = { Text("Repeat new password") }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = tvKeyboard(kb), shape = RoundedCornerShape(14.dp))
+                    OutlinedTextField(curPw, { curPw = it }, Modifier.fillMaxWidth().tvOkKeyboard(top = 8.dp), singleLine = true, label = { Text("Current password") }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = tvKeyboard(kb), shape = RoundedCornerShape(14.dp))
+                    OutlinedTextField(newPw, { newPw = it }, Modifier.fillMaxWidth().tvOkKeyboard(top = 8.dp), singleLine = true, label = { Text("New password") }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = tvKeyboard(kb), shape = RoundedCornerShape(14.dp))
+                    OutlinedTextField(newPw2, { newPw2 = it }, Modifier.fillMaxWidth().tvOkKeyboard(top = 8.dp), singleLine = true, label = { Text("Repeat new password") }, visualTransformation = PasswordVisualTransformation(), keyboardOptions = tvKeyboard(kb), shape = RoundedCornerShape(14.dp))
                     pwMsg?.let { Text(it, color = if (pwOk) Color(0xFF5BD68A) else Color(0xFFFF6B6B), fontSize = 14.sp) }
                     Button(
                         {
@@ -749,7 +749,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         items(TextFields + StyleFields, key = { "f_" + it.key }) { f ->
             key(resetN) {
                 var v by remember { mutableStateOf(texts[f.key] ?: Defaults[f.key] ?: "") }
-                OutlinedTextField(v, { v = it; vm.setText(f.key, it) }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp).tvOkKeyboard(), label = { Text(f.label) }, shape = RoundedCornerShape(14.dp), keyboardOptions = tvKeyboard())
+                OutlinedTextField(v, { v = it; vm.setText(f.key, it) }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp).tvOkKeyboard(top = 8.dp), label = { Text(f.label) }, shape = RoundedCornerShape(14.dp), keyboardOptions = tvKeyboard())
             }
         }
         item {
