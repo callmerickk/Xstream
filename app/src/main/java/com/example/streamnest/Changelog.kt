@@ -13,6 +13,12 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.4 beta", "20 Oct 2026", "CloudStream and Nuvio plugins", listOf(
+        "Plugins: CloudStream and Nuvio sections — add repositories, switch plugins on, open their settings",
+        "Developer's Corner › Source Test has CloudStream and Nuvio tabs: search, match, links, qualities, audio, subtitles and play time, with a full log",
+        "Streams that carry several qualities in one (like CloudStream's Netflix server) get a quality picker in the player",
+        "CloudStream plugins can be kept warm in the background so their servers answer fast",
+    )),
     Release("0.3 beta", "20 Oct 2026", "Floating dock, bell, cleaner settings", listOf(
         "The dock's icons float as if on water, each with a glowing red ring; hold one and they all wobble",
         "My Space in the dock is your picture with a red ring — hold it for your other profiles: tap one, or slide onto it and let go",
@@ -204,6 +210,16 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.4 beta", "20 Oct 2026", "Xstream 0.4 beta: plugins", listOf(
+        "versionCode 5. Own CloudStream library in com.lagradost.* (api.Log, cloudstream3 models / MainAPI helpers / APIHolder / MainActivityKt.app / CommonActivity / CloudStreamApp / amap / logError, utils ExtractorApi + ExtractorLink + Qualities + loadExtractor + JsUnpacker + AppUtils, plugins BasePlugin/Plugin/@CloudstreamPlugin, network CloudflareKiller (WebView cf_clearance), extractors PixelDrain / StreamTape / VidHidePro / StreamWish / FileMoon / VidStack, nicehttp Requests / NiceResponse / ResponseParser). Written from scratch, no GPL code",
+        "Deps: jsoup 1.18.1, jackson-databind + module-kotlin 2.17.2, gson 2.11.0, ktor-http 2.3.12, appcompat 1.7.0, material 1.12.0; keep rules for every library plugins call",
+        "CsPlugins.kt: repos (repo.json → pluginLists), catalog, enabled set (7 picks seeded), .cs3 download (read-only), DexClassLoader per plugin, AssetManager resources for requiresResources, warmAll(); CsSettingsActivity hosts plugin settings (AppCompat, translucent Material theme)",
+        "CsTest.kt: Source Test › CloudStream — load timing, search / match score (name, year, type, IMDb from syncData), load, episode pick, loadLinks with arrival times, per-server groups + HLS master probe (variants, audio, subtitles), firstPicture play test, log save / copy / share",
+        "CI: tools/cs_compat.py checks every class / method the 7 plugins call against the built APK (dexapi.py); all 7 report 0 missing",
+        "NuvioPlugins.kt: hidden-WebView runtime (assets/nuvio/bootstrap.js: fetch via XNative → OkHttp, require cheerio / crypto-js / axios shim, console), libs.js bundled in CI with esbuild (cheerio 1.0.0-rc.12, crypto-js 4.2.0, MIT); manifest (array or {scrapers}); TMDB id via /find; Source Test › Nuvio tab",
+        "Player: quality picker for adaptive HLS (TrackSelectionOverride per height) when the stream has no separate quality files",
+        "Settings › Plugins → XPluginsPage (JavaScript / CloudStream / Nuvio); Dev Corner Source Test → SourceTestHub tabs",
+    )),
     Release("0.3 beta", "20 Oct 2026", "Xstream 0.3 beta", listOf(
         "versionCode 4. Dock: DockItem float (rememberFloat sin/tilt, water mode on hold), red glow ring; avatar with red ring; bubble stays open after a plain long-press; idle hide via lastTouch timestamp + Initial-pass pointer watcher (no recomposition)",
         "XBell.kt: NotificationBell (EpisodeAlerts + Recs + Social.pending, seen timestamp in prefs bell) → Popup bubble; BellNav opens Together. Library tabs watchlist/calendar + WatchTogetherCard",

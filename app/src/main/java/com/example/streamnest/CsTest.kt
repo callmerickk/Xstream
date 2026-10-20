@@ -64,6 +64,7 @@ object CsTester {
     val results = MutableStateFlow<List<CsTitleResult>>(emptyList())
     val logFile = MutableStateFlow<File?>(null)
     private var job: Job? = null
+    private val testScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
     private val buf = StringBuilder()
     private fun w(s: String) { synchronized(buf) { buf.append(SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())).append("  ").append(s).append('\n') } }
 
@@ -72,7 +73,8 @@ object CsTester {
     fun start(scope: CoroutineScope, ctx: Context, vm: AppViewModel, manual: Meta?, playTest: Boolean) {
         if (running.value) return
         running.value = true; results.value = emptyList(); synchronized(buf) { buf.setLength(0) }
-        job = scope.launch {
+        // Own scope, off the main thread: plugins parse pages here, and the test keeps going if you leave the screen.
+        job = testScope.launch {
             CsBridge.sink = { w("    · $it") }
             try { run(ctx, vm, manual, playTest) } catch (e: Throwable) { w("STOPPED: ${e.javaClass.simpleName}: ${e.message}") }
             finally {

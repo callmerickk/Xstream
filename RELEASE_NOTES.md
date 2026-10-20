@@ -1,3 +1,13 @@
+Xstream 0.4 beta
+
+• Plugins: CloudStream and Nuvio sections. Add repositories, switch plugins on, and open their settings.
+• Developer's Corner › Source Test has CloudStream and Nuvio tabs, showing search, matching, links, qualities, audio, subtitles and play time, with a full log.
+• Streams that carry several qualities in one (like CloudStream's Netflix server) get a quality picker in the player.
+• CloudStream plugins can be kept warm in the background so their servers answer fast.
+• Plugins are for testing for now; Quick Play works as before.
+
+---
+
 Xstream 0.3 beta
 
 • The dock's icons float as if on water, each with a glowing red ring. Hold one and they all wobble.

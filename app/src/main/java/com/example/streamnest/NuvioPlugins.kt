@@ -163,7 +163,8 @@ object NuvioRuntime {
 ) { val key: String get() = "$repo|$id" }
 
 object NuvioPlugins {
-    val defaultRepos = listOf("https://raw.githubusercontent.com/tapframe/nuvio-providers/refs/heads/main/manifest.json")
+    /** No repository by default: add the Nuvio repositories you use (manifest.json links). */
+    val defaultRepos = emptyList<String>()
     val repos = MutableStateFlow<List<String>>(emptyList())
     val repoNames = MutableStateFlow<Map<String, String>>(emptyMap())
     val catalog = MutableStateFlow<List<NuvioScraper>>(emptyList())
@@ -194,16 +195,17 @@ object NuvioPlugins {
         val out = ArrayList<NuvioScraper>(); val errs = ArrayList<String>(); val names = HashMap<String, String>()
         for (r in repos.value) {
             val mu = manifestUrl(r)
-            val o = runCatching { Api.json.parseToJsonElement(Api.get(mu)) as JsonObject }.getOrNull()
-            if (o == null) { errs += "can't read ${r.substringAfter("//").take(60)}"; continue }
-            o["name"]?.jsonPrimitive?.contentOrNull?.let { names[r] = it }
+            // A manifest is either { name, scrapers: [...] } or just the list of scrapers.
+            val el = runCatching { Api.json.parseToJsonElement(Api.get(mu)) }.getOrNull()
+            if (el == null) { errs += "can't read ${r.substringAfter("//").take(60)}"; continue }
+            val o = el as? JsonObject
+            o?.get("name")?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }?.let { names[r] = it }
             val base = mu.substringBeforeLast('/') + "/"
-            (o["scrapers"] as? JsonArray ?: o["providers"] as? JsonArray)?.mapNotNull { it as? JsonObject }?.forEach { s ->
+            ((el as? JsonArray) ?: o?.get("scrapers") as? JsonArray ?: o?.get("providers") as? JsonArray)?.mapNotNull { it as? JsonObject }?.forEach { s ->
                 fun str(k: String) = runCatching { s[k]?.jsonPrimitive?.contentOrNull }.getOrNull()
                 fun list(k: String) = (s[k] as? JsonArray)?.mapNotNull { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }.orEmpty()
                 val id = str("id") ?: str("name") ?: return@forEach
                 val file = str("filename") ?: str("file") ?: return@forEach
-                if (str("enabled") == "false") return@forEach
                 out += NuvioScraper(r, id, str("name") ?: id, if (file.startsWith("http")) file else base + file.trimStart('/'), str("version") ?: "",
                     list("supportedTypes"), str("description"), list("contentLanguage"), str("logo"))
             }
@@ -234,6 +236,7 @@ object NuvioTester {
     val results = MutableStateFlow<List<NuvioResult>>(emptyList())
     val logFile = MutableStateFlow<File?>(null)
     private var job: Job? = null
+    private val testScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
     private val buf = StringBuilder()
     private fun w(s: String) { synchronized(buf) { buf.append(SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())).append("  ").append(s).append('\n') } }
 
@@ -242,7 +245,8 @@ object NuvioTester {
     fun start(scope: CoroutineScope, ctx: Context, vm: AppViewModel, manual: Meta?, playTest: Boolean) {
         if (running.value) return
         running.value = true; results.value = emptyList(); synchronized(buf) { buf.setLength(0) }
-        job = scope.launch {
+        // Own scope, off the main thread: plugins parse pages here, and the test keeps going if you leave the screen.
+        job = testScope.launch {
             NuvioRuntime.sink = { w(it) }
             try { run(ctx, vm, manual, playTest) } catch (e: Throwable) { w("STOPPED: ${e.javaClass.simpleName}: ${e.message}") }
             finally {
@@ -362,6 +366,7 @@ fun NuvioPluginList(vm: AppViewModel) {
                 NuvioPlugins.addRepo(newRepo); newRepo = ""; scope.launch { msg = NuvioPlugins.refresh() ?: "Added" }
             }.padding(horizontal = 14.dp, vertical = 12.dp), fontWeight = FontWeight.Bold)
         }
+        if (repos.isEmpty()) Text("No Nuvio repository yet. Paste a repository's manifest.json link above.", fontSize = 12.5.sp, color = Muted)
         repos.forEach { r ->
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFF15161C)).border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(16.dp)).padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
