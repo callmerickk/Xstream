@@ -80,7 +80,7 @@ fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) 
         "collections" -> CollectionsSettingsPage(vm, back)
         "about" -> LicensesPage(back)
         "manual" -> ManualPage(back)
-        "plugins" -> PluginsPage(back)
+        "plugins" -> XPluginsPage(vm, back)
         "notifications" -> NotificationsPage(vm, back)
         "updates" -> UpdateLogPage(vm, back, open)
         "playback" -> PlaybackPage(vm, back)
@@ -600,7 +600,7 @@ private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> 
             }
             if (!BuildConfig.IS_TV) {
                 RowDivider(20.dp)
-                SettingRow(null, "Plugins", "Install JavaScript plugins that find streams, next to your addons.") { open("plugins") }
+                SettingRow(null, "Plugins", "CloudStream, Nuvio and JavaScript plugins.") { open("plugins") }
             }
         }
         SectionLabel("Recommendations")

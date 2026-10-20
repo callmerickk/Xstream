@@ -60,6 +60,11 @@
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
             android:theme="@style/Theme.Xstream" />
+        <!-- CloudStream plugin settings screens (CsSettingsActivity.kt). -->
+        <activity
+            android:name=".CsSettingsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Xstream.PluginSettings" />
         <!-- Home screen widget: Continue watching (ContinueWidget.kt). -->
         <!-- Watch together: reminders for planned watches (Social.kt). -->
         <receiver android:name=".PlanAlarmReceiver" android:exported="false" />

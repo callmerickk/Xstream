@@ -7,4 +7,13 @@
         <item name="android:statusBarColor">@android:color/black</item>
         <item name="android:navigationBarColor">@android:color/black</item>
     </style>
+    <!-- CloudStream plugin settings (CsSettingsActivity): see-through, Material components for the plugins' own dialogs. -->
+    <style name="Theme.Xstream.PluginSettings" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="colorPrimary">#E50914</item>
+        <item name="colorSecondary">#E50914</item>
+    </style>
 </resources>

@@ -36,3 +36,19 @@
 -dontwarn javax.script.**
 -dontwarn java.beans.**
 -dontwarn javax.lang.model.**
+
+# CloudStream plugins (.cs3) are loaded at run time and call these libraries by name: keep all of them whole.
+-keep class com.lagradost.** { *; }
+-keep class kotlin.** { *; }
+-keep class kotlinx.coroutines.** { *; }
+-keep class kotlinx.serialization.** { *; }
+-keep class okhttp3.** { *; }
+-keep class okio.** { *; }
+-keep class org.jsoup.** { *; }
+-keep class com.fasterxml.jackson.** { *; }
+-keep class com.google.gson.** { *; }
+-keep class io.ktor.** { *; }
+-keep class androidx.appcompat.** { *; }
+-keep class androidx.fragment.** { *; }
+-keep class androidx.core.** { *; }
+-keep class com.google.android.material.** { *; }

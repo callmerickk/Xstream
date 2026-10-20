@@ -124,6 +124,15 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.5")
     // JavaScript engine for StreamX plugins (Plugins.kt).
     implementation("org.mozilla:rhino:1.7.15")
+    // CloudStream plugins run on Xstream's own CloudStream library (com.lagradost.*). The open-source libraries plugins
+    // call directly (all MIT / Apache 2.0): HTML parsing, JSON, URLs, and AppCompat / Material for their settings.
+    implementation("org.jsoup:jsoup:1.18.1")
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
+    implementation("com.google.code.gson:gson:2.11.0")
+    implementation("io.ktor:ktor-http:2.3.12")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
     // "Continue with Google" on phones (Credential Manager). Fire TV signs in with email + password.
     implementation("androidx.credentials:credentials:1.3.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")

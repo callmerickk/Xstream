@@ -406,7 +406,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
     var pwOk by remember { mutableStateOf(false) }
 
     var sourceTest by remember { mutableStateOf(false) }
-    if (sourceTest) { SourceTestScreen(vm) { sourceTest = false }; return }
+    if (sourceTest) { SourceTestHub(vm) { sourceTest = false }; return }
     var autoPlay by remember { mutableStateOf(false) }
     if (autoPlay) { AutoPlayLogicScreen(vm) { autoPlay = false }; return }
     var refreshLab by remember { mutableStateOf(false) }
