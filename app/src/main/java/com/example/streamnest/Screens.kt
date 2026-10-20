@@ -263,7 +263,7 @@ fun App(vm: AppViewModel = viewModel()) {
                     },
                     modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"),
                 )
-                if (voiceOpen) VoiceAssistant(vm, onClose = { voiceOpen = false }) { voiceOpen = false; open(it) }
+                if (voiceOpen) VoiceAssistant(vm, onClose = { voiceOpen = false }, onOpen = { voiceOpen = false; open(it) })
                 // Voice search handed a request to the AI.
                 val voiceAsk by VoiceAskBus.pending.collectAsState()
                 voiceAsk?.let { said -> key(said) { VoiceAssistant(vm, onClose = { VoiceAskBus.pending.value = null }, onOpen = { VoiceAskBus.pending.value = null; open(it) }, firstAsk = said) } }
