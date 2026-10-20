@@ -261,7 +261,7 @@ object NuvioTester {
         }
     }
 
-    private suspend fun tmdbIdFor(vm: AppViewModel, imdb: String, series: Boolean): String? {
+    internal suspend fun tmdbIdFor(vm: AppViewModel, imdb: String, series: Boolean): String? {
         val key = vm.tmdbKey().ifEmpty { return null }
         return runCatching {
             val o = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/find/$imdb?api_key=$key&external_source=imdb_id")).jsonObject

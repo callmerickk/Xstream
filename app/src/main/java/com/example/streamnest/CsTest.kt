@@ -50,7 +50,8 @@ import java.util.Date
 import java.util.Locale
 
 /** "Instant Download" links (one-time download pages, mostly 403 / broken for players): left out everywhere. */
-private val instantRx = Regex("(?i)instant[\\s(\\[_-]*download")
+// "Instant Download" and "10Gbps" links are download-only: they never play in a player.
+private val instantRx = Regex("(?i)instant[\\s(\\[_-]*download|10\\s*gbps")
 fun isInstantDownloadName(vararg texts: String?): Boolean = texts.any { it != null && instantRx.containsMatchIn(it) }
 fun StreamItem.isInstantDownload(): Boolean = isInstantDownloadName(stream.name, stream.title, stream.description, stream.behaviorHints?.filename)
 
@@ -134,7 +135,7 @@ object CsTester {
     }
 
     /** A site's title without the year, quality, language and file details ("Movie (2019) WEB-DL [Hindi…] 1080p…" → "Movie"). */
-    internal fun cleanTitle(raw: String): String {
+    fun cleanTitle(raw: String): String {
         var t = raw.replace(Regex("(?i)^download\\s+"), "")
         val parenYear = Regex("\\(\\s*(19|20)\\d{2}").containsMatchIn(t)
         val cut = listOfNotNull(Regex("\\(\\s*(19|20)\\d{2}"), Regex("\\[|\\{|\\|"), if (parenYear) null else Regex("(?i)\\b(19|20)\\d{2}\\b"),

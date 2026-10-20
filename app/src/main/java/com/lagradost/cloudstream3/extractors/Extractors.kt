@@ -17,7 +17,7 @@ import javax.crypto.spec.SecretKeySpec
 // Xstream's own link readers for common video hosts (written from scratch; same class names plugins extend).
 
 object BuiltInExtractors {
-    val list: List<ExtractorApi> by lazy { listOf(PixelDrain(), StreamTape(), VidHidePro(), VidStack(), StreamWishExtractor(), FileMoon()) }
+    val list: List<ExtractorApi> by lazy { listOf(PixelDrain(), VidHidePro(), VidStack(), StreamWishExtractor(), FileMoon()) + extraExtractors }
 }
 
 private fun origin(u: String): String = runCatching { URI(u).let { "${it.scheme}://${it.host}" } }.getOrDefault(u)
@@ -35,22 +35,6 @@ open class PixelDrain : ExtractorApi() {
         callback(newExtractorLink(name, fileName ?: name, "$base/api/file/$id?download", ExtractorLinkType.VIDEO) {
             this.referer = url; quality = getQualityFromName(fileName)
         })
-    }
-}
-
-/** streamtape: the page builds the address from two pieces of text. */
-open class StreamTape : ExtractorApi() {
-    override val name: String = "StreamTape"
-    override val mainUrl: String = "https://streamtape.com"
-    override val requiresReferer: Boolean = false
-    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
-        val page = app.get(url.replace("/e/", "/v/"), referer = referer).text
-        val m = Regex("""getElementById\('(?:robotlink|ideoolink|norobotlink)'\)\.innerHTML\s*=\s*['"]([^'"]+)['"]\s*\+\s*\(?['"]([^'"]+)['"]\)?(?:\.substring\((\d+)\))?(?:\.substring\((\d+)\))?""").findAll(page).lastOrNull() ?: return
-        var tail = m.groupValues[2]
-        m.groupValues[3].toIntOrNull()?.let { tail = tail.drop(it) }
-        m.groupValues[4].toIntOrNull()?.let { tail = tail.drop(it) }
-        val link = "https:" + (m.groupValues[1] + tail).trimStart(':') + "&stream=1"
-        callback(newExtractorLink(name, name, link.replace("https:////", "https://"), ExtractorLinkType.VIDEO) { this.referer = mainUrl; quality = Qualities.Unknown.value })
     }
 }
 

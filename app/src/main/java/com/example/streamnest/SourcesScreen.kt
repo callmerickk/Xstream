@@ -133,6 +133,12 @@ fun SourcesScreen(
         all = emptyList(); done = false
         vm.streamsFlow(meta.type, target.videoId).collect { (l, d) -> all = l; done = d }
     }
+    // Xstream: CloudStream and Nuvio plugins, two extra sections (hidden while they have nothing).
+    val pctx = androidx.compose.ui.platform.LocalContext.current
+    var csItems by remember(target.videoId) { mutableStateOf<List<StreamItem>>(emptyList()) }
+    var nuItems by remember(target.videoId) { mutableStateOf<List<StreamItem>>(emptyList()) }
+    LaunchedEffect(target.videoId, reload) { csItems = emptyList(); runCatching { PluginSources.cloudstream(pctx, meta, target.videoId).collect { csItems = it } } }
+    LaunchedEffect(target.videoId, reload) { nuItems = emptyList(); runCatching { PluginSources.nuvio(pctx, vm, meta, target.videoId).collect { nuItems = it } } }
     var showAll by remember(target.videoId) { mutableStateOf(false) }
     val rules = remember(texts["tagRules"]) { parseTagRules(v("tagRules")) }
     // Links a slow-server addon (CNCVerse) finds later appear here by themselves (asked again every 5 s).
@@ -159,7 +165,7 @@ fun SourcesScreen(
     val shown = remember(own, addon) {
         (if (addon == null) own else own.filter { it.addonName == addon }).distinctBy { it.addonName + (it.stream.url ?: "") + (it.stream.name ?: "") }
     }
-    val nothing = shown.isEmpty() && (addon != null || (quickItems.isEmpty() && backupGroups.isEmpty()))
+    val nothing = shown.isEmpty() && (addon != null || (quickItems.isEmpty() && backupGroups.isEmpty() && csItems.isEmpty() && nuItems.isEmpty()))
     var resume by remember(resumeMs) { mutableStateOf(resumeMs > 0) }
     val fusion = isOn(v("fusionBadges"))
     val showAddon = isOn(v("showAddonName"))
@@ -232,6 +238,18 @@ fun SourcesScreen(
                         }
                     }
                     if (!done) items(if (shown.isEmpty()) 3 else 1) { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { SkeletonCard() } }
+                    if (addon == null && csItems.isNotEmpty()) {
+                        item { SectionHead("CloudStream", "from your CloudStream plugins") }
+                        items(csItems.distinctBy { it.stream.url }, key = { "cs" + it.addonName + it.stream.url }) { s ->
+                            Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, f.list + csItems, if (resume) resumeMs else 0L) } }
+                        }
+                    }
+                    if (addon == null && nuItems.isNotEmpty()) {
+                        item { SectionHead("Nuvio", "from your Nuvio plugins") }
+                        items(nuItems.distinctBy { it.stream.url }, key = { "nu" + it.addonName + it.stream.url }) { s ->
+                            Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, f.list + nuItems, if (resume) resumeMs else 0L) } }
+                        }
+                    }
                 }
             }
         }
