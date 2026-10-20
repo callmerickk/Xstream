@@ -67,7 +67,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+    kotlinOptions {
+        jvmTarget = "17"
+        // coroutines 1.11 is built with a newer Kotlin than this project's compiler; reading its metadata is safe.
+        freeCompilerArgs += listOf("-Xskip-metadata-version-check")
+    }
     buildFeatures { compose = true; buildConfig = true }
     packaging {
         // Keep one copy of the C++ runtime, and store native libraries compressed (much smaller APK).
@@ -127,9 +131,9 @@ dependencies {
     // CloudStream plugins run on Xstream's own CloudStream library (com.lagradost.*). The open-source libraries plugins
     // call directly (all MIT / Apache 2.0): HTML parsing, JSON, URLs, and AppCompat / Material for their settings.
     implementation("org.jsoup:jsoup:1.18.1")
-    // Plugins are built with the current coroutines (runBlocking is "runBlockingK" there): use the same version.
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // Plugins are built with coroutines 1.11 (runBlocking is "runBlockingK" there): use the same version.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
     implementation("com.google.code.gson:gson:2.11.0")
