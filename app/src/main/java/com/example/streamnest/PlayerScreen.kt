@@ -3003,6 +3003,32 @@ fun PlayerScreen(
                                 val quickNow = now?.url?.let { itemFor(it) }?.let { it.isMovieBox() || vm.isQuick(it) } == true
                                 if (quality == "auto" || quickNow) "Quick" + (real?.let { " · $it" } ?: "") else real ?: (AllQualityLevels.firstOrNull { it.id == quality }?.label ?: "Quick")
                             }, "Quality", iconFirst = false) { qualityMenu = !qualityMenu; poke++ }
+                        // Xstream: one stream that carries several qualities (an HLS playlist, like CloudStream's Netflix
+                        // server): pick one of them here, or Auto.
+                        if (!BuildConfig.IS_TV && quickList.isEmpty()) {
+                            val vg = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 1 }
+                            val heights = vg?.let { g -> (0 until g.length).map { g.getTrackFormat(it).height }.filter { it > 0 }.distinct().sortedDescending() }.orEmpty()
+                            if (vg != null && heights.size > 1) Box {
+                                var open by remember { mutableStateOf(false) }
+                                val curH = (0 until vg.length).firstOrNull { vg.isTrackSelected(it) }?.let { vg.getTrackFormat(it).height }
+                                val pinned = player.trackSelectionParameters.overrides.keys.any { it == vg.mediaTrackGroup }
+                                GlassBtn(if (open) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                    (if (pinned) "" else "Auto · ") + (curH?.let { "${it}p" } ?: "Quality"), "Quality", iconFirst = false) { open = !open; poke++ }
+                                androidx.compose.material3.DropdownMenu(open, { open = false }, containerColor = Color(0xF21A1A20)) {
+                                    androidx.compose.material3.DropdownMenuItem({ Text("Auto" + if (!pinned) "  ✓" else "") }, {
+                                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO).build(); open = false
+                                    })
+                                    heights.forEach { h ->
+                                        androidx.compose.material3.DropdownMenuItem({ Text("${h}p" + if (pinned && curH == h) "  ✓" else "") }, {
+                                            val idx = (0 until vg.length).filter { vg.getTrackFormat(it).height == h }
+                                            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                                                .setOverrideForType(androidx.media3.common.TrackSelectionOverride(vg.mediaTrackGroup, idx)).build()
+                                            open = false
+                                        })
+                                    }
+                                }
+                            }
+                        }
                         GlassBtn(Icons.Default.Close, null, "Back") { onBack() }
                     }
                     // Phones: play / pause is the big centre button. TV: it stays the first button of the bottom row (remote focus).

@@ -1,0 +1,6 @@
+{
+  "name": "xstream-nuvio-runtime",
+  "private": true,
+  "description": "Open-source libraries Nuvio plugins require (cheerio, crypto-js; MIT), bundled for Xstream's plugin runtime",
+  "dependencies": { "cheerio": "1.0.0-rc.12", "crypto-js": "4.2.0", "esbuild": "0.21.5" }
+}

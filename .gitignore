@@ -4,3 +4,6 @@ app/build/
 local.properties
 *.iml
 .idea/
+app/src/main/assets/nuvio/libs.js
+tools/nuvio/node_modules
+tools/nuvio/package-lock.json

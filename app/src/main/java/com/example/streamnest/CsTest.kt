@@ -367,3 +367,20 @@ fun CsTestTab(vm: AppViewModel) {
         }
     }
 }
+
+/** Reads an HLS master playlist: (qualities, audio names, subtitle names). Null = not a playlist / unreachable. */
+internal suspend fun probeHlsMaster(url: String, headers: Map<String, String>): Triple<List<String>, List<String>, List<String>>? = withContext(Dispatchers.IO) {
+    runCatching {
+        val req = okhttp3.Request.Builder().url(url).apply {
+            headers.forEach { (k, v) -> header(k, v) }
+            if (headers.keys.none { it.equals("user-agent", true) }) header("user-agent", com.lagradost.cloudstream3.USER_AGENT)
+        }.build()
+        val text = Api.http.newCall(req).execute().use { it.body?.string().orEmpty() }
+        if (!text.contains("#EXTM3U")) return@runCatching null
+        val v = Regex("RESOLUTION=\\d+x(\\d+)").findAll(text).map { "${it.groupValues[1]}p" }.distinct().toList()
+        fun media(type: String) = Regex("#EXT-X-MEDIA:[^\\n]*TYPE=$type[^\\n]*").findAll(text).map { m ->
+            Regex("NAME=\"([^\"]+)\"").find(m.value)?.groupValues?.get(1) ?: Regex("LANGUAGE=\"([^\"]+)\"").find(m.value)?.groupValues?.get(1) ?: "?"
+        }.distinct().toList()
+        Triple(v, media("AUDIO"), media("SUBTITLES"))
+    }.getOrNull()
+}

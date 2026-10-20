@@ -21,6 +21,15 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Nuvio runtime libraries (cheerio, crypto-js)
+        run: |
+          cd tools/nuvio && npm install --no-audit --no-fund --silent
+          mkdir -p ../../app/src/main/assets/nuvio
+          npx esbuild entry.js --bundle --minify --platform=browser --format=iife --outfile=../../app/src/main/assets/nuvio/libs.js
+          ls -la ../../app/src/main/assets/nuvio
       - name: Build
         run: |
           set -o pipefail
