@@ -315,7 +315,8 @@ fun DetailScreen(
             if (external) openExternal(ctx, s.stream.url!!, tg.title)
             else onPlay(Screen.Player(tg.title, s.stream.url!!, subs, key = tg.videoId, image = tg.image ?: meta.background ?: meta.poster,
                 resumeMs = resume, type = meta.type, meta = meta, source = s.stream.name ?: s.addonName, addon = s.addonName,
-                candidates = all.filter { it !== s }))
+                // If this link fails, the player tries the same source's other links first.
+                candidates = all.filter { it !== s }.sortedBy { if (it.addonName == s.addonName) 0 else 1 }))
         }
     }
 

@@ -10,6 +10,7 @@ import com.lagradost.cloudstream3.TvSeriesLoadResponse
 import com.lagradost.cloudstream3.TvSeriesSearchResponse
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -59,6 +60,14 @@ object PluginSources {
         val item = StreamItem("CloudStream · $provider", StreamInfo(url = url, name = listOf(provider, q).filter { it.isNotBlank() }.joinToString("\n"),
             title = name, behaviorHints = BehaviorHints(filename = name, proxyHeaders = ProxyHeaders(getAllHeaders().takeIf { it.isNotEmpty() }))))
         StreamHeaders.remember(item)
+        // The plugin already knows the link's kind; telling the player saves a probe and avoids wrong guesses
+        // (many plugin playlists have no .m3u8 in the link).
+        when (type) {
+            ExtractorLinkType.M3U8 -> StreamType.remember(url, StreamType.HLS)
+            ExtractorLinkType.DASH -> StreamType.remember(url, StreamType.DASH)
+            ExtractorLinkType.VIDEO -> if (StreamType.quick(url) == null) StreamType.remember(url, "")
+            else -> {}
+        }
         return item
     }
 

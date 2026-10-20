@@ -1,3 +1,13 @@
+Xstream 0.4.5 beta
+
+• Choosing a CloudStream or Nuvio link plays that link (it no longer swaps in the link prepared in the background).
+• If a picked link fails, the other links from the same source are tried first.
+• Play manually: CloudStream and Nuvio have their own chips next to All, and sit above your addons.
+• Watch Next follows your finger as you swipe it up in the middle of the player.
+• Episodes chosen inside the player continue from where you stopped.
+
+---
+
 Xstream 0.4.4 beta
 
 • Play manually shows CloudStream and Nuvio sections with your plugins' streams. Each stays hidden while it has none.

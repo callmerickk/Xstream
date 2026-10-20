@@ -13,6 +13,13 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.4.5 beta", "21 Oct 2026", "Plugin links play what you pick", listOf(
+        "Choosing a CloudStream or Nuvio link plays that link (it no longer swaps in the link prepared in the background)",
+        "If a picked link fails, the other links from the same source are tried first",
+        "Play manually: CloudStream and Nuvio have their own chips next to All, and sit above your addons",
+        "Watch Next follows your finger as you swipe it up in the middle of the player",
+        "Episodes chosen inside the player continue from where you stopped",
+    )),
     Release("0.4.4 beta", "20 Oct 2026", "Plugin streams in Play manually", listOf(
         "Play manually shows CloudStream and Nuvio sections with your plugins' streams (each hidden while it has none)",
         "\"10Gbps\" links are left out too, like \"Instant Download\" (download-only, they never play)",
@@ -228,6 +235,14 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.4.5 beta", "21 Oct 2026", "Plugin links play what you pick", listOf(
+        "PlayerScreen: Preloader.take ignores the paused player when p.url is set and differs (it hijacked picked CloudStream links)",
+        "Detail.play: candidates sorted same-addon first, so fallbacks stay on the picked source",
+        "PluginSources: ExtractorLinkType -> StreamType.remember (HLS/DASH/file) so plugin playlists without .m3u8 open correctly",
+        "SourcesScreen: CS_TAB / NU_TAB chips with counts; All view shows 6 of each above Your addons with an 'All N' link",
+        "Watch Next: drag-follow sheet (wnDrag + Animatable, opens past 30% or on a flick), slides in from the bottom on phones",
+        "playEpisode: resumeMs from progress / epProgress like the title page",
+    )),
     Release("0.4.4 beta", "20 Oct 2026", "Plugin streams in Play manually", listOf(
         "PluginSources.kt: cloudstream() / nuvio() channelFlows (parallel per provider, withDeadline search 20 s / load 20 s / links 45 s), bestMatch() shared scoring; SourcesScreen sections CloudStream / Nuvio after addons, hidden when empty",
         "instantRx also matches 10 ?Gbps",

@@ -432,7 +432,10 @@ fun PlayerScreen(
     val pre = remember {
         Preloader.take(p.key)?.let { pl ->
             val bad = pl.player.playerError != null || pl.player.playbackState == androidx.media3.common.Player.STATE_IDLE
-            if (bad) { runCatching { pl.player.release() }; PlayTiming.mark("paused player was broken — opening the link again"); null }
+            // A link you picked yourself always wins over the one prepared in the background.
+            val other = p.url.isNotBlank() && p.url != pl.url
+            if (other) { runCatching { pl.player.release() }; PlayTiming.mark("paused player was for another link — opening the one you chose"); null }
+            else if (bad) { runCatching { pl.player.release() }; PlayTiming.mark("paused player was broken — opening the link again"); null }
             else pl.also { StreamHeaders.use(it.url) }
         }
     }
@@ -551,6 +554,12 @@ fun PlayerScreen(
     var topHasFocus by remember { mutableStateOf(false) }
     var rowHasFocus by remember { mutableStateOf(false) }
     var watchNext by remember { mutableStateOf(false) }
+    // Watch Next follows the finger while you swipe it up (-1 = not dragging), then settles open or closed.
+    var wnDrag by remember { mutableFloatStateOf(-1f) }
+    val wnAnim = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(watchNext) {
+        if (wnDrag < 0f) wnAnim.animateTo(if (watchNext) 1f else 0f, if (watchNext) spring(dampingRatio = 0.86f, stiffness = 420f) else tween(240))
+    }
     // Seek bubble while the controls are hidden: direction and seconds jumped so far (◀ ▶ = 30 s each).
     var bubble by remember { mutableStateOf<Pair<Boolean, Int>?>(null) }
     var bubbleTick by remember { mutableIntStateOf(0) }
@@ -2091,10 +2100,13 @@ fun PlayerScreen(
 
     fun playEpisode(ep: Video) {
         val m = meta ?: return
+        // Same saved place the title page would use (Continue Watching or the episode's own progress).
+        val saved = (vm.progress.value.firstOrNull { it.key == ep.id } ?: vm.epProgress.value[ep.id])
+            ?.takeIf { it.durationMs <= 0 || it.positionMs < it.durationMs * 0.95 }?.positionMs ?: 0L
         onReplace(
             Screen.Player(
                 "${m.name}  S${ep.season}E${ep.episode}", "", emptyList(), key = ep.id,
-                image = ep.thumbnail ?: m.background ?: m.poster, type = type, meta = m,
+                image = ep.thumbnail ?: m.background ?: m.poster, type = type, meta = m, resumeMs = saved,
                 source = if (p.quick) null else now?.source, addon = now?.addon, find = true, quick = p.quick,
             )
         )
@@ -2703,6 +2715,7 @@ fun PlayerScreen(
                         var pinchRatio = 1f
                         var baseSpeed = 1f
                         var lastStep = 0
+                        var wnLastY = 0f; var wnLastT = 0L; var wnVel = 0f
                         while (true) {
                             val wait = if (mode == 0) (longMs - (SystemClock.uptimeMillis() - downAt)).coerceAtLeast(1L) else Long.MAX_VALUE
                             val ev = this.withTimeoutOrNull(wait) { awaitPointerEvent() }
@@ -2731,6 +2744,7 @@ fun PlayerScreen(
                                 0 -> if (!BuildConfig.IS_TV && abs(delta.y) > slop && abs(delta.y) > abs(delta.x) && start.x in (size.width / 3f)..(size.width * 2f / 3f)) {
                                     // Xstream: the middle third — swiping up there pulls Watch Next up (like YouTube).
                                     mode = 5
+                                    wnDrag = 0f; wnLastY = c.position.y; wnLastT = SystemClock.uptimeMillis(); wnVel = 0f
                                 } else if (abs(delta.y) > slop && abs(delta.y) > abs(delta.x)) {
                                     mode = 1
                                     val act = ctx as Activity
@@ -2750,6 +2764,13 @@ fun PlayerScreen(
                                     }
                                     c.consume()
                                 }
+                                5 -> {
+                                    // The sheet tracks the finger: a full pull is just over half the screen.
+                                    wnDrag = ((start.y - c.position.y) / (size.height * 0.55f)).coerceIn(0f, 1f)
+                                    val tNow = SystemClock.uptimeMillis()
+                                    if (tNow > wnLastT) { wnVel = (wnLastY - c.position.y) / (tNow - wnLastT); wnLastY = c.position.y; wnLastT = tNow }
+                                    c.consume()
+                                }
                                 2 -> {
                                     val step = (delta.x / stepPx).toInt()
                                     if (step != lastStep) {
@@ -2765,8 +2786,14 @@ fun PlayerScreen(
                             }
                         }
                         if (mode == 5) {
-                            val endY = currentEvent.changes.firstOrNull()?.position?.y ?: start.y
-                            if (start.y - endY > 56.dp.toPx()) { watchNext = true; controls = false }
+                            // Let go past a third of the way (or with a quick flick up) and it opens; otherwise it drops back.
+                            val pNow = wnDrag.coerceAtLeast(0f)
+                            val open = pNow > 0.3f || (wnVel > 0.6f && pNow > 0.05f)
+                            scope.launch {
+                                wnAnim.snapTo(pNow); wnDrag = -1f
+                                if (open) { if (!watchNext) { watchNext = true; controls = false } else wnAnim.animateTo(1f, spring(dampingRatio = 0.86f, stiffness = 420f)) }
+                                else wnAnim.animateTo(0f, tween(200))
+                            }
                         }
                         when (mode) {
                             0 -> {
@@ -3516,7 +3543,6 @@ fun PlayerScreen(
             fun originOf(k: String) = btnCenters[k]?.let { androidx.compose.ui.graphics.TransformOrigin((it.x / bw).coerceIn(0f, 1f), (it.y / bh).coerceIn(0f, 1f)) }
                 ?: androidx.compose.ui.graphics.TransformOrigin(0.5f, 0.9f)
             val epScale by animateFloatAsState(if (showEpisodes) 1f else 0.08f, if (showEpisodes) spring(dampingRatio = 0.8f, stiffness = 380f) else tween(220), label = "epB")
-            val wnScale by animateFloatAsState(if (watchNext) 1f else 0.08f, if (watchNext) spring(dampingRatio = 0.8f, stiffness = 380f) else tween(220), label = "wnB")
             // ───── Episodes (series): premium pop-up grouped by season ─────
             Box(Modifier.fillMaxSize().graphicsLayer { if (!BuildConfig.IS_TV) { scaleX = epScale; scaleY = epScale; transformOrigin = originOf("episodes") } }) {
             EpisodesPopup(
@@ -3541,9 +3567,13 @@ fun PlayerScreen(
                     }
                 }
             }
-            Box(Modifier.fillMaxSize().graphicsLayer { if (!BuildConfig.IS_TV) { scaleX = wnScale; scaleY = wnScale; transformOrigin = originOf("watchnext") } }) {
+            val wnP = if (wnDrag >= 0f) wnDrag else wnAnim.value
+            Box(Modifier.fillMaxSize().graphicsLayer {
+                // Phones: the sheet slides up from the bottom, following the finger while it is dragged.
+                if (!BuildConfig.IS_TV) { translationY = (1f - wnP) * bh; alpha = (wnP * 1.6f).coerceAtMost(1f) }
+            }) {
             WatchNextOverlay(
-                vm, watchNext, meta, type, p.key, episodes, onClose = { watchNext = false },
+                vm, watchNext || wnP > 0.001f, meta, type, p.key, episodes, onClose = { watchNext = false },
                 onEpisode = { ep -> watchNext = false; playEpisode(ep) },
             ) { m ->
                 watchNext = false

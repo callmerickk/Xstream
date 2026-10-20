@@ -165,7 +165,14 @@ fun SourcesScreen(
     val shown = remember(own, addon) {
         (if (addon == null) own else own.filter { it.addonName == addon }).distinctBy { it.addonName + (it.stream.url ?: "") + (it.stream.name ?: "") }
     }
-    val nothing = shown.isEmpty() && (addon != null || (quickItems.isEmpty() && backupGroups.isEmpty() && csItems.isEmpty() && nuItems.isEmpty()))
+    // CloudStream and Nuvio get their own chips next to "All", like an addon.
+    val csList = remember(csItems) { csItems.distinctBy { it.stream.url } }
+    val nuList = remember(nuItems) { nuItems.distinctBy { it.stream.url } }
+    val nothing = when (addon) {
+        CS_TAB -> csList.isEmpty()
+        NU_TAB -> nuList.isEmpty()
+        else -> shown.isEmpty() && (addon != null || (quickItems.isEmpty() && backupGroups.isEmpty() && csList.isEmpty() && nuList.isEmpty()))
+    }
     var resume by remember(resumeMs) { mutableStateOf(resumeMs > 0) }
     val fusion = isOn(v("fusionBadges"))
     val showAddon = isOn(v("showAddonName"))
@@ -203,6 +210,8 @@ fun SourcesScreen(
                         }
                     }
                     item { Pill("All", addon == null, big = true, mod = if (resumeMs > 0) Modifier else Modifier.focusRequester(firstFr)) { addon = null } }
+                    if (csList.isNotEmpty()) item { Pill("CloudStream · ${csList.size}", addon == CS_TAB, big = true) { addon = CS_TAB } }
+                    if (nuList.isNotEmpty()) item { Pill("Nuvio · ${nuList.size}", addon == NU_TAB, big = true) { addon = NU_TAB } }
                     items(addons) { a -> Pill(Public.serverName(a), addon == a, big = true) { addon = a } }
                 }
             }
@@ -215,6 +224,12 @@ fun SourcesScreen(
                 }
                 nothing && done -> item {
                     EmptyBox(Icons.Default.CloudOff, t("noStreams"), "Try again") { reload++ }
+                }
+                addon == CS_TAB -> items(csList, key = { "cs" + it.addonName + it.stream.url }) { s ->
+                    Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, csList, if (resume) resumeMs else 0L) } }
+                }
+                addon == NU_TAB -> items(nuList, key = { "nu" + it.addonName + it.stream.url }) { s ->
+                    Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, nuList, if (resume) resumeMs else 0L) } }
                 }
                 else -> {
                     if (addon == null && quickItems.isNotEmpty()) {
@@ -231,25 +246,28 @@ fun SourcesScreen(
                             BackupGroupRow(tag, l) { onPick(l.first(), f.list, if (resume) resumeMs else 0L) }
                         }
                     }
-                    if (shown.isNotEmpty() && (quickItems.isNotEmpty() || backupGroups.isNotEmpty()) && addon == null) item { SectionHead("Your addons", "every detail") }
+                    // Plugins sit above your addons so they are easy to reach (each also has its own chip).
+                    if (addon == null && csList.isNotEmpty()) {
+                        item { SectionHead("CloudStream", "from your CloudStream plugins") }
+                        items(csList.take(6), key = { "cs" + it.addonName + it.stream.url }) { s ->
+                            Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, csList, if (resume) resumeMs else 0L) } }
+                        }
+                        if (csList.size > 6) item { MoreLink("All ${csList.size} CloudStream links") { addon = CS_TAB } }
+                    }
+                    if (addon == null && nuList.isNotEmpty()) {
+                        item { SectionHead("Nuvio", "from your Nuvio plugins") }
+                        items(nuList.take(6), key = { "nu" + it.addonName + it.stream.url }) { s ->
+                            Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, nuList, if (resume) resumeMs else 0L) } }
+                        }
+                        if (nuList.size > 6) item { MoreLink("All ${nuList.size} Nuvio links") { addon = NU_TAB } }
+                    }
+                    if (shown.isNotEmpty() && (quickItems.isNotEmpty() || backupGroups.isNotEmpty() || csList.isNotEmpty() || nuList.isNotEmpty()) && addon == null) item { SectionHead("Your addons", "every detail") }
                     items(shown, key = { it.addonName + (it.stream.url ?: "") + (it.stream.name ?: "") }) { s ->
                         Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) {
                             StreamCard(s, fusion, showAddon, pack) { onPick(s, f.list, if (resume) resumeMs else 0L) }
                         }
                     }
                     if (!done) items(if (shown.isEmpty()) 3 else 1) { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { SkeletonCard() } }
-                    if (addon == null && csItems.isNotEmpty()) {
-                        item { SectionHead("CloudStream", "from your CloudStream plugins") }
-                        items(csItems.distinctBy { it.stream.url }, key = { "cs" + it.addonName + it.stream.url }) { s ->
-                            Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, f.list + csItems, if (resume) resumeMs else 0L) } }
-                        }
-                    }
-                    if (addon == null && nuItems.isNotEmpty()) {
-                        item { SectionHead("Nuvio", "from your Nuvio plugins") }
-                        items(nuItems.distinctBy { it.stream.url }, key = { "nu" + it.addonName + it.stream.url }) { s ->
-                            Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, f.list + nuItems, if (resume) resumeMs else 0L) } }
-                        }
-                    }
                 }
             }
         }
@@ -320,4 +338,13 @@ fun fmtTime(ms: Long): String {
     val s = (ms / 1000).coerceAtLeast(0)
     val h = s / 3600; val m = (s % 3600) / 60; val sec = s % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+}
+
+private const val CS_TAB = "\u0001cloudstream"
+private const val NU_TAB = "\u0001nuvio"
+
+@Composable
+private fun MoreLink(label: String, onClick: () -> Unit) {
+    Text(label, Modifier.padding(horizontal = 20.dp, vertical = 8.dp).clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick).padding(horizontal = 6.dp, vertical = 4.dp),
+        color = Accent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
 }
