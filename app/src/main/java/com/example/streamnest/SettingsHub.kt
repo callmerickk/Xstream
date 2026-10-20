@@ -70,11 +70,11 @@ fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) 
         "cw" -> ContinueWatchingPage(vm, back)
         "poster" -> PosterStylePage(vm, back)
         "streams" -> StreamsPage(vm, back)
-        "content" -> ContentPage(back, open)
+        "content" -> ContentPage(vm, back, open)
         "addons" -> AddonsPage(vm, back)
         "integrations" -> IntegrationsPage(vm, back)
         "quickStart" -> QuickStartPage(vm, back)
-        "playback" -> PlaybackPage(vm, back)
+        "quickPlay" -> QuickPlayPage(vm, back)
         "detailPage" -> DetailPageSettings(vm, back)
         "streamFilters" -> StreamFiltersPage(vm, back)
         "collections" -> CollectionsSettingsPage(vm, back)
@@ -584,14 +584,14 @@ private fun AppIconPicker() {
 // ───────────── Content & Discovery ─────────────
 
 @Composable
-private fun ContentPage(onBack: () -> Unit, open: (String) -> Unit) {
+private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> Unit) {
     Page("Content & Discovery", onBack) {
         SectionLabel("Sources")
         SettingsCard {
             SettingRow(null, "Addons", "Install, remove, refresh, and sort your content sources.") { open("addons") }
             RowDivider(20.dp)
             // Xstream: Quick Play and Stream Filters are one page for users; the detailed pages stay for the developer.
-            SettingRow(null, "Playback", "Quick Play, quality, audio language and what to hide.") { open("playback") }
+            SettingRow(null, "Quick Play & filters", "Quick Play, quality, audio language and what to hide.") { open("quickPlay") }
             if (Public.dev) {
                 RowDivider(20.dp)
                 SettingRow(null, "Stream Filters (all)", "Include, exclude or force every tag.") { open("streamFilters") }

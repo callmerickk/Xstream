@@ -26,7 +26,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
  * (quality, audio, picture, hide). No paragraphs. The addon picker and speeds live in Developer's Corner.
  */
 @Composable
-fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
+fun QuickPlayPage(vm: AppViewModel, onBack: () -> Unit) {
     val texts by vm.texts.collectAsStateWithLifecycle()
     fun v(k: String) = texts[k] ?: Defaults[k] ?: ""
     val langs = v("qsLangs").split(",").map { it.trim() }.filter { it.isNotEmpty() }
@@ -34,7 +34,7 @@ fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
     fun setRule(id: String, r: TagRule) = vm.setText("tagRules", encodeTagRules(rules + (id to r)))
     val red = Accent
     Column(Modifier.fillMaxSize().background(Bg).verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 60.dp)) {
-        PageHeader("Playback", onBack)
+        PageHeader("Quick Play & filters", onBack)
         // Quick Play
         val shape = RoundedCornerShape(22.dp)
         Row(
