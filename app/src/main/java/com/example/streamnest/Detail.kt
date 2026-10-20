@@ -67,6 +67,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -197,13 +198,16 @@ fun DetailScreen(
         // collect the links, so they are there for the HD upgrade once the video plays.
         SlowAddons.watch(vm, meta.type, playTarget.target.videoId)
         if (!instantOn) { runCatching { if (quick) vm.quickStreams(meta.type, playTarget.target.videoId) else vm.allStreams(meta.type, playTarget.target.videoId) }; return@LaunchedEffect }
-        Prepare.start(vm, ctx, meta.type, playTarget.target.videoId, playTarget.resumeMs, runtimeMs(meta.runtime), quick, level)
+        Prepare.start(vm, ctx, meta.type, playTarget.target.videoId, playTarget.resumeMs, runtimeMs(meta.runtime), quick, level, meta)
     }
     val prep by Prepare.state.collectAsStateWithLifecycle()
     // Play pressed while it is still saving: stay here; start as soon as enough is saved (or fall back).
     var waitingFor by remember { mutableStateOf<SourceTarget?>(null) }
     var waitingResume by remember { mutableLongStateOf(0L) }
     var showPrepInfo by remember { mutableStateOf(false) }
+    // Play pressed while Quick Play's CloudStream plugins are still getting their best link ready (≤ 20 s from the page
+    // opening): wait for them, then play whatever is ready (CloudStream, else MovieBox).
+    var csWait by remember { mutableStateOf<SourceTarget?>(null) }
     // A ready, paused player made for this page: freed when you leave without playing (Play takes it over first).
     val prepKey by rememberUpdatedState(playTarget.target.videoId)
     DisposableEffect(Unit) { onDispose { Preloader.release(prepKey) } }
@@ -227,6 +231,7 @@ fun DetailScreen(
         }
         when {
             forceSources -> pick = t
+            instantOn && !fromStart && Prepare.csPendingFor(t.videoId) -> csWait = t
             instantOn && !fromStart -> {
                 // Instant: the prepared link plays straight from storage; if it isn't ready yet, wait here.
                 val st = Prepare.state.value
@@ -269,6 +274,13 @@ fun DetailScreen(
         }
     }
 
+    LaunchedEffect(csWait) {
+        val t = csWait ?: return@LaunchedEffect
+        PlayTiming.mark("Play pressed — waiting for CloudStream (at most 20 s from the page opening)")
+        withTimeoutOrNull(21_000) { Prepare.csPending.first { it != t.videoId } }
+        csWait = null
+        start(t)
+    }
     LaunchedEffect(waitingFor) {
         val t = waitingFor ?: return@LaunchedEffect
         val t0 = android.os.SystemClock.elapsedRealtime()

@@ -13,6 +13,15 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.4.6 beta", "21 Oct 2026", "CloudStream in Quick Play", listOf(
+        "Quick Start › CloudStream: tick the plugins (Netflix, Hotstar, Prime Video…) Quick Play should try first — each repository folds open",
+        "Opening a title fetches their links at once; the best quality plays if it's ready within 20 seconds, otherwise MovieBox plays straight away",
+        "Plugin streams now bring their subtitles",
+        "Subtitles that come with a link can be synced (Sync and auto sync work on them too)",
+        "More plugins work (MovieBox and others that needed newer CloudStream parts)",
+        "Watch Next: tidy layout that scrolls, and dragging it down follows your finger to close it",
+        "Episodes in the player show how much you've watched",
+    )),
     Release("0.4.5 beta", "21 Oct 2026", "Plugin links play what you pick", listOf(
         "Choosing a CloudStream or Nuvio link plays that link (it no longer swaps in the link prepared in the background)",
         "If a picked link fails, the other links from the same source are tried first",
@@ -235,6 +244,15 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.4.6 beta", "21 Oct 2026", "CloudStream Quick Play race, plugin subtitles, CS library gaps", listOf(
+        "qsCs (pluginKey#provider) picked in QuickStartPage › QuickCsSection (TriStateCheckbox per repo, foldable); backed up with qsAddons",
+        "Prepare.csRace: PluginSources.selected() from page open; best resolution first (waits ≤3 s for ≥6 links); csOpen = paused ExoPlayer until first frame; replaces MovieBox Preloader; 20 s deadline; csWonFor stops MovieBox status/preloader overrides; Detail waits on Prepare.csPending",
+        "PluginSources.linksFrom: subtitleCallback → StreamInfo.subtitles; DrmExtractorLink skipped; CSPLAY logs every step (search count / top results / load / episode / links / errors / plugin load failure)",
+        "CS library: MainAPI.Companion.settingsForProvider + SettingsJson, SubtitleHelper, M3u8Helper.generateM3u8, DrmExtractorLink/newDrmExtractorLink/CLEARKEY_UUID, getPacked, addEpisodes/addDubStatus/addSub/addDub, fixTitle, imdbUrlToIdNullable, APIHolder.capitalize, addTrailer(List), addKitsuId, addActorsOnly, AudioFile + ExtractorLink.audioTracks, NiceResponse.textLarge, CloudStreamApp setKey(any)/setKey(folder,path)/removeKey",
+        "Sidecar subtitle track selected → loaded with ExtSubs into ext (app-drawn) so Speech sync applies",
+        "WatchNextOverlay: BoxWithConstraints + verticalScroll + NestedScrollConnection drag (onDrag/onDragEnd → wnDrag/wnAnim, close < 70 % or fling > 1200 px/s); WnRow sizes 200/100 dp, progress bar; EpisodesPopup watched bar + % label",
+        "DevSourcesPanel: CloudStream + Nuvio streams; foldable groups (DevGroupHeader), playing group open",
+    )),
     Release("0.4.5 beta", "21 Oct 2026", "Plugin links play what you pick", listOf(
         "PlayerScreen: Preloader.take ignores the paused player when p.url is set and differs (it hijacked picked CloudStream links)",
         "Detail.play: candidates sorted same-addon first, so fallbacks stay on the picked source",

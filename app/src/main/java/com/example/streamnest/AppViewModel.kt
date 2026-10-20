@@ -598,7 +598,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     // ───────────── Addon backup / move (Settings › Addons › Export / Import) ─────────────
     /** Settings that travel with the addons. */
-    private val backupKeys = listOf("qsAddons", "qsOn", "qsLangs", "qsQuality", "qsUpgrade", "subLangs", "tagRules", "srcAutoManage",
+    private val backupKeys = listOf("qsAddons", "qsCs", "qsOn", "qsLangs", "qsQuality", "qsUpgrade", "subLangs", "tagRules", "srcAutoManage",
         "testedOnly", "hideDead", "autoOnlineSubs", "subAutoSync")
 
     /** Everything about your addons as a small JSON text: links in order, on / off, pins, Quick play and the play settings. */

@@ -47,7 +47,12 @@ object Prepare {
     private val failed = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
     fun failedFor(id: String): Set<String> = failed[id]?.toSet().orEmpty()
 
-    fun start(vm: AppViewModel, ctx: Context, type: String, id: String, resumeMs: Long, durMs: Long?, quick: Boolean, level: String) {
+    /** The CloudStream race (Quick Play's picked plugins) is still running for this title: Play waits for it (≤ 20 s). */
+    val csPending = MutableStateFlow<String?>(null)
+    fun csPendingFor(id: String) = csPending.value == id
+    @Volatile private var csWonFor: String? = null
+
+    fun start(vm: AppViewModel, ctx: Context, type: String, id: String, resumeMs: Long, durMs: Long?, quick: Boolean, level: String, meta: Meta? = null) {
         val cur = state.value
         // Same title, same resume point (within 30 s), prepared or still preparing: keep it.
         val sameSpot = kotlin.math.abs(resumeMs - lastResume) < 30_000 && System.currentTimeMillis() - preparedAt < 15 * 60_000L
@@ -57,6 +62,15 @@ object Prepare {
         preparedAt = System.currentTimeMillis()
         state.value = Prepared(id, "Finding streams…")
         job = vm.viewModelScope.launch {
+            // CloudStream won the race: MovieBox's preparing goes on quietly (backup links) but no longer changes the status.
+            csWonFor = null
+            fun put(p: Prepared) { if (csWonFor != id) state.value = p }
+            val csPicked = if (quick && meta != null) vm.qsCs() else emptySet()
+            if (csPicked.isNotEmpty() && meta != null) launch {
+                csPending.value = id
+                try { csRace(vm, ctx, meta, id, csPicked, resumeMs) { state.value?.list.orEmpty() } }
+                finally { if (csPending.value == id) csPending.value = null }
+            }
             // Links arrive addon by addon: start checking as soon as the fast addons answered (no waiting for the slowest).
             val live = MutableStateFlow<Pair<List<StreamItem>, Boolean>>(emptyList<StreamItem>() to false)
             var useQuick = quick
@@ -75,7 +89,7 @@ object Prepare {
                 if (wideOn) return
                 wideOn = true
                 useQuick = false
-                state.value = Prepared(id, why)
+                put(Prepared(id, why))
                 wide = launch {
                     launch { SlowAddons.links.collect { m -> if (m[id].orEmpty().isNotEmpty()) publish() } }
                     runCatching { vm.progressiveStreams(type, id, false).collect { (l, d) -> wideL = (wideL + l).distinctBy { it.stream.url }; wideDone = d; publish() } }
@@ -125,7 +139,7 @@ object Prepare {
             suspend fun attempt(s: StreamItem, i: Int, n: Int, known: LinkProbe? = null): Boolean {
                 val url = s.stream.url ?: return false
                 val label = if (Public.dev) "${Ranker.labelOf(Ranker.groupKey(s)).substringAfter(" · ", "")} · ${qualityName(s.resolution())}" else qualityName(s.resolution())
-                state.value = Prepared(id, "Checking ${i + 1}/$n · $label", list = list, subs = subs)
+                put(Prepared(id, "Checking ${i + 1}/$n · $label", list = list, subs = subs))
                 StreamCache.register(s)
                 val pr = known ?: StreamCache.probe(url)
                 if (!pr.ok) {
@@ -139,7 +153,7 @@ object Prepare {
                 // Playlists (HLS / DASH) stream in small pieces: nothing to save, they start fast.
                 val mime = StreamType.mimeFor(url, s.fileName())
                 if (mime != null) {
-                    state.value = Prepared(id, "Ready · streaming playlist · $label", 1f, ready = true, item = s, list = list, subs = subs)
+                    put(Prepared(id, "Ready · streaming playlist · $label", 1f, ready = true, item = s, list = list, subs = subs))
                     readyPlayer(vm, ctx, id, s, url, mime, subs, list, resumeMs)
                     return true
                 }
@@ -153,7 +167,7 @@ object Prepare {
                 else 0L
                 val len = if (pr.size > 0) minOf(want, pr.size - startByte) else want
                 val minStart = if (big) want else want / 4 // enough to start without waiting
-                state.value = Prepared(id, "Saving ${if (big) "15 s" else "1:00"} · $label", 0f, item = s, list = list, subs = subs, target = len)
+                put(Prepared(id, "Saving ${if (big) "15 s" else "1:00"} · $label", 0f, item = s, list = list, subs = subs, target = len))
                 // The player first reads the file's header (start) and its index (end: MP4 "moov", MKV "cues"), then jumps
                 // to your resume point: save those too, so nothing has to come from the server before the picture.
                 // The start (when resuming) and the end are fetched at the same time as each other.
@@ -174,21 +188,21 @@ object Prepare {
                     StreamCache.saveParts(ctx, url, startByte, len, 4, onHeadDone = { enough.set(true) }) { f ->
                         val done = (len * f).toLong()
                         savedNow.set(done)
-                        if (!enough.get()) state.value = Prepared(id, "Saving ${(f * 100).toInt()}% · $label", f, item = s, list = list, subs = subs, saved = done, target = len)
+                        if (!enough.get()) put(Prepared(id, "Saving ${(f * 100).toInt()}% · $label", f, item = s, list = list, subs = subs, saved = done, target = len))
                     }
                 }
                 while (!enough.get() && saver.isActive) delay(80)
                 if (enough.get()) {
                     saver.cancel()
-                    state.value = Prepared(id, "⚡ Ready to play instantly · ${if (big) "15 s" else "1:00"} start saved · $label", 1f, ready = true,
-                        item = s, list = list, subs = subs, saved = savedNow.get(), target = len)
+                    put(Prepared(id, "⚡ Ready to play instantly · ${if (big) "15 s" else "1:00"} start saved · $label", 1f, ready = true,
+                        item = s, list = list, subs = subs, saved = savedNow.get(), target = len))
                     readyPlayer(vm, ctx, id, s, url, null, subs, list, resumeMs)
                     return true
                 }
                 val err = runCatching { saver.await() }.getOrNull()
                 if (err == null) {
-                    state.value = Prepared(id, "⚡ Ready to play instantly · ${if (big) "15 s" else "1:00"} saved · $label", 1f, ready = true,
-                        item = s, list = list, subs = subs, saved = len, target = len)
+                    put(Prepared(id, "⚡ Ready to play instantly · ${if (big) "15 s" else "1:00"} saved · $label", 1f, ready = true,
+                        item = s, list = list, subs = subs, saved = len, target = len))
                     readyPlayer(vm, ctx, id, s, url, null, subs, list, resumeMs)
                     return true
                 }
@@ -205,7 +219,7 @@ object Prepare {
                 // MovieBox MP4s through PenguPlay's server: only when nothing else can play.
                 val cands = (all0.filter { !it.slowMp4() }.ifEmpty { all0 }).take(5)
                 // Race the best three at once: the first server to answer with a video is prepared first.
-                state.value = Prepared(id, "Checking ${minOf(3, cands.size)} links at once…", list = list, subs = subs)
+                put(Prepared(id, "Checking ${minOf(3, cands.size)} links at once…", list = list, subs = subs))
                 // The best one is a streaming playlist (MovieBox .mpd / .m3u8): it starts at once, no race needed.
                 // One link per server in the race (three links on one slow server would all be slow).
                 val win = if (cands.size > 1 && cands.first().isPlaylist().not()) StreamCache.race(cands.distinctBy { hostOf(it.stream.url) }.take(3).mapNotNull { it.stream.url }, 6000) else null
@@ -215,15 +229,16 @@ object Prepare {
                     s.stream.url?.let { tried += it }
                     val known = win?.takeIf { it.first == s.stream.url }?.second
                     if (attempt(s, i++, ordered.size, known)) {
+                        if (csWonFor == id) { feeder.cancel(); return@launch }   // CloudStream is playing first
                         // The HD file that played for this title last time (remembered 2 days): made ready now in the
                         // background; if it's ready before Play, Play starts straight in HD.
                         val memo = if (quick && !BuildConfig.IS_TV && vm.upgradeAllowed()) HdMemo.get(ctx, id) else null
                         if (memo != null && memo.stream.url != s.stream.url) {
                             val ok = saveHdStart(ctx, memo, resumeMs, durMs ?: 0)
-                            if (ok) {
+                            if (ok && csWonFor != id) {
                                 Preloader.release(id)
                                 val hdLabel = qualityName(memo.effectiveRes())
-                                state.value = Prepared(id, "⚡ Ready in HD · $hdLabel", 1f, ready = true, item = memo, list = (list + memo).distinctBy { it.stream.url }, subs = subs)
+                                put(Prepared(id, "⚡ Ready in HD · $hdLabel", 1f, ready = true, item = memo, list = (list + memo).distinctBy { it.stream.url }, subs = subs))
                                 readyPlayer(vm, ctx, id, memo, memo.stream.url!!, null, subs, list, resumeMs)
                                 feeder.cancel(); return@launch
                             } else HdMemo.forget(ctx, id)
@@ -234,7 +249,7 @@ object Prepare {
                             val mb = withTimeoutOrNull(90_000) {
                                 live.first { (l, _) -> l.any { it.isMovieBox() && it.isPlaylist() && vm.langRank(it) <= vm.langRank(s) && it.stream.url !in tried } }
                             }?.first?.filter { it.isMovieBox() && it.isPlaylist() && vm.langRank(it) <= vm.langRank(s) && it.stream.url !in tried }?.minByOrNull { vm.langRank(it) }
-                            if (mb != null) {
+                            if (mb != null && csWonFor != id) {
                                 mb.stream.url?.let { tried += it }
                                 list = live.value.first
                                 if (Preloader.has(id)) Preloader.release(id)
@@ -247,12 +262,12 @@ object Prepare {
                 // Nothing worked yet. Addons still answering, or a slow addon (CNCVerse) still collecting: wait for new links.
                 val known = list.mapNotNull { it.stream.url }.toSet() + tried
                 if (!live.value.second) {
-                    state.value = Prepared(id, "Waiting for more addons…", list = list, subs = subs)
+                    put(Prepared(id, "Waiting for more addons…", list = list, subs = subs))
                     val m = withTimeoutOrNull(25_000) { live.first { (l, done) -> done || l.any { it.stream.url != null && it.stream.url !in known } } }
                     if (m != null) continue
                 }
                 if (!SlowAddons.watching(id)) break
-                state.value = Prepared(id, "Waiting for more links…", list = list, subs = subs)
+                put(Prepared(id, "Waiting for more links…", list = list, subs = subs))
                 val m = withTimeoutOrNull(90_000) {
                     SlowAddons.links.first { mm -> mm[id].orEmpty().any { it.stream.url != null && it.stream.url !in known } }
                 }
@@ -261,8 +276,8 @@ object Prepare {
                 live.value = list to true
             }
             feeder.cancel()
-            state.value = Prepared(id, "Couldn't prepare (${lastWhy.ifBlank { "no link answered" }}) — Play will search again",
-                failed = true, list = list, subs = subs)
+            put(Prepared(id, "Couldn't prepare (${lastWhy.ifBlank { "no link answered" }}) — Play will search again",
+                failed = true, list = list, subs = subs))
         }
     }
 
@@ -294,10 +309,77 @@ object Prepare {
         }
     }
 
+    /**
+     * Quick Play's CloudStream plugins: links are fetched from the moment the title page opens; the best quality is opened
+     * in a paused player and, as soon as its first picture is ready, it replaces MovieBox's. 20 seconds at most — after
+     * that MovieBox (prepared meanwhile) plays. true = a CloudStream link is ready.
+     */
+    private suspend fun csRace(vm: AppViewModel, ctx: Context, meta: Meta, id: String, picked: Set<String>, resumeMs: Long,
+                               others: () -> List<StreamItem>): Boolean = kotlinx.coroutines.coroutineScope {
+        val deadline = System.currentTimeMillis() + 20_000
+        fun left() = deadline - System.currentTimeMillis()
+        val found = MutableStateFlow<List<StreamItem>>(emptyList())
+        val t0 = System.currentTimeMillis()
+        val fetch = launch { PluginSources.selected(ctx, meta, id, picked).collect { s -> found.value = (found.value + s).distinctBy { it.stream.url } } }
+        val tried = HashSet<String>()
+        var won = false
+        try {
+            // Give the plugins a moment to answer together, so the best quality goes first (not just the fastest).
+            withTimeoutOrNull(left()) { found.first { it.isNotEmpty() } }
+            withTimeoutOrNull(minOf(3_000L, left().coerceAtLeast(0))) { found.first { it.size >= 6 } }
+            while (left() > 0) {
+                val next = found.value.filter { it.stream.url !in tried && it.stream.url != null }.maxByOrNull { it.resolution() }
+                if (next == null) { withTimeoutOrNull(left()) { found.first { l -> l.any { it.stream.url !in tried } } } ?: break; continue }
+                val url = next.stream.url!!
+                tried += url
+                ActLog.add("CSPLAY", "Quick Play race: trying ${next.addonName} ${qualityName(next.resolution())}")
+                if (csOpen(vm, ctx, id, next, url, others, resumeMs, left())) {
+                    won = true
+                    PlayTiming.mark("CloudStream ready in ${(System.currentTimeMillis() - t0) / 1000.0} s · ${next.addonName} · ${qualityName(next.resolution())}")
+                    break
+                }
+            }
+        } finally { fetch.cancel() }
+        if (!won) ActLog.add("CSPLAY", "Quick Play race: nothing ready in 20 s — MovieBox plays")
+        won
+    }
+
+    /** One CloudStream link in a paused player; true once it can show its first picture (within [timeoutMs]). */
+    private suspend fun csOpen(vm: AppViewModel, ctx: Context, id: String, s: StreamItem, url: String, others: () -> List<StreamItem>,
+                               resumeMs: Long, timeoutMs: Long): Boolean {
+        if (timeoutMs <= 0) return false
+        val ready = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        val subs = s.stream.subtitles.orEmpty()
+        val p = runCatching {
+            StreamHeaders.use(url)
+            val mime = StreamType.mimeFor(url, s.fileName())
+            buildPlayer(ctx, vm, true).apply {
+                setMediaItem(androidx.media3.common.MediaItem.Builder().setUri(url).apply { if (mime != null) setMimeType(mime) }
+                    .setSubtitleConfigurations(subtitleConfigs(subs)).build(), resumeMs)
+                playWhenReady = false
+                addListener(object : androidx.media3.common.Player.Listener {
+                    override fun onRenderedFirstFrame() { ready.complete(true) }
+                    override fun onPlaybackStateChanged(st: Int) { if (st == androidx.media3.common.Player.STATE_READY) ready.complete(true) }
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) { ready.complete(false) }
+                })
+                prepare()
+            }
+        }.getOrNull() ?: return false
+        val ok = withTimeoutOrNull(timeoutMs) { ready.await() } == true
+        if (!ok) { runCatching { p.release() }; return false }
+        val list = (listOf(s) + others()).distinctBy { it.stream.url }
+        csWonFor = id
+        Preloader.release(id)                           // MovieBox's paused player, if it was ready first
+        Preloader.set(Preloaded(id, url, subs, s.stream.name ?: s.addonName, s.addonName, list, p))
+        state.value = Prepared(id, "⚡ Ready · ${s.addonName.removePrefix("CloudStream · ")} · ${qualityName(s.resolution())}", 1f, ready = true,
+            item = s, list = list, subs = subs, playerReady = true)
+        return true
+    }
+
     /** Stop downloading (Play was pressed — the player takes over; what was saved stays saved). */
     fun stopSaving() { job?.cancel(); job = null }
 
-    fun cancel() { job?.cancel(); job = null; saveJob?.cancel(); saveJob = null }
+    fun cancel() { job?.cancel(); job = null; saveJob?.cancel(); saveJob = null; csPending.value = null }
 
     fun qualityName(res: Int): String = when { res >= 1440 -> "4K"; res >= 1080 -> "1080p"; res >= 720 -> "720p"; res > 0 -> "${res}p"; else -> "SD" }
 

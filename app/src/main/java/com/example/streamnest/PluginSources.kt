@@ -18,6 +18,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -55,10 +56,11 @@ object PluginSources {
             r to sc
         }.maxByOrNull { it.second }?.takeIf { it.second >= 0.7 }?.first
 
-    private fun ExtractorLink.toItem(provider: String): StreamItem {
+    private fun ExtractorLink.toItem(provider: String, subs: List<Subtitle>): StreamItem {
         val q = Qualities.getStringByInt(quality)
         val item = StreamItem("CloudStream · $provider", StreamInfo(url = url, name = listOf(provider, q).filter { it.isNotBlank() }.joinToString("\n"),
-            title = name, behaviorHints = BehaviorHints(filename = name, proxyHeaders = ProxyHeaders(getAllHeaders().takeIf { it.isNotEmpty() }))))
+            title = name, subtitles = subs.takeIf { it.isNotEmpty() },
+            behaviorHints = BehaviorHints(filename = name, proxyHeaders = ProxyHeaders(getAllHeaders().takeIf { it.isNotEmpty() }))))
         StreamHeaders.remember(item)
         // The plugin already knows the link's kind; telling the player saves a probe and avoids wrong guesses
         // (many plugin playlists have no .m3u8 in the link).
@@ -71,20 +73,44 @@ object PluginSources {
         return item
     }
 
-    private suspend fun linksFrom(api: MainAPI, name: String, year: Int?, series: Boolean, season: Int?, episode: Int?): List<StreamItem> {
-        val found = withDeadline(20_000) { try { api.search(name, 1)?.items ?: api.search(name) } catch (_: NotImplementedError) { api.search(name) } } ?: return emptyList()
-        val hit = bestMatch(found, name, year, series, season) ?: return emptyList()
-        val lr = withDeadline(20_000) { api.load(hit.url) } ?: return emptyList()
+    /** One provider's links for this title; every step is logged (Activity log › CSPLAY) so a silent plugin can be traced. */
+    suspend fun linksFrom(api: MainAPI, name: String, year: Int?, series: Boolean, season: Int?, episode: Int?,
+                          onLink: ((StreamItem) -> Unit)? = null): List<StreamItem> {
+        fun log(s: String) = ActLog.add("CSPLAY", "${api.name}: $s")
+        val found = try {
+            withDeadline(20_000) { try { api.search(name, 1)?.items ?: api.search(name) } catch (_: NotImplementedError) { api.search(name) } }
+        } catch (e: Throwable) { log("search failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
+        if (found == null) { log("search gave nothing (timeout or no answer)"); return emptyList() }
+        val hit = bestMatch(found, name, year, series, season)
+        if (hit == null) { log("${found.size} results, none matched \"$name\"" + found.take(4).joinToString("; ", " — top: ") { it.name.take(60) }); return emptyList() }
+        val lr = try { withDeadline(20_000) { api.load(hit.url) } } catch (e: Throwable) { log("load failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
+        if (lr == null) { log("matched \"${hit.name.take(60)}\" but its page didn't load"); return emptyList() }
         val data = when (lr) {
             is MovieLoadResponse -> lr.dataUrl
             is TvSeriesLoadResponse -> if (!series) lr.episodes.firstOrNull()?.data else
                 (lr.episodes.firstOrNull { (it.season ?: 1) == (season ?: 1) && it.episode == (episode ?: 1) } ?: lr.episodes.firstOrNull { it.episode == episode && it.season == null })?.data
             is AnimeLoadResponse -> lr.episodes.values.flatten().firstOrNull { it.episode == (episode ?: 1) }?.data
             else -> null
-        } ?: return emptyList()
+        }
+        if (data == null) { log("\"${hit.name.take(60)}\" (${lr.javaClass.simpleName}) has no S${season}E${episode}"); return emptyList() }
+        val links = java.util.concurrent.CopyOnWriteArrayList<ExtractorLink>()
+        val subs = java.util.concurrent.CopyOnWriteArrayList<Subtitle>()
         val out = java.util.concurrent.CopyOnWriteArrayList<StreamItem>()
-        withDeadline(45_000) { api.loadLinks(data, false, {}, { l -> if (!isInstantDownloadName(l.name, l.source)) out += l.toItem(api.name) }) }
-        return out.toList()
+        try {
+            withDeadline(45_000) {
+                api.loadLinks(data, false, { s -> if (subs.none { it.url == s.url }) subs += Subtitle(id = s.url, url = s.url, lang = s.lang) },
+                    cb@{ l ->
+                        if (l is com.lagradost.cloudstream3.utils.DrmExtractorLink) return@cb   // protected: can't play
+                        if (isInstantDownloadName(l.name, l.source)) return@cb
+                        links += l
+                        val item = l.toItem(api.name, subs.toList()); out += item; onLink?.invoke(item)
+                    })
+            }
+        } catch (e: Throwable) { log("links failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)) }
+        // Subtitles often arrive after the first links: every link gets all of them.
+        val res = if (subs.isEmpty()) out.toList() else links.map { it.toItem(api.name, subs.toList()) }
+        log("${res.size} links, ${subs.size} subtitles for \"${hit.name.take(60)}\"")
+        return res
     }
 
     /** CloudStream: every switched-on plugin provider, results growing as each one answers. */
@@ -99,18 +125,41 @@ object PluginSources {
         coroutineScope {
             CsPlugins.enabledEntries().forEach { e ->
                 launch {
-                    val reg = runCatching { CsPlugins.ensureLoaded(e) }.getOrNull() ?: return@launch
+                    val reg = runCatching { CsPlugins.ensureLoaded(e) }.onFailure { x -> ActLog.add("CSPLAY", "${e.name}: plugin didn't load — ${x.javaClass.simpleName} ${x.message ?: ""}".take(200)) }.getOrNull() ?: return@launch
                     reg.apis.forEach { api ->
                         launch {
                             val l = runCatching { linksFrom(api, meta.name, year, series, season, episode) }.getOrDefault(emptyList())
                             if (l.isNotEmpty()) lock.withLock { acc += l; send(acc.toList()) }
-                            ActLog.add("CSPLAY", "${api.name}: ${l.size} links for ${meta.name}")
                         }
                     }
                 }
             }
         }
     }
+
+    /**
+     * Quick Play: only the providers picked in Settings › Quick Start › CloudStream ("pluginKey#provider"), each link
+     * sent the moment it is found.
+     */
+    fun selected(ctx: Context, meta: Meta, videoId: String, picked: Set<String>): Flow<StreamItem> = channelFlow {
+        CsPlugins.init(ctx)
+        if (CsPlugins.catalog.value.isEmpty()) runCatching { CsPlugins.refresh() }
+        val series = meta.type == "series"
+        val season = videoId.split(":").getOrNull(1)?.toIntOrNull()
+        val episode = videoId.split(":").getOrNull(2)?.toIntOrNull()
+        val year = meta.releaseInfo?.take(4)?.toIntOrNull()
+        val plugins = picked.map { it.substringBefore('#') }.toSet()
+        coroutineScope {
+            CsPlugins.catalog.value.filter { it.key in plugins }.forEach { e ->
+                launch {
+                    val reg = runCatching { CsPlugins.ensureLoaded(e) }.getOrNull() ?: return@launch
+                    reg.apis.filter { csProviderKey(e.key, it.name) in picked }.forEach { api ->
+                        launch { runCatching { linksFrom(api, meta.name, year, series, season, episode) { trySend(it) } } }
+                    }
+                }
+            }
+        }
+    }.flowOn(kotlinx.coroutines.Dispatchers.IO)
 
     /** Nuvio: every switched-on plugin, asked with the TMDB id. */
     fun nuvio(ctx: Context, vm: AppViewModel, meta: Meta, videoId: String): Flow<List<StreamItem>> = channelFlow {

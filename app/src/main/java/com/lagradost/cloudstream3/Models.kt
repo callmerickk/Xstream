@@ -110,6 +110,11 @@ interface LoadResponse {
         suspend fun LoadResponse.addTrailer(trailerUrl: String?, referer: String? = null, addRaw: Boolean = false) {
             if (!trailerUrl.isNullOrBlank()) trailers.add(TrailerData(trailerUrl, referer, addRaw))
         }
+        suspend fun LoadResponse.addTrailer(trailerUrls: List<String>?, referer: String? = null, addRaw: Boolean = false) {
+            trailerUrls?.filter { it.isNotBlank() }?.forEach { trailers.add(TrailerData(it, referer, addRaw)) }
+        }
+        fun LoadResponse.addKitsuId(id: String?) { if (!id.isNullOrBlank()) syncData["kitsu"] = id }
+        fun LoadResponse.addActorsOnly(actors: List<Actor>?) { this.actors = actors?.map { ActorData(it) } }
         fun LoadResponse.getImdbId(): String? = syncData["imdb"]
         fun LoadResponse.getTMDbId(): String? = syncData["tmdb"]
     }
@@ -164,6 +169,9 @@ data class HomePageResponse(val items: List<HomePageList>, val hasNext: Boolean 
 data class MainPageData(val name: String, val data: String, val horizontalImages: Boolean = false)
 data class MainPageRequest(val name: String, val data: String, val horizontalImages: Boolean)
 data class SearchResponseList(val items: List<SearchResponse>, val hasNext: Boolean)
+
+/** A separate audio track for a link (plugins may attach them). */
+data class AudioFile(val url: String, var headers: Map<String, String>? = null)
 
 data class SubtitleFile(var lang: String, var url: String) {
     var headers: Map<String, String>? = null

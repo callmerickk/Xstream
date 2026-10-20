@@ -48,7 +48,7 @@ fun XPluginsPage(vm: AppViewModel, onBack: () -> Unit) {
         PageHeader("Plugins", onBack)
         TabRow3(listOf("JavaScript", "CloudStream", "Nuvio"), tab) { tab = it }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 80.dp)) {
-            Text("Test them in Developer's Corner › Source Test. Quick Play doesn't use plugins yet.", Modifier.padding(16.dp), fontSize = 12.5.sp, color = Muted)
+            Text("Test them in Developer's Corner › Source Test. Pick the ones Quick Play tries first in Settings › Quick Start › CloudStream.", Modifier.padding(16.dp), fontSize = 12.5.sp, color = Muted)
             if (tab == 1) CsPluginList(vm) else NuvioPluginList(vm)
         }
     }

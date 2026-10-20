@@ -11,6 +11,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.TriStateCheckbox
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -64,6 +67,7 @@ internal fun QuickStartPage(vm: AppViewModel, onBack: () -> Unit) {
             ToggleRow("Quick Play", if (Public.dev) "Play from the addons below with the quality selector." else "Starts videos instantly from the fastest servers.", isOn(v("qsOn"))) { vm.setText("qsOn", if (it) "yes" else "no") }
         }
 
+        if (!BuildConfig.IS_TV) QuickCsSection(vm)
         if (!Public.dev) Text("Xstream picks the fastest servers for Quick Play for you — just switch it on or off.",
             Modifier.padding(horizontal = 24.dp, vertical = 8.dp), fontSize = 13.sp, color = Muted)
         if (Public.dev) {
@@ -188,5 +192,82 @@ internal fun DetailPageSettings(vm: AppViewModel, onBack: () -> Unit) {
             ToggleRow("More like this", "Similar titles at the bottom.", isOn(v("detailMore"))) { vm.setText("detailMore", yn(it)) }
         }
         Text("Tip: long-press Play or any episode to choose a source yourself.", Modifier.padding(horizontal = 24.dp, vertical = 12.dp), fontSize = 13.sp, color = Muted)
+    }
+}
+
+
+/**
+ * Quick Start › CloudStream (phones): each repository folds open to its plugins' providers (Netflix, Hotstar, Prime
+ * Video…), each with a tick. Ticked providers are asked the moment a title page opens; the best quality that's ready
+ * within 20 seconds plays first, else MovieBox.
+ */
+@Composable
+private fun QuickCsSection(vm: AppViewModel) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val texts by vm.texts.collectAsStateWithLifecycle()
+    val picked = (texts["qsCs"] ?: "").split("|").filter { it.isNotBlank() }.toSet()
+    fun save(s: Set<String>) = vm.setText("qsCs", s.joinToString("|"))
+    val repos by CsPlugins.repos.collectAsStateWithLifecycle()
+    val catalog by CsPlugins.catalog.collectAsStateWithLifecycle()
+    val enabled by CsPlugins.enabled.collectAsStateWithLifecycle()
+    // Providers of every switched-on plugin (loading a plugin is what tells its providers).
+    var providers by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(enabled) {
+        CsPlugins.init(ctx)
+        loading = true
+        val m = LinkedHashMap<String, List<String>>()
+        CsPlugins.enabledEntries().forEach { e ->
+            val reg = runCatching { CsPlugins.ensureLoaded(e) }.getOrNull()
+            m[e.key] = reg?.apis?.map { it.name }.orEmpty()
+            providers = m.toMap()
+        }
+        loading = false
+    }
+    var open by remember { mutableStateOf<Set<String>>(emptySet()) }
+    SectionLabel("CloudStream")
+    SettingsCard {
+        Text("Tick the plugins Quick Play should try first. Their best quality plays if it's ready within 20 seconds of opening a title; otherwise MovieBox plays.",
+            Modifier.padding(horizontal = 20.dp, vertical = 12.dp), fontSize = 13.sp, color = Muted)
+        val on = catalog.filter { it.key in enabled }
+        if (on.isEmpty()) Text("No CloudStream plugins switched on. Add them in Settings › Plugins › CloudStream.", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), fontSize = 14.sp, color = Muted)
+        repos.filter { r -> on.any { it.repo == r.url } }.forEach { r ->
+            val entries = on.filter { it.repo == r.url }
+            val keys = entries.flatMap { e -> providers[e.key].orEmpty().map { csProviderKey(e.key, it) } }
+            val nOn = keys.count { it in picked }
+            val expanded = r.url in open
+            RowDivider(20.dp)
+            Row(Modifier.fillMaxWidth().clickable { open = if (expanded) open - r.url else open + r.url }.padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                TriStateCheckbox(
+                    when { keys.isEmpty() || nOn == 0 -> androidx.compose.ui.state.ToggleableState.Off; nOn == keys.size -> androidx.compose.ui.state.ToggleableState.On
+                        else -> androidx.compose.ui.state.ToggleableState.Indeterminate },
+                    onClick = { if (keys.isNotEmpty()) save(if (nOn == keys.size) picked - keys.toSet() else picked + keys) },
+                    colors = CheckboxDefaults.colors(checkedColor = Accent, checkmarkColor = OnAccent),
+                )
+                Column(Modifier.weight(1f).padding(start = 4.dp)) {
+                    Text(r.name.ifBlank { r.url.substringAfter("githubusercontent.com/").substringBefore('/') }, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+                    Text(if (keys.isEmpty() && loading) "Loading plugins…" else "$nOn of ${keys.size} picked", fontSize = 12.sp, color = if (nOn > 0) Accent else Muted)
+                }
+                Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, tint = Muted)
+            }
+            if (expanded) entries.forEach { e ->
+                val provs = providers[e.key].orEmpty()
+                if (provs.isEmpty()) Text("${e.name}: " + (if (loading) "loading…" else "no providers (didn't load)"),
+                    Modifier.padding(start = 56.dp, top = 4.dp, bottom = 4.dp), fontSize = 13.sp, color = Muted)
+                provs.forEach { name ->
+                    val k = csProviderKey(e.key, name)
+                    val sel = k in picked
+                    Row(Modifier.fillMaxWidth().clickable { save(if (sel) picked - k else picked + k) }.padding(start = 40.dp, end = 16.dp, top = 2.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(sel, { save(if (sel) picked - k else picked + k) }, colors = CheckboxDefaults.colors(checkedColor = Accent, checkmarkColor = OnAccent))
+                        Column(Modifier.weight(1f)) {
+                            Text(name, fontSize = 15.sp)
+                            if (provs.size > 1 || name != e.name) Text(e.name, fontSize = 11.sp, color = Muted)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

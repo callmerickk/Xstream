@@ -58,6 +58,8 @@ open class ExtractorLink(
     open var extractorData: String? = null,
     open var type: ExtractorLinkType = inferTypeFromUrl(url),
 ) {
+    /** Separate audio tracks some plugins attach. */
+    open var audioTracks: List<com.lagradost.cloudstream3.AudioFile> = emptyList()
     val isM3u8: Boolean get() = type == ExtractorLinkType.M3U8
     val isDash: Boolean get() = type == ExtractorLinkType.DASH
     /** Every header to send with the link (Referer included). */
@@ -73,6 +75,30 @@ suspend fun newExtractorLink(source: String, name: String, url: String, type: Ex
     link.initializer()
     return link
 }
+
+/** A protected (DRM) link. Xstream's player doesn't play these; plugins can still create them. */
+open class DrmExtractorLink(
+    override val source: String, override val name: String, override val url: String,
+    override var referer: String = "", override var quality: Int = Qualities.Unknown.value,
+    override var headers: Map<String, String> = mapOf(), override var extractorData: String? = null,
+    override var type: ExtractorLinkType = inferTypeFromUrl(url),
+    open var kid: String? = null, open var key: String? = null, open var uuid: java.util.UUID = CLEARKEY_UUID,
+    open var kty: String? = null, open var keyRequestParameters: java.util.HashMap<String, String> = java.util.HashMap(),
+    open var licenseUrl: String? = null,
+) : ExtractorLink(source, name, url, referer, quality, headers, extractorData, type)
+
+val CLEARKEY_UUID: java.util.UUID = java.util.UUID(-0x1d8e62a7567a4c37L, 0x781AB030AF78D30EL)
+val WIDEVINE_UUID: java.util.UUID = java.util.UUID(-0x121074568629b532L, -0x5c37d8232ae2de13L)
+val PLAYREADY_UUID: java.util.UUID = java.util.UUID(-0x65fb0f8667bfbd7aL, -0x546d19a41f77a06bL)
+
+suspend fun newDrmExtractorLink(source: String, name: String, url: String, type: ExtractorLinkType? = null, uuid: java.util.UUID,
+                                initializer: suspend DrmExtractorLink.() -> Unit = {}): DrmExtractorLink {
+    val t = if (type == null || type == ExtractorLinkType.VIDEO) inferTypeFromUrl(url) else type
+    return DrmExtractorLink(source, name, url, type = t, uuid = uuid).apply { initializer() }
+}
+
+/** The packed (eval) JavaScript in a page, if any. */
+fun getPacked(string: String): String? = Regex("""eval\(function\(p,a,c,k,e,.*\)\)""").find(string)?.value
 
 abstract class ExtractorApi {
     abstract val name: String

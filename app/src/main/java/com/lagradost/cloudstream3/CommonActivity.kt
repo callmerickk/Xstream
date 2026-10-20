@@ -22,6 +22,13 @@ class CloudStreamApp {
     companion object {
         @Volatile var context: Context? = null
         fun getKey(path: String): String? = context?.getSharedPreferences("cs_keys", Context.MODE_PRIVATE)?.getString(path, null)
-        fun setKey(path: String, value: String?) { context?.getSharedPreferences("cs_keys", Context.MODE_PRIVATE)?.edit()?.putString(path, value)?.apply() }
+        /** Stored as text: strings as they are, anything else as JSON (like CloudStream). */
+        fun <T> setKey(path: String, value: T) {
+            val s: String? = when (value) { null -> null; is String -> value; else -> runCatching { mapper.writeValueAsString(value) }.getOrNull() }
+            context?.getSharedPreferences("cs_keys", Context.MODE_PRIVATE)?.edit()?.putString(path, s)?.apply()
+        }
+        fun <T> setKey(folder: String, path: String, value: T) = setKey("$folder/$path", value)
+        fun getKey(folder: String, path: String): String? = getKey("$folder/$path")
+        fun removeKey(path: String) { context?.getSharedPreferences("cs_keys", Context.MODE_PRIVATE)?.edit()?.remove(path)?.apply() }
     }
 }

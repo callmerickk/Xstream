@@ -37,6 +37,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -2037,6 +2038,21 @@ fun PlayerScreen(
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .setOverrideForType(TrackSelectionOverride(pick.first.mediaTrackGroup, pick.second)).build()
     }
+    // Subtitles sent with the link (addons, CloudStream / Nuvio plugins): the chosen one is drawn by the app instead of
+    // the player, so Sync / auto sync can move it (the player can't shift its own subtitles).
+    LaunchedEffect(tracks, firstFrame) {
+        if (!firstFrame || usingVlc) return@LaunchedEffect
+        val f = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+            .firstNotNullOfOrNull { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it) } } ?: return@LaunchedEffect
+        if (!f.isSidecar()) return@LaunchedEffect
+        val h = f.id?.substringAfter("side:")?.toIntOrNull() ?: return@LaunchedEffect
+        val sub = now?.subs?.firstOrNull { it.url.hashCode() == h } ?: return@LaunchedEffect
+        if (ext?.sub?.url == sub.url) return@LaunchedEffect
+        val cues = ExtSubs.load(sub.url) ?: return@LaunchedEffect      // can't read it: the player keeps showing it
+        autoPickedSub = false; manualSync = false
+        ext = ExtActive(sub, cues); disableExoText()
+        ActLog.add("SUBSYNC", "link subtitle ${sub.lang} drawn by the app (syncable)")
+    }
     // A video without subtitles inside: your language's online subtitles are downloaded (the first three) and the first
     // one is shown at once — unless you turned subtitles off (Settings › Playback › Online subtitles by default).
     LaunchedEffect(firstFrame) {
@@ -3548,6 +3564,7 @@ fun PlayerScreen(
             EpisodesPopup(
                 visible = showEpisodes, episodes = episodes, currentId = p.key, showName = meta?.name ?: "",
                 maxW = screenW, maxH = screenH, onClose = { showEpisodes = false },
+                watched = { id -> (vm.progress.value.firstOrNull { it.key == id } ?: vm.epProgress.value[id])?.let { s -> if (s.durationMs > 0) (s.positionMs.toFloat() / s.durationMs).coerceIn(0f, 1f) else null } },
             ) { ep -> showEpisodes = false; if (ep.id != p.key) playEpisode(ep) }
             }
 
@@ -3575,6 +3592,21 @@ fun PlayerScreen(
             WatchNextOverlay(
                 vm, watchNext || wnP > 0.001f, meta, type, p.key, episodes, onClose = { watchNext = false },
                 onEpisode = { ep -> watchNext = false; playEpisode(ep) },
+                onDrag = { dy, h ->
+                    val cur = if (wnDrag >= 0f) wnDrag else wnAnim.value
+                    wnDrag = (cur - dy / (h * 0.55f)).coerceIn(0f, 1f)
+                },
+                onDragEnd = { vel ->
+                    // Let go below 70 % (or flick down) and it closes; otherwise it springs back open.
+                    val pNow = wnDrag.coerceAtLeast(0f)
+                    val close = pNow < 0.7f || vel > 1200f
+                    scope.launch {
+                        wnAnim.snapTo(pNow); wnDrag = -1f
+                        if (close) { watchNext = false; wnAnim.animateTo(0f, tween(220)) }
+                        else wnAnim.animateTo(1f, spring(dampingRatio = 0.86f, stiffness = 420f))
+                    }
+                },
+                dragging = { wnDrag >= 0f },
             ) { m ->
                 watchNext = false
                 scope.launch {
@@ -3781,7 +3813,7 @@ fun PlayerScreen(
                             }
                           }
                           // Sources: by visual tag, no server / provider names. Dev sources (chosen accounts): everything, as before.
-                          if (which == "devsources") DevSourcesPanel(vm, type, p.key, now?.url, quickList, onSwitch = pickSource)
+                          if (which == "devsources") DevSourcesPanel(vm, type, p.key, now?.url, quickList, meta, onSwitch = pickSource)
                           // TV: by quality (Instant · 4K · Full HD · Mid HD) with every link's picture / sound tags.
                           else if (BuildConfig.IS_TV) TvSourcesPanel(vm, type, p.key, now?.url, (known + quickList).distinctBy { it.stream.url }, panelFocus) { st, all ->
                               if (st.stream.url == tvUp?.stream?.url) tvUp = null
@@ -4350,11 +4382,15 @@ private val Flags = mapOf("hindi" to "🇮🇳", "english" to "🇺🇸", "tamil
  */
 @kotlin.OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playingUrl: String?, quick: List<StreamItem>, onSwitch: (StreamItem, List<StreamItem>) -> Unit) {
+private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playingUrl: String?, quick: List<StreamItem>, meta: Meta?,
+                            onSwitch: (StreamItem, List<StreamItem>) -> Unit) {
     val pack by vm.badgePack.collectAsStateWithLifecycle()
+    val pctx = LocalContext.current
     var reload by remember { mutableIntStateOf(0) }
     var qs by remember { mutableStateOf(quick) }
     var all by remember { mutableStateOf<List<StreamItem>>(emptyList()) }
+    var csItems by remember { mutableStateOf<List<StreamItem>>(emptyList()) }
+    var nuItems by remember { mutableStateOf<List<StreamItem>>(emptyList()) }
     var done by remember { mutableStateOf(false) }
     LaunchedEffect(key, reload) {
         if (reload > 0) { forgetStreams(key); qs = emptyList() }
@@ -4363,12 +4399,29 @@ private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playing
         if (reload > 0) SlowAddons.poll(vm, type, key, forMs = 6_000) else SlowAddons.watch(vm, type, key)
         vm.streamsFlow(type, key, except = if (vm.qsActive()) vm.qsAddons() else null).collect { (l, d) -> all = l; done = d }
     }
-    val slow by SlowAddons.links.collectAsStateWithLifecycle()
-    val others = remember(all, slow[key], qs) {
-        val qUrls = qs.mapNotNull { it.stream.url }.toSet()
-        (all + slow[key].orEmpty()).distinctBy { it.stream.url }.filter { it.stream.url !in qUrls }.groupBy { it.addonName }.toList()
+    // CloudStream and Nuvio plugins (phones): every switched-on plugin, grouped like the addons.
+    LaunchedEffect(key, reload) {
+        if (BuildConfig.IS_TV || meta == null) return@LaunchedEffect
+        csItems = emptyList(); runCatching { PluginSources.cloudstream(pctx, meta, key).collect { csItems = it } }
     }
+    LaunchedEffect(key, reload) {
+        if (BuildConfig.IS_TV || meta == null) return@LaunchedEffect
+        nuItems = emptyList(); runCatching { PluginSources.nuvio(pctx, vm, meta, key).collect { nuItems = it } }
+    }
+    val slow by SlowAddons.links.collectAsStateWithLifecycle()
+    val others = remember(all, slow[key], qs, csItems, nuItems) {
+        val qUrls = qs.mapNotNull { it.stream.url }.toSet()
+        (all + slow[key].orEmpty() + csItems + nuItems).distinctBy { it.stream.url }.filter { it.stream.url !in qUrls }.groupBy { it.addonName }.toList()
+    }
+    // Groups fold: the one holding what's playing starts open, the rest closed (tap a header to open it).
+    var openGroups by remember(key) { mutableStateOf<Set<String>?>(null) }
+    val playingGroup = remember(others, qs, playingUrl) {
+        (qs.firstOrNull { it.stream.url == playingUrl } ?: others.flatMap { it.second }.firstOrNull { it.stream.url == playingUrl })?.addonName
+    }
+    val opened = openGroups ?: setOfNotNull(playingGroup)
+    fun toggle(g: String) { openGroups = if (g in opened) opened - g else opened + g }
     val spin by animateFloatAsState(reload * 360f, tween(700), label = "devspin")
+    val allFiles = remember(others) { others.flatMap { it.second } }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("${qs.size + others.sumOf { it.second.size }} files${if (!done) " · still asking…" else ""}", Modifier.weight(1f), fontSize = 12.sp, color = Color(0xFF8A94A8))
@@ -4379,21 +4432,32 @@ private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playing
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             DevColumn("Quick play", qs.size, Modifier.weight(1f)) {
                 if (qs.isEmpty()) item { Text(if (done) "Nothing from quick play" else "Asking…", Modifier.padding(8.dp), fontSize = 12.sp, color = Color(0xFF8A94A8)) }
-                items(qs, key = { "q" + it.stream.url }) { s -> DevFileCard(s, s.stream.url == playingUrl, pack) { onSwitch(s, qs) } }
+                qs.groupBy { it.addonName }.forEach { (addon, files) ->
+                    item(key = "qh$addon") { DevGroupHeader(addon, files.size, addon in opened, files.any { it.stream.url == playingUrl }) { toggle(addon) } }
+                    if (addon in opened) items(files, key = { "q" + it.stream.url }) { s -> DevFileCard(s, s.stream.url == playingUrl, pack) { onSwitch(s, qs) } }
+                }
             }
             DevColumn("All addons", others.sumOf { it.second.size }, Modifier.weight(1.35f)) {
                 others.forEach { (addon, files) ->
-                    item(key = "h$addon") {
-                        Row(Modifier.padding(start = 4.dp, top = 8.dp, bottom = 4.dp)) {
-                            Text(addonLabel(addon), Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFC9CED9))
-                            Text("${files.size}", fontSize = 11.sp, color = Color(0xFF8A94A8))
-                        }
-                    }
-                    items(files, key = { "a" + it.stream.url }) { s -> DevFileCard(s, s.stream.url == playingUrl, pack) { onSwitch(s, all) } }
+                    item(key = "h$addon") { DevGroupHeader(addon, files.size, addon in opened, files.any { it.stream.url == playingUrl }) { toggle(addon) } }
+                    if (addon in opened) items(files, key = { "a" + it.stream.url }) { s -> DevFileCard(s, s.stream.url == playingUrl, pack) { onSwitch(s, allFiles) } }
                 }
                 if (!done) item { Box(Modifier.fillMaxWidth().padding(10.dp), Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) } }
             }
         }
+    }
+}
+
+/** A foldable addon group in the dev sources: name, file count, ▾ / ▸. */
+@Composable
+private fun DevGroupHeader(addon: String, n: Int, open: Boolean, playingHere: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (playingHere) Color(0x14E50914) else Color(0x0AFFFFFF))
+        .clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null, Modifier.size(18.dp), tint = Color(0xFFC9CED9))
+        Text(addonLabel(addon), Modifier.weight(1f).padding(start = 4.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFC9CED9),
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (playingHere) Text("▶ ", fontSize = 11.sp, color = Color(0xFFFF8D94))
+        Text("$n", fontSize = 11.sp, color = Color(0xFF8A94A8))
     }
 }
 
@@ -4927,7 +4991,7 @@ private fun SubChip(label: String, selected: Boolean, modifier: Modifier = Modif
 private fun EpisodesPopup(
     visible: Boolean, episodes: List<Video>, currentId: String, showName: String,
     maxW: androidx.compose.ui.unit.Dp, maxH: androidx.compose.ui.unit.Dp,
-    onClose: () -> Unit, onPick: (Video) -> Unit,
+    onClose: () -> Unit, watched: (String) -> Float? = { null }, onPick: (Video) -> Unit,
 ) {
     val prog = remember { androidx.compose.animation.core.Animatable(0f) }
     LaunchedEffect(visible) {
@@ -5015,10 +5079,19 @@ private fun EpisodesPopup(
                             if (now) Box(Modifier.fillMaxSize().background(Color(0x66000000)), Alignment.Center) {
                                 Icon(Icons.Default.GraphicEq, null, Modifier.size(28.dp), tint = Color.White)
                             }
+                            // How much of this episode you've watched.
+                            watched(ep.id)?.takeIf { it > 0.01f }?.let { f ->
+                                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0x66FFFFFF))) {
+                                    Box(Modifier.fillMaxHeight().fillMaxWidth(f).background(BrandRed))
+                                }
+                            }
                         }
                         Column(Modifier.weight(1f).padding(start = 14.dp, end = 6.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("E${ep.episode}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF9AA3B5))
+                                if (!now) watched(ep.id)?.takeIf { it > 0.01f }?.let { f ->
+                                    Text(if (f >= 0.95f) "Watched" else "${(f * 100).toInt()}% watched", Modifier.padding(start = 8.dp), fontSize = 11.sp, color = Color(0xFFB6BDCC))
+                                }
                                 if (now) Text("NOW PLAYING", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(6.dp)).background(Accent)
                                     .padding(horizontal = 6.dp, vertical = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = OnAccent, letterSpacing = 0.5.sp)
                             }
@@ -5045,7 +5118,10 @@ private data class WnItem(val key: String, val title: String, val sub: String?, 
 @Composable
 private fun WatchNextOverlay(
     vm: AppViewModel, visible: Boolean, meta: Meta?, type: String, key: String, episodes: List<Video>,
-    onClose: () -> Unit, onEpisode: (Video) -> Unit, onTitle: (Meta) -> Unit,
+    onClose: () -> Unit, onEpisode: (Video) -> Unit,
+    // Phones: dragging the sheet (dy px, sheet height px) and letting go (vertical speed, px/s, down = +).
+    onDrag: (Float, Float) -> Unit = { _, _ -> }, onDragEnd: (Float) -> Unit = {}, dragging: () -> Boolean = { false },
+    onTitle: (Meta) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var similar by remember(key) { mutableStateOf<List<WnItem>?>(null) }
@@ -5089,11 +5165,40 @@ private fun WatchNextOverlay(
             }
         }
     }
+    val epProg by vm.epProgress.collectAsState()
+    val prog by vm.progress.collectAsState()
+    fun watched(id: String): Float? = (prog.firstOrNull { it.key == id } ?: epProg[id])?.let { s -> if (s.durationMs > 0) (s.positionMs.toFloat() / s.durationMs).coerceIn(0f, 1f) else null }
     AnimatedVisibility(visible, Modifier.fillMaxSize(), enter = fadeIn(tween(200)), exit = fadeOut(tween(200))) {
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0x33000000), 0.45f to Color(0xB3000000), 1f to Color(0xF2000000)))
-            .noFocus().clickable(interactionSource = noRipple, indication = null) { onClose() }) {
+        BoxWithConstraints(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0x33000000), 0.45f to Color(0xB3000000), 1f to Color(0xF2000000)))
+            .noFocus()) {
+            val sheetH = constraints.maxHeight.toFloat()
+            val scroll = androidx.compose.foundation.rememberScrollState()
+            // Phones: when the list can't scroll any further, the drag moves the whole sheet (it follows the finger both ways).
+            val sheetScroll = remember(sheetH) {
+                object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+                    override fun onPreScroll(available: Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): Offset {
+                        if (BuildConfig.IS_TV || !dragging() || available.y >= 0f) return Offset.Zero
+                        onDrag(available.y, sheetH); return Offset(0f, available.y)   // pulling back up first re-opens the sheet
+                    }
+                    override fun onPostScroll(consumed: Offset, available: Offset, source: androidx.compose.ui.input.nestedscroll.NestedScrollSource): Offset {
+                        if (BuildConfig.IS_TV || available.y <= 0f || source != androidx.compose.ui.input.nestedscroll.NestedScrollSource.UserInput) return Offset.Zero
+                        onDrag(available.y, sheetH); return Offset(0f, available.y)
+                    }
+                    override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+                        if (BuildConfig.IS_TV || !dragging()) return androidx.compose.ui.unit.Velocity.Zero
+                        onDragEnd(available.y); return available
+                    }
+                }
+            }
+            Column(Modifier.fillMaxSize().nestedScroll(sheetScroll).verticalScroll(scroll)) {
             Column(
-                Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(bottom = 28.dp)
+                Modifier.fillMaxWidth().heightIn(min = maxHeight)
+                    .clickable(interactionSource = noRipple, indication = null) { onClose() }
+                    .padding(top = 24.dp, bottom = 20.dp),
+                verticalArrangement = Arrangement.Bottom,
+            ) {
+            Column(
+                Modifier.fillMaxWidth()
                     .onFocusChanged {
                         val had = hasFocus
                         hasFocus = it.hasFocus
@@ -5105,7 +5210,7 @@ private fun WatchNextOverlay(
                 if (upNext.isNotEmpty()) {
                     Text("Up next", Modifier.padding(start = 40.dp, top = 6.dp, bottom = 8.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFB6BDCC))
                     val isFirst = first; first = false
-                    WnRow(upNext, wide = true, firstFr = if (isFirst) firstFr else null) { pick(it) }
+                    WnRow(upNext, wide = true, firstFr = if (isFirst) firstFr else null, progressOf = { it.ep?.id?.let(::watched) }) { pick(it) }
                 }
                 val sim = similar
                 Text("More like this", Modifier.padding(start = 40.dp, top = 12.dp, bottom = 8.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFB6BDCC))
@@ -5115,19 +5220,21 @@ private fun WatchNextOverlay(
                     else -> WnRow(sim, wide = false, firstFr = if (first) firstFr else null) { pick(it) }
                 }
             }
+            }
+            }
         }
     }
 }
 
 @Composable
-private fun WnRow(items: List<WnItem>, wide: Boolean, firstFr: FocusRequester?, onPick: (WnItem) -> Unit) {
+private fun WnRow(items: List<WnItem>, wide: Boolean, firstFr: FocusRequester?, progressOf: (WnItem) -> Float? = { null }, onPick: (WnItem) -> Unit) {
     LazyRow(contentPadding = PaddingValues(horizontal = 40.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         itemsIndexed(items, key = { _, it -> it.key }) { i, it ->
             var focused by remember { mutableStateOf(false) }
             val shape = RoundedCornerShape(12.dp)
             // TV: a poster opens up when focused — the poster plus its title, year and rating beside it.
             if (BuildConfig.IS_TV && !wide) { TvWnPoster(it, i == 0 && firstFr != null, firstFr) { onPick(it) }; return@itemsIndexed }
-            Column(Modifier.width(if (wide) 220.dp else 116.dp)) {
+            Column(Modifier.width(if (wide) 200.dp else 100.dp)) {
                 Box(
                     Modifier.fillMaxWidth().aspectRatio(if (wide) 16f / 9f else 2f / 3f)
                         .graphicsLayer { val sc = if (focused) 1.06f else 1f; scaleX = sc; scaleY = sc }
@@ -5141,8 +5248,14 @@ private fun WnRow(items: List<WnItem>, wide: Boolean, firstFr: FocusRequester?, 
                     if (wide) Box(Modifier.align(Alignment.Center).size(38.dp).clip(CircleShape).background(Color(0x80000000)), Alignment.Center) {
                         Icon(Icons.Default.PlayArrow, null, Modifier.size(22.dp), tint = Color.White)
                     }
+                    // How much of this episode you've watched.
+                    progressOf(it)?.takeIf { f -> f > 0.01f }?.let { f ->
+                        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color(0x66FFFFFF))) {
+                            Box(Modifier.fillMaxHeight().fillMaxWidth(f).background(BrandRed))
+                        }
+                    }
                 }
-                Text(it.title, Modifier.padding(top = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = if (wide) 2 else 1, overflow = TextOverflow.Ellipsis)
+                Text(it.title, Modifier.padding(top = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 it.sub?.let { sub -> Text(sub, fontSize = 11.sp, color = Color(0xFF9AA3B5), maxLines = 1) }
             }
         }

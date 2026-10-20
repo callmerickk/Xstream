@@ -47,6 +47,8 @@ class NiceResponse(val okhttpResponse: Response, val parser: ResponseParser?) {
     val url: String get() = okhttpResponse.request.url.toString()
     val body get() = okhttpResponse.body
     val text: String by lazy { runCatching { okhttpResponse.body?.string() }.getOrNull().orEmpty() }
+    /** Same as [text] (CloudStream reads big pages this way). */
+    val textLarge: String get() = text
     val document: Document by lazy { Jsoup.parse(text, url) }
     val cookies: Map<String, String> by lazy {
         okhttpResponse.headers("set-cookie").mapNotNull { Cookie.parse(okhttpResponse.request.url, it) }.associate { it.name to it.value }

@@ -59,7 +59,36 @@ abstract class MainAPI {
     open suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean =
         throw NotImplementedError()
     open fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? = null
+
+    companion object {
+        /** CloudStream's app-wide provider settings (plugins read enableAdult). */
+        var settingsForProvider: SettingsJson = SettingsJson()
+    }
 }
+
+/** CloudStream's provider settings object. */
+class SettingsJson { var enableAdult: Boolean = false }
+
+/** Anime episodes for one audio kind (dub / sub). */
+fun AnimeLoadResponse.addEpisodes(status: DubStatus, episodes: List<Episode>?) {
+    if (episodes.isNullOrEmpty()) return
+    this.episodes[status] = (this.episodes[status] ?: emptyList()) + episodes
+}
+fun AnimeSearchResponse.addDubStatus(status: DubStatus, episodes: Int? = null) {
+    dubStatus = (dubStatus ?: java.util.EnumSet.noneOf(DubStatus::class.java)).apply { add(status) }
+    if (episodes != null && episodes > 0) this.episodes[status] = episodes
+}
+fun AnimeSearchResponse.addDubStatus(isDub: Boolean, episodes: Int? = null) = addDubStatus(if (isDub) DubStatus.Dubbed else DubStatus.Subbed, episodes)
+fun AnimeSearchResponse.addDubStatus(dubExist: Boolean, subExist: Boolean, dubEpisodes: Int? = null, subEpisodes: Int? = null) {
+    if (dubExist) addDubStatus(DubStatus.Dubbed, dubEpisodes)
+    if (subExist) addDubStatus(DubStatus.Subbed, subEpisodes)
+}
+fun AnimeSearchResponse.addSub(episodes: Int?) = addDubStatus(false, episodes)
+fun AnimeSearchResponse.addDub(episodes: Int?) = addDubStatus(true, episodes)
+/** "the big bang theory" -> "The Big Bang Theory". */
+fun fixTitle(str: String): String = str.split(" ").joinToString(" ") { w -> w.lowercase().replaceFirstChar { it.titlecase() } }
+fun imdbUrlToIdNullable(url: String?): String? = url?.let { Regex("tt\\d+").find(it)?.value }
+fun imdbUrlToId(url: String): String? = imdbUrlToIdNullable(url)
 
 fun base64Decode(string: String): String = String(android.util.Base64.decode(string, android.util.Base64.DEFAULT), Charsets.ISO_8859_1)
 fun base64DecodeArray(string: String): ByteArray = android.util.Base64.decode(string, android.util.Base64.DEFAULT)
