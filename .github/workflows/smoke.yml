@@ -34,14 +34,4 @@ jobs:
           arch: x86_64
           target: google_apis
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
-          script: |
-            adb install -r app/build/outputs/apk/phone/debug/*.apk
-            adb logcat -c
-            adb shell am start -n com.example.xstream/com.example.streamnest.MainActivity
-            sleep 25
-            adb logcat -d -b crash > crash.txt || true
-            adb logcat -d | grep -E "AndroidRuntime|FATAL|Exception|Caused by|at com\.|at androidx\.|at kotlin" | head -120 > logcat.txt || true
-            echo "---- crash buffer"; cat crash.txt | head -80
-            echo "---- logcat"; cat logcat.txt | head -80
-            msg=$( (cat crash.txt; echo ----; cat logcat.txt) | head -60 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
-            echo "::warning title=Smoke::$msg"
+          script: bash tools/smoke.sh
