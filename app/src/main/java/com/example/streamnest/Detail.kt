@@ -387,7 +387,7 @@ fun DetailScreen(
                 }
                 Box(Modifier.align(Alignment.Center)) { Wordmark(t("appName"), 22.sp) }
                 Row(Modifier.align(Alignment.CenterEnd), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TopRound(Modifier, { vm.toggleList(meta) }) {
+                    TopRound(Modifier, { WatchlistAsk.toggle(vm, meta) }) {
                         Icon(if (saved) Icons.Default.Favorite else Icons.Default.FavoriteBorder, if (saved) "Remove from Watchlist" else "Add to Watchlist",
                             Modifier.size(20.dp), tint = if (saved) BrandRed else Color.White)
                     }
@@ -445,7 +445,7 @@ fun DetailScreen(
                                 PrepDot(st, Modifier.align(Alignment.TopEnd).offset(x = (-4).dp, y = (-10).dp).tourTarget("light")) { showPrepInfo = !showPrepInfo }
                         }
                         LabeledRound("Trailer", Modifier.tourTarget("trailer").alpha(if (hasTrailer) 1f else 0.45f).tapHold(onTap = { playTrailer() }, onHold = { holdTrailer() }), rim = Color(0x8CE50914)) { ClapperGlyph(22.dp) }
-                        LabeledRound("Library", Modifier.quietClick { vm.toggleList(meta) }, rim = if (saved) Color(0x8CE50914) else Color(0xFF23252D)) {
+                        LabeledRound("Library", Modifier.quietClick { WatchlistAsk.toggle(vm, meta) }, rim = if (saved) Color(0x8CE50914) else Color(0xFF23252D)) {
                             Icon(if (saved) Icons.Default.Check else Icons.Default.Add, if (saved) "In Watchlist" else "Add to Watchlist", Modifier.size(24.dp), tint = Color.White)
                         }
                         LabeledRound("More", Modifier.tourTarget("more").quietClick { actions = true }) {
@@ -559,7 +559,7 @@ fun DetailScreen(
             buildList {
                 add(TitleAction("Play manually", Icons.Default.PlayArrow) { start(playTarget.target, forceSources = true) })
                 if (playTarget.resumeMs > 0) add(TitleAction("Start from beginning", Icons.Default.Replay) { start(playTarget.target, fromStart = true) })
-                add(TitleAction(if (saved) "Remove from Watchlist" else "Add to Watchlist", if (saved) Icons.Default.Check else Icons.Default.Add) { vm.toggleList(meta) })
+                add(TitleAction(if (saved) "Remove from Watchlist" else "Add to Watchlist", if (saved) Icons.Default.Check else Icons.Default.Add) { WatchlistAsk.toggle(vm, meta) })
                 if (hasTrailer) add(TitleAction("Watch trailer", Icons.Default.Movie) { playTrailer() })
                 if (videos.size > 1) add(TitleAction("All trailers & videos", Icons.Default.VideoLibrary) { showVideos = true })
                 if (!BuildConfig.IS_TV) {

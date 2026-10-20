@@ -373,16 +373,8 @@ fun PlanFlow(meta: Meta, item: SharedItem?, friends: List<Person>, startAt: Long
     val scope = rememberCoroutineScope()
     var at by remember { mutableStateOf<Long?>(null) }
     var who by remember { mutableStateOf<String?>(if (existing != null) "keep" else null) }
-    LaunchedEffect(Unit) {
-        val c = java.util.Calendar.getInstance().apply { startAt?.let { timeInMillis = it } ?: run { add(java.util.Calendar.HOUR_OF_DAY, 2); set(java.util.Calendar.MINUTE, 0) } }
-        android.app.DatePickerDialog(ctx, { _, y, mo, d ->
-            android.app.TimePickerDialog(ctx, { _, h, mi ->
-                at = java.util.Calendar.getInstance().apply { set(y, mo, d, h, mi, 0) }.timeInMillis
-            }, c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE), false).apply { setOnCancelListener { onDone() } }.show()
-        }, c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH), c.get(java.util.Calendar.DAY_OF_MONTH)).apply {
-            datePicker.minDate = System.currentTimeMillis() - 60_000; setOnCancelListener { onDone() }
-        }.show()
-    }
+    // Xstream: the day and time are picked inside the app (no phone calendar pop-up).
+    if (at == null) { DateTimeSheet(startAt, title = "When do you want to watch ${meta.name}?", onPicked = { at = it }, onCancel = onDone); return }
     val time = at ?: return
     fun save(with: List<Person>) {
         scope.launch {

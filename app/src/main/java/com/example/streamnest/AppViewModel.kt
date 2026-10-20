@@ -1263,6 +1263,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         start?.let { loadProfileData(it.id) }
         Cloud.init(ctx)
         Cloud.attach(this)
+        // Xstream: a friend's recommendation lands in your watchlist.
+        Recs.init(ctx)
+        Recs.addToList = { m -> viewModelScope.launch(Dispatchers.Main) { if (myList.value.none { it.id == m.id }) toggleList(m) } }
     }
 
     override fun onCleared() {

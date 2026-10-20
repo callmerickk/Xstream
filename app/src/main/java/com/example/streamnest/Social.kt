@@ -118,6 +118,9 @@ object Social {
     fun publishCard() { if (me.isNotBlank()) io.launch { send("PUT", "card/$me", nameJson(myName)) } }
     suspend fun cardName(uid: String): String = get("card/$uid").obj()?.s("n") ?: ""
 
+    /** Xstream: sends a message to someone's inbox (used by recommendations). */
+    suspend fun sendRaw(to: String, m: SocialMsg) = inbox(to, m)
+
     private suspend fun inbox(to: String, m: SocialMsg) {
         if (to.isBlank() || to == me) return
         send("POST", "inbox/$to", Api.json.encodeToJsonElement(SocialMsg.serializer(), m.copy(from = me, fromName = myName, sent = System.currentTimeMillis())))
@@ -223,6 +226,8 @@ object Social {
                 "waiting" -> SocialNotes.post(ctx, "${m.fromName} is waiting for you in the room", "${m.title} · join fast", id, code = m.code, by = m.from)
                 "msg" -> if (!ChatState.open(m.item)) SocialNotes.post(ctx, if (m.title.isNotBlank()) "${m.fromName} · ${m.title}" else m.fromName, m.aboutName.ifBlank { "New message" }, "chat_" + m.item, chat = m.item)
                 "chat" -> send("PUT", "mychats/$me/${m.item}", JsonPrimitive(true))
+                "rec" -> { Recs.incoming(ctx, m); SocialNotes.post(ctx, "${m.fromName} recommended ${m.title}", "It's in your library now. Watch it and tell ${m.fromName} what you thought", id) }
+                "recfb" -> { Recs.feedback(ctx, m); SocialNotes.post(ctx, "${m.fromName} watched ${m.title}", "“${m.aboutName}”", id) }
                 else -> {}
             }
             if (done) { send("DELETE", "inbox/$me/$id"); changed = true } else keep += id to m

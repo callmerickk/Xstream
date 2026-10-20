@@ -229,7 +229,15 @@ private fun Modifier.verticalScrollCompat(): Modifier = this.then(Modifier.verti
 
 /** Library: Continue Watching (remove one / clear all), downloads, and your history (finished, loved). */
 @Composable
-fun LibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit, onPlay: (Screen.Player) -> Unit) {
+fun LibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit, onPlay: (Screen.Player) -> Unit) =
+    XLibraryPage(vm, onBack, onOpen, onPlayRoom = { st ->
+        val expected = st.pos + if (st.playing) (System.currentTimeMillis() - st.receivedAt + 300) else 0L
+        onPlay(Screen.Player(st.title, st.url, emptyList(), key = st.key, image = st.image, resumeMs = expected, type = st.type))
+    })
+
+@Suppress("unused")
+@Composable
+private fun OldLibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit, onPlay: (Screen.Player) -> Unit) {
     val progress by vm.progress.collectAsStateWithLifecycle()
     val votes by vm.votes.collectAsStateWithLifecycle()
     var confirmClear by remember { mutableStateOf(false) }
@@ -297,14 +305,14 @@ private data class CalEvent(val day: Long, val kind: String, val title: String, 
  * watches you planned (alone or with friends). Tap a day, then "Plan a watch".
  */
 @Composable
-fun WatchlistPage(vm: AppViewModel, onBack: () -> Unit, onOpen: (Meta) -> Unit, startCalendar: Boolean = false) {
+fun WatchlistPage(vm: AppViewModel, onBack: () -> Unit, onOpen: (Meta) -> Unit, startCalendar: Boolean = false, embedded: Boolean = false) {
     val myList by vm.myList.collectAsStateWithLifecycle()
     val progress by vm.progress.collectAsStateWithLifecycle()
     val items by Social.items.collectAsStateWithLifecycle()
     val friends by Social.friends.collectAsStateWithLifecycle()
     var cal by remember { mutableStateOf(startCalendar) }
     var share by remember { mutableStateOf<Meta?>(null) }
-    BackHandler { onBack() }
+    if (!embedded) BackHandler { onBack() }
     val day = 86_400_000L
     val today = remember { localDay(System.currentTimeMillis()) }
     var month by remember { mutableStateOf(Calendar.getInstance().apply { set(Calendar.DAY_OF_MONTH, 1) }.timeInMillis) }
@@ -348,8 +356,8 @@ fun WatchlistPage(vm: AppViewModel, onBack: () -> Unit, onOpen: (Meta) -> Unit, 
     val all = found + planned
 
     Column(Modifier.fillMaxSize().background(Bg)) {
-        PageHead("Watchlist", onBack)
-        Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(HubCard).padding(4.dp)) {
+        if (!embedded) PageHead("Watchlist", onBack)
+        if (!embedded) Row(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(HubCard).padding(4.dp)) {
             listOf("Titles" to false, "Calendar" to true).forEach { (n, c) ->
                 Text(n, Modifier.weight(1f).clip(RoundedCornerShape(9.dp)).background(if (cal == c) Color(0xFFF2F4F8) else Color.Transparent).clickable { cal = c }.padding(vertical = 9.dp),
                     fontSize = 13.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, color = if (cal == c) Color(0xFF0E1014) else HubMuted)
@@ -401,7 +409,10 @@ fun WatchlistPage(vm: AppViewModel, onBack: () -> Unit, onOpen: (Meta) -> Unit, 
         }
     }
     if (pickTitle) PremiumAlert(onDismissRequest = { pickTitle = false }, title = { Text("Plan which title?") }, text = {
-        Column(Modifier.heightIn(max = 400.dp).verticalScrollCompat()) {
+        Column(Modifier.heightIn(max = 460.dp).verticalScrollCompat()) {
+            // Xstream: search any title, not only the ones in your watchlist.
+            TitleSearchBox(vm) { m -> pickTitle = false; planFor = m }
+            if (myList.isNotEmpty()) Text("From your watchlist", Modifier.padding(top = 14.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = HubMuted)
             if (myList.isEmpty()) Text("Add titles to your watchlist first.", fontSize = 13.sp, color = HubMuted)
             myList.forEach { m ->
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(10.dp)).clickable { pickTitle = false; planFor = m }.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -470,13 +481,13 @@ private fun MonthGrid(month: Long, sel: Long, today: Long, events: List<CalEvent
 
 /** New-episode alerts (and a link to Watch together when someone is waiting for your answer). */
 @Composable
-fun NotificationsPage(onBack: () -> Unit, onTogether: () -> Unit) {
+fun NotificationsPage(onBack: () -> Unit, onTogether: () -> Unit, embedded: Boolean = false) {
     val ctx = LocalContext.current
     var alerts by remember { mutableStateOf(EpisodeAlerts.inbox(ctx)) }
     val pending by Social.pending.collectAsStateWithLifecycle()
-    BackHandler { onBack() }
+    if (!embedded) BackHandler { onBack() }
     LazyColumn(Modifier.fillMaxSize().background(Bg), contentPadding = PaddingValues(bottom = 120.dp)) {
-        item { PageHead("Notifications", onBack) }
+        if (!embedded) item { PageHead("Notifications", onBack) }
         if (pending.isNotEmpty()) item {
             Row(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF3A0B12)).clickable(onClick = onTogether).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Groups, null)

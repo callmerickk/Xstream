@@ -101,7 +101,7 @@ fun WatchCharts(onOpenKey: (String) -> Unit) {
                 Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(8.dp)).clickable { sel = i }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Bottom) {
                     if (totals[i] > 0) Text(dur(totals[i]), fontSize = 8.5.sp, color = if (on) Color.White else ChartMuted, maxLines = 1)
                     Spacer(Modifier.height(3.dp))
-                    Box(Modifier.fillMaxWidth().height((6 + 84 * totals[i] / max).dp).clip(RoundedCornerShape(topStart = 7.dp, topEnd = 7.dp, bottomStart = 3.dp, bottomEnd = 3.dp))
+                    Box(Modifier.fillMaxWidth().height((6 + 84 * totals[i] / max).toInt().dp).clip(RoundedCornerShape(topStart = 7.dp, topEnd = 7.dp, bottomStart = 3.dp, bottomEnd = 3.dp))
                         .background(if (on) Accent else Color(0xFF2E3442)))
                     Text(SimpleDateFormat("EEE", Locale.getDefault()).format(d).take(1), Modifier.padding(top = 5.dp), fontSize = 10.sp, color = ChartMuted)
                 }
@@ -146,7 +146,7 @@ fun WatchCharts(onOpenKey: (String) -> Unit) {
         Text("When you watch", Modifier.padding(top = 16.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
         val hmax = (byHour.maxOrNull() ?: 0L).coerceAtLeast(1L)
         Row(Modifier.padding(top = 8.dp).fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.Bottom) {
-            byHour.forEach { v -> Box(Modifier.weight(1f).height((4 + 40 * v / hmax).dp).clip(RoundedCornerShape(2.dp)).background(Accent.copy(alpha = 0.25f + 0.75f * v / hmax))) }
+            byHour.forEach { v -> Box(Modifier.weight(1f).height((4 + 40 * v / hmax).toInt().dp).clip(RoundedCornerShape(2.dp)).background(Accent.copy(alpha = 0.25f + 0.75f * v / hmax))) }
         }
         Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
             listOf("12a", "6a", "12p", "6p", "11p").forEachIndexed { i, s -> Text(s, Modifier.weight(1f), fontSize = 9.sp, color = ChartMuted) }

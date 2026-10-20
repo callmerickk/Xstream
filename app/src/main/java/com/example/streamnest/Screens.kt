@@ -50,7 +50,6 @@ import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.animateFloat
@@ -351,6 +350,8 @@ fun App(vm: AppViewModel = viewModel()) {
         // Built-in servers (CNCVerse / HdHub links published from Developer's Corner) and the Connect PenguPlay card.
         LaunchedEffect(profile?.id) { if (profile != null) { runCatching { BuiltIns.sync(vm) }; runCatching { AppLook.fetch(vm.appContext) } } }
         if (profile != null && stack.isEmpty() && !showSplash && !texts["guideDone"].isNullOrEmpty()) PenguConnectPrompt(vm)
+        val askWl by WatchlistAsk.pending.collectAsState()
+        askWl?.let { m -> AddToWatchlistSheet(vm, m) { WatchlistAsk.pending.value = null } }
         if (showSplash) StartupSplash { showSplash = false }
         SnackHost()
     }
@@ -411,6 +412,7 @@ fun BottomNav(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) ->
             DockItem(tab == 1, t("navSearch"), { onTab(1) }) { c -> Icon(Icons.Default.Search, t("navSearch"), Modifier.size(24.dp), tint = c) }
             DockItem(tab == 3, "Library", { onTab(3) }) { c -> Icon(Icons.Default.VideoLibrary, "Library", Modifier.size(24.dp), tint = c) }
             val fill by androidx.compose.animation.animateColorAsState(if (tab == 2) Color(0xFFF2F4F8) else Color.Transparent, label = "me")
+            val meLabel = t("navMySpace")
             Box(
                 Modifier.size(48.dp).clip(CircleShape).background(fill)
                     .onGloballyPositioned { meOrigin[0] = it.boundsInRoot().topLeft }
@@ -435,7 +437,7 @@ fun BottomNav(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) ->
                             if (pick != null && pick.id != current?.id) ProfileLock.ask(pick) { vm.selectProfile(pick); onTab(2) }
                         }
                     }
-                    .semantics { contentDescription = t("navMySpace") },
+                    .semantics { contentDescription = meLabel },
                 Alignment.Center,
             ) { Avatar(vm, 30.dp) }
         }

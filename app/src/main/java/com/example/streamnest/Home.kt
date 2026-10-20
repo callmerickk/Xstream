@@ -295,7 +295,7 @@ fun HomeScreen(
                 }
             } else {
                 if (showHero) item(key = DeckKey, contentType = DeckKey) {
-                    Box(Modifier.tourTarget("deck")) { Deck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { vm.toggleList(it) } }
+                    Box(Modifier.tourTarget("deck")) { Deck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { WatchlistAsk.toggle(vm, it) } }
                 }
             }
             if (progress.isNotEmpty() && filter == null && cwShow) {
