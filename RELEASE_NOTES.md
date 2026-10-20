@@ -1,3 +1,11 @@
+Xstream 0.4.4 beta
+
+• Play manually shows CloudStream and Nuvio sections with your plugins' streams. Each stays hidden while it has none.
+• "10Gbps" links are left out too, like "Instant Download" (download-only, they never play).
+• Plugins can now open links from Doodstream, Mixdrop, Upstream, Gofile, MultiUp, StreamTape (every domain) and more.
+
+---
+
 Xstream 0.4.3 beta
 
 • "Instant Download" links are left out everywhere.

@@ -13,6 +13,11 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.4.4 beta", "20 Oct 2026", "Plugin streams in Play manually", listOf(
+        "Play manually shows CloudStream and Nuvio sections with your plugins' streams (each hidden while it has none)",
+        "\"10Gbps\" links are left out too, like \"Instant Download\" (download-only, they never play)",
+        "Plugins can now open links from Doodstream, Mixdrop, Upstream, Gofile, MultiUp, StreamTape (every domain) and more",
+    )),
     Release("0.4.3 beta", "20 Oct 2026", "Plugin fixes", listOf(
         "\"Instant Download\" links are left out everywhere",
         "CNC Verse Mobile works (it stopped at the first search before)",
@@ -223,6 +228,11 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.4.4 beta", "20 Oct 2026", "Plugin streams in Play manually", listOf(
+        "PluginSources.kt: cloudstream() / nuvio() channelFlows (parallel per provider, withDeadline search 20 s / load 20 s / links 45 s), bestMatch() shared scoring; SourcesScreen sections CloudStream / Nuvio after addons, hidden when empty",
+        "instantRx also matches 10 ?Gbps",
+        "Helper-written extractors (DoodStream, MixDrop, Upstream, Gofile, Waaw, StreamSB, MultiUp, StreamTape all domains) via extraExtractors; 1fichier / Indishare / ClickNUpload / GDTot left out (download-only); my StreamTape removed",
+    )),
     Release("0.4.3 beta", "20 Oct 2026", "Plugin fixes", listOf(
         "com.lagradost.api.Log: instance methods (no @JvmStatic) — CNC Verse Mobile invokes them virtually (IncompatibleClassChangeError)",
         "isInstantDownload() filter in streamsFlow (all addons) + CsTester / NuvioTester",
