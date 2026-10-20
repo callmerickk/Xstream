@@ -13,6 +13,7 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.4.2 beta", "20 Oct 2026", "Opens again", listOf("Fixed: 0.4.1 closed right away on Android 12 and newer")),
     Release("0.4.1 beta", "20 Oct 2026", "Plugin fixes", listOf(
         "All 7 CloudStream plugins load now (FourKHDHub, UHDmovies and both CNC Verse plugins failed before)",
         "Plugins find the right title much more often: site titles are cleaned of year, quality and language before matching, and season pages pick the right season",
@@ -215,6 +216,10 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.4.2 beta", "20 Oct 2026", "Startup crash fix", listOf(
+        "values-v31/themes.xml still had Theme.Material parent → AppCompatActivity threw \"You need to use a Theme.AppCompat theme\" in setContent; now AppCompat",
+        "CI smoke.yml: builds, launches on an API 34 emulator, reports crashes as an annotation (tools/smoke.sh)",
+    )),
     Release("0.4.1 beta", "20 Oct 2026", "Plugin fixes", listOf(
         "kotlinx-coroutines 1.11.0 (plugins call BuildersKt.runBlockingK) with -Xskip-metadata-version-check; cs_compat.py no longer excuses missing members on classes whose only framework parent is java.lang.Object",
         "MainActivity is an AppCompatActivity (Theme.AppCompat.NoActionBar parent); CommonActivity.activity = MainActivity; plugins load(activity) — CNC Verse casts it to AppCompatActivity",

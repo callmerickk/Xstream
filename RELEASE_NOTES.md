@@ -1,3 +1,10 @@
+Xstream 0.4.2 beta
+
+• Fixed: 0.4.1 closed right away on Android 12 and newer.
+• Includes all 0.4.1 plugin fixes.
+
+---
+
 Xstream 0.4.1 beta
 
 • All 7 CloudStream plugins load now (FourKHDHub, UHDmovies and both CNC Verse plugins failed before).
