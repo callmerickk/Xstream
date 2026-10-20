@@ -77,6 +77,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     val myList = MutableStateFlow<List<Meta>>(emptyList())
     val doneKeys = MutableStateFlow<Set<String>>(emptySet())
     val doneMs = MutableStateFlow(0L)
+    /** Xstream: where you are in EVERY episode you started (Continue Watching keeps only the latest one per series). */
+    val epProgress = MutableStateFlow<Map<String, Progress>>(emptyMap())
 
     private fun loadProfiles(): List<Profile> {
         val saved = glob.getString("profiles", null)?.let { runCatching { Api.json.decodeFromString<List<Profile>>(it) }.getOrNull() }
@@ -114,6 +116,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         current.value = p
         lib = prefsFor(p)
         progress.value = lib.getString("progress", null)?.let { runCatching { warm("p:${p.id}", it) { r -> Api.json.decodeFromString<List<Progress>>(r) } }.getOrNull() } ?: emptyList()
+        epProgress.value = lib.getString("eprog", null)?.let { runCatching { Api.json.decodeFromString<Map<String, Progress>>(it) }.getOrNull() } ?: emptyMap()
+        WatchLog.load(ctx, p.id)
         myList.value = lib.getString("mylist", null)?.let { runCatching { warm("l:${p.id}", it) { r -> Api.json.decodeFromString<List<Meta>>(r) } }.getOrNull() } ?: emptyList()
         doneKeys.value = lib.getStringSet("done", emptySet())?.toSet() ?: emptySet()
         doneMs.value = lib.getLong("doneMs", 0L)
@@ -424,6 +428,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     fun saveProgress(p: Progress) {
         if (p.positionMs < 10_000) return
         ContinueWidget.update(ctx, p)
+        WatchLog.record(ctx, current.value?.id, p)
+        if (p.key.contains(":")) {
+            // Every episode keeps its own place (newest 300).
+            val m = epProgress.value + (p.key to p)
+            epProgress.value = if (m.size > 300) m.entries.sortedByDescending { it.value.updated }.take(300).associate { it.key to it.value } else m
+            lib.edit().putString("eprog", Api.json.encodeToString(epProgress.value)).apply()
+            markCur("eprog")
+        }
         // One entry per series (the latest episode). A finished EPISODE stays (at 100%) so Continue Watching can offer
         // the next one / say when it airs; a finished movie leaves the row.
         val base = p.key.substringBefore(":")
@@ -1282,6 +1294,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             "cols" -> runCatching { colFileFor(id).takeIf { it.exists() }?.readText() }.getOrNull()
             "list" -> pp.getString("mylist", null)
             "prog" -> pp.getString("progress", null)
+            "eprog" -> pp.getString("eprog", null)
             "done" -> Api.json.encodeToString(mapOf(
                 "k" to (pp.getStringSet("done", emptySet()) ?: emptySet()).joinToString("\n"),
                 "ms" to pp.getLong("doneMs", 0L).toString(),
@@ -1330,6 +1343,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             "list" -> {
                 pp.edit().putString("mylist", value).apply()
                 if (isCur) myList.value = value?.let { runCatching { Api.json.decodeFromString<List<Meta>>(it) }.getOrNull() } ?: emptyList()
+            }
+            "eprog" -> {
+                pp.edit().putString("eprog", value).apply()
+                if (isCur) epProgress.value = value?.let { runCatching { Api.json.decodeFromString<Map<String, Progress>>(it) }.getOrNull() } ?: emptyMap()
             }
             "prog" -> {
                 pp.edit().putString("progress", value).apply()

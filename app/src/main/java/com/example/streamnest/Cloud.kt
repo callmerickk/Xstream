@@ -68,7 +68,7 @@ data class CloudUser(val uid: String, val email: String, val verified: Boolean, 
  * Signing in on a device makes the cloud win for everything that already exists there.
  */
 object Cloud {
-    val PROFILE_FIELDS = listOf("set", "dev_phone", "dev_tv", "addons", "cols", "list", "prog", "done", "votes")
+    val PROFILE_FIELDS = listOf("set", "dev_phone", "dev_tv", "addons", "cols", "list", "prog", "eprog", "done", "votes")
     val DEVICE_FIELD = if (BuildConfig.IS_TV) "dev_tv" else "dev_phone"
 
     val user = MutableStateFlow<CloudUser?>(null)

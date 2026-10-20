@@ -18,9 +18,42 @@ import androidx.compose.ui.viewinterop.AndroidView
  * inside a WebView. The page identifies the app as its origin/referrer, which YouTube now requires
  * (otherwise embeds fail with error 152/153). Some uploaders block embedding; then onError is called.
  */
-@SuppressLint("SetJavaScriptEnabled")
+/** Where trailers play as real video (our own player) instead of YouTube's embedded page. Xstream: TV only for now. */
+val DirectTrailers: Boolean get() = true
+
+/**
+ * A trailer inside the app. Direct video first ([TrailerStream] + [DirectTrailer]: croppable, zoomable, no YouTube
+ * buttons); YouTube's embedded page only when no direct video is offered.
+ */
 @Composable
 fun TrailerVideo(
+    videoId: String,
+    muted: Boolean,
+    modifier: Modifier = Modifier,
+    fitWhole: Boolean = false,
+    backdrop: String? = null,
+    zoom: Float = 1f,
+    onPlaying: () -> Unit,
+    onEnded: () -> Unit,
+    onError: () -> Unit,
+) {
+    if (!DirectTrailers) { TrailerWebVideo(videoId, muted, modifier, fitWhole, backdrop, zoom, onPlaying, onEnded, onError); return }
+    var src by remember(videoId) { mutableStateOf<YtDirect.Src?>(null) }
+    var noDirect by remember(videoId) { mutableStateOf(false) }
+    LaunchedEffect(videoId) { src = YtDirect.resolve(videoId); if (src == null) noDirect = true }
+    val s = src
+    when {
+        noDirect -> TrailerWebVideo(videoId, muted, modifier, fitWhole, backdrop, zoom, onPlaying, onEnded, onError)
+        s != null -> androidx.compose.foundation.layout.Box(modifier) {
+            if (fitWhole && backdrop != null) coil.compose.AsyncImage(backdrop, null, Modifier.matchParentSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+            DirectTrailer(s, muted, Modifier.matchParentSize(), crop = !fitWhole, zoom = zoom, onPlaying = onPlaying, onEnded = onEnded, onError = { noDirect = true })
+        }
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun TrailerWebVideo(
     videoId: String,
     muted: Boolean,
     modifier: Modifier = Modifier,

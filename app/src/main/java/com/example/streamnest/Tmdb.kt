@@ -120,7 +120,7 @@ private fun parseRec(r: JsonObject, kind: String): TmRec? {
     val title = r.str("title") ?: r.str("name") ?: return null
     return TmRec(
         id, r.str("media_type") ?: kind, title,
-        (r.str("release_date") ?: r.str("first_air_date"))?.take(4), r.str("poster_path")?.let { "${IMG}w342$it" },
+        (r.str("release_date") ?: r.str("first_air_date"))?.take(4), r.str("poster_path")?.let { "${IMG}w500$it" },
         score = (r["vote_average"] as? JsonPrimitive)?.doubleOrNull ?: 0.0,
         genreIds = (r["genre_ids"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.intOrNull }.orEmpty(),
     )

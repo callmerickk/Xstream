@@ -129,17 +129,12 @@ fun MySpaceScreen(
                         ProfileAvatar(vm, profile, 64.dp, Modifier.clickable(onClick = onProfile))
                         Column(Modifier.weight(1f).padding(start = 14.dp)) {
                             Text(profile?.name ?: "", fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                st.tags.forEach { Text(it, Modifier.clip(RoundedCornerShape(50)).background(Color(0x1AFFFFFF)).padding(horizontal = 9.dp, vertical = 3.dp), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                            // Xstream: tags wrap onto a new line instead of sliding under each other; no Switch button (long-press
+                            // your picture in the dock and slide to another profile).
+                            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                            androidx.compose.foundation.layout.FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                st.tags.forEach { Text(it, Modifier.clip(RoundedCornerShape(50)).background(Color(0x1AFFFFFF)).padding(horizontal = 10.dp, vertical = 4.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
                             }
-                        }
-                        Row(
-                            Modifier.clip(RoundedCornerShape(14.dp)).background(Accent).clickable(onClick = onSwitchProfile).padding(horizontal = 12.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Default.SwapHoriz, null, Modifier.size(18.dp), tint = OnAccent)
-                            Spacer(Modifier.width(4.dp))
-                            Text("Switch", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = OnAccent)
                         }
                     }
                     Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -152,21 +147,9 @@ fun MySpaceScreen(
                     }
                 }
             }
-            // Library · Watch together
-            item {
-                Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    BigHubButton("Library", "Continue · downloads · history", Icons.Default.VideoLibrary, Brush.linearGradient(listOf(Color(0xFF2B3550), Color(0xFF1A2032))), Modifier.weight(1f), onClick = onLibrary)
-                    BigHubButton("Watch together", if (pending.isNotEmpty()) "${pending.size} waiting for you" else "Friends · plans · chats", Icons.Default.Groups,
-                        Brush.linearGradient(listOf(Color(0xFF7A1420), Color(0xFF3A0B12))), Modifier.weight(1f).tourTarget("together"), onClick = onTogether)
-                }
-            }
-            item {
-                Column(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).border(1.dp, HubLine, RoundedCornerShape(18.dp))) {
-                    HubRow(Icons.Default.Bookmark, Color(0xFF1E2A44), "Watchlist", "${myList.size} titles · calendar", onClick = onWatchlist)
-                    HubRow(Icons.Default.Notifications, Color(0xFF2A2440), "Notifications", if (alerts > 0) "$alerts" else "", onClick = onNotifications)
-                    HubRow(Icons.Default.DeleteSweep, Color(0xFF3A1418), "Clear Continue Watching", "${progress.size} titles", danger = true, last = true) { if (progress.isNotEmpty()) confirmClear = true }
-                }
-            }
+            // Xstream: Library, Watch together, Watchlist, Notifications and Clear Continue Watching live in Library now;
+            // My Space shows your charts instead.
+            item { LaunchedEffect(profile?.id) { WatchLog.load(ctx, profile?.id) } ; WatchCharts { k -> progress.firstOrNull { it.key == k }?.let { onOpen(it.toMeta()) } ?: onOpen(Meta(id = k.substringBefore(":"), type = if (k.contains(":")) "series" else "movie", name = "")) } }
             if (!BuildConfig.IS_TV) item { DownloadsSection(onPlay) }
             item { Spacer(Modifier.navigationBarsPadding().height(120.dp)) }
         }

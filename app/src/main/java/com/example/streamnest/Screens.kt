@@ -44,6 +44,18 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -351,34 +363,115 @@ fun App(vm: AppViewModel = viewModel()) {
 private suspend fun Animatable<Float, AnimationVector1D>.follow(target: () -> Float) {
     var first = true
     snapshotFlow(target).distinctUntilChanged().collectLatest { v ->
-        if (first) { first = false; snapTo(v) } else animateTo(v, tween(260))
+        // Xstream: hiding shrinks away quickly; coming back pops in with a little bounce, like a bubble.
+        if (first) { first = false; snapTo(v) }
+        else if (v < value) animateTo(v, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 360f))
+        else animateTo(v, tween(240, easing = androidx.compose.animation.core.FastOutLinearInEasing))
     }
 }
 
-/** Hotstar-style bottom bar: 3 items, dark base with a glowing curved top edge. Shrinks while scrolling down. */
+/**
+ * Xstream dock: a floating capsule with a red horizon glow along its top edge. Scrolling down the page it shrinks away
+ * like a bubble; scrolling back up it pops in again. Long-press your picture and, without lifting, slide onto another
+ * profile (it ripples like water); lift to switch.
+ */
 @Composable
 fun BottomNav(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> Unit, modifier: Modifier = Modifier) {
-    var switcher by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
-    // Xstream: a floating dock (a glass pill above the bottom edge); the chosen tab sits in a white circle.
-    Box(modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 14.dp).graphicsLayer { translationY = compact.value * 10.dp.toPx() }, Alignment.Center) {
+    val profiles by vm.profiles.collectAsStateWithLifecycle()
+    val current by vm.current.collectAsStateWithLifecycle()
+    var bubble by remember { mutableStateOf(false) }
+    var hover by remember { mutableIntStateOf(-1) }
+    val slots = remember { mutableStateMapOf<Int, androidx.compose.ui.geometry.Rect>() }
+    val meOrigin = remember { arrayOf(Offset.Zero) }
+    val red = Accent
+    Box(
+        modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 14.dp).graphicsLayer {
+            val v = compact.value
+            translationY = v * 96.dp.toPx(); val sc = 1f - 0.6f * v.coerceIn(0f, 1f); scaleX = sc; scaleY = sc
+            alpha = (1f - v * 1.3f).coerceIn(0f, 1f)
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+        },
+        Alignment.Center,
+    ) {
         val shape = RoundedCornerShape(50)
         Row(
-            Modifier.width(300.dp).height(64.dp).shadow(20.dp, shape).clip(shape).background(Color(0xF01C2029)).border(1.dp, Color(0xFF2C3240), shape)
+            Modifier.width(300.dp).height(64.dp).shadow(22.dp, shape)
+                .drawBehind {
+                    // The glow above the edge (strongest on the left, like sunrise on StreamX's bar).
+                    drawOval(Brush.radialGradient(listOf(red.copy(alpha = 0.45f), Color.Transparent), center = Offset(size.width * 0.3f, 0f), radius = size.width * 0.45f),
+                        topLeft = Offset(-size.width * 0.1f, -size.height * 0.55f), size = androidx.compose.ui.geometry.Size(size.width * 0.85f, size.height * 1.1f))
+                }
+                .clip(shape).background(Brush.verticalGradient(listOf(Color(0xF71A1A22), Color(0xFA0D0E13))))
+                .border(1.5.dp, Brush.horizontalGradient(listOf(Color(0xFFFF6A3D), red, red.copy(alpha = 0.35f), Color(0x26FFFFFF))), shape)
                 .padding(horizontal = 9.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
         ) {
             DockItem(tab == 0, t("navHome"), { onTab(0) }) { c -> Icon(Icons.Default.Home, t("navHome"), Modifier.size(24.dp), tint = c) }
             DockItem(tab == 1, t("navSearch"), { onTab(1) }) { c -> Icon(Icons.Default.Search, t("navSearch"), Modifier.size(24.dp), tint = c) }
             DockItem(tab == 3, "Library", { onTab(3) }) { c -> Icon(Icons.Default.VideoLibrary, "Library", Modifier.size(24.dp), tint = c) }
-            Box {
-                DockItem(tab == 2, t("navMySpace"), { onTab(2) }, onLongClick = {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress); switcher = true
-                }) { _ -> Avatar(vm, 30.dp) }
-                if (switcher) ProfileSwitcher(vm, onDismiss = { switcher = false }, onPicked = { switcher = false; onTab(2) })
+            val fill by androidx.compose.animation.animateColorAsState(if (tab == 2) Color(0xFFF2F4F8) else Color.Transparent, label = "me")
+            Box(
+                Modifier.size(48.dp).clip(CircleShape).background(fill)
+                    .onGloballyPositioned { meOrigin[0] = it.boundsInRoot().topLeft }
+                    .pointerInput(profiles) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val long = awaitLongPressOrCancellation(down.id)
+                            if (long == null) { onTab(2); return@awaitEachGesture }
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            bubble = true; hover = -1
+                            while (true) {
+                                val ev = awaitPointerEvent()
+                                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                val at = meOrigin[0] + ch.position
+                                val h = slots.entries.firstOrNull { (_, r) -> r.inflate(18f).contains(at) }?.key ?: -1
+                                if (h != hover) { hover = h; if (h >= 0) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+                                ch.consume()
+                                if (!ch.pressed) break
+                            }
+                            val pick = profiles.getOrNull(hover)
+                            bubble = false; hover = -1
+                            if (pick != null && pick.id != current?.id) ProfileLock.ask(pick) { vm.selectProfile(pick); onTab(2) }
+                        }
+                    }
+                    .semantics { contentDescription = t("navMySpace") },
+                Alignment.Center,
+            ) { Avatar(vm, 30.dp) }
+        }
+        if (bubble) Column(
+            Modifier.align(Alignment.BottomEnd).padding(end = 12.dp).offset(y = (-80).dp)
+                .shadow(18.dp, RoundedCornerShape(40.dp)).clip(RoundedCornerShape(40.dp)).background(Color(0xF216181F))
+                .border(1.dp, Color(0x262C3240), RoundedCornerShape(40.dp)).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.End,
+        ) {
+            profiles.forEachIndexed { i, pr ->
+                val on = hover == i
+                val grow by animateFloatAsState(if (on) 1.18f else 1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 500f), label = "grow")
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(pr.name + if (pr.id == current?.id) " · you" else "", fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        color = if (on) Color.White else Color(0xFFB6BDCC))
+                    Box(Modifier.size(52.dp).onGloballyPositioned { slots[i] = it.boundsInRoot() }, Alignment.Center) {
+                        if (on) WaterRipple(Modifier.matchParentSize())
+                        ProfileAvatar(vm, pr, 46.dp, Modifier.graphicsLayer { scaleX = grow; scaleY = grow }, animate = false)
+                    }
+                }
             }
         }
     }
+}
+
+/** Three soft rings spreading out like water, under a hovered profile. */
+@Composable
+private fun WaterRipple(modifier: Modifier) {
+    val inf = rememberInfiniteTransition(label = "water")
+    val t by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing)), label = "w")
+    Spacer(modifier.drawBehind {
+        for (k in 0..2) {
+            val p = (t + k / 3f) % 1f
+            drawCircle(Color(0xFF9FD8FF), radius = size.minDimension / 2f * (0.8f + 0.7f * p), alpha = 0.7f * (1f - p), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+        }
+    })
 }
 
 @Composable

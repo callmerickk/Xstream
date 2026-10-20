@@ -110,7 +110,10 @@ fun DetailScreen(
     LaunchedEffect(meta0.id) { vm.fullMeta(meta0)?.let { meta = it }; metaLoaded = true }
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
-    val progress by vm.progress.collectAsStateWithLifecycle()
+    val progress0 by vm.progress.collectAsStateWithLifecycle()
+    val epProg by vm.epProgress.collectAsStateWithLifecycle()
+    // Xstream: Continue Watching's entries plus every episode's own saved place.
+    val progress = remember(progress0, epProg) { progress0 + epProg.values.filter { e -> progress0.none { it.key == e.key } } }
     val done by vm.doneKeys.collectAsStateWithLifecycle()
     val myList by vm.myList.collectAsStateWithLifecycle()
     val texts by vm.texts.collectAsStateWithLifecycle()
