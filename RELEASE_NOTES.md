@@ -1,3 +1,21 @@
+Xstream 0.3 beta
+
+• The dock's icons float as if on water, each with a glowing red ring. Hold one and they all wobble.
+• My Space in the dock is your picture with a red ring. Hold it for your other profiles: tap one, or slide onto it and let go.
+• The dock tucks away after 4 seconds without a touch and comes back when you touch the screen.
+• Notification bell on Home with a red dot, for new episodes, friends' recommendations and invites.
+• Library: Watchlist and Calendar, with Watch together as a glowing card up front.
+• Tapping your picture in My Space opens profile editing straight away.
+• Player: Audio & Subtitles and Watch Next (or Episodes) on the left; next episode, play / pause and › on the right. Swipe up from the middle for Watch Next.
+• Hold Play on a title page: the card lifts out with the trailer and every option.
+• New loading screen with the trailer playing inside a frame.
+• Full-screen trailers play in Xstream's own player.
+• Subtitle auto sync rebuilt, and it works quietly.
+• GIF search works again. Sharper Picked for you pictures.
+• Settings: Quick Play & filters on one page; Integrations is just the debrid services.
+
+---
+
 Xstream 0.2 beta
 
 • Long-press any poster: it lifts out, the trailer plays inside the card, with ratings and Details · Play manually · Add to watchlist.

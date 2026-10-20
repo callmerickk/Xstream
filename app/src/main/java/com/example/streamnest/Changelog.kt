@@ -13,6 +13,26 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.3 beta", "20 Oct 2026", "Floating dock, bell, cleaner settings", listOf(
+        "The dock's icons float as if on water, each with a glowing red ring; hold one and they all wobble",
+        "My Space in the dock is your picture with a red ring — hold it for your other profiles: tap one, or slide onto it and let go",
+        "The dock tucks away after 4 seconds without a touch and comes back when you touch the screen",
+        "Notification bell on Home with a red dot; tap it for new episodes, friends' recommendations and invites",
+        "Library: Watchlist and Calendar, with Watch together as a glowing card up front",
+        "Tapping your picture in My Space opens profile editing straight away",
+        "Removing a title from Continue Watching also takes it out of your charts",
+        "The card deck opens on the 2nd card; the AI button is redder and its logo bigger",
+        "Player: Audio & Subtitles, then Watch Next (or Episodes for series) on the left; next episode, play / pause and › on the right",
+        "Swipe up from the middle of the video to bring up Watch Next",
+        "Hold Play on a title page: the card lifts out with the trailer and every option",
+        "New loading screen: the trailer plays inside a frame, with the progress around it and the heartbeat line",
+        "Full-screen trailers play in Xstream's own player",
+        "Subtitle auto sync rebuilt: it lines up at the start, then checks quietly every 30 minutes",
+        "GIF search works again, with animated GIFs",
+        "Sharper Picked for you pictures",
+        "Settings: Quick Play & filters on one clean page; Integrations is just the debrid services",
+        "Addons show the settings gear again; Source Test lists each addon by its own name",
+    )),
     Release("0.2 beta", "20 Oct 2026", "Long-press previews, rooms and charts", listOf(
         "Long-press any poster: it lifts out, the trailer plays inside the card, with ratings and Details · Play manually · Add to watchlist",
         "The dock hides with a bubble while you scroll and pops back, with a red glow edge",
@@ -184,6 +204,21 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.3 beta", "20 Oct 2026", "Xstream 0.3 beta", listOf(
+        "versionCode 4. Dock: DockItem float (rememberFloat sin/tilt, water mode on hold), red glow ring; avatar with red ring; bubble stays open after a plain long-press; idle hide via lastTouch timestamp + Initial-pass pointer watcher (no recomposition)",
+        "XBell.kt: NotificationBell (EpisodeAlerts + Recs + Social.pending, seen timestamp in prefs bell) → Popup bubble; BellNav opens Together. Library tabs watchlist/calendar + WatchTogetherCard",
+        "Settings(profileEdit) → ProfileEditor directly; WatchLog.remove on removeProgress / clearContinue",
+        "Deck initialPage 1 (+ scrollToPage once); AI orb red sweep rim, logo 0.6×",
+        "Player (phone): row Audio&Subs + Episodes|WatchNext, right: next-ep icon (series), play/pause, ›; gesture mode 5 = middle-third swipe up → watchNext",
+        "Detail: long-press Play → TitleLiftMenu(actions = full TitleAction list) in a Dialog; TV keeps TitleActionsSheet",
+        "XLoading.kt XMomentLoader replaces Finding/Serving scenes on phone: radial bg, 16:9 frame with DirectTrailer (muted) or drifting stills, border progress, HeartbeatBar (now internal)",
+        "TrailerActivity direct mode: YtDirect.resolve → ExoPlayer + PlayerView; js() commands mapped (playV/pauseV/seekBy/seekTo/setMuted/setFill/setZoom); WebView only as fallback. YtDirect.mirrors(): Piped + Invidious (local=true)",
+        "AutoSync: PCM float measured; evaluateImpl ±30 s coarse/fine search with min-gain gate vs current offset; settle() until 2 agreeing checks, then 30-min re-checks; no snacks",
+        "Gifs: TenorWeb keyless scrape + WebGifs + GIPHY in parallel; empty state; animated previews",
+        "hiResArt: IMDb ._V1_ → UX1000, fanart preview→fanart; LandscapeCard uses hiResArt",
+        "Addon gear for all non-borrowed; SourceTest uses Addon.label() (names + addonObj lookup)",
+        "QuickPlayPage (XPlayback.kt) for users; Stream Filters (all) / Quick Start servers dev-only. IntegrationsPage(dev) = Defaults for everyone + Publish (DevDefaults → shared/devDefaults, t_/s_ keys; synced on profile open); users get DebridPage (debridRd/Ad/Pm/Tb). PenguConnectPrompt + Quick server card removed. Recommendations toggles moved to Content & Discovery",
+    )),
     Release("0.2 beta", "20 Oct 2026", "Xstream 0.2 beta", listOf(
         "versionCode 3. Dock: Animatable hide (scale/translate/alpha, spring back), red radial glow + gradient border; My Space long-press bubble slide-to-select with WaterRipple + ProfileLock",
         "XLift.kt: LocalTitleHold + Modifier.titleTap on Shelf/AddonPoster/Landscape/Ranked cards; TitleLiftMenu (flying card → 16:9, DirectTrailer, logo shrink, IMDb/cert)",
