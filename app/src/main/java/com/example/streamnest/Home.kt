@@ -424,7 +424,9 @@ fun ShelfRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     val ratio: Float? = if (!addonDesign) null else when (declared) {
         "landscape" -> detected?.takeIf { it > 1.2f } ?: (16f / 9f)
         "square" -> 1f
-        else -> detected?.takeIf { it > 1.2f || it in 0.9f..1.1f }
+        // Tall posters the addon makes itself (configured rating / provider posters): shown as they are, not swapped
+        // for a wide backdrop card.
+        else -> detected?.takeIf { it > 1.2f || it in 0.9f..1.1f } ?: (2f / 3f).takeIf { items.take(4).any { m -> isDesignedPoster(m.poster) } }
     }
     val corner = posterCorner()
     val posterShape = remember(corner) { RoundedCornerShape(corner) }
@@ -1051,4 +1053,13 @@ private fun ContinueAllPage(vm: AppViewModel, items: List<Progress>, onClose: ()
             dismissButton = { androidx.compose.material3.TextButton({ ask = false }) { Text("Cancel") } },
         )
     }
+}
+
+
+/** A poster drawn by the addon (rating / rank posters from a configured addon), not a plain artwork file. */
+fun isDesignedPoster(url: String?): Boolean {
+    val u = url?.lowercase() ?: return false
+    if (!u.startsWith("http")) return false
+    val plain = listOf("image.tmdb.org", "images.metahub.space", "live.metahub.space", "m.media-amazon.com", "artworks.thetvdb.com", "assets.fanart.tv", "img.youtube.com")
+    return plain.none { it in u }
 }

@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
@@ -117,10 +119,6 @@ private fun SettingsRootPage(vm: AppViewModel, onClose: () -> Unit, open: (Strin
             SectionLabel("About")
             SettingsCard {
                 SettingRow(Icons.Default.Info, "Licenses & Attribution", "Data sources, acknowledgements, and licenses.") { open("about") }
-                RowDivider()
-                SettingRow(Icons.Default.TouchApp, "Replay the visual tour", "Shows the guide on Home, title pages, the player and My Space again.") {
-                    Tour.reset(); Snack.show("The visual tour will show again on each screen")
-                }
                 RowDivider()
                 run {
                     // "Update" badge while a newer version is waiting (e.g. after "Later").
@@ -241,6 +239,8 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
             SettingRow(null, "Continue Watching", "Settings for the Continue Watching section.") { open("cw") }
             RowDivider(20.dp)
             SettingRow(null, "Poster Card Style", "Tune card width and corner radius.") { open("poster") }
+            RowDivider(20.dp)
+            SettingRow(null, "Collections", "Import Nuvio collections (studios, networks, genres…) for Home.") { open("collections") }
         }
         SectionLabel("Streams")
         SettingsCard { SettingRow(null, "Streams", "How stream sources are listed.") { open("streams") } }
@@ -592,10 +592,6 @@ private fun ContentPage(onBack: () -> Unit, open: (String) -> Unit) {
                 SettingRow(null, "Plugins", "Install JavaScript plugins that find streams, next to your addons.") { open("plugins") }
             }
         }
-        SectionLabel("Discovery")
-        SettingsCard {
-            SettingRow(null, "Collections", "Import Nuvio collections (studios, networks, genres…) for Home.") { open("collections") }
-        }
     }
 }
 
@@ -712,29 +708,44 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
             if (!devView && Public.isDevChoice(a)) return@forEachIndexed
             val on = vm.isAddonOn(a)
             Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(CardShape).background(CardBg).padding(18.dp)) {
+                val borrowed = isOn(texts["addonBorrowed:${a.baseUrl}"] ?: "no")
+                val addonCtx = androidx.compose.ui.platform.LocalContext.current
+                val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+                var renaming by remember { mutableStateOf(false) }
+                // Nuvio-style head: logo, name with a small pencil (rename), long-press the name to copy the addon link.
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(58.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF26262C)), Alignment.Center) {
                         Icon(Icons.Default.Extension, null, Modifier.size(32.dp), tint = Color(0xFF6FB6FF))
+                        a.manifest.logo?.takeIf { it.startsWith("http") }?.let { coil.compose.AsyncImage(it, null, Modifier.fillMaxSize().background(Color(0xFF26262C)), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
                     }
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(a.label(), fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(if (a.label() != a.manifest.name) "${a.manifest.name} · Version ${a.manifest.version}" else "Version ${a.manifest.version}", fontSize = 15.sp, color = Muted)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(a.label(), Modifier.weight(1f, fill = false).pointerInput(a.baseUrl) {
+                                detectTapGestures(onLongPress = {
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                    runCatching {
+                                        val cm = addonCtx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                        cm.setPrimaryClip(android.content.ClipData.newPlainText("Addon link", "${a.baseUrl}/manifest.json"))
+                                    }
+                                    Snack.show("Addon link copied")
+                                })
+                            }, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Icon(Icons.Default.Edit, "Rename", Modifier.padding(start = 6.dp).size(26.dp).clip(CircleShape).clickable { renaming = true }.padding(5.dp), tint = Color(0xFF9AA3B5))
+                        }
+                        Text((if (a.label() != a.manifest.name) "${a.manifest.name} · " else "") + "Version ${a.manifest.version}" + (if (borrowed) " · Borrowed" else ""), fontSize = 15.sp, color = Muted)
                     }
                     Switch(on, { vm.toggleAddon(a) })
                 }
                 val pinned = vm.isPinned(a)
                 val fixed = vm.isPinnedFixed(a)
-                val addonCtx = androidx.compose.ui.platform.LocalContext.current
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                    // Configure: opens the addon's own settings page.
-                    TextButton({
+                    // Configure (gear): only for addons that have a settings page and weren't borrowed from someone's backup.
+                    if (a.manifest.configurable && !borrowed) IconButton({
                         runCatching { addonCtx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(vm.configureUrl(a))).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
                             .onFailure { Snack.show("No browser to open the addon's settings") }
-                    }) { Icon(Icons.Default.Settings, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Configure") }
+                    }) { Icon(Icons.Default.Settings, "Configure") }
                     // Rename: the name shown everywhere in Xstream (the addon itself doesn't change).
-                    var renaming by remember { mutableStateOf(false) }
-                    IconButton({ renaming = true }) { Icon(Icons.Default.Edit, "Rename") }
                     if (renaming) {
                         var nm by remember { mutableStateOf(a.label()) }
                         // Saves the name for THIS addon (by its link) and moves its Quick Start tick to the new name.

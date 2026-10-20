@@ -604,6 +604,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                 BuiltIns.keys.forEach { (k, _) ->
                     vals[k] = m[k] ?: when (k) {
                         "penguConnect" -> QuickServer.DEFAULT_CONNECT
+                        "quickPlay" -> vm.texts.value["qpUrl"]?.let { "$it/manifest.json" } ?: ""
                         else -> vm.addons.value.firstOrNull { k in (it.manifest.name + " " + it.baseUrl).lowercase() }?.let { it.baseUrl + "/manifest.json" } ?: ""
                     }
                 }

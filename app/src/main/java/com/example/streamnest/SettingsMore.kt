@@ -61,9 +61,12 @@ internal fun QuickStartPage(vm: AppViewModel, onBack: () -> Unit) {
         )
         SectionLabel("Quick Start")
         SettingsCard {
-            ToggleRow("Use Quick Start", "Play from the addons below with the quality selector.", isOn(v("qsOn"))) { vm.setText("qsOn", if (it) "yes" else "no") }
+            ToggleRow("Quick Play", if (Public.dev) "Play from the addons below with the quality selector." else "Starts videos instantly from the fastest servers.", isOn(v("qsOn"))) { vm.setText("qsOn", if (it) "yes" else "no") }
         }
 
+        if (!Public.dev) Text("Xstream picks the fastest servers for Quick Play for you — just switch it on or off.",
+            Modifier.padding(horizontal = 24.dp, vertical = 8.dp), fontSize = 13.sp, color = Muted)
+        if (Public.dev) {
         SectionLabel("Quick Start addons (group 1)")
         SettingsCard {
             if (!Public.dev && addons.any { Public.isDevChoice(it) }) Text("The built-in quick server always plays first. Addons you tick here join it.", Modifier.padding(20.dp), color = Muted)
@@ -110,6 +113,7 @@ internal fun QuickStartPage(vm: AppViewModel, onBack: () -> Unit) {
             }
         }
 
+        }
         SectionLabel("Preferred audio language")
         SettingsCard {
             Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {

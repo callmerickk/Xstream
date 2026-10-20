@@ -74,10 +74,10 @@ object WebGifs {
                 val js = mr.groupValues[1].replace("&quot;", "\"").replace("&amp;", "&")
                 val o = runCatching { Api.json.parseToJsonElement(js).jsonObject }.getOrNull() ?: return@mapNotNull null
                 val full = o["murl"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                val thumb = o["turl"]?.jsonPrimitive?.contentOrNull ?: full
-                if (!full.startsWith("https://")) return@mapNotNull null
-                GifHit(full, thumb, full)
-            }.distinctBy { it.full }.take(36).toList()
+                if (!full.startsWith("https://") || !full.substringBefore('?').lowercase().endsWith(".gif")) return@mapNotNull null
+                // The grid plays the real GIF (the search's own thumbnail is a still picture).
+                GifHit(full, full, full)
+            }.distinctBy { it.full }.take(24).toList()
         }.getOrNull()
     }
 

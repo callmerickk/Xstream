@@ -158,17 +158,6 @@ fun ManualPage(onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().pageScroll().navigationBarsPadding().padding(bottom = 40.dp)) {
         PageHeader("User manual", onBack)
         Text("Everything Xstream can do, and how. Tap a chapter to open it.", Modifier.padding(horizontal = 20.dp), fontSize = 14.sp, color = Muted)
-        Row(
-            Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF15161C))
-                .clickable { Tour.reset(); Snack.show("The visual tour will show again on Home, title pages, the player and My Space") }.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Default.TouchApp, null, Modifier.size(22.dp), tint = Accent)
-            Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                Text("Replay the visual tour", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                Text("Highlights every button on each screen, with the player gestures.", fontSize = 12.sp, color = Muted)
-            }
-        }
         OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).tvOkKeyboard(), singleLine = true,
             placeholder = { Text("Search the manual (e.g. trailer, lock, download)") }, leadingIcon = { Icon(Icons.Default.Search, null) },
             shape = RoundedCornerShape(14.dp), keyboardOptions = tvKeyboard())

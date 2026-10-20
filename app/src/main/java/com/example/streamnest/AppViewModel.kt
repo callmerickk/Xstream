@@ -644,6 +644,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
         withContext(Dispatchers.Main) {
             setText("addonsOff", off.joinToString("|")); setText("addonsPinned", pins.joinToString("|"))
+            // Xstream: addons that came from someone's backup are "borrowed" — their settings page (with that person's
+            // account in the link) stays hidden.
+            got.filter { it.baseUrl !in have }.forEach { setText("addonBorrowed:${it.baseUrl}", "yes") }
             if (replace) o["settings"]?.jsonObject?.forEach { (k, v) -> if (k in backupKeys) v.jsonPrimitive.contentOrNull?.let { setText(k, it) } }
             setAddons(list)
             refresh()

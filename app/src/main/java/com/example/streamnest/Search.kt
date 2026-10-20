@@ -328,12 +328,20 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
         val said = r.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim()
         if (!said.isNullOrEmpty()) { setQuery(said); addRecent(said); keyboard?.hide(); focus.clearFocus() }
     }
+    // Xstream: the in-app voice panel (falls back to the phone's dialog when the phone has no speech service).
+    var voiceSheet by remember { mutableStateOf(false) }
     fun startVoice() {
+        if (android.speech.SpeechRecognizer.isRecognitionAvailable(ctx)) { voiceSheet = true; return }
         val i = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Say a movie or show")
         runCatching { voice.launch(i) }.onFailure { Snack.show("Voice search isn't available on this phone") }
     }
+    if (voiceSheet) VoiceSearchSheet(
+        onSearch = { said -> voiceSheet = false; setQuery(said); addRecent(said); keyboard?.hide(); focus.clearFocus() },
+        onAsk = { said -> voiceSheet = false; VoiceAskBus.pending.value = said },
+        onClose = { voiceSheet = false },
+    )
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         // Search field

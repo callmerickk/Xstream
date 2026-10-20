@@ -612,7 +612,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
  * Hands-free: it listens, answers out loud and listens again. Tap the orb to talk, stop or interrupt.
  */
 @Composable
-fun VoiceAssistant(vm: AppViewModel, onClose: () -> Unit, onOpen: (Meta) -> Unit) {
+fun VoiceAssistant(vm: AppViewModel, onClose: () -> Unit, onOpen: (Meta) -> Unit, firstAsk: String? = null) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val s = remember { XSession(ctx, vm, scope) }
@@ -623,6 +623,8 @@ fun VoiceAssistant(vm: AppViewModel, onClose: () -> Unit, onOpen: (Meta) -> Unit
 
     DisposableEffect(Unit) {
         s.start()
+        // Xstream: opened from voice search with what was said.
+        firstAsk?.takeIf { it.isNotBlank() }?.let { s.handleUser(it, voice = false) }
         onDispose { s.release() }
     }
     val lifecycle = LocalLifecycleOwner.current.lifecycle

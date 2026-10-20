@@ -535,8 +535,8 @@ object SourceTester {
         runCatching {
             val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.updates", f)
             ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Source Test log").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Share log").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { e -> ActLog.add("SHARE", "log share failed: ${e.message}"); Snack.show("Couldn't share the log — use Save or Copy") }
     }
 
     /** Saves the log into Downloads (Android 10+). Null = saved, else why not. */

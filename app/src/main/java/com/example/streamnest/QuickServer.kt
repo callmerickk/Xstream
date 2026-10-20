@@ -77,7 +77,7 @@ object QuickServer {
  */
 object BuiltIns {
     @Volatile private var cur: Map<String, String> = emptyMap()
-    val keys = listOf("cncverse" to "CNCVerse link", "hdhub" to "HdHub link", "penguConnect" to "PenguPlay connect page")
+    val keys = listOf("cncverse" to "CNCVerse link", "hdhub" to "HdHub link", "penguConnect" to "PenguPlay connect page", "quickPlay" to "Default Quick Play addon")
     fun value(k: String): String? = cur[k]?.takeIf { it.isNotBlank() }
 
     suspend fun fetch(): Map<String, String> = withContext(Dispatchers.IO) {
@@ -93,6 +93,23 @@ object BuiltIns {
         for (k in listOf("cncverse", "hdhub")) {
             val url = m[k]?.takeIf { it.startsWith("http") } ?: continue
             if (vm.addons.value.none { it.baseUrl == Api.normalize(url) }) vm.installAddon(url, family = k)
+        }
+        // Xstream: the default Quick Play addon, chosen in Developer's Corner. Everyone gets it in Quick Start; users only
+        // see the Quick Play on / off switch.
+        val qp = m["quickPlay"]?.takeIf { it.startsWith("http") } ?: return
+        val base = Api.normalize(qp)
+        val prev = vm.texts.value["qpUrl"]
+        if (prev != base || vm.addons.value.none { it.baseUrl == base }) {
+            if (prev != null && prev != base) vm.addons.value.firstOrNull { it.baseUrl == prev }?.let { old ->
+                withContext(Dispatchers.Main) { vm.setText("qsAddons", (vm.qsAddons() - old.label()).joinToString("|")); vm.removeAddon(old) }
+            }
+            if (vm.addons.value.none { it.baseUrl == base } && vm.installAddon(qp) != null) return
+            val name = vm.addons.value.firstOrNull { it.baseUrl == base }?.label() ?: return
+            withContext(Dispatchers.Main) {
+                vm.setText("qpUrl", base)
+                if (name !in vm.qsAddons()) vm.setText("qsAddons", (vm.qsAddons() + name).joinToString("|"))
+                if (prev == null) vm.setText("qsOn", "yes")
+            }
         }
     }
 

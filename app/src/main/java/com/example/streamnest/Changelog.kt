@@ -13,6 +13,27 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.2 beta", "20 Oct 2026", "Long-press previews, rooms and charts", listOf(
+        "Long-press any poster: it lifts out, the trailer plays inside the card, with ratings and Details · Play manually · Add to watchlist",
+        "The dock hides with a bubble while you scroll and pops back, with a red glow edge",
+        "Long-press My Space in the dock and slide to another profile — let go to switch",
+        "Library is now four tabs: Watchlist, Calendar, Notifications and Watch together",
+        "Watchlist rooms: your own room plus one for each friend — recommend titles to each other and say what you thought",
+        "Adding to your watchlist asks: your library, or a friend's room",
+        "Calendar: search to add any title, and pick the date and time in the app",
+        "Continue Watching › See all, with a button to clear it",
+        "My Space charts: your week (tap a day to see what you finished or skipped), movies vs series and when you watch",
+        "Every episode remembers where you stopped",
+        "Card deck: the centre card in focus with just a peek of the others; sharper \"Picked for you\" posters",
+        "Trailers play directly, smoother and faster",
+        "New voice search: speak a title to search, or ask for something (\"a funny movie for tonight\") and the AI answers",
+        "Player: play / pause sits at the bottom right next to ›, long titles never cover the clock, subtitles inside the video move up above the controls too",
+        "Subtitle auto sync works quietly: once at the start, then every 30 minutes or when you tap Sync",
+        "Addons: a small pencil to rename, long-press the name to copy its link, the settings gear only where it applies",
+        "Addon-made posters (ratings, ranks) are shown as the addon draws them",
+        "Quick Play is a simple on / off switch",
+        "Collections moved to Layout settings; the GIF picker plays the GIFs",
+    )),
     Release("0.1 beta", "20 Oct 2026", "Meet Xstream", listOf(
         "Ticket Booth: pick your profile as a cinema ticket; the stub tears off and \"Admit one\" takes you in",
         "After signing in, your profiles, pictures and settings come over from your account before \"Who's watching?\"",
@@ -163,6 +184,21 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.2 beta", "20 Oct 2026", "Xstream 0.2 beta", listOf(
+        "versionCode 3. Dock: Animatable hide (scale/translate/alpha, spring back), red radial glow + gradient border; My Space long-press bubble slide-to-select with WaterRipple + ProfileLock",
+        "XLift.kt: LocalTitleHold + Modifier.titleTap on Shelf/AddonPoster/Landscape/Ranked cards; TitleLiftMenu (flying card → 16:9, DirectTrailer, logo shrink, IMDb/cert)",
+        "XLibrary.kt: tabs watchlist/calendar/alerts/together; Recs rooms via SocialMsg rec / recfb; WatchlistAsk sheet; DateTimeSheet replaces system pickers (also PlanFlow); TitleSearchBox",
+        "XWatch.kt: per-profile WatchLog (90 days, delta-based) + WatchCharts; epProgress store synced as cloud field eprog (StreamX ignores it)",
+        "YtDirect.kt: innertube ANDROID_VR / IOS / ANDROID → adaptive avc+m4a / muxed / HLS, 3 h cache, WebView fallback; DirectTrailers = true",
+        "Deck centred with contentPadding, 0.92 side scale; Tmdb rec posters w500",
+        "Player (phone): CenterPlayPause removed, play/pause left of ›; title end padding = measured top-right row; liftCues() moves positioned / bitmap embedded cues; auto sync silent (start, then 30 min / tap), syncNow without snacks",
+        "Addons: Manifest.logo + behaviorHints.configurable; gear only when configurable && !addonBorrowed:<url> (set by importAddons); rename pencil; long-press copies manifest link",
+        "ShelfRow: isDesignedPoster() keeps addon-drawn tall posters instead of LandscapeCard",
+        "BuiltIns key quickPlay (shared/devAddons): installs, adds to qsAddons, qpUrl; isDevChoice hides it; QuickStartPage shows users only the toggle",
+        "XVoice.kt: SpeechRecognizer panel (partials, rms orb, waveform), soundsLikeAsk → VoiceAskBus → VoiceAssistant(firstAsk)",
+        "Collections row moved to Layout; Replay visual tour removed (settings + manual); WebGifs grid uses animated murl (.gif only)",
+        "Refresh Lab Share: update_paths.xml gains files-path refresh-lab/ (FileProvider threw on the path); shareLog failures logged + snack",
+    )),
     Release("0.1 beta", "20 Oct 2026", "Xstream 0.1 beta: StreamX 0.9.47 code with the Xstream look", listOf(
         "applicationId com.example.xstream; versionCode 2 (installs over 1.0); updates from callmerickk/Xstream releases",
         "StreamX 0.9.47 ported (Social.kt Watch together, LibraryPage, calendar, keyless GIFs, upgrade pill fix); TV files carried along unused",

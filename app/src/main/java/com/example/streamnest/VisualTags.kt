@@ -127,7 +127,8 @@ object Public {
         // A renamed addon: judged by the addon behind that name.
         return vm?.addons?.value?.firstOrNull { it.label() == name }?.let { a -> listOf(a.manifest.name, a.baseUrl).any { t -> (quickNames + hdNames).any { k -> k in t.lowercase() } } } == true
     }
-    fun isDevChoice(a: Addon): Boolean = isDevChoice(a.manifest.name) || isDevChoice(a.baseUrl) || isDevChoice(a.manifest.id)
+    fun isDevChoice(a: Addon): Boolean = isDevChoice(a.manifest.name) || isDevChoice(a.baseUrl) || isDevChoice(a.manifest.id) ||
+        a.baseUrl == vm?.texts?.value?.get("qpUrl")
     /** "Quick server" / "HD server" for the developer's-choice addons; other addons keep their own name. */
     fun serverName(addon: String?): String {
         if (dev && addon != null) return addonLabel(addon)

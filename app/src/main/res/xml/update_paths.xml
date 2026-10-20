@@ -5,4 +5,6 @@
     <!-- Source Test logs (Developer's Corner › Source Test › Share log) -->
     <cache-path name="logs" path="logs/" />
     <files-path name="tests" path="source-tests/" />
+    <!-- Refresh Lab logs (Developer's Corner › Refresh Lab › Share) -->
+    <files-path name="lab" path="refresh-lab/" />
 </paths>

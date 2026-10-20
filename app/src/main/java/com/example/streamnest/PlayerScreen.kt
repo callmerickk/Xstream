@@ -109,6 +109,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -1924,50 +1926,49 @@ fun PlayerScreen(
     var autoPickedSub by remember { mutableStateOf(false) }
     /** What auto sync is doing (shown under Adjust timing). */
     var syncNote by remember { mutableStateOf("") }
-    /** "Sync now": line the online subtitle up with the speech heard so far (the last 3 minutes). */
+    /** "Sync now": line the online subtitle up with the speech heard so far (the last 3 minutes). Quiet: the result
+     *  shows under Adjust timing only, never as a popup. */
     fun syncNow() {
         val e = ext ?: return
         val t = curPos()
         val off = Speech.bestOffset(e.cues, t - 180_000, t, subOffsetMs)
-        when {
-            off != null -> { subOffsetMs = off; Snack.show("Subtitles lined up with the speech (" + (if (off > 0) "+" else "") + "%.1f s)".format(off / 1000f)) }
-            Speech.lastWhy == "ok" -> Snack.show("Already in step with the speech")
-            else -> Snack.show("Need a little more talking — play ~30 s with dialogue, then tap Sync now again")
+        syncNote = when {
+            off != null -> { subOffsetMs = off; "Synced " + (if (off > 0) "+" else "") + "%.1f s".format(off / 1000f) }
+            Speech.lastWhy == "ok" -> "In step ✓"
+            else -> "Needs a little more talking — try again in ~30 s"
         }
     }
-    // Subtitle auto sync: after a minute or so of talking, the online subtitle is slid to match it (again every minute,
-    // a few times; never after you moved it by hand).
+    // Subtitle auto sync (Xstream): listen once at the start until there's enough talking, sync once, then only check
+    // again every 30 minutes (or right away when Sync is tapped). Silent: no popups, just a note under Adjust timing.
     LaunchedEffect(ext?.sub?.url, syncTick) {
         val e0 = ext ?: run { syncNote = ""; return@LaunchedEffect }
         if (!isOn(opt("subAutoSync")) || usingVlc) { syncNote = ""; return@LaunchedEffect }
-        // Every 30 s until it fits: compare every downloaded subtitle with the talking heard (the last 3 minutes), keep
-        // the best-fitting one, slide it to the speech; once it fits twice in a row it's done.
         var e = e0
-        var good = 0
-        syncNote = "Auto sync: listening…"
-        repeat(30) {
-            delay(30_000L)
-            if (manualSync || ext?.sub?.url != e.sub.url) return@LaunchedEffect
-            if (!isPlayingNow()) return@repeat
+        suspend fun attempt(): Boolean {
+            if (manualSync || ext?.sub?.url != e.sub.url || !isPlayingNow()) return false
             val t = curPos()
             val scored = (if (autoPickedSub) subCands else listOf(e)).mapNotNull { c -> Speech.evaluate(c.cues, t - 180_000, t)?.let { c to it } }
-            if (scored.isEmpty()) { syncNote = "Auto sync: needs a bit more talking…"; return@repeat }
+            if (scored.isEmpty()) return false
             val (bestSub, fit) = scored.maxBy { it.second.second }
-            if (bestSub.sub.url != e.sub.url) {
-                e = bestSub
-                ext = bestSub
-                Snack.show("Switched to the subtitle that fits the talking best")
-            }
+            if (bestSub.sub.url != e.sub.url) { e = bestSub; ext = bestSub }
             val off = fit.first
-            if (kotlin.math.abs(off - subOffsetMs) >= 300) {
-                subOffsetMs = off; good = 0
-                syncNote = "Auto sync: moved " + (if (off > 0) "+" else "") + "%.1f s".format(off / 1000f)
-                Snack.show("Subtitles lined up with the speech (" + (if (off > 0) "+" else "") + "%.1f s)".format(off / 1000f))
-            } else {
-                good++
-                syncNote = "Auto sync: in step ✓"
-                if (good >= 2) return@LaunchedEffect
-            }
+            if (kotlin.math.abs(off - subOffsetMs) >= 300) subOffsetMs = off
+            syncNote = "Auto sync: in step (" + (if (subOffsetMs > 0) "+" else "") + "%.1f s)".format(subOffsetMs / 1000f)
+            return true
+        }
+        // A tap on Sync: check now.
+        if (syncTick > 0 && attempt()) Unit
+        else {
+            // The start: listen (every 20 s, up to ~10 minutes) until one sync works.
+            syncNote = "Auto sync: listening…"
+            var done = false
+            repeat(30) { if (!done) { delay(20_000L); if (manualSync || ext?.sub?.url != e.sub.url) return@LaunchedEffect; done = attempt() } }
+        }
+        // Then once every 30 minutes.
+        while (true) {
+            delay(30 * 60_000L)
+            if (manualSync || ext?.sub?.url != e.sub.url) return@LaunchedEffect
+            attempt()
         }
     }
     /** Subtitles chosen by hand during this play (then the automatic defaults leave them alone). */
@@ -2648,7 +2649,7 @@ fun PlayerScreen(
                     update = { sv ->
                         sv.setBottomPaddingFraction((0.07f + subLiftDp / screenHdp).coerceAtMost(0.6f))
                         sv.setApplyEmbeddedStyles(false); sv.setApplyEmbeddedFontSizes(false)
-                        sv.setStyle(subStyle); sv.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, subSize); sv.setCues(cues)
+                        sv.setStyle(subStyle); sv.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, subSize); sv.setCues(liftCues(cues, subLiftDp / screenHdp))
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -2943,13 +2944,15 @@ fun PlayerScreen(
                     // Only the buttons watch for a finger (the empty video area keeps its tap-to-hide and double-taps).
                     val touch: (Boolean) -> Unit = { d -> touchingControls = d; if (!d) poke++ }
                     // Phones: one play / pause button in the middle.
-                    if (!BuildConfig.IS_TV) CenterPlayPause(playing, Modifier.align(Alignment.Center).watchTouch(touch)) { togglePlay(); pausedByUp = false; poke++ }
+                    // Xstream: play / pause lives at the bottom right, next to ›. The top-right buttons' width keeps the title clear of them.
+                    var topRightW by remember { mutableIntStateOf(0) }
+                    val topRightDp = with(LocalDensity.current) { topRightW.toDp() }
                     // Title, top-left.
                     val showName = meta?.name?.takeIf { it.isNotBlank() }
                     val epNow = episodes.firstOrNull { it.id == p.key }
-                    Column(Modifier.align(Alignment.TopStart).padding(start = side, top = topY - 4.dp).fillMaxWidth(0.55f)) {
+                    Column(Modifier.align(Alignment.TopStart).padding(start = side, top = topY - 4.dp, end = side + topRightDp + 14.dp).fillMaxWidth()) {
                         Text(if (type == "series") showName ?: p.title.substringBefore("  S") else showName ?: p.title,
-                            fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 26.sp)
                         if (type == "series" && epNow != null) Text(
                             "S${epNow.season} E${epNow.episode}" + (epNow.title ?: epNow.name)?.let { " · $it" }.orEmpty(),
                             Modifier.padding(top = 2.dp), fontSize = 14.sp, color = Color(0xFFD0D4DD), fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -2957,7 +2960,7 @@ fun PlayerScreen(
                     }
                     // Top-right: clock, lock (phone), quality, back.
                     Row(
-                        Modifier.align(Alignment.TopEnd).padding(top = topY - 8.dp, end = side - 8.dp).onFocusChanged { topHasFocus = it.hasFocus }.watchTouch(touch),
+                        Modifier.align(Alignment.TopEnd).padding(top = topY - 8.dp, end = side - 8.dp).onSizeChanged { topRightW = it.width }.onFocusChanged { topHasFocus = it.hasFocus }.watchTouch(touch),
                         horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(clockNow(), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E8EE))
@@ -3033,6 +3036,8 @@ fun PlayerScreen(
                             if (BuildConfig.IS_TV) GlassBtn(if (more) Icons.Default.ChevronLeft else Icons.Default.ChevronRight, null, if (more) "Less" else "More", at("more")) { more = !more; poke++ }
                         }
                         if (!BuildConfig.IS_TV) {
+                            Spacer(Modifier.width(10.dp))
+                            GlassBtn(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, if (playing) "Pause" else "Play") { togglePlay(); pausedByUp = false; poke++ }
                             Spacer(Modifier.width(10.dp))
                             GlassBtn(if (more) Icons.Default.KeyboardArrowUp else Icons.Default.ChevronRight, null, if (more) "Less" else "More", at("more")) { more = !more; poke++ }
                         }
@@ -5288,3 +5293,20 @@ private fun SoundToggle(title: String, sub: String, on: Boolean, onChange: (Bool
 
 /** A quick / lower-quality file worth upgrading from: MovieBox, a streaming playlist, or a file under Full HD. */
 private fun StreamItem.belowFullHd(): Boolean = isMovieBox() || isPlaylist() || effectiveRes() in 1..1079 || effectiveRes() <= 0
+
+
+/**
+ * Subtitles inside the video often carry their own place on screen, so the bottom padding alone never moved them.
+ * Text lines placed near the bottom go back to the normal (padded) place; picture subtitles (PGS / VobSub) are moved up
+ * by the same amount the controls need. Lines placed at the top (signs, songs) stay where they are.
+ */
+internal fun liftCues(cues: List<Cue>, lift: Float): List<Cue> = cues.map { c ->
+    when {
+        c.bitmap != null -> if (lift > 0f && c.lineType == Cue.LINE_TYPE_FRACTION && c.line != Cue.DIMEN_UNSET)
+            c.buildUpon().setLine((c.line - lift).coerceAtLeast(0f), Cue.LINE_TYPE_FRACTION).build() else c
+        c.line == Cue.DIMEN_UNSET -> c
+        (c.lineType == Cue.LINE_TYPE_FRACTION && c.line >= 0.6f) || (c.lineType == Cue.LINE_TYPE_NUMBER && c.line < 0f) ->
+            c.buildUpon().setLine(Cue.DIMEN_UNSET, Cue.TYPE_UNSET).setLineAnchor(Cue.TYPE_UNSET).build()
+        else -> c
+    }
+}

@@ -16,7 +16,12 @@ data class Manifest(
     val types: List<String> = emptyList(),
     val idPrefixes: List<String>? = null,
     val catalogs: List<CatalogDef> = emptyList(),
-)
+    val logo: String? = null,
+    val behaviorHints: JsonElement? = null,
+) {
+    /** The addon says it has a settings page. */
+    val configurable: Boolean get() = behaviorHints?.toString()?.let { it.contains("\"configurable\":true") || it.contains("\"configurationRequired\":true") } == true
+}
 
 @Serializable
 data class Addon(val baseUrl: String, val manifest: Manifest) {
