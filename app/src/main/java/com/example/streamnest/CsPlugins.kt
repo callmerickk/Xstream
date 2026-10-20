@@ -63,7 +63,8 @@ object CsPlugins {
         if (prefs != null) return
         appCtx = ctx.applicationContext
         CloudStreamApp.context = appCtx
-        com.lagradost.cloudstream3.app.baseClient = Api.http
+        // Plugins' requests: Xstream's network, with a hard 25 s limit per request (one hung request stalled a whole test).
+        com.lagradost.cloudstream3.app.baseClient = Api.http.newBuilder().callTimeout(25, java.util.concurrent.TimeUnit.SECONDS).build()
         val p = ctx.getSharedPreferences("cs_plugins", Context.MODE_PRIVATE); prefs = p
         repos.value = runCatching { Api.json.decodeFromString<List<CsRepo>>(p.getString("repos", null) ?: "") }.getOrNull() ?: defaultRepos.map { CsRepo(it) }
         catalog.value = runCatching { Api.json.decodeFromString<List<CsPluginEntry>>(p.getString("catalog", null) ?: "") }.getOrDefault(emptyList())

@@ -316,7 +316,7 @@ object NuvioTester {
                     val url = str("url") ?: return@mapNotNull null
                     val h = (o["headers"] as? JsonObject)?.mapValues { runCatching { it.value.jsonPrimitive.contentOrNull }.getOrNull().orEmpty() }.orEmpty()
                     S(str("name") ?: s.name, str("title") ?: "", url, str("quality") ?: "", h)
-                }
+                }.filterNot { isInstantDownloadName(it.name, it.title) }
                 parsed.forEach { x -> w("    ${x.name} · ${x.quality.ifEmpty { "?" }} · ${runCatching { java.net.URI(x.url).host }.getOrNull()} · ${x.title.replace("\n", " ").take(80)}" + (if (x.headers.isNotEmpty()) " · headers ${x.headers.keys.joinToString()}" else "")) }
                 val groups = parsed.groupBy { it.name }.map { (n, xs) ->
                     val hls = xs.firstOrNull { it.url.contains(".m3u8") }
@@ -327,8 +327,8 @@ object NuvioTester {
                         val best = xs.maxByOrNull { Regex("(\\d{3,4})").find(it.quality)?.value?.toIntOrNull() ?: 0 } ?: xs.first()
                         step.value = "Playing $n · ${t.name}"
                         StreamHeaders.remember(StreamItem(s.name, StreamInfo(url = best.url, name = n, behaviorHints = BehaviorHints(proxyHeaders = ProxyHeaders(best.headers.takeIf { it.isNotEmpty() })))))
-                        val (ff, err) = withContext(Dispatchers.Main) { SourceTester.firstPicture(ctx, vm, best.url, null) }
-                        w("    PLAY $n: " + (ff?.let { "first picture in $it ms" } ?: "failed: $err"))
+                        val (ff, err) = withTimeoutOrNull(45_000) { withContext(Dispatchers.Main) { SourceTester.firstPicture(ctx, vm, best.url, null) } } ?: (null to "no picture in 45 s")
+                        w("    PLAY $n: " + (ff?.let { "first picture in $it ms" } ?: "failed: $err · ${linkCheck(best.url, best.headers)}"))
                         g = g.copy(playMs = ff, playErr = err)
                     }
                     g

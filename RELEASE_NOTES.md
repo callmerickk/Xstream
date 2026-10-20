@@ -1,3 +1,13 @@
+Xstream 0.4.3 beta
+
+• "Instant Download" links are left out everywhere.
+• CNC Verse Mobile works (it stopped at the first search before).
+• A plugin can't hang a test any more: every step and request has a time limit.
+• Movies a site keeps as a one-episode series now play.
+• When a link won't play, the test log shows what its server answers.
+
+---
+
 Xstream 0.4.2 beta
 
 • Fixed: 0.4.1 closed right away on Android 12 and newer.

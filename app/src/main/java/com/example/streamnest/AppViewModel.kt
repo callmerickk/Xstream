@@ -828,7 +828,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         val yearJob = async { TitleMatch.ensureYear(type, id) }
         suspend fun right(l: List<StreamItem>): List<StreamItem> {
             kotlinx.coroutines.withTimeoutOrNull(1500) { yearJob.await() }
-            return l.filterNot { TitleMatch.wrong(it, type, id) }
+            return l.filterNot { TitleMatch.wrong(it, type, id) || it.isInstantDownload() }
         }
         val lock = Any()
         var done = 0

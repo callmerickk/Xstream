@@ -41,12 +41,25 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/** "Instant Download" links (one-time download pages, mostly 403 / broken for players): left out everywhere. */
+private val instantRx = Regex("(?i)instant[\\s(\\[_-]*download")
+fun isInstantDownloadName(vararg texts: String?): Boolean = texts.any { it != null && instantRx.containsMatchIn(it) }
+fun StreamItem.isInstantDownload(): Boolean = isInstantDownloadName(stream.name, stream.title, stream.description, stream.behaviorHints?.filename)
+
+/** Runs [block] off the caller with a hard deadline: plugins sometimes block a thread (not cancellable), so on
+ *  timeout the work is abandoned instead of waited for. */
+internal suspend fun <T> withDeadline(ms: Long, block: suspend () -> T): T? {
+    val d = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob()).async { block() }
+    return withTimeoutOrNull(ms) { d.await() } ?: run { d.cancel(); null }
+}
 
 /** One server's links for one title, grouped like CloudStream shows them: qualities, audio and subtitles together. */
 data class CsGroup(val provider: String, val source: String, val type: String, val qualities: List<String>, val audios: List<String>, val subs: Int, val links: Int, val firstMs: Long, val playMs: Long? = null, val playErr: String? = null)
@@ -155,8 +168,7 @@ object CsTester {
         fun fail(why: String) = CsTitleResult(t.name, api.name, false, why, emptyList(), ms()).also { w("  ✗ $why (${ms()} ms)") }
         // 1. Search
         val q = t.name.substringBefore(" (").trim()
-        val found = try { withTimeoutOrNull(30_000) { api.search(q, 1)?.items ?: api.search(q) } }
-            catch (x: NotImplementedError) { runCatching { withTimeoutOrNull(30_000) { api.search(q) } }.getOrNull() }
+        val found = try { withDeadline(30_000) { try { api.search(q, 1)?.items ?: api.search(q) } catch (x: NotImplementedError) { api.search(q) } } }
             catch (x: Throwable) { return fail("search error ${x.javaClass.simpleName}: ${x.message?.take(160)}") }
         if (found == null) {
             // Nothing back: is the site even reachable from here?
@@ -185,13 +197,14 @@ object CsTester {
         w("  match: ${best.first.name} (score ${"%.2f".format(best.second)})")
         // 2. Load
         val t1 = SystemClock.elapsedRealtime()
-        val lr: LoadResponse = try { withTimeoutOrNull(30_000) { api.load(best.first.url) } } catch (x: Throwable) { return fail("load error ${x.javaClass.simpleName}: ${x.message?.take(160)}") }
-            ?: return fail("load: nothing in 30 s")
+        val lr: LoadResponse = try { withDeadline(30_000) { api.load(best.first.url) } } catch (x: Throwable) { return fail("load error ${x.javaClass.simpleName}: ${x.message?.take(160)}") }
+            ?: return fail("load: nothing in 30 s (a request the plugin made hung — see the http lines above)")
         val imdb = lr.syncData["imdb"]
         w("  load: ${lr.javaClass.simpleName} \"${lr.name}\" ${lr.year ?: ""} in ${SystemClock.elapsedRealtime() - t1} ms" + (imdb?.let { " · IMDb $it ${if (it == t.imdb) "✓ same title" else "✗ different from ${t.imdb}"}" } ?: ""))
         val data: String = when (lr) {
             is MovieLoadResponse -> lr.dataUrl
-            is TvSeriesLoadResponse -> {
+            // A movie that the site keeps as a one-episode "series": play that episode.
+            is TvSeriesLoadResponse -> if (!series && lr.episodes.isNotEmpty()) { w("    movie kept as ${lr.episodes.size} episode(s): using the first"); lr.episodes.first().data } else {
                 w("    episodes: ${lr.episodes.size} · seasons: ${lr.episodes.mapNotNull { it.season }.distinct().sorted().joinToString()}")
                 (lr.episodes.firstOrNull { (it.season ?: 1) == (season ?: 1) && it.episode == (episode ?: 1) } ?: lr.episodes.firstOrNull { it.episode == (episode ?: 1) && it.season == null })?.data
                     ?: return fail("episode S${season}E${episode} not found")
@@ -203,9 +216,14 @@ object CsTester {
         val t2 = SystemClock.elapsedRealtime()
         val links = java.util.concurrent.CopyOnWriteArrayList<Pair<Long, ExtractorLink>>()
         val subs = java.util.concurrent.CopyOnWriteArrayList<SubtitleFile>()
+        var skipped = 0
         val ok = try {
-            withTimeoutOrNull(60_000) { api.loadLinks(data, false, { subs += it }, { l -> links += (SystemClock.elapsedRealtime() - t2) to l }) }
+            withDeadline(60_000) { api.loadLinks(data, false, { subs += it }, { l ->
+                // "Instant Download" links are left out everywhere.
+                if (isInstantDownloadName(l.name, l.source)) skipped++ else links += (SystemClock.elapsedRealtime() - t2) to l
+            }) }
         } catch (x: Throwable) { w("  loadLinks error ${x.javaClass.simpleName}: ${x.message?.take(200)}"); false }
+        if (skipped > 0) w("  left out $skipped \"Instant Download\" link(s)")
         w("  loadLinks: ${links.size} links, ${subs.size} subtitles in ${SystemClock.elapsedRealtime() - t2} ms" + (if (ok == null) " (stopped at 60 s)" else ""))
         links.forEach { (at, l) ->
             w("    +${at}ms ${l.source} · ${l.name} · ${com.lagradost.cloudstream3.utils.Qualities.getStringByInt(l.quality).ifEmpty { "?" }} · ${l.type} · ${hostOf(l.url)}" +
@@ -230,8 +248,8 @@ object CsTester {
             val item = StreamItem(api.name, StreamInfo(url = best.url, name = "${api.name} · ${best.name}",
                 behaviorHints = BehaviorHints(proxyHeaders = ProxyHeaders(best.getAllHeaders().takeIf { it.isNotEmpty() }))))
             StreamHeaders.remember(item)
-            val (ff, err) = withContext(Dispatchers.Main) { SourceTester.firstPicture(ctx, vm, best.url, null) }
-            w("    PLAY ${g.source}: " + (ff?.let { "first picture in $it ms" } ?: "failed: $err"))
+            val (ff, err) = withTimeoutOrNull(45_000) { withContext(Dispatchers.Main) { SourceTester.firstPicture(ctx, vm, best.url, null) } } ?: (null to "no picture in 45 s")
+            w("    PLAY ${g.source}: " + (ff?.let { "first picture in $it ms" } ?: "failed: $err · ${linkCheck(best.url, best.getAllHeaders())}"))
             groups[i] = g.copy(playMs = ff, playErr = err)
         }
         val total = ms()
@@ -410,4 +428,20 @@ internal suspend fun probeHlsMaster(url: String, headers: Map<String, String>): 
         }.distinct().toList()
         Triple(v, media("AUDIO"), media("SUBTITLES"))
     }.getOrNull()
+}
+
+
+/** What the server says about a link (first 2 bytes): status, type, size, ranges — for play failures. */
+internal suspend fun linkCheck(url: String, headers: Map<String, String>): String = withContext(Dispatchers.IO) {
+    runCatching {
+        val req = okhttp3.Request.Builder().url(url).header("Range", "bytes=0-1").apply {
+            headers.forEach { (k, v) -> header(k, v) }
+            if (headers.keys.none { it.equals("user-agent", true) }) header("user-agent", com.lagradost.cloudstream3.USER_AGENT)
+        }.build()
+        Api.http.newBuilder().callTimeout(15, java.util.concurrent.TimeUnit.SECONDS).build().newCall(req).execute().use { r ->
+            val len = r.header("Content-Range")?.substringAfter('/')?.toLongOrNull() ?: r.header("Content-Length")?.toLongOrNull()
+            "server: ${r.code} · ${r.header("Content-Type") ?: "no type"} · ${len?.let { "%.2f GB".format(it / 1e9) } ?: "size ?"} · ranges ${if (r.code == 206) "yes" else "no"}" +
+                (if (r.request.url.host != java.net.URI(url).host) " · via ${r.request.url.host}" else "")
+        }
+    }.getOrElse { "server check failed: ${it.javaClass.simpleName}: ${it.message?.take(80)}" }
 }

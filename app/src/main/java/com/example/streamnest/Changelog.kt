@@ -13,6 +13,13 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.4.3 beta", "20 Oct 2026", "Plugin fixes", listOf(
+        "\"Instant Download\" links are left out everywhere",
+        "CNC Verse Mobile works (it stopped at the first search before)",
+        "A plugin can't hang a test any more: every step and request has a time limit",
+        "Movies a site keeps as a one-episode series now play",
+        "When a link won't play, the test log shows what its server answers",
+    )),
     Release("0.4.2 beta", "20 Oct 2026", "Opens again", listOf("Fixed: 0.4.1 closed right away on Android 12 and newer")),
     Release("0.4.1 beta", "20 Oct 2026", "Plugin fixes", listOf(
         "All 7 CloudStream plugins load now (FourKHDHub, UHDmovies and both CNC Verse plugins failed before)",
@@ -216,6 +223,12 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.4.3 beta", "20 Oct 2026", "Plugin fixes", listOf(
+        "com.lagradost.api.Log: instance methods (no @JvmStatic) — CNC Verse Mobile invokes them virtually (IncompatibleClassChangeError)",
+        "isInstantDownload() filter in streamsFlow (all addons) + CsTester / NuvioTester",
+        "withDeadline(): search 30 s / load 30 s / loadLinks 60 s on an abandonable IO job; plugin client callTimeout 25 s; play test 45 s cap + linkCheck() (Range 0-1: status, type, size, ranges, redirect host)",
+        "TvSeriesLoadResponse for a movie → first episode",
+    )),
     Release("0.4.2 beta", "20 Oct 2026", "Startup crash fix", listOf(
         "values-v31/themes.xml still had Theme.Material parent → AppCompatActivity threw \"You need to use a Theme.AppCompat theme\" in setContent; now AppCompat",
         "CI smoke.yml: builds, launches on an API 34 emulator, reports crashes as an annotation (tools/smoke.sh)",
