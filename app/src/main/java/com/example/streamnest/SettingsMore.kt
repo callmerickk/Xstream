@@ -205,8 +205,8 @@ internal fun DetailPageSettings(vm: AppViewModel, onBack: () -> Unit) {
 private fun QuickCsSection(vm: AppViewModel) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val texts by vm.texts.collectAsStateWithLifecycle()
-    val picked = (texts["qsCs"] ?: "").split("|").filter { it.isNotBlank() }.toSet()
-    fun save(s: Set<String>) = vm.setText("qsCs", s.joinToString("|"))
+    val picked = qsCsParse(texts["qsCs"])
+    fun save(s: Set<String>) = vm.setText("qsCs", s.joinToString("\n"))
     val repos by CsPlugins.repos.collectAsStateWithLifecycle()
     val catalog by CsPlugins.catalog.collectAsStateWithLifecycle()
     val enabled by CsPlugins.enabled.collectAsStateWithLifecycle()

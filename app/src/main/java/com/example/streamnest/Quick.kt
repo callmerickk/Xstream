@@ -98,7 +98,9 @@ fun StreamItem.languages(): List<String> {
 
 fun AppViewModel.qsAddons(): Set<String> = (texts.value["qsAddons"] ?: "").split("|").filter { it.isNotBlank() }.toSet()
 /** CloudStream providers picked for Quick Play (Settings › Quick Start › CloudStream), as "pluginKey#provider". Phones only. */
-fun AppViewModel.qsCs(): Set<String> = if (BuildConfig.IS_TV) emptySet() else (texts.value["qsCs"] ?: "").split("|").filter { it.isNotBlank() }.toSet()
+fun AppViewModel.qsCs(): Set<String> = if (BuildConfig.IS_TV) emptySet() else qsCsParse(texts.value["qsCs"])
+/** Saved one per line (plugin keys contain "|" themselves, so "|" can't separate them). */
+fun qsCsParse(raw: String?): Set<String> = (raw ?: "").split("\n").filter { it.isNotBlank() }.toSet()
 fun csProviderKey(pluginKey: String, provider: String) = "$pluginKey#$provider"
 fun AppViewModel.qsActive(): Boolean = isOn(texts.value["qsOn"] ?: "yes") && qsAddons().isNotEmpty()
 fun AppViewModel.qsLangs(): List<String> = (texts.value["qsLangs"] ?: "hindi,english,original").split(",").map { it.trim() }.filter { it.isNotEmpty() }
