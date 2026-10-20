@@ -189,7 +189,7 @@ object SourceTester {
                     if (l == null) w("  Addon $a: no answer in 35 s")
                     else w("  Addon $a: ${"%.1f".format(ms / 1000f)} s · ${l.size} links")
                     // Slow-server addons (CNCVerse) keep collecting links: ask again every 2 s for 60 s.
-                    val addonObj = vm.addons.value.firstOrNull { it.manifest.name == a }
+                    val addonObj = vm.addons.value.firstOrNull { it.label() == a }
                     if (addonObj != null && SlowAddons.isSlow(addonObj)) {
                         val acc = l.orEmpty().toMutableList()
                         val ts = SystemClock.elapsedRealtime()
@@ -571,8 +571,9 @@ fun SourceTestScreen(vm: AppViewModel, onBack: () -> Unit) {
     val testPlayer by SourceTester.player.collectAsStateWithLifecycle()
     val logFile by SourceTester.logFile.collectAsStateWithLifecycle()
     val addonsAll by vm.addons.collectAsStateWithLifecycle()
-    val names = remember(addonsAll) {
-        addonsAll.filter { vm.isAddonOn(it) && it.supports("stream", "movie", "tt0111161") }.map { it.manifest.name }.distinct()
+    val labelTexts by vm.texts.collectAsStateWithLifecycle()
+    val names = remember(addonsAll, labelTexts) {
+        addonsAll.filter { vm.isAddonOn(it) && it.supports("stream", "movie", "tt0111161") }.map { it.label() }.distinct()
     }
     var chosen by remember(names) {
         mutableStateOf(names.filter { n -> n in vm.qsAddons() && !n.contains("aio", ignoreCase = true) }.toSet().ifEmpty { names.filter { !it.contains("aio", true) }.toSet() })

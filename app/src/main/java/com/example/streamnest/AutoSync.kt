@@ -28,14 +28,16 @@ object Speech {
     fun flush() { anchorMs = anchorHintMs; frames = 0; winFrames = 0; sum = 0.0 }
     fun clear() { levels.clear() }
 
+    @Volatile var float = false
     fun feed(buf: ByteBuffer) {
         val r = rate; val ch = channels
         if (r <= 0 || ch <= 0) return
         val win = r / 10
         val b = buf.order(ByteOrder.LITTLE_ENDIAN)
-        while (b.remaining() >= 2 * ch) {
+        val bytes = if (float) 4 else 2
+        while (b.remaining() >= bytes * ch) {
             var s = 0.0
-            for (c in 0 until ch) s += b.short.toDouble()
+            for (c in 0 until ch) s += if (float) b.float.toDouble() * 32768.0 else b.short.toDouble()
             val m = s / ch / 32768.0
             sum += m * m; winFrames++
             if (winFrames >= win) {
@@ -56,23 +58,32 @@ object Speech {
     @Volatile var lastWhy = ""
     fun measuredSteps(fromMs: Long, toMs: Long): Int = ((fromMs / 100).toInt()..(toMs / 100).toInt()).count { levels.containsKey(it) }
 
-    internal fun evaluateImpl(cues: List<ExtCue>, fromMs: Long, toMs: Long): Pair<Long, Float>? {
+    /**
+     * Best shift (ms) for [cues] against the talking heard in [fromMs]..[toMs] (searched ±30 s), and how sure: the share
+     * of 0.1 s steps that agree. [currentMs] is the shift in use; null when too little was heard or the best shift isn't
+     * clearly better than the current one (so nothing jumps around on a guess).
+     */
+    internal fun evaluateImpl(cues: List<ExtCue>, fromMs: Long, toMs: Long, currentMs: Long = 0L): Pair<Long, Float>? {
         val a = (fromMs / 100).toInt(); val z = (toMs / 100).toInt()
         val raw = (a..z).mapNotNull { k -> levels[k]?.let { k to it } }
         if (raw.size < 250) return null
         val sorted = raw.map { it.second }.sorted()
         val floor = sorted[sorted.size / 4]
         val thr = maxOf(floor + 6f, sorted[sorted.size / 2])
-        val inWin = cues.filter { it.end >= fromMs - 9_000 && it.start <= toMs + 9_000 }
+        val inWin = cues.filter { it.end >= fromMs - 31_000 && it.start <= toMs + 31_000 }
         if (inWin.size < 6) return null
         val cover = HashSet<Int>()
         inWin.forEach { c -> for (k in (c.start / 100).toInt()..(c.end / 100).toInt()) cover += k }
+        val talk = raw.map { (k, v) -> k to (v > thr) }
+        fun score(sh: Int): Int { var sc = 0; talk.forEach { (k, t) -> if (t == ((k - sh) in cover)) sc++ }; return sc }
         var best = 0; var bestScore = Int.MIN_VALUE
-        for (sh in -80..80) {
-            var sc = 0
-            raw.forEach { (k, v) -> val talk = v > thr; val shown = (k - sh) in cover; if (talk == shown) sc++ }
-            if (sc > bestScore) { bestScore = sc; best = sh }
-        }
+        // Coarse (0.5 s) over ±30 s, then fine (0.1 s) around the best.
+        for (sh in -300..300 step 5) { val sc = score(sh); if (sc > bestScore) { bestScore = sc; best = sh } }
+        for (sh in (best - 5)..(best + 5)) { val sc = score(sh); if (sc > bestScore) { bestScore = sc; best = sh } }
+        val cur = (currentMs / 100).toInt()
+        val curScore = score(cur)
+        // Only a clear win moves the subtitles (≥1.5% of the measured steps better than now).
+        if (best != cur && bestScore - curScore < maxOf(8, raw.size * 15 / 1000)) return cur * 100L to curScore.toFloat() / raw.size
         return best * 100L to bestScore.toFloat() / raw.size
     }
 
@@ -108,13 +119,15 @@ object Speech {
  * How well a subtitle file fits the talking heard between [fromMs] and [toMs]: the best shift (ms) and a match value
  * (0..1, the share of 0.1 s steps where "line shown" agrees with "someone talks"). Null when too little was heard yet.
  */
-fun Speech.evaluate(cues: List<ExtCue>, fromMs: Long, toMs: Long): Pair<Long, Float>? = evaluateImpl(cues, fromMs, toMs)
+fun Speech.evaluate(cues: List<ExtCue>, fromMs: Long, toMs: Long, currentMs: Long = 0L): Pair<Long, Float>? = evaluateImpl(cues, fromMs, toMs, currentMs)
 
 /** Passes the sound through unchanged while measuring it for [Speech]. */
 @OptIn(UnstableApi::class)
 class SpeechMeter : BaseAudioProcessor() {
     override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {
-        if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) return AudioFormat.NOT_SET
+        // 16-bit and float sound are both measured (float comes from some decoders and hi-res files).
+        if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT && inputAudioFormat.encoding != C.ENCODING_PCM_FLOAT) return AudioFormat.NOT_SET
+        Speech.float = inputAudioFormat.encoding == C.ENCODING_PCM_FLOAT
         Speech.configure(inputAudioFormat.sampleRate, inputAudioFormat.channelCount)
         return inputAudioFormat
     }

@@ -1944,31 +1944,43 @@ fun PlayerScreen(
         val e0 = ext ?: run { syncNote = ""; return@LaunchedEffect }
         if (!isOn(opt("subAutoSync")) || usingVlc) { syncNote = ""; return@LaunchedEffect }
         var e = e0
-        suspend fun attempt(): Boolean {
-            if (manualSync || ext?.sub?.url != e.sub.url || !isPlayingNow()) return false
+        /** One check: the best-fitting subtitle and shift for the last 3 minutes heard. Returns the shift, or null. */
+        fun check(): Long? {
+            if (manualSync || ext?.sub?.url != e.sub.url || !isPlayingNow()) return null
             val t = curPos()
-            val scored = (if (autoPickedSub) subCands else listOf(e)).mapNotNull { c -> Speech.evaluate(c.cues, t - 180_000, t)?.let { c to it } }
-            if (scored.isEmpty()) return false
+            val scored = (if (autoPickedSub) subCands else listOf(e)).mapNotNull { c ->
+                Speech.evaluate(c.cues, t - 180_000, t, if (c.sub.url == e.sub.url) subOffsetMs else 0L)?.let { c to it }
+            }
+            if (scored.isEmpty()) return null
             val (bestSub, fit) = scored.maxBy { it.second.second }
             if (bestSub.sub.url != e.sub.url) { e = bestSub; ext = bestSub }
-            val off = fit.first
-            if (kotlin.math.abs(off - subOffsetMs) >= 300) subOffsetMs = off
-            syncNote = "Auto sync: in step (" + (if (subOffsetMs > 0) "+" else "") + "%.1f s)".format(subOffsetMs / 1000f)
-            return true
+            return fit.first
         }
-        // A tap on Sync: check now.
-        if (syncTick > 0 && attempt()) Unit
-        else {
-            // The start: listen (every 20 s, up to ~10 minutes) until one sync works.
-            syncNote = "Auto sync: listening…"
-            var done = false
-            repeat(30) { if (!done) { delay(20_000L); if (manualSync || ext?.sub?.url != e.sub.url) return@LaunchedEffect; done = attempt() } }
+        // Start: listen (every 15 s) until two checks in a row agree — that's "in sync", then it goes quiet.
+        suspend fun settle(maxTries: Int): Boolean {
+            var last: Long? = null
+            repeat(maxTries) {
+                delay(15_000L)
+                if (manualSync || ext?.sub?.url != e.sub.url) return false
+                val off = check() ?: return@repeat
+                if (kotlin.math.abs(off - subOffsetMs) >= 200) subOffsetMs = off
+                if (last != null && kotlin.math.abs(off - last!!) < 300) {
+                    syncNote = "Auto sync: in step (" + (if (subOffsetMs > 0) "+" else "") + "%.1f s)".format(subOffsetMs / 1000f)
+                    ActLog.add("SUBSYNC", "settled at ${subOffsetMs} ms")
+                    return true
+                }
+                last = off
+                syncNote = "Auto sync: lining up…"
+            }
+            return false
         }
-        // Then once every 30 minutes.
+        syncNote = "Auto sync: listening…"
+        settle(if (syncTick > 0) 8 else 40)
+        // Then a quiet re-check every 30 minutes (Sync restarts it at once).
         while (true) {
             delay(30 * 60_000L)
             if (manualSync || ext?.sub?.url != e.sub.url) return@LaunchedEffect
-            attempt()
+            settle(8)
         }
     }
     /** Subtitles chosen by hand during this play (then the automatic defaults leave them alone). */
@@ -3636,7 +3648,7 @@ fun PlayerScreen(
                             val styleCol: @Composable () -> Unit = {
                                 CompositionLocalProvider(LocalFirstFocus provides null) {
                                     SubStyleColumn(vm, subOffsetMs, ext != null, { subOffsetMs = it; manualSync = true }, { subPreview = it }, scroll = !compact,
-                                        onSyncNow = { syncNow() }, onAuto = { on -> if (on) { manualSync = false; syncTick++ } }, syncNote = syncNote)
+                                        onSyncNow = { manualSync = false; syncNote = "Auto sync: checking…"; syncNow(); syncTick++ }, onAuto = { on -> if (on) { manualSync = false; syncTick++ } }, syncNote = syncNote)
                                 }
                             }
                             if (compact) Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(androidx.compose.foundation.rememberScrollState())) { subsCol(); styleCol() }

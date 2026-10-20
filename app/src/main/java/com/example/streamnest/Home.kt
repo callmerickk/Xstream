@@ -481,7 +481,7 @@ fun LandscapeCard(m: Meta, width: Dp = 236.dp, onClick: () -> Unit) {
     var logoFailed by remember(m.id) { mutableStateOf(false) }
     val hideLabels = isOn(t("hideLabels"))
     Box(Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(posterCorner())).background(Surface1).titleTap(m, onClick)) {
-        AsyncImage(backdropOf(m), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        AsyncImage(hiResArt(backdropOf(m)), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xCC000000), 0.65f to Color.Transparent)))
         val logo = logoOf(m)
         if (!hideLabels) Box(Modifier.align(Alignment.BottomStart).padding(10.dp).fillMaxWidth(0.55f)) {
@@ -1021,6 +1021,9 @@ fun hiResArt(url: String?): String? = url
     ?.replace(Regex("/poster/(small|medium)/"), "/poster/large/")
     ?.replace(Regex("/background/(small|medium)/"), "/background/large/")
     ?.replace(Regex("/t/p/w(92|154|185|300|342|500)/"), "/t/p/w780/")
+    // IMDb / Amazon images come resized to ~300 px: ask for a 1000 px copy.
+    ?.replace(Regex("""\._V1_[^/]*?\.(jpg|jpeg|png)$"""), "._V1_QL90_UX1000_.$1")
+    ?.replace("assets.fanart.tv/preview/", "assets.fanart.tv/fanart/")
 
 
 /** Xstream: Continue Watching opened up: every title you started, and a button to clear the row. */

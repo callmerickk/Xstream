@@ -18,6 +18,8 @@ import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -172,49 +174,12 @@ class TrailerActivity : ComponentActivity() {
         }
 
         val root = FrameLayout(this).apply { setBackgroundColor(AColor.BLACK) }
-        if (keys.isNotEmpty()) {
-            val w = WebView(this).apply {
-                // Default layer type, no clip, no alpha: the video surface draws normally.
-                setBackgroundColor(AColor.BLACK)
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.mediaPlaybackRequiresUserGesture = false
-                isVerticalScrollBarEnabled = false
-                isHorizontalScrollBarEnabled = false
-                isFocusable = false
-                isFocusableInTouchMode = false
-                webChromeClient = object : WebChromeClient() {
-                    // No grey "play" poster before the first frame.
-                    override fun getDefaultVideoPoster(): Bitmap? = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
-                }
-                webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        main.postDelayed({ runCatching { view?.evaluateJavascript("tryPlay()", null) } }, 1200)
-                        main.postDelayed({ runCatching { view?.evaluateJavascript("tryPlay()", null) } }, 3000)
-                    }
-                }
-                addJavascriptInterface(object {
-                    @JavascriptInterface fun ready() { main.post { ui.ready = true } }
-                    @JavascriptInterface fun playing() { main.post { ui.playing = true; ui.failed = false } }
-                    @JavascriptInterface fun paused() { main.post { ui.playing = false } }
-                    @JavascriptInterface fun ended() { main.post { ui.playing = false; next() } }
-                    @JavascriptInterface fun error(code: Int) { main.post { ui.playing = false; ui.failed = true; ui.controls = true; ui.refocus++ } }
-                    @JavascriptInterface fun time(cur: Double, total: Double) { main.post { ui.pos = cur; if (total > 0) ui.dur = total } }
-                    @JavascriptInterface fun captions(list: String) {
-                        val parsed = runCatching {
-                            Api.json.parseToJsonElement(list).jsonArray.mapNotNull { e ->
-                                val t = e.jsonPrimitive.content
-                                t.substringBefore("|").takeIf { it.isNotBlank() }?.let { it to t.substringAfter("|") }
-                            }
-                        }.getOrDefault(emptyList())
-                        main.post { ui.captions = parsed.distinctBy { it.first } }
-                    }
-                }, "Android")
-                val origin = "https://$packageName"
-                loadDataWithBaseURL("$origin/", trailerPlayerHtml(keys[ui.index], origin, ui.muted), "text/html", "utf-8", null)
-            }
-            web = w
-            root.addView(w, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        rootView = root
+        // Xstream: the trailer plays as real video in our own player when YouTube gives its direct address; the
+        // embedded YouTube page is only the fallback.
+        if (keys.isNotEmpty()) lifecycleScope.launch {
+            val src = YtDirect.resolve(keys[ui.index])
+            if (src != null && !isFinishing) startDirect(src) else if (!isFinishing) startWeb()
         }
         val controls = ComposeView(this).apply {
             setContent {
@@ -238,13 +203,133 @@ class TrailerActivity : ComponentActivity() {
         controls.post { controls.requestFocus() }
     }
 
-    private fun js(code: String) { runCatching { web?.evaluateJavascript(code, null) } }
+    private var rootView: FrameLayout? = null
+    private var exo: androidx.media3.exoplayer.ExoPlayer? = null
+    private var pv: androidx.media3.ui.PlayerView? = null
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun startWeb() {
+        val root = rootView ?: return
+        if (web != null) return
+            val w = WebView(this).apply {
+            // Default layer type, no clip, no alpha: the video surface draws normally.
+            setBackgroundColor(AColor.BLACK)
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.mediaPlaybackRequiresUserGesture = false
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
+            isFocusable = false
+            isFocusableInTouchMode = false
+            webChromeClient = object : WebChromeClient() {
+                // No grey "play" poster before the first frame.
+                override fun getDefaultVideoPoster(): Bitmap? = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+            }
+            webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    main.postDelayed({ runCatching { view?.evaluateJavascript("tryPlay()", null) } }, 1200)
+                    main.postDelayed({ runCatching { view?.evaluateJavascript("tryPlay()", null) } }, 3000)
+                }
+            }
+            addJavascriptInterface(object {
+                @JavascriptInterface fun ready() { main.post { ui.ready = true } }
+                @JavascriptInterface fun playing() { main.post { ui.playing = true; ui.failed = false } }
+                @JavascriptInterface fun paused() { main.post { ui.playing = false } }
+                @JavascriptInterface fun ended() { main.post { ui.playing = false; next() } }
+                @JavascriptInterface fun error(code: Int) { main.post { ui.playing = false; ui.failed = true; ui.controls = true; ui.refocus++ } }
+                @JavascriptInterface fun time(cur: Double, total: Double) { main.post { ui.pos = cur; if (total > 0) ui.dur = total } }
+                @JavascriptInterface fun captions(list: String) {
+                    val parsed = runCatching {
+                        Api.json.parseToJsonElement(list).jsonArray.mapNotNull { e ->
+                            val t = e.jsonPrimitive.content
+                            t.substringBefore("|").takeIf { it.isNotBlank() }?.let { it to t.substringAfter("|") }
+                        }
+                    }.getOrDefault(emptyList())
+                    main.post { ui.captions = parsed.distinctBy { it.first } }
+                }
+            }, "Android")
+            val origin = "https://$packageName"
+            loadDataWithBaseURL("$origin/", trailerPlayerHtml(keys[ui.index], origin, ui.muted), "text/html", "utf-8", null)
+        }
+        web = w
+        root.addView(w, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun startDirect(src: YtDirect.Src) {
+        val root = rootView ?: return
+        val p = exo ?: androidx.media3.exoplayer.ExoPlayer.Builder(this).build().also { pl ->
+            exo = pl
+            pl.addListener(object : androidx.media3.common.Player.Listener {
+                override fun onIsPlayingChanged(isPlaying: Boolean) { ui.playing = isPlaying; if (isPlaying) ui.failed = false }
+                override fun onPlaybackStateChanged(state: Int) {
+                    if (state == androidx.media3.common.Player.STATE_READY) ui.ready = true
+                    if (state == androidx.media3.common.Player.STATE_ENDED) { ui.playing = false; next() }
+                }
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    ActLog.add("TRAILER", "full-screen direct failed ${error.errorCodeName}: embedded player instead")
+                    // Direct address refused: fall back to the embedded player for this trailer.
+                    stopDirect(); startWeb()
+                }
+            })
+            val v = androidx.media3.ui.PlayerView(this).apply {
+                useController = false; player = pl; setShutterBackgroundColor(AColor.BLACK); setKeepContentOnPlayerReset(true)
+                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                isFocusable = false
+            }
+            pv = v
+            root.addView(v, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            // Time for the controls.
+            val tick = object : Runnable {
+                override fun run() {
+                    exo?.let { e -> ui.pos = e.currentPosition / 1000.0; if (e.duration > 0) ui.dur = e.duration / 1000.0 }
+                    main.postDelayed(this, 400)
+                }
+            }
+            main.post(tick)
+        }
+        p.volume = if (ui.muted) 0f else 1f
+        p.setMediaSource(YtDirect.source(src)); p.prepare(); p.playWhenReady = true
+    }
+
+    private fun stopDirect() {
+        exo?.release(); exo = null
+        pv?.let { (it.parent as? ViewGroup)?.removeView(it) }; pv = null
+    }
+
+    /** The control commands (written for the embedded page) acted out on our own player. */
+    private fun direct(code: String) {
+        val e = exo ?: return
+        code.split(";").map { it.trim() }.filter { it.isNotEmpty() }.forEach { c ->
+            val arg = c.substringAfter("(", "").substringBeforeLast(")")
+            when (c.substringBefore("(")) {
+                "playV" -> e.play()
+                "pauseV" -> e.pause()
+                "seekBy" -> arg.toDoubleOrNull()?.let { e.seekTo((e.currentPosition + it * 1000).toLong().coerceAtLeast(0)) }
+                "seekTo" -> arg.toDoubleOrNull()?.let { e.seekTo((it * 1000).toLong()) }
+                "setMuted" -> e.volume = if (arg == "true") 0f else 1f
+                "setFill" -> pv?.resizeMode = if (arg == "true") androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM else androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                "setZoom" -> arg.toFloatOrNull()?.let { z -> pv?.scaleX = z; pv?.scaleY = z }
+            }
+        }
+    }
+
+    private fun loadIndex() {
+        val k = keys[ui.index]
+        if (web != null) { js("loadVid('$k')"); return }
+        lifecycleScope.launch {
+            val src = YtDirect.resolve(k)
+            if (src != null) startDirect(src) else { stopDirect(); startWeb() }
+        }
+    }
+
+    private fun js(code: String) { if (exo != null) { direct(code); return }; runCatching { web?.evaluateJavascript(code, null) } }
 
     private fun next() {
         if (ui.index < keys.lastIndex) {
             ui.index++
             ui.finished = false; ui.failed = false; ui.pos = 0.0; ui.dur = 0.0
-            js("loadVid('${keys[ui.index]}')")
+            loadIndex()
         } else {
             ui.finished = true; ui.controls = true; ui.playing = false; ui.refocus++
         }
@@ -301,6 +386,7 @@ class TrailerActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        exo?.pause()
         runCatching { web?.onPause() }
     }
 
@@ -311,6 +397,7 @@ class TrailerActivity : ComponentActivity() {
 
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
+        stopDirect()
         web?.let { w ->
             runCatching {
                 w.stopLoading(); w.loadUrl("about:blank"); w.removeJavascriptInterface("Android")

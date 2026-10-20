@@ -82,9 +82,61 @@ object YtDirect {
             out = runCatching { ask(c, videoId) }.getOrNull()
             if (out != null) { ActLog.add("TRAILER", "$videoId · ${c.name} · ${if (out.hls) "HLS" else "${out.height}p"}"); break }
         }
+        // YouTube said no to every app client: ask public Piped / Invidious mirrors (they hand out playable addresses).
+        if (out == null) out = runCatching { mirrors(videoId) }.getOrNull()
         if (out == null) ActLog.add("TRAILER", "$videoId · no direct video (embedded player instead)")
         synchronized(cache) { cache[videoId] = now to out }
         out
+    }
+
+    /** The media source for a resolved trailer (video + audio merged, one muxed file, or HLS). */
+    @OptIn(UnstableApi::class)
+    fun source(src: Src): MediaSource {
+        val ds = OkHttpDataSource.Factory(Api.http).setUserAgent(src.ua)
+        fun prog(u: String): MediaSource = ProgressiveMediaSource.Factory(ds).createMediaSource(MediaItem.fromUri(u))
+        return when {
+            src.hls -> HlsMediaSource.Factory(ds).createMediaSource(MediaItem.fromUri(src.video))
+            src.audio != null -> MergingMediaSource(prog(src.video), prog(src.audio))
+            else -> prog(src.video)
+        }
+    }
+
+    private val quick by lazy { Api.http.newBuilder().callTimeout(6, java.util.concurrent.TimeUnit.SECONDS).build() }
+    private const val BROWSER_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36"
+    private val pipedApis = listOf("https://pipedapi.kavin.rocks", "https://pipedapi.adminforge.de", "https://api.piped.private.coffee")
+    private val invidious = listOf("https://inv.nadeko.net", "https://invidious.nerdvpn.de", "https://yewtu.be", "https://invidious.f5.si")
+
+    private fun getJson(url: String): JsonObject? = quick.newCall(Request.Builder().url(url).header("User-Agent", BROWSER_UA).build()).execute().use { r ->
+        if (!r.isSuccessful) null else r.body?.string()?.let { Api.json.parseToJsonElement(it) as? JsonObject }
+    }
+
+    private fun mirrors(videoId: String): Src? {
+        fun s(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.contentOrNull
+        fun i(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.intOrNull ?: 0
+        for (base in pipedApis) {
+            val o = runCatching { getJson("$base/streams/$videoId") }.getOrNull() ?: continue
+            val vids = ((o["videoStreams"] as? JsonArray) ?: JsonArray(emptyList())).mapNotNull { it as? JsonObject }.filter { s(it, "url") != null }
+            val auds = ((o["audioStreams"] as? JsonArray) ?: JsonArray(emptyList())).mapNotNull { it as? JsonObject }.filter { s(it, "url") != null && s(it, "mimeType")?.contains("mp4") == true }
+            val v = vids.filter { s(it, "mimeType")?.contains("mp4") == true && s(it, "codec")?.startsWith("avc") != false && i(it, "height") in 1..maxHeight }.maxByOrNull { i(it, "height") }
+            val a = auds.maxByOrNull { i(it, "bitrate") }
+            if (v != null && (a != null || (o["videoStreams"] != null && (v["videoOnly"] as? JsonPrimitive)?.contentOrNull == "false"))) {
+                ActLog.add("TRAILER", "$videoId · mirror ${base.substringAfter("//")}")
+                return Src(s(v, "url")!!, if ((v["videoOnly"] as? JsonPrimitive)?.contentOrNull == "false") null else s(a!!, "url"), false, BROWSER_UA, i(v, "height"))
+            }
+            s(o, "hls")?.let { ActLog.add("TRAILER", "$videoId · mirror HLS"); return Src(it, null, true, BROWSER_UA, 0) }
+        }
+        for (base in invidious) {
+            val o = runCatching { getJson("$base/api/v1/videos/$videoId?local=true&fields=formatStreams,adaptiveFormats") }.getOrNull() ?: continue
+            fun abs(u: String) = if (u.startsWith("/")) base + u else u
+            val ad = ((o["adaptiveFormats"] as? JsonArray) ?: JsonArray(emptyList())).mapNotNull { it as? JsonObject }.filter { s(it, "url") != null }
+            val v = ad.filter { s(it, "type")?.startsWith("video/mp4") == true && s(it, "type")?.contains("avc1") == true &&
+                (s(it, "resolution")?.removeSuffix("p")?.toIntOrNull() ?: 0) in 1..maxHeight }.maxByOrNull { s(it, "resolution")?.removeSuffix("p")?.toIntOrNull() ?: 0 }
+            val a = ad.filter { s(it, "type")?.startsWith("audio/mp4") == true }.maxByOrNull { s(it, "bitrate")?.toIntOrNull() ?: 0 }
+            if (v != null && a != null) { ActLog.add("TRAILER", "$videoId · mirror ${base.substringAfter("//")}"); return Src(abs(s(v, "url")!!), abs(s(a, "url")!!), false, BROWSER_UA, s(v, "resolution")?.removeSuffix("p")?.toIntOrNull() ?: 0) }
+            val mux = ((o["formatStreams"] as? JsonArray) ?: JsonArray(emptyList())).mapNotNull { it as? JsonObject }.lastOrNull { s(it, "url") != null }
+            if (mux != null) { ActLog.add("TRAILER", "$videoId · mirror ${base.substringAfter("//")} (one file)"); return Src(abs(s(mux, "url")!!), null, false, BROWSER_UA, 360) }
+        }
+        return null
     }
 
     private fun ask(c: Client, videoId: String): Src? {

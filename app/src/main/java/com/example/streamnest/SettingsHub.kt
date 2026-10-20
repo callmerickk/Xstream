@@ -741,7 +741,7 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
                 val fixed = vm.isPinnedFixed(a)
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                     // Configure (gear): only for addons that have a settings page and weren't borrowed from someone's backup.
-                    if (a.manifest.configurable && !borrowed) IconButton({
+                    if (!borrowed) IconButton({
                         runCatching { addonCtx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(vm.configureUrl(a))).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
                             .onFailure { Snack.show("No browser to open the addon's settings") }
                     }) { Icon(Icons.Default.Settings, "Configure") }

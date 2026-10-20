@@ -27,6 +27,7 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import androidx.compose.foundation.horizontalScroll
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -56,6 +57,26 @@ object Giphy {
     private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
 }
 
+/** Keyless GIF search on Tenor's own search page: the real animated GIFs (small ones for the grid). */
+object TenorWeb {
+    private val rx = Regex("""https://media\d*\.tenor\.com/([A-Za-z0-9_-]{8,}?)(AAAA[A-Za-z0-9])/[A-Za-z0-9._%-]+\.gif""")
+    suspend fun search(q: String): List<GifHit>? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val slug = q.ifBlank { "movie reaction" }.trim().lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
+            val req = okhttp3.Request.Builder().url("https://tenor.com/search/$slug-gifs")
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36")
+                .header("Accept-Language", "en-US,en;q=0.9").build()
+            val html = Api.http.newCall(req).execute().use { r -> if (!r.isSuccessful) return@runCatching null; r.body?.string().orEmpty() }
+            rx.findAll(html.replace("\\u002F", "/")).groupBy { it.groupValues[1] }.map { (id, ms) ->
+                val urls = ms.map { it.value }.distinct()
+                val full = urls.firstOrNull { "AAAAC/" in it } ?: urls.first()
+                val small = urls.firstOrNull { "AAAAM/" in it } ?: full
+                GifHit("t_$id", small, full)
+            }.take(30)
+        }.getOrNull()
+    }
+}
+
 /**
  * GIF search without any key: a web image search limited to animated GIFs (safe search on), like Nuvio's picker.
  * Unofficial — if it ever stops answering, pasting a link and GIPHY (with a key) still work.
@@ -74,10 +95,12 @@ object WebGifs {
                 val js = mr.groupValues[1].replace("&quot;", "\"").replace("&amp;", "&")
                 val o = runCatching { Api.json.parseToJsonElement(js).jsonObject }.getOrNull() ?: return@mapNotNull null
                 val full = o["murl"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                if (!full.startsWith("https://") || !full.substringBefore('?').lowercase().endsWith(".gif")) return@mapNotNull null
-                // The grid plays the real GIF (the search's own thumbnail is a still picture).
-                GifHit(full, full, full)
-            }.distinctBy { it.full }.take(24).toList()
+                val thumb = o["turl"]?.jsonPrimitive?.contentOrNull ?: full
+                if (!full.startsWith("http")) return@mapNotNull null
+                // The grid plays the real GIF when the address is one (the search's own thumbnail is a still picture).
+                val animated = full.substringBefore('?').lowercase().let { it.endsWith(".gif") || it.endsWith(".webp") }
+                GifHit(full, if (animated) full else thumb, full)
+            }.distinctBy { it.full }.take(30).toList()
         }.getOrNull()
     }
 
@@ -115,10 +138,15 @@ fun GifPicker(vm: AppViewModel, onPick: (String) -> Unit, onDismiss: () -> Unit)
         delay(if (q.isBlank()) 0 else 450) // wait for typing to pause
         loading = true
         // No key needed: the built-in GIF search; GIPHY results are added when you have a key.
-        val web = WebGifs.search(q)
-        val gi = if (key.isNotEmpty()) Giphy.search(key, q) else null
-        failed = web == null && gi == null
-        hits = (gi.orEmpty() + web.orEmpty()).distinctBy { it.full }
+        // Tenor, the web search and GIPHY (with a key) all at once; whatever answers fills the grid.
+        val (tn, web, gi) = kotlinx.coroutines.coroutineScope {
+            val a = async { TenorWeb.search(q) }; val b = async { WebGifs.search(q) }
+            val c = async { if (key.isNotEmpty()) Giphy.search(key, q) else null }
+            Triple(a.await(), b.await(), c.await())
+        }
+        failed = tn == null && web == null && gi == null
+        hits = (gi.orEmpty() + tn.orEmpty() + web.orEmpty()).distinctBy { it.full }
+        if (hits.isEmpty()) ActLog.add("GIF", "no results for \"$q\" (tenor ${tn?.size ?: "x"}, web ${web?.size ?: "x"}, giphy ${gi?.size ?: "-"})")
         loading = false
     }
     PremiumAlert(
@@ -152,6 +180,7 @@ fun GifPicker(vm: AppViewModel, onPick: (String) -> Unit, onDismiss: () -> Unit)
                 Box(Modifier.fillMaxWidth().height(300.dp).padding(top = 10.dp)) {
                     when {
                         loading && hits.isEmpty() -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                        !loading && hits.isEmpty() && !failed -> Text("No GIFs for \"$q\" — try another word.", Modifier.align(Alignment.Center), fontSize = 13.sp, color = Color(0xFF9AA3B5))
                         failed -> Text("Couldn't search right now. Paste a GIF link instead.", Modifier.align(Alignment.Center), fontSize = 13.sp, color = Color(0xFFFF8A80))
                         else -> LazyVerticalGrid(GridCells.Fixed(3), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             items(hits, key = { it.id }) { h ->
