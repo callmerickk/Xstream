@@ -50,6 +50,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
@@ -163,6 +165,7 @@ fun DetailScreen(
     fun target(ep: Video) = SourceTarget(ep.id, "${meta.name}  S${ep.season}E${ep.episode}", "S${ep.season} E${ep.episode}", ep.title ?: ep.name, ep.thumbnail)
 
     // The big button: resume where you left off, or the next episode / start.
+    val playRect = remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     val playTarget = remember(meta, progress, done, episodes) {
         if (episodes.isEmpty()) {
             val p = progress.firstOrNull { it.key == meta.id }
@@ -431,7 +434,7 @@ fun DetailScreen(
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
                         val waitingHere = waitingFor != null
                         val pillLabel = if (waitingHere) "Preparing… ${((prep?.progress ?: 0f) * 100).toInt()}%" else playTarget.label
-                        Box(Modifier.weight(1f).tourTarget("play")) {
+                        Box(Modifier.weight(1f).tourTarget("play").onGloballyPositioned { playRect.value = it.boundsInRoot() }) {
                             RedPill(pillLabel, Modifier.fillMaxWidth(), fontSize = if (pillLabel.length > 9) 19 else 22,
                                 onClick = { if (!waitingHere) start(playTarget.target) }, onLongClick = { actions = true }) {
                                 if (playTarget.frac > 0f) Box(Modifier.align(Alignment.BottomCenter).padding(horizontal = 28.dp, vertical = 7.dp).fillMaxWidth().height(3.dp)
@@ -553,10 +556,8 @@ fun DetailScreen(
             }
         }
 
-        if (actions) TitleActionsSheet(
-            meta.name, playTarget.target.epLabel ?: if (meta.type == "series") "Series" else "Movie",
-            playTarget.target.image ?: backdrop, playTarget.frac, progress.firstOrNull { it.key == playTarget.target.videoId }?.let { timeLeft(it) },
-            buildList {
+        if (actions) {
+          val actionList = buildList {
                 add(TitleAction("Play manually", Icons.Default.PlayArrow) { start(playTarget.target, forceSources = true) })
                 if (playTarget.resumeMs > 0) add(TitleAction("Start from beginning", Icons.Default.Replay) { start(playTarget.target, fromStart = true) })
                 add(TitleAction(if (saved) "Remove from Watchlist" else "Add to Watchlist", if (saved) Icons.Default.Check else Icons.Default.Add) { WatchlistAsk.toggle(vm, meta) })
@@ -575,9 +576,18 @@ fun DetailScreen(
                     add(TitleAction("Share with friends", Icons.Default.Groups) { shareFriends = true })
                     add(TitleAction("Plan a watch", Icons.Default.Event) { planWatch = true })
                 }
-            },
+            }
+          // Xstream phone: the Play button lifts out like a poster — trailer playing in the card, ratings, then every action.
+          if (!BuildConfig.IS_TV) androidx.compose.ui.window.Dialog({ actions = false }, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+              TitleLiftMenu(vm, meta, playRect.value, onDetails = {}, onManual = {}, onWatchlist = {}, onClose = { actions = false },
+                  actions = actionList, subtitle = playTarget.target.epLabel)
+          } else TitleActionsSheet(
+            meta.name, playTarget.target.epLabel ?: if (meta.type == "series") "Series" else "Movie",
+            playTarget.target.image ?: backdrop, playTarget.frac, progress.firstOrNull { it.key == playTarget.target.videoId }?.let { timeLeft(it) },
+            actionList,
             onDismiss = { actions = false },
-        )
+          )
+        }
         if (shareFriends) ShareWithFriends(meta, Social.friends.collectAsState().value) { shareFriends = false }
         if (planWatch) PlanFlow(meta, null, Social.friends.collectAsState().value, null, onDone = { planWatch = false })
 

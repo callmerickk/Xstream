@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -64,7 +65,9 @@ fun Modifier.titleTap(m: Meta, onOpen: () -> Unit): Modifier = composed {
  * length and ratings, then Go to details · Play manually · Add to watchlist.
  */
 @Composable
-fun TitleLiftMenu(vm: AppViewModel, m: Meta, from: Rect, onDetails: () -> Unit, onManual: () -> Unit, onWatchlist: () -> Unit, onClose: () -> Unit) {
+fun TitleLiftMenu(vm: AppViewModel, m: Meta, from: Rect, onDetails: () -> Unit, onManual: () -> Unit, onWatchlist: () -> Unit, onClose: () -> Unit,
+                  /** The title page's long-press on Play: its own full list instead of the three poster actions. */
+                  actions: List<TitleAction>? = null, subtitle: String? = null) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     var origin by remember { mutableStateOf(Offset.Zero) }
@@ -145,6 +148,7 @@ fun TitleLiftMenu(vm: AppViewModel, m: Meta, from: Rect, onDetails: () -> Unit, 
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(m.name, fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                subtitle?.let { Text(it, Modifier.padding(top = 2.dp), fontSize = 12.5.sp, color = Color(0xFFB6BDCC)) }
                 val facts = listOfNotNull(
                     if (m.type == "series") "Series" else "Movie",
                     (m.releaseInfo ?: info?.release)?.take(4),
@@ -166,8 +170,9 @@ fun TitleLiftMenu(vm: AppViewModel, m: Meta, from: Rect, onDetails: () -> Unit, 
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color(0xFF17181D))) {
-                    val acts = listOf(
+                Column(Modifier.fillMaxWidth().heightIn(max = 380.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF17181D))
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                    val acts = actions?.map { a -> Triple(a.label, a.icon) { close(a.onClick) } } ?: listOf(
                         Triple("Go to details", Icons.Default.Info) { close(onDetails) },
                         Triple("Play manually", Icons.Default.PlayArrow) { close(onManual) },
                         Triple("Add to watchlist", Icons.Default.BookmarkAdd) { close(onWatchlist) },

@@ -215,7 +215,7 @@ fun TvMomentLoader(
  * is recomputed per frame; a small dot marks the head.
  */
 @Composable
-private fun HeartbeatBar(p: Float, modifier: Modifier) {
+internal fun HeartbeatBar(p: Float, modifier: Modifier) {
     androidx.compose.foundation.layout.Spacer(modifier.drawWithCache {
         val w = size.width; val h = size.height
         val y0 = h * 0.62f; val amp = h * 0.5f; val per = w / 7f

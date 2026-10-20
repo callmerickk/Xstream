@@ -2728,7 +2728,10 @@ fun PlayerScreen(
                             val c = ev.changes.firstOrNull { it.id == down.id } ?: pressed.first()
                             val delta = c.position - start
                             when (mode) {
-                                0 -> if (abs(delta.y) > slop && abs(delta.y) > abs(delta.x)) {
+                                0 -> if (!BuildConfig.IS_TV && abs(delta.y) > slop && abs(delta.y) > abs(delta.x) && start.x in (size.width / 3f)..(size.width * 2f / 3f)) {
+                                    // Xstream: the middle third — swiping up there pulls Watch Next up (like YouTube).
+                                    mode = 5
+                                } else if (abs(delta.y) > slop && abs(delta.y) > abs(delta.x)) {
                                     mode = 1
                                     val act = ctx as Activity
                                     level = if (left) act.window.attributes.screenBrightness.let { if (it < 0f) 0.5f else it }
@@ -2760,6 +2763,10 @@ fun PlayerScreen(
                                     c.consume()
                                 }
                             }
+                        }
+                        if (mode == 5) {
+                            val endY = currentEvent.changes.firstOrNull()?.position?.y ?: start.y
+                            if (start.y - endY > 56.dp.toPx()) { watchNext = true; controls = false }
                         }
                         when (mode) {
                             0 -> {
@@ -3031,12 +3038,20 @@ fun PlayerScreen(
                             if (BuildConfig.IS_TV) GlassBtn(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, if (playing) "Pause" else "Play", firstMod()) {
                                 togglePlay(); pausedByUp = false; poke++
                             }
+                            if (BuildConfig.IS_TV) {
                             // Order: Watch Next · Audio & Subtitles · Episodes · Next Episode · ›
                             GlassBtn(Icons.Default.Theaters, "Watch Next", "Watch next", firstMod().then(at("watchnext"))) { watchNext = true; controls = false }
                             GlassBtn(Icons.Default.Subtitles, "Audio & Subtitles", "Audio and subtitles",
                                 firstMod().then(Modifier.onGloballyPositioned { c -> avBtnCenter = c.boundsInRoot().center; btnCenters["avsubs"] = c.boundsInRoot().center })) { panel = "avsubs" }
                             if (type == "series" && episodes.isNotEmpty()) GlassBtn(Icons.Default.VideoLibrary, "Episodes", "Episodes", firstMod().then(at("episodes"))) { showEpisodes = true; controls = false }
                             if (nextEp != null) GlassBtn(Icons.Default.SkipNext, "Next Episode", "Next episode", firstMod()) { playNext() }
+                            } else {
+                                // Xstream phone: Audio & Subtitles, then Watch Next (movies) or Episodes (series) in the same spot.
+                                GlassBtn(Icons.Default.Subtitles, "Audio & Subtitles", "Audio and subtitles",
+                                    Modifier.onGloballyPositioned { c -> avBtnCenter = c.boundsInRoot().center; btnCenters["avsubs"] = c.boundsInRoot().center }) { panel = "avsubs" }
+                                if (type == "series" && episodes.isNotEmpty()) GlassBtn(Icons.Default.VideoLibrary, "Episodes", "Episodes", at("episodes")) { showEpisodes = true; controls = false }
+                                else GlassBtn(Icons.Default.Theaters, "Watch Next", "Watch next", at("watchnext")) { watchNext = true; controls = false }
+                            }
                             // TV: the extra buttons in the row; phones: › opens them as a small bubble above the button.
                             if (more && BuildConfig.IS_TV) {
                                 GlassBtn(Icons.Default.CloudQueue, "Sources", "Sources") { panel = "sources" }
@@ -3048,6 +3063,8 @@ fun PlayerScreen(
                             if (BuildConfig.IS_TV) GlassBtn(if (more) Icons.Default.ChevronLeft else Icons.Default.ChevronRight, null, if (more) "Less" else "More", at("more")) { more = !more; poke++ }
                         }
                         if (!BuildConfig.IS_TV) {
+                            // Series: next episode (icon only) before play / pause.
+                            if (type == "series" && nextEp != null) { Spacer(Modifier.width(10.dp)); GlassBtn(Icons.Default.SkipNext, null, "Next episode") { playNext() } }
                             Spacer(Modifier.width(10.dp))
                             GlassBtn(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, if (playing) "Pause" else "Play") { togglePlay(); pausedByUp = false; poke++ }
                             Spacer(Modifier.width(10.dp))
@@ -3313,9 +3330,14 @@ fun PlayerScreen(
                             if (slow) CircularProgressIndicator(Modifier.align(Alignment.Center).size(34.dp), color = Color.White, strokeWidth = 2.5.dp)
                         // Quick play starts in a moment: only the "Serving it fresh" scene (no finding scene first).
                         // Playing from all addons: finding → serving, as before.
-                        } else Crossfade(status.startsWith("Finding") && !p.quick, Modifier.fillMaxSize(), animationSpec = tween(600), label = "scene") { finding ->
-                            if (finding) FindingScene(scenePoster, meta?.name ?: p.title, answered, sourceTotal, sceneQuality, Modifier.fillMaxSize())
-                            else ServingScene(scenePoster, bufProgress, Modifier.fillMaxSize())
+                        } else {
+                            // Xstream phone: the StreamX TV style loader, with the trailer playing inside the frame.
+                            val finding = status.startsWith("Finding") || status.startsWith("Quick")
+                            val pct = if (finding) (if (sourceTotal > 0) answered * 38 / sourceTotal.coerceAtLeast(1) else 5).coerceIn(3, 39)
+                                else (40 + bufProgress * 59).toInt().coerceIn(40, 99)
+                            XMomentLoader(vm, meta, p.key.substringBefore(":"), type, meta?.name ?: p.title.substringBefore("  S"), meta?.background ?: p.image,
+                                stage = when { status.startsWith("Quick") -> "Trying the fastest servers"; finding -> "Finding the best source"; pct < 70 -> "Connecting"; else -> "Loading the first minutes" },
+                                percent = pct, modifier = Modifier.fillMaxSize())
                         }
                     } else {
                         Column(Modifier.align(Alignment.Center).padding(horizontal = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
