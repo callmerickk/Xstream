@@ -5172,6 +5172,7 @@ private fun WatchNextOverlay(
         BoxWithConstraints(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0x33000000), 0.45f to Color(0xB3000000), 1f to Color(0xF2000000)))
             .noFocus()) {
             val sheetH = constraints.maxHeight.toFloat()
+            val sheetMinH = maxHeight
             val scroll = androidx.compose.foundation.rememberScrollState()
             // Phones: when the list can't scroll any further, the drag moves the whole sheet (it follows the finger both ways).
             val sheetScroll = remember(sheetH) {
@@ -5192,7 +5193,7 @@ private fun WatchNextOverlay(
             }
             Column(Modifier.fillMaxSize().nestedScroll(sheetScroll).verticalScroll(scroll)) {
             Column(
-                Modifier.fillMaxWidth().heightIn(min = maxHeight)
+                Modifier.fillMaxWidth().heightIn(min = sheetMinH)
                     .clickable(interactionSource = noRipple, indication = null) { onClose() }
                     .padding(top = 24.dp, bottom = 20.dp),
                 verticalArrangement = Arrangement.Bottom,
