@@ -35,6 +35,25 @@ jobs:
             [ -n "$msg" ] && echo "::error title=Build errors $chunk::$msg"
           done
           true
+      - name: CloudStream plugin compatibility check
+        if: success()
+        continue-on-error: true
+        run: |
+          mkdir -p cscheck && cd cscheck
+          for u in \
+            "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/FourKHDHub.cs3" \
+            "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/HDhub4u.cs3" \
+            "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/MPlayerProvider.cs3" \
+            "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/UHDmoviesProvider.cs3" \
+            "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/VegaMovies.cs3" \
+            "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/builds/CNC%20Verse.cs3" \
+            "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/builds/CNC%20Verse%20Mobile.cs3"; do
+            curl -sL -o "$(basename "$u" | sed 's/%20/_/g')" "$u"
+          done
+          cd ..
+          python3 tools/cs_compat.py app/build/outputs/apk/phone/debug/*.apk cscheck/*.cs3 | tee cscheck.txt
+          msg=$(head -40 cscheck.txt | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+          echo "::warning title=CloudStream compatibility::$msg"
       - uses: actions/upload-artifact@v4
         with:
           name: Xstream-phone-apk
