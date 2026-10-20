@@ -120,16 +120,29 @@ object CsTester {
         }
     }
 
-    private fun norm(s: String) = s.lowercase().replace(Regex("\\(\\d{4}\\)|season\\s*\\d+|s\\d+|[^a-z0-9]"), "")
+    /** A site's title without the year, quality, language and file details ("Movie (2019) WEB-DL [Hindi…] 1080p…" → "Movie"). */
+    internal fun cleanTitle(raw: String): String {
+        var t = raw.replace(Regex("(?i)^download\\s+"), "")
+        val parenYear = Regex("\\(\\s*(19|20)\\d{2}").containsMatchIn(t)
+        val cut = listOfNotNull(Regex("\\(\\s*(19|20)\\d{2}"), Regex("\\[|\\{|\\|"), if (parenYear) null else Regex("(?i)\\b(19|20)\\d{2}\\b"),
+            Regex("(?i)\\b(season|s\\d{1,2}e?\\d*|complete|web[- ]?series|dual audio|hindi|english|bluray|web-?dl|webrip|hdtc|hdrip|\\d{3,4}p|4k)\\b"))
+            .mapNotNull { it.find(t)?.range?.first }.filter { it > 0 }.minOrNull()
+        if (cut != null) t = t.substring(0, cut)
+        return t.replace("&", " and ").trim(' ', '-', '–', ':', '.')
+    }
+    private fun words(s: String) = s.lowercase().replace(Regex("[^a-z0-9 ]"), " ").split(" ").filter { it.isNotBlank() && it !in setOf("the", "a", "an", "of", "and") }
+    private fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
     private fun similarity(a: String, b: String): Double {
-        val x = norm(a); val y = norm(b)
+        val x = norm(cleanTitle(a)); val y = norm(b.replace("&", " and "))
         if (x.isEmpty() || y.isEmpty()) return 0.0
         if (x == y) return 1.0
-        if (x.contains(y) || y.contains(x)) return 0.85 * minOf(x.length, y.length) / maxOf(x.length, y.length) + 0.15
-        val common = x.toSet().intersect(y.toSet()).size.toDouble()
-        return common / maxOf(x.toSet().size, y.toSet().size) * 0.6
+        val wa = words(cleanTitle(a)).toSet(); val wb = words(b).toSet()
+        if (wa.isEmpty() || wb.isEmpty()) return 0.0
+        val jac = wa.intersect(wb).size.toDouble() / wa.union(wb).size
+        return jac * 0.9
     }
     private fun yearOf(r: SearchResponse): Int? = (r as? MovieSearchResponse)?.year ?: (r as? TvSeriesSearchResponse)?.year
+        ?: Regex("\\b(19|20)\\d{2}\\b").find(r.name)?.value?.toIntOrNull()
 
     private suspend fun testOne(ctx: Context, vm: AppViewModel, api: MainAPI, e: CsPluginEntry, t: TestTitle, playTest: Boolean): CsTitleResult {
         val series = t.type == "series"
@@ -145,18 +158,30 @@ object CsTester {
         val found = try { withTimeoutOrNull(30_000) { api.search(q, 1)?.items ?: api.search(q) } }
             catch (x: NotImplementedError) { runCatching { withTimeoutOrNull(30_000) { api.search(q) } }.getOrNull() }
             catch (x: Throwable) { return fail("search error ${x.javaClass.simpleName}: ${x.message?.take(160)}") }
-        if (found == null) return fail("search: no answer in 30 s")
+        if (found == null) {
+            // Nothing back: is the site even reachable from here?
+            val probe = runCatching { withTimeoutOrNull(10_000) { com.lagradost.cloudstream3.app.get(api.mainUrl) } }.getOrNull()
+            return fail("search gave nothing back · ${api.mainUrl} answers " + (probe?.let { "${it.code}${if (it.url.trimEnd('/') != api.mainUrl.trimEnd('/')) " (moved to ${it.url})" else ""}" } ?: "nothing (unreachable)"))
+        }
         w("  search \"$q\": ${found.size} results in ${ms()} ms" + found.take(5).joinToString("") { "\n     · ${it.name} [${it.type}${yearOf(it)?.let { y -> ", $y" } ?: ""}] ${it.url.take(90)}" })
         val wantYear = t.year?.take(4)?.toIntOrNull()
         val scored = found.map { r ->
-            var s = similarity(r.name, q)
+            var sc = similarity(r.name, q)
             val y = yearOf(r)
-            if (wantYear != null && y != null) s += if (kotlin.math.abs(y - wantYear) <= 1) 0.25 else -0.3
-            val isSeries = r.type in setOf(TvType.TvSeries, TvType.Anime, TvType.AsianDrama, TvType.Cartoon, TvType.Documentary)
-            if (r.type != null) s += if (isSeries == series) 0.1 else -0.25
-            r to s
+            // Movies: the year must fit. Series: sites show the season's year, so it only helps when it matches.
+            if (wantYear != null && y != null) sc += when { kotlin.math.abs(y - wantYear) <= 1 -> 0.2; series -> 0.0; else -> -0.4 }
+            // Season pages ("… Season 3 …"): the right season wins, others drop.
+            if (series) Regex("(?i)season\\s*(\\d+)|\\bS(\\d{1,2})\\b").find(r.name)?.let { m ->
+                val n = (m.groupValues[1].ifEmpty { m.groupValues[2] }).toIntOrNull()
+                if (n != null) sc += if (n == (season ?: 1)) 0.25 else -0.6
+            }
+            val isSeries = r.type in setOf(TvType.TvSeries, TvType.Anime, TvType.AsianDrama, TvType.Cartoon, TvType.Documentary) || Regex("(?i)season|web series|episode").containsMatchIn(r.name)
+            val typeKnown = r.type != null && !(r.type == TvType.Movie && Regex("(?i)season|web series").containsMatchIn(r.name))
+            if (typeKnown) sc += if (isSeries == series) 0.05 else -0.2
+            r to sc
         }.sortedByDescending { it.second }
-        val best = scored.firstOrNull()?.takeIf { it.second >= 0.55 } ?: return fail("no matching result (best: ${scored.firstOrNull()?.let { "${it.first.name} ${"%.2f".format(it.second)}" } ?: "none"})")
+        scored.take(3).forEach { (r, sc) -> w("     score ${"%.2f".format(sc)} · \"${cleanTitle(r.name)}\" (${yearOf(r) ?: "no year"})") }
+        val best = scored.firstOrNull()?.takeIf { it.second >= 0.7 } ?: return fail("no matching result (best: ${scored.firstOrNull()?.let { "${cleanTitle(it.first.name)} ${"%.2f".format(it.second)}" } ?: "none"})")
         w("  match: ${best.first.name} (score ${"%.2f".format(best.second)})")
         // 2. Load
         val t1 = SystemClock.elapsedRealtime()

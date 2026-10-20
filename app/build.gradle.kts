@@ -127,6 +127,9 @@ dependencies {
     // CloudStream plugins run on Xstream's own CloudStream library (com.lagradost.*). The open-source libraries plugins
     // call directly (all MIT / Apache 2.0): HTML parsing, JSON, URLs, and AppCompat / Material for their settings.
     implementation("org.jsoup:jsoup:1.18.1")
+    // Plugins are built with the current coroutines (runBlocking is "runBlockingK" there): use the same version.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
     implementation("com.google.code.gson:gson:2.11.0")

@@ -15,9 +15,11 @@ import coil.decode.ImageDecoderDecoder
 import coil.decode.VideoFrameDecoder
 
 /** A FragmentActivity (still a ComponentActivity) so the fingerprint prompt can be shown. */
-class MainActivity : androidx.fragment.app.FragmentActivity() {
+// AppCompat (still a FragmentActivity underneath): CloudStream plugins expect the app's screen to be one.
+class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.lagradost.cloudstream3.CommonActivity.activity = this
         CrashLog.install(this)
         ActLog.init(this)
         // App icon picked with "Later": apply it now that the app was fully closed and opened again.
@@ -67,7 +69,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     }
 
     override fun onPause() { super.onPause(); ActLog.add("APP", "to background") }
-    override fun onResume() { super.onResume(); ActLog.add("APP", "in front"); runCatching { Cloud.onAppForeground() } }
+    override fun onResume() { super.onResume(); com.lagradost.cloudstream3.CommonActivity.activity = this; ActLog.add("APP", "in front"); runCatching { Cloud.onAppForeground() } }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)

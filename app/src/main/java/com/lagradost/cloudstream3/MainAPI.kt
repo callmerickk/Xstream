@@ -12,8 +12,23 @@ import java.util.Locale
 // Xstream's own implementation of the provider base class and helper functions CloudStream plugins call.
 
 /** Jackson, as plugins expect it: unknown fields ignored, Kotlin classes understood. */
-val mapper: JsonMapper = JsonMapper.builder().addModule(kotlinModule())
-    .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false).build()
+val mapper: JsonMapper = LoggingMapper().apply {
+    registerModule(kotlinModule())
+    configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+}
+
+/** Jackson that tells the plugin test log when a plugin's JSON doesn't fit what it expected (then fails as usual). */
+class LoggingMapper : JsonMapper() {
+    private fun report(e: Throwable, what: String, content: String?) {
+        CsBridge.note("JSON ✗ $what: ${e.javaClass.simpleName}: ${e.message?.lineSequence()?.firstOrNull()?.take(160)} · text starts: ${content?.take(80)?.replace("\n", " ")}")
+    }
+    override fun <T : Any?> readValue(content: String?, valueType: Class<T>?): T =
+        try { super.readValue(content, valueType) } catch (e: Exception) { report(e, valueType?.simpleName ?: "?", content); throw e }
+    override fun <T : Any?> readValue(content: String?, valueTypeRef: com.fasterxml.jackson.core.type.TypeReference<T>?): T =
+        try { super.readValue(content, valueTypeRef) } catch (e: Exception) { report(e, valueTypeRef?.type?.typeName?.substringAfterLast('.') ?: "?", content); throw e }
+    override fun readTree(content: String?): com.fasterxml.jackson.databind.JsonNode =
+        try { super.readTree(content) } catch (e: Exception) { report(e, "tree", content); throw e }
+}
 
 val json: Json = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true; explicitNulls = false }
 

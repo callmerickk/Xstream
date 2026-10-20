@@ -160,7 +160,9 @@ object CsPlugins {
         }.getOrNull()
         val reg = CsBridge.Registered(inst, e.name)
         CsBridge.loading = reg
-        try { if (inst is Plugin) inst.load(appCtx) else inst.load() } finally { CsBridge.loading = null }
+        // Plugins get the app's screen (CNC Verse casts it to AppCompatActivity), like in CloudStream.
+        val loadCtx: Context = com.lagradost.cloudstream3.CommonActivity.activity?.takeIf { !it.isFinishing } ?: appCtx
+        try { if (inst is Plugin) inst.load(loadCtx) else inst.load() } finally { CsBridge.loading = null }
         return reg
     }
 

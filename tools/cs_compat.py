@@ -47,7 +47,8 @@ def main():
             if c not in app: missing.append('class ' + c); continue
             ms, outside = members(app, c)
             if n + pr in ms: continue
-            if outside is not None and outside.startswith(SKIP): continue  # may come from the framework parent
+            # May come from a framework parent class (not java.lang.Object, which has none of these).
+            if outside is not None and outside.startswith(SKIP) and outside != 'Ljava/lang/Object;': continue
             if n == '<init>' and (n + pr) not in ms: missing.append('ctor %s%s' % (c, pr)); continue
             # interfaces: search their members too
             found = False

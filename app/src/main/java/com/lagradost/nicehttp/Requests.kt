@@ -99,13 +99,21 @@ class Requests(
 
     private suspend fun execute(c: OkHttpClient, r: Request, parser: ResponseParser?): NiceResponse = suspendCancellableCoroutine { cont ->
         val call = c.newCall(r)
+        val t0 = System.currentTimeMillis()
         cont.invokeOnCancellation { runCatching { call.cancel() } }
         call.enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) { if (cont.isActive) cont.resumeWithException(e) }
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                com.lagradost.cloudstream3.CsBridge.note("http ${r.method} ${r.url.toString().take(110)} ✗ ${e.javaClass.simpleName}: ${e.message?.take(80)} (${System.currentTimeMillis() - t0} ms)")
+                if (cont.isActive) cont.resumeWithException(e)
+            }
             override fun onResponse(call: okhttp3.Call, response: Response) {
                 val nr = NiceResponse(response, parser ?: responseParser)
                 // Read the body here (off the main thread) so .text never blocks a caller later.
-                runCatching { nr.text }
+                val body = runCatching { nr.text }.getOrDefault("")
+                // Every request a plugin makes, for the plugin test log (status, size, time, Cloudflare).
+                val cf = response.header("server")?.contains("cloudflare", true) == true && (response.code == 403 || response.code == 503)
+                com.lagradost.cloudstream3.CsBridge.note("http ${r.method} ${r.url.toString().take(110)} → ${response.code}${if (cf) " (Cloudflare check)" else ""} · ${body.length / 1024} KB · ${System.currentTimeMillis() - t0} ms" +
+                    (if (response.request.url != r.url) " · ended at ${response.request.url.host}" else ""))
                 if (cont.isActive) cont.resume(nr)
             }
         })
