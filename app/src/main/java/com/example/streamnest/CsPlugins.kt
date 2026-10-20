@@ -171,7 +171,9 @@ object CsPlugins {
     suspend fun warmAll(log: (String) -> Unit = { ActLog.add("CSWARM", it) }) {
         for (e in enabledEntries()) {
             val t0 = System.currentTimeMillis()
-            val reg = runCatching { ensureLoaded(e) }.getOrElse { log("${e.name}: ${it.message}"); continue }
+            val got = runCatching { ensureLoaded(e) }
+            val reg = got.getOrNull()
+            if (reg == null) { log("${e.name}: ${got.exceptionOrNull()?.message}"); continue }
             reg.apis.forEach { api ->
                 val t1 = System.currentTimeMillis()
                 val n = runCatching { kotlinx.coroutines.withTimeoutOrNull(20_000) { api.search("the", 1)?.items?.size ?: api.search("the")?.size } }.getOrNull()
