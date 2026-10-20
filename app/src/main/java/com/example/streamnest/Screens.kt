@@ -367,8 +367,8 @@ fun App(vm: AppViewModel = viewModel()) {
         }
         if (profile != null && texts["guideDone"].isNullOrEmpty()) QuickGuide { vm.setText("guideDone", "1") }
         // Built-in servers (CNCVerse / HdHub links published from Developer's Corner) and the Connect PenguPlay card.
-        LaunchedEffect(profile?.id) { if (profile != null) { runCatching { BuiltIns.sync(vm) }; runCatching { AppLook.fetch(vm.appContext) } } }
-        if (profile != null && stack.isEmpty() && !showSplash && !texts["guideDone"].isNullOrEmpty()) PenguConnectPrompt(vm)
+        LaunchedEffect(profile?.id) { if (profile != null) { runCatching { BuiltIns.sync(vm) }; runCatching { DevDefaults.sync(vm) }; runCatching { AppLook.fetch(vm.appContext) } } }
+        // Xstream: no "Connect PenguPlay" prompt — servers come from Developer's Corner.
         val askWl by WatchlistAsk.pending.collectAsState()
         askWl?.let { m -> AddToWatchlistSheet(vm, m) { WatchlistAsk.pending.value = null } }
         if (showSplash) StartupSplash { showSplash = false }

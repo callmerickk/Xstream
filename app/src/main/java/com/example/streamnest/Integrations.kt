@@ -68,7 +68,10 @@ fun AiLogo(vm: AppViewModel, modifier: Modifier) {
 // ───────────── Help & Settings > Integrations ─────────────
 
 @Composable
-internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit) {
+internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean = false) {
+    // Xstream: users only see the debrid services; keys, the AI's logo and voice are set in Developer's Corner and
+    // published for everyone.
+    if (!dev) { DebridPage(vm, onBack); return }
     val texts by vm.texts.collectAsStateWithLifecycle()
     fun v(k: String) = texts[k] ?: Defaults[k] ?: ""
     fun yn(b: Boolean) = if (b) "yes" else "no"
@@ -89,7 +92,19 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().pageScroll().navigationBarsPadding().padding(bottom = 40.dp)) {
-        PageHeader("Integrations", onBack)
+        PageHeader("Defaults for everyone", onBack)
+        run {
+            var msg by remember { mutableStateOf<String?>(null) }
+            SettingsCard {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Set the keys, the AI's logo (use a link) and its voice here, then publish. Every Xstream user gets them when they sign in.", fontSize = 13.sp, color = Muted)
+                    Button({ msg = "Publishing…"; scope.launch { msg = DevDefaults.publish(vm) ?: "Published ✓ — everyone gets these on their next start" } },
+                        Modifier.padding(top = 10.dp).fillMaxWidth(), shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) { Text("Publish for everyone", fontWeight = FontWeight.SemiBold) }
+                    msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Muted) }
+                }
+            }
+        }
 
         SectionLabel("AI assistant")
         SettingsCard {
@@ -208,5 +223,25 @@ private fun KeyField(vm: AppViewModel, key: String, label: String, desc: String,
             label = { Text(label) }, visualTransformation = PasswordVisualTransformation(),
             trailingIcon = { if (text != (texts[key] ?: "")) TextButton({ vm.setText(key, text) }) { Text("Save") } }, keyboardOptions = tvKeyboard())
         TextButton({ runCatching { uri.openUri(link) } }) { Text("Get a free key", color = Color.White) }
+    }
+}
+
+
+/** Xstream Integrations for users: the debrid services only. */
+@Composable
+private fun DebridPage(vm: AppViewModel, onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize().pageScroll().navigationBarsPadding().padding(bottom = 40.dp)) {
+        PageHeader("Integrations", onBack)
+        Text("Connect a debrid service for cached, high-speed links from torrent sources and plugins.", Modifier.padding(horizontal = 24.dp, vertical = 4.dp), fontSize = 13.sp, color = Muted)
+        SectionLabel("Debrid services")
+        SettingsCard {
+            KeyField(vm, "debridRd", "Real-Debrid API token", "real-debrid.com › My account › API token.", "https://real-debrid.com/apitoken")
+            RowDivider(20.dp)
+            KeyField(vm, "debridAd", "AllDebrid API key", "alldebrid.com › Account › API keys.", "https://alldebrid.com/apikeys/")
+            RowDivider(20.dp)
+            KeyField(vm, "debridPm", "Premiumize API key", "premiumize.me › Account.", "https://www.premiumize.me/account")
+            RowDivider(20.dp)
+            KeyField(vm, "debridTb", "TorBox API key", "torbox.app › Settings › API key.", "https://torbox.app/settings")
+        }
     }
 }

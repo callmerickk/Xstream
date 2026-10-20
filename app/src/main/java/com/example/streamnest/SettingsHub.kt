@@ -74,6 +74,7 @@ fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) 
         "addons" -> AddonsPage(vm, back)
         "integrations" -> IntegrationsPage(vm, back)
         "quickStart" -> QuickStartPage(vm, back)
+        "playback" -> PlaybackPage(vm, back)
         "detailPage" -> DetailPageSettings(vm, back)
         "streamFilters" -> StreamFiltersPage(vm, back)
         "collections" -> CollectionsSettingsPage(vm, back)
@@ -117,7 +118,7 @@ private fun SettingsRootPage(vm: AppViewModel, onClose: () -> Unit, open: (Strin
                 RowDivider()
                 SettingRow(Icons.Default.Dns, "Network & DNS", DnsProviders[texts["dns"] ?: "system"]?.first ?: "System default") { open("network") }
                 RowDivider()
-                SettingRow(Icons.Default.Link, "Integrations", "AI assistant, recommendations, TMDB and ratings.") { open("integrations") }
+                SettingRow(Icons.Default.Link, "Integrations", "Debrid services: Real-Debrid, AllDebrid, Premiumize, TorBox.") { open("integrations") }
                 RowDivider()
                 SettingRow(Icons.Default.Notifications, "Notifications", "New episode alerts for shows in My List.") { open("notifications") }
             }
@@ -589,13 +590,25 @@ private fun ContentPage(onBack: () -> Unit, open: (String) -> Unit) {
         SettingsCard {
             SettingRow(null, "Addons", "Install, remove, refresh, and sort your content sources.") { open("addons") }
             RowDivider(20.dp)
-            SettingRow(null, "Stream Filters", "Include, exclude or force HDR, Dolby Vision, 4K and more.") { open("streamFilters") }
-            RowDivider(20.dp)
-            SettingRow(null, "Quick Start", "Fast addons for instant play, quality selector and audio language.") { open("quickStart") }
+            // Xstream: Quick Play and Stream Filters are one page for users; the detailed pages stay for the developer.
+            SettingRow(null, "Playback", "Quick Play, quality, audio language and what to hide.") { open("playback") }
+            if (Public.dev) {
+                RowDivider(20.dp)
+                SettingRow(null, "Stream Filters (all)", "Include, exclude or force every tag.") { open("streamFilters") }
+                RowDivider(20.dp)
+                SettingRow(null, "Quick Start servers", "Pick the Quick Play addons and see their speed.") { open("quickStart") }
+            }
             if (!BuildConfig.IS_TV) {
                 RowDivider(20.dp)
                 SettingRow(null, "Plugins", "Install JavaScript plugins that find streams, next to your addons.") { open("plugins") }
             }
+        }
+        SectionLabel("Recommendations")
+        SettingsCard {
+            val rt by vm.texts.collectAsStateWithLifecycle()
+            ToggleRow("Recommended for you", "Show a row on Home built from what you liked.", isOn(rt["showRecs"] ?: Defaults["showRecs"] ?: "yes")) { vm.setText("showRecs", if (it) "yes" else "no") }
+            RowDivider(20.dp)
+            ToggleRow("Ask \"How was it?\"", "After watching, ask Go for it / Skip / Just surfing.", isOn(rt["askVote"] ?: Defaults["askVote"] ?: "yes")) { vm.setText("askVote", if (it) "yes" else "no") }
         }
     }
 }
@@ -684,21 +697,6 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF2F2F2), contentColor = Color.Black),
             ) { Text("Install Addon", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) }
             error?.let { Text(it, color = Color(0xFFFF6B6B), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)) }
-        }
-        if (!BuildConfig.IS_TV) {
-            SectionLabel("Quick server")
-            var connect by remember { mutableStateOf(false) }
-            Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(CardShape).background(CardBg).padding(18.dp)) {
-                val own = QuickServer.hasOwn(vm)
-                Text(if (own) "Your own account is connected ✓" else "Connect your own account", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text(if (own) "Videos start from your own quick server account." else "Sign in to PenguPlay once — your own account joins the quick server, so busy hours don't slow you down.",
-                    fontSize = 13.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
-                if (!own) Button({ connect = true }, Modifier.padding(top = 12.dp).fillMaxWidth().height(48.dp), shape = RoundedCornerShape(24.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) { Text("Connect PenguPlay", fontWeight = FontWeight.SemiBold) }
-            }
-            if (connect) androidx.compose.ui.window.Dialog({ connect = false }, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
-                PenguConnectSheet(vm) { connect = false }
-            }
         }
         SectionLabel("Backup & move")
         AddonBackupCard(vm)
