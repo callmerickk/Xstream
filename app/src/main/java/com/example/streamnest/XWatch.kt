@@ -52,6 +52,17 @@ object WatchLog {
         entries.value = runCatching { Api.json.decodeFromString<List<WatchDay>>(prefs(ctx).getString("w_$profile", null) ?: "[]") }.getOrDefault(emptyList())
     }
 
+    /** Takes a title (a movie, or a whole series when [key] is one of its episodes) out of the diary. */
+    fun remove(ctx: Context, profile: String?, key: String) {
+        if (profile == null) return
+        if (profile != pid) load(ctx, profile)
+        val base = key.substringBefore(":")
+        val left = entries.value.filterNot { it.k == key || it.k.substringBefore(":") == base }
+        if (left.size == entries.value.size) return
+        entries.value = left
+        prefs(ctx).edit().putString("w_$profile", Api.json.encodeToString(left)).apply()
+    }
+
     fun record(ctx: Context, profile: String?, p: Progress) {
         if (profile == null) return
         if (profile != pid) load(ctx, profile)

@@ -46,6 +46,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -230,7 +231,10 @@ fun HomeScreen(
         }
     }
     // The top cards keep their position when you scroll away and come back (state lives outside the lazy item).
-    val deckPager = rememberPagerState { deck.size }
+    val deckPager = rememberPagerState(initialPage = 1) { deck.size }
+    // Xstream: open on the 2nd card so both sides are filled (once the cards are in).
+    val deckStarted = rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(deck.size > 1) { if (deck.size > 1 && !deckStarted.value) { deckStarted.value = true; if (deckPager.currentPage == 0) deckPager.scrollToPage(1) } }
     // True while at least half of the top cards are on screen. Recomputed on scroll, but only notifies readers
     // when the answer flips, so it costs nothing per frame. Trailers / auto-slide stop when the deck scrolls away.
     val deckOnScreen = remember(listState) {
@@ -281,6 +285,8 @@ fun HomeScreen(
                             }
                         }
                     }
+                    Spacer(Modifier.weight(1f))
+                    NotificationBell(onTogether = { BellNav.together.value = true }, onOpen = onOpen)
                 }
             }
             item(key = "forYou", contentType = "forYou") {

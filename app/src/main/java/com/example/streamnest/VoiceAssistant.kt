@@ -128,7 +128,7 @@ fun AiOrbButton(vm: AppViewModel, size: androidx.compose.ui.unit.Dp = 54.dp, shr
                 .graphicsLayer { rotationZ = angle.value }
                 .drawWithCache {
                     val r = this.size.minDimension / 2f - 1.5.dp.toPx()
-                    val stroke = Stroke(width = 2.dp.toPx())
+                    val stroke = Stroke(width = 2.5.dp.toPx())
                     onDrawBehind { drawCircle(OrbRim, radius = r, style = stroke) }
                 }
         )
@@ -139,7 +139,7 @@ fun AiOrbButton(vm: AppViewModel, size: androidx.compose.ui.unit.Dp = 54.dp, shr
             rotationZ = -angle.value * 0.75f
             val b = 1f + 0.05f * kotlin.math.sin(Math.toRadians(angle.value * 2.0)).toFloat()
             scaleX = b; scaleY = b
-        }) { AiLogo(vm, Modifier.size(size * 0.46f)) }
+        }) { AiLogo(vm, Modifier.size(size * 0.6f)) }
         Icon(Icons.Default.Mic, "AI assistant", Modifier.size(size * 0.42f).graphicsLayer {
             alpha = shrink?.value ?: 0f
             compositingStrategy = CompositingStrategy.ModulateAlpha
@@ -147,8 +147,9 @@ fun AiOrbButton(vm: AppViewModel, size: androidx.compose.ui.unit.Dp = 54.dp, shr
     }
 }
 
-private val OrbFill = Brush.radialGradient(listOf(Color(0xFF2A3F8F), Color(0xFF1A1F4A), Color(0xFF2B1240)))
-private val OrbRim = Brush.sweepGradient(listOf(Color(0xFF3FB4FF), Color(0xFF7A5CFF), Color(0xFFFF3B8D), Color(0xFF3FB4FF)))
+// Xstream: the dock's red — a dark ember inside, a red → orange rim with a fading tail as it spins.
+private val OrbFill = Brush.radialGradient(listOf(Color(0xFF3A0D12), Color(0xFF1A0A0D), Color(0xFF0D0709)))
+private val OrbRim = Brush.sweepGradient(listOf(Color(0xFFE50914), Color(0xFFFF6A3D), Color(0x33E50914), Color(0xFFE50914)))
 
 // ───────────── Live voice conversation with X ─────────────
 

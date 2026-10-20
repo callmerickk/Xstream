@@ -26,6 +26,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -211,12 +212,15 @@ fun XLibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit
             Text("Library", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
         }
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("watchlist" to "Watchlist", "calendar" to "Calendar", "alerts" to "Notifications", "together" to "Watch together").forEach { (k, n) ->
+            listOf("watchlist" to "Watchlist", "calendar" to "Calendar").forEach { (k, n) ->
                 val on = tab == k
                 Text(n, Modifier.clip(RoundedCornerShape(50)).background(if (on) Color(0xFFF2F4F8) else LCard).border(1.dp, if (on) Color(0xFFF2F4F8) else LLine, RoundedCornerShape(50))
                     .clickable { tab = k }.padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (on) Color(0xFF0E1014) else LMuted)
             }
         }
+        // Watch together, up front: a red glowing card (who's online, what they're watching).
+        if (tab != "together") WatchTogetherCard(friends) { tab = "together" }
+        if (tab == "together") BackHandler { tab = "watchlist" }
         Box(Modifier.weight(1f)) {
             when (tab) {
                 "watchlist" -> Column {
@@ -235,7 +239,6 @@ fun XLibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit
                     else FriendRoom(vm, p, onOpen)
                 }
                 "calendar" -> WatchlistPage(vm, onBack = {}, onOpen = onOpen, startCalendar = true, embedded = true)
-                "alerts" -> NotificationsPage(onBack = { tab = "watchlist" }, onTogether = { tab = "together" }, embedded = true)
                 else -> WatchTogetherPage(vm, onBack = { tab = "watchlist" }, onOpen = onOpen, onPlayRoom = onPlayRoom)
             }
         }
@@ -310,5 +313,35 @@ fun TitleSearchBox(vm: AppViewModel, onPick: (Meta) -> Unit) {
                 }
             }
         }
+    }
+}
+
+
+@Composable
+private fun WatchTogetherCard(friends: List<Person>, onOpen: () -> Unit) {
+    val shape = RoundedCornerShape(20.dp)
+    val red = Accent
+    val inf = androidx.compose.animation.core.rememberInfiniteTransition(label = "wt")
+    val glow by inf.animateFloat(0.35f, 0.7f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1800), androidx.compose.animation.core.RepeatMode.Reverse), label = "g")
+    Row(
+        Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth()
+            .drawBehind { drawRoundRect(red.copy(alpha = glow * 0.5f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(24.dp.toPx()), size = size.copy(height = size.height + 6.dp.toPx())) }
+            .clip(shape).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(red.copy(alpha = 0.32f), Color(0xFFFF5A36).copy(alpha = 0.12f), Color(0xFF14090B))))
+            .border(1.dp, red.copy(alpha = 0.75f), shape).clickable(onClick = onOpen).padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Watch together", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+            Text(if (friends.isEmpty()) "Invite a friend and watch in sync, with chat" else "${friends.size} friend${if (friends.size == 1) "" else "s"} · rooms, chats and plans",
+                Modifier.padding(top = 3.dp), fontSize = 12.5.sp, color = Color(0xFFFFD6D0))
+            Row(Modifier.padding(top = 10.dp)) {
+                friends.take(5).forEachIndexed { i, p ->
+                    Box(Modifier.offset(x = (-8 * i).dp).size(28.dp).clip(CircleShape).background(Color(0xFF2A1416)).border(2.dp, Color(0xFF1A0B0D), CircleShape), Alignment.Center) {
+                        Text(p.name.take(1).uppercase(), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+        Icon(Icons.Default.Groups, null, Modifier.size(34.dp), tint = Color.White)
     }
 }

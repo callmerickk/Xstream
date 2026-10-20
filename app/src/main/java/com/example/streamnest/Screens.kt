@@ -138,6 +138,17 @@ fun App(vm: AppViewModel = viewModel()) {
     // drive Animatables. So flipping it (each time the scroll direction changes) recomposes nothing — before, it
     // recomposed all of App() (and re-ran animateFloatAsState) right in the middle of a scroll.
     var scrolledDown by remember { mutableStateOf(false) }
+    // Xstream: the dock also hides after 4 s without a touch; any touch brings it back.
+    // (A plain timestamp, not state: touches never recompose anything; only the hide / show flip is observed.)
+    var idleHidden by remember { mutableStateOf(false) }
+    val lastTouch = remember { longArrayOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(250)
+            val idle = System.currentTimeMillis() - lastTouch[0] > 4_000
+            if (idle != idleHidden) idleHidden = idle
+        }
+    }
     val navStyle = texts["navStyle"] ?: "adaptive"
     val capsuleAnimatable = remember { Animatable(0f) }
     val barAnimatable = remember { Animatable(0f) }
@@ -145,7 +156,7 @@ fun App(vm: AppViewModel = viewModel()) {
         launch { capsuleAnimatable.follow { if (navStyle != "expanded" && scrolledDown) 1f else 0f } }
         launch {
             barAnimatable.follow {
-                val compact = when (navStyle) { "expanded" -> false; "compact" -> true; else -> scrolledDown }
+                val compact = when (navStyle) { "expanded" -> false; "compact" -> true; else -> scrolledDown } || idleHidden
                 if (compact) 1f else 0f
             }
         }
@@ -230,7 +241,10 @@ fun App(vm: AppViewModel = viewModel()) {
             Screen.Library -> LibraryPage(vm, onBack = pop, onOpen = open, onPlay = { stack.add(it) })
             is Screen.Watchlist -> key(top) { WatchlistPage(vm, onBack = pop, onOpen = open, startCalendar = top.calendar) }
             Screen.Notes -> NotificationsPage(onBack = pop, onTogether = { stack.add(Screen.Together()) })
-            null -> Box(Modifier.fillMaxSize().background(Bg).nestedScroll(scrollWatcher)) {
+            null -> Box(Modifier.fillMaxSize().background(Bg).nestedScroll(scrollWatcher).pointerInput(Unit) {
+                // Watches every touch (never consumes it) to wake the dock.
+                awaitPointerEventScope { while (true) { awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial); lastTouch[0] = System.currentTimeMillis(); if (idleHidden) idleHidden = false } }
+            }) {
                 when (tab) {
                     0 -> HomeScreen(
                         vm, homeList, capsuleAnim, open, { stack.add(it) },
@@ -244,7 +258,7 @@ fun App(vm: AppViewModel = viewModel()) {
                     else -> MySpaceScreen(
                         vm,
                         onSettings = { stack.add(Screen.Settings()) },
-                        onProfile = { stack.add(Screen.Settings("profile")) },
+                        onProfile = { stack.add(Screen.Settings("profileEdit")) },
                         onSwitchProfile = { vm.leaveProfile() },
                         onOpen = open,
                         onPlay = { stack.add(it) },
@@ -264,6 +278,8 @@ fun App(vm: AppViewModel = viewModel()) {
                     modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"),
                 )
                 if (voiceOpen) VoiceAssistant(vm, onClose = { voiceOpen = false }, onOpen = { voiceOpen = false; open(it) })
+                val bellTogether by BellNav.together.collectAsState()
+                LaunchedEffect(bellTogether) { if (bellTogether) { BellNav.together.value = false; stack.add(Screen.Together()) } }
                 // Voice search handed a request to the AI.
                 val voiceAsk by VoiceAskBus.pending.collectAsState()
                 voiceAsk?.let { said -> key(said) { VoiceAssistant(vm, onClose = { VoiceAskBus.pending.value = null }, onOpen = { VoiceAskBus.pending.value = null; open(it) }, firstAsk = said) } }
@@ -399,25 +415,26 @@ fun BottomNav(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) ->
         Alignment.Center,
     ) {
         val shape = RoundedCornerShape(50)
+        // Holding any dock button: every icon wobbles as if under water.
+        var water by remember { mutableStateOf(false) }
         Row(
-            Modifier.width(300.dp).height(64.dp).shadow(22.dp, shape)
+            Modifier.width(312.dp).height(68.dp).shadow(22.dp, shape)
                 .drawBehind {
-                    // The glow above the edge (strongest on the left, like sunrise on StreamX's bar).
                     drawOval(Brush.radialGradient(listOf(red.copy(alpha = 0.45f), Color.Transparent), center = Offset(size.width * 0.3f, 0f), radius = size.width * 0.45f),
                         topLeft = Offset(-size.width * 0.1f, -size.height * 0.55f), size = androidx.compose.ui.geometry.Size(size.width * 0.85f, size.height * 1.1f))
                 }
                 .clip(shape).background(Brush.verticalGradient(listOf(Color(0xF71A1A22), Color(0xFA0D0E13))))
                 .border(1.5.dp, Brush.horizontalGradient(listOf(Color(0xFFFF6A3D), red, red.copy(alpha = 0.35f), Color(0x26FFFFFF))), shape)
-                .padding(horizontal = 9.dp),
+                .padding(horizontal = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
         ) {
-            DockItem(tab == 0, t("navHome"), { onTab(0) }) { c -> Icon(Icons.Default.Home, t("navHome"), Modifier.size(24.dp), tint = c) }
-            DockItem(tab == 1, t("navSearch"), { onTab(1) }) { c -> Icon(Icons.Default.Search, t("navSearch"), Modifier.size(24.dp), tint = c) }
-            DockItem(tab == 3, "Library", { onTab(3) }) { c -> Icon(Icons.Default.VideoLibrary, "Library", Modifier.size(24.dp), tint = c) }
-            val fill by androidx.compose.animation.animateColorAsState(if (tab == 2) Color(0xFFF2F4F8) else Color.Transparent, label = "me")
+            DockItem(0, water, tab == 0, t("navHome"), { onTab(0) }, { water = it }) { c -> Icon(Icons.Default.Home, t("navHome"), Modifier.size(23.dp), tint = c) }
+            DockItem(1, water, tab == 1, t("navSearch"), { onTab(1) }, { water = it }) { c -> Icon(Icons.Default.Search, t("navSearch"), Modifier.size(23.dp), tint = c) }
+            DockItem(2, water, tab == 3, "Library", { onTab(3) }, { water = it }) { c -> Icon(Icons.Default.VideoLibrary, "Library", Modifier.size(23.dp), tint = c) }
             val meLabel = t("navMySpace")
+            val bob = rememberFloat(3, water)
             Box(
-                Modifier.size(48.dp).clip(CircleShape).background(fill)
+                Modifier.size(50.dp).graphicsLayer { translationY = bob.value.first * 3.dp.toPx(); rotationZ = bob.value.second }
                     .onGloballyPositioned { meOrigin[0] = it.boundsInRoot().topLeft }
                     .pointerInput(profiles) {
                         awaitEachGesture {
@@ -426,34 +443,44 @@ fun BottomNav(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) ->
                             if (long == null) { onTab(2); return@awaitEachGesture }
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             bubble = true; hover = -1
+                            var moved = false
                             while (true) {
                                 val ev = awaitPointerEvent()
                                 val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
                                 val at = meOrigin[0] + ch.position
+                                if ((ch.position - down.position).getDistance() > 24f) moved = true
                                 val h = slots.entries.firstOrNull { (_, r) -> r.inflate(18f).contains(at) }?.key ?: -1
                                 if (h != hover) { hover = h; if (h >= 0) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
                                 ch.consume()
                                 if (!ch.pressed) break
                             }
                             val pick = profiles.getOrNull(hover)
-                            bubble = false; hover = -1
-                            if (pick != null && pick.id != current?.id) ProfileLock.ask(pick) { vm.selectProfile(pick); onTab(2) }
+                            hover = -1
+                            // Released on a profile: switch. Released without sliding: the bubble stays open to tap.
+                            if (pick != null) { bubble = false; if (pick.id != current?.id) ProfileLock.ask(pick) { vm.selectProfile(pick); onTab(2) } }
+                            else if (moved) bubble = false
                         }
                     }
                     .semantics { contentDescription = meLabel },
                 Alignment.Center,
-            ) { Avatar(vm, 30.dp) }
+            ) {
+                // Your picture with a red ring (white inside it while My Space is open).
+                Box(Modifier.size(40.dp).border(2.dp, if (tab == 2) Color.White else red, CircleShape).padding(3.dp).clip(CircleShape), Alignment.Center) { Avatar(vm, 34.dp) }
+                Box(Modifier.size(46.dp).drawBehind { drawCircle(red.copy(alpha = 0.28f), radius = size.minDimension / 2f, style = androidx.compose.ui.graphics.drawscope.Stroke(5.dp.toPx())) })
+            }
         }
+        if (bubble) Box(Modifier.matchParentSize().pointerInput(Unit) { detectTapGestures { bubble = false } })
         if (bubble) Column(
-            Modifier.align(Alignment.BottomEnd).padding(end = 12.dp).offset(y = (-80).dp)
+            Modifier.align(Alignment.BottomEnd).padding(end = 12.dp).offset(y = (-84).dp)
                 .shadow(18.dp, RoundedCornerShape(40.dp)).clip(RoundedCornerShape(40.dp)).background(Color(0xF216181F))
-                .border(1.dp, Color(0x262C3240), RoundedCornerShape(40.dp)).padding(12.dp),
+                .border(1.dp, Brush.verticalGradient(listOf(red.copy(alpha = 0.7f), red.copy(alpha = 0.2f))), RoundedCornerShape(40.dp)).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.End,
         ) {
             profiles.forEachIndexed { i, pr ->
                 val on = hover == i
                 val grow by animateFloatAsState(if (on) 1.18f else 1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 500f), label = "grow")
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.clip(RoundedCornerShape(26.dp)).clickable { bubble = false; if (pr.id != current?.id) ProfileLock.ask(pr) { vm.selectProfile(pr); onTab(2) } },
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(pr.name + if (pr.id == current?.id) " · you" else "", fontSize = 12.sp, fontWeight = FontWeight.Bold,
                         color = if (on) Color.White else Color(0xFFB6BDCC))
                     Box(Modifier.size(52.dp).onGloballyPositioned { slots[i] = it.boundsInRoot() }, Alignment.Center) {
@@ -479,18 +506,51 @@ private fun WaterRipple(modifier: Modifier) {
     })
 }
 
+/** One floating dock icon: it bobs gently all the time (as if on water) and wears a red glowing ring. */
 @Composable
-private fun DockItem(selected: Boolean, label: String, onClick: () -> Unit, onLongClick: (() -> Unit)? = null, icon: @Composable (Color) -> Unit) {
+private fun DockItem(i: Int, water: Boolean, selected: Boolean, label: String, onClick: () -> Unit, onHold: (Boolean) -> Unit, icon: @Composable (Color) -> Unit) {
     val click by rememberUpdatedState(onClick)
-    val longClick by rememberUpdatedState(onLongClick)
-    val hasLong = onLongClick != null
-    val fill by androidx.compose.animation.animateColorAsState(if (selected) Color(0xFFF2F4F8) else Color.Transparent, label = "dock")
+    val hold by rememberUpdatedState(onHold)
+    val bob = rememberFloat(i, water)
+    val fill by androidx.compose.animation.animateColorAsState(if (selected) Color(0x24FFFFFF) else Color.Transparent, label = "dock")
+    val red = Accent
     Box(
-        Modifier.size(48.dp).clip(CircleShape).background(fill)
-            .pointerInput(hasLong) { detectTapGestures(onTap = { click() }, onLongPress = if (hasLong) { _: Offset -> longClick?.invoke() } else null) }
+        Modifier.size(50.dp).graphicsLayer {
+            val (y, r) = bob.value
+            translationY = y * (if (water) 5.dp else 3.dp).toPx(); rotationZ = r
+            val sc = if (water) 1f + 0.04f * y else 1f; scaleX = sc; scaleY = sc
+        }
+            .drawBehind {
+                // Glow, then the ring.
+                drawCircle(Brush.radialGradient(listOf(red.copy(alpha = if (selected) 0.32f else 0.22f), Color.Transparent), radius = size.minDimension * 0.62f), radius = size.minDimension * 0.62f)
+                drawCircle(red.copy(alpha = if (selected) 0.95f else 0.6f), radius = size.minDimension / 2f - 1.dp.toPx(), style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
+            }
+            .clip(CircleShape).background(fill)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { click() },
+                    onPress = { tryAwaitRelease(); hold(false) },
+                    onLongPress = { hold(true) },
+                )
+            }
             .semantics { contentDescription = label },
         Alignment.Center,
-    ) { icon(if (selected) Color(0xFF0E1014) else Color(0xFF8A90A0)) }
+    ) { icon(if (selected) Color.White else Color(0xFF9AA0B0)) }
+}
+
+/** A slow float for dock icon [i] (each a little out of step): (up/down -1..1, tilt in degrees). Faster and wilder in [water]. */
+@Composable
+private fun rememberFloat(i: Int, water: Boolean): State<Pair<Float, Float>> {
+    val inf = rememberInfiniteTransition(label = "float$i")
+    val t by inf.animateFloat(0f, (2 * Math.PI).toFloat(), infiniteRepeatable(tween(3200, easing = LinearEasing)), label = "t$i")
+    return remember(water) {
+        derivedStateOf {
+            val ph = t * (if (water) 2.6f else 1f) + i * 1.6f
+            val y = kotlin.math.sin(ph)
+            val r = (if (water) 4f else 1.6f) * kotlin.math.sin(ph * 0.7f + 0.8f)
+            y to r
+        }
+    }
 }
 
 /** Instagram-style quick profile switcher: a small capsule of avatars above the My Space button. */

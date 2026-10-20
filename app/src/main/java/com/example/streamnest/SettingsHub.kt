@@ -59,6 +59,11 @@ fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) 
 
     when (pages.last()) {
         "profile" -> ProfileScreen(vm, back)
+        // Xstream: tapping your picture in My Space goes straight to editing.
+        "profileEdit" -> Box(Modifier.fillMaxSize().background(Bg)) {
+            val cur = vm.current.value
+            if (cur != null) ProfileEditor(vm, cur) { back() } else LaunchedEffect(Unit) { back() }
+        }
         "account" -> AccountScreen(vm, back)
         "layout" -> LayoutPage(vm, back, open)
         "homeLayout" -> HomeLayoutPage(vm, back)

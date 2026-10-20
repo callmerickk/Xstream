@@ -455,6 +455,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     fun removeProgress(key: String) {
+        // Xstream: removing a title from Continue Watching also takes it out of My Space's charts (and its episodes).
+        WatchLog.remove(appContext, current.value?.id, key)
         progress.value = progress.value.filter { it.key != key }
         lib.edit().putString("progress", Api.json.encodeToString(progress.value)).apply()
         markCur("prog")
@@ -492,6 +494,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     /** TV Library › Clear all: empties Continue Watching only (finished titles and stats stay). */
     fun clearContinue() {
+        progress.value.forEach { WatchLog.remove(appContext, current.value?.id, it.key) }
         progress.value = emptyList()
         lib.edit().remove("progress").apply()
         markCur("prog")
