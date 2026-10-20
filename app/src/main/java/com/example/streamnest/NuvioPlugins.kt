@@ -294,7 +294,9 @@ object NuvioTester {
                 step.value = "${s.name} · ${t.name}"
                 w("-- ${s.name} ${s.version}")
                 val t0 = SystemClock.elapsedRealtime()
-                val code = runCatching { NuvioPlugins.code(s) }.getOrElse { w("  ✗ download: ${it.message}"); results.value = results.value + NuvioResult(t.name, s.name, false, "download failed", emptyList(), 0); continue }
+                val codeR = runCatching { NuvioPlugins.code(s) }
+                val code = codeR.getOrNull()
+                if (code == null) { w("  ✗ download: ${codeR.exceptionOrNull()?.message}"); results.value = results.value + NuvioResult(t.name, s.name, false, "download failed", emptyList(), 0); continue }
                 val out = runCatching { NuvioRuntime.getStreams(ctx, code, listOf(tmdb, if (series) "tv" else "movie", season, episode)) }
                 val ms = SystemClock.elapsedRealtime() - t0
                 val arr = out.getOrNull()?.let { runCatching { Api.json.parseToJsonElement(it) as JsonArray }.getOrNull() }
