@@ -13,6 +13,11 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.4.1 beta", "20 Oct 2026", "Plugin fixes", listOf(
+        "All 7 CloudStream plugins load now (FourKHDHub, UHDmovies and both CNC Verse plugins failed before)",
+        "Plugins find the right title much more often: site titles are cleaned of year, quality and language before matching, and season pages pick the right season",
+        "The plugin test log shows every request a plugin makes, JSON it couldn't read, and whether a site is reachable",
+    )),
     Release("0.4 beta", "20 Oct 2026", "CloudStream and Nuvio plugins", listOf(
         "Plugins: CloudStream and Nuvio sections — add repositories, switch plugins on, open their settings",
         "Developer's Corner › Source Test has CloudStream and Nuvio tabs: search, match, links, qualities, audio, subtitles and play time, with a full log",
@@ -210,6 +215,12 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.4.1 beta", "20 Oct 2026", "Plugin fixes", listOf(
+        "kotlinx-coroutines 1.11.0 (plugins call BuildersKt.runBlockingK) with -Xskip-metadata-version-check; cs_compat.py no longer excuses missing members on classes whose only framework parent is java.lang.Object",
+        "MainActivity is an AppCompatActivity (Theme.AppCompat.NoActionBar parent); CommonActivity.activity = MainActivity; plugins load(activity) — CNC Verse casts it to AppCompatActivity",
+        "CsTester: cleanTitle() (cut at (year / [ / | / quality / language words), word-Jaccard similarity, movie year ±1 required, series season pages scored, threshold 0.7, top 3 scores logged; search-null → mainUrl reachability probe",
+        "Requests logs every plugin HTTP call (status, KB, ms, Cloudflare, redirect host); LoggingMapper logs JSON parse failures",
+    )),
     Release("0.4 beta", "20 Oct 2026", "Xstream 0.4 beta: plugins", listOf(
         "versionCode 5. Own CloudStream library in com.lagradost.* (api.Log, cloudstream3 models / MainAPI helpers / APIHolder / MainActivityKt.app / CommonActivity / CloudStreamApp / amap / logError, utils ExtractorApi + ExtractorLink + Qualities + loadExtractor + JsUnpacker + AppUtils, plugins BasePlugin/Plugin/@CloudstreamPlugin, network CloudflareKiller (WebView cf_clearance), extractors PixelDrain / StreamTape / VidHidePro / StreamWish / FileMoon / VidStack, nicehttp Requests / NiceResponse / ResponseParser). Written from scratch, no GPL code",
         "Deps: jsoup 1.18.1, jackson-databind + module-kotlin 2.17.2, gson 2.11.0, ktor-http 2.3.12, appcompat 1.7.0, material 1.12.0; keep rules for every library plugins call",

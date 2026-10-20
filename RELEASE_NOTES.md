@@ -1,3 +1,11 @@
+Xstream 0.4.1 beta
+
+• All 7 CloudStream plugins load now (FourKHDHub, UHDmovies and both CNC Verse plugins failed before).
+• Plugins find the right title much more often: site titles are cleaned of year, quality and language before matching, and season pages pick the right season.
+• The plugin test log shows every request a plugin makes, JSON it couldn't read, and whether a site is reachable.
+
+---
+
 Xstream 0.4 beta
 
 • Plugins: CloudStream and Nuvio sections. Add repositories, switch plugins on, and open their settings.
