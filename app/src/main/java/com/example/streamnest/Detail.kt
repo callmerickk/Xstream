@@ -128,7 +128,8 @@ fun DetailScreen(
     var ratings by remember(imdb) { mutableStateOf<List<Rating>>(emptyList()) }
     var more by remember(imdb) { mutableStateOf<List<Meta>>(emptyList()) }
     var trailer by remember(imdb) { mutableStateOf<String?>(null) }
-    LaunchedEffect(imdb) { art = vm.tmdbArt(imdb, meta.type) }
+    // No extra artwork is downloaded: the page shows the poster Home already showed (it's in the image cache), so the
+    // connection is free for readying the stream.
     LaunchedEffect(imdb) { ratings = vm.mdbRatings(imdb) }
     LaunchedEffect(imdb) { trailer = runCatching { vm.trailerId(meta) }.getOrNull() }
     LaunchedEffect(imdb, meta.genres) {
@@ -391,8 +392,8 @@ fun DetailScreen(
     val saved = myList.any { it.id == meta.id }
     var expanded by remember { mutableStateOf(false) }
     var castOpen by remember { mutableStateOf(false) }
-    val backdrop = tm?.backdrop ?: art?.backdrop ?: backdropOf(meta)
-    val artwork = backdrop ?: tm?.poster ?: meta.poster
+    val backdrop = art?.backdrop ?: meta.poster ?: backdropOf(meta)
+    val artwork = meta.poster ?: backdrop
 
     Box(Modifier.fillMaxSize().background(Bg)) {
         Column(Modifier.fillMaxSize()) {

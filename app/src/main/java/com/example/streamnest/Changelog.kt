@@ -22,6 +22,8 @@ private val UserReleases get() = listOf(
         "MovieBox plugins are switched on; VegaMovies finds its current site again",
         "Cinematic zoom: pinch out once more after Zoomed to fill to zoom a bit further (pinch in to step back)",
         "Quick Start › CloudStream picks now stay ticked",
+        "Title pages show the same poster as Home (nothing extra downloaded — the connection goes to readying the video)",
+        "Plugin mode: your plugins are loaded and woken when the app starts, so title pages get links at once",
     )),
     Release("0.4.6 beta", "21 Oct 2026", "CloudStream in Quick Play", listOf(
         "Quick Start › CloudStream: tick the plugins (Netflix, Hotstar, Prime Video…) Quick Play should try first — each repository folds open",

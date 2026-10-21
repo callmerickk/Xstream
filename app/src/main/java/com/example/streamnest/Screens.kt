@@ -369,7 +369,8 @@ fun App(vm: AppViewModel = viewModel()) {
         // Built-in servers (CNCVerse / HdHub links published from Developer's Corner) and the Connect PenguPlay card.
         LaunchedEffect(profile?.id) { if (profile != null) { runCatching { BuiltIns.sync(vm) }; runCatching { DevDefaults.sync(vm) }; runCatching { AppLook.fetch(vm.appContext) } } }
         // CloudStream plugins "kept warm" (Source Test › CloudStream): loaded and woken in the background.
-        LaunchedEffect(profile?.id) { if (profile != null && vm.store("csWarm") == "yes") runCatching { CsPlugins.init(vm.appContext); if (CsPlugins.catalog.value.isEmpty()) CsPlugins.refresh(); CsPlugins.warmAll() } }
+        // Plugin mode: every switched-on plugin is loaded and woken at start, so a title page gets its links at once.
+        LaunchedEffect(profile?.id) { if (profile != null && (vm.store("csWarm") == "yes" || vm.pluginMode())) runCatching { CsPlugins.init(vm.appContext); if (CsPlugins.catalog.value.isEmpty()) CsPlugins.refresh(); CsPlugins.warmAll() } }
         // Xstream: no "Connect PenguPlay" prompt — servers come from Developer's Corner.
         val askWl by WatchlistAsk.pending.collectAsState()
         askWl?.let { m -> AddToWatchlistSheet(vm, m) { WatchlistAsk.pending.value = null } }
