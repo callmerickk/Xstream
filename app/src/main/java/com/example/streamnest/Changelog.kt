@@ -13,6 +13,17 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.4.8 beta", "21 Oct 2026", "Faster plugin play, smarter 4K and a new quality menu", listOf(
+        "Plugin mode: your Quick Play plugins stay warm all the time, and the title page readies the first picture so Play starts at once",
+        "Plugin mode: the 4K plugins start working as soon as a title opens; Upgrade to 4K appears the moment it's ready — swipe it right or up to dismiss",
+        "Plugin mode: the quality menu is now a vertical list in its bubble; Netflix, Prime Video and Hotstar-style streams show Auto, and their own 1080p / 720p choices appear in the same menu",
+        "Long-press a quality to see every stream ranked 1, 2, 3…; streams not checked yet say Unidentified",
+        "Web pages posing as links are left out; embedded players and servers that can't jump to a time are kept only as a last backup",
+        "Jumping ahead in 4K: it's given a full minute to load before falling back",
+        "A faster lower-quality link no longer replaces a 4K or Full HD one that's still loading",
+        "Seek previews now show for streaming playlists too",
+        "Sharper HD posters on Home and title pages",
+    )),
     Release("0.4.7 beta", "21 Oct 2026", "Plugin mode (testing) and Cinematic zoom", listOf(
         "Settings › Content & Discovery: Source mode — Addons (as before, plugins off) or Plugins (every stream from your CloudStream / Nuvio plugins, addons off)",
         "Plugin mode: Quick Start lets you pick the plugins for Quick Play and, separately, the ones for Upgrade to 4K",
@@ -256,6 +267,19 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.4.8 beta", "21 Oct 2026", "Warm plugins, 4K prefetch, vertical quality bubble, seek tests", listOf(
+        "Screens: warmAll at start + every 15 min in plugin mode; PluginSources.shared(api,id) Deferred cache (10 min) so title-page and player share answers; forget(id) on forgetStreams",
+        "Detail: plugin mode prefetches qs4kNames via streamsFlow(only) on open",
+        "UpgradePill draggable: right > 110 px or up > 110 px dismisses",
+        "Ranker: markUnseekable(url) persists host (unseekHosts); 4K readiness mid-file jump test; seekAbs: landed < 60 s after a > 90 s jump on a plain file → unseekable; untested(s); isEmbedBackup (vidstack, /embed/, /e/, embed*) sorts last",
+        "PluginSources.keep also drops hubcdn in name/title/filename",
+        "PluginQualityBar vertical: THIS STREAM (HLS variant ladder via TRACK_TYPE_VIDEO override) + Auto/4K/Full HD/Mid HD rows; long-press list numbered in red, Unidentified tag",
+        "Prepare.qualityName(0) = Auto",
+        "seekedAt: upgraded-file stall fallback and Elite auto step-down wait 60 s after a jump",
+        "Late race: never switch to a lower effectiveRes link; plugin mode skips CNCVerse re-ask and 'no quick playlist' mark",
+        "SeekThumbs: HlsFrames (lowest variant, EXT-X-MAP, AES-128) for playlists",
+        "HdPoster Coil mapper (phone): metahub poster small/medium → large, TMDB w92–w342 → w780",
+    )),
     Release("0.4.7 beta", "21 Oct 2026", "Plugin mode, Upgrade to 4K from plugins, quality bar, cinematic zoom", listOf(
         "srcMode (plugins/addons): vm.streamsFlow → PluginSources.modeStreams in plugin mode (CS providers + Nuvio, only/except by link name); qsAddons() = picked CS link names; SlowAddons off (slowStreamAddons empty); forgetAllStreams on switch",
         "QuickStartPage: SourceModeCard; QuickCsSection(qsCs) + QuickCsSection(qs4k) only in plugin mode; group-1 addons hidden there; qsCs/qs4k saved one per line (plugin keys contain |)",

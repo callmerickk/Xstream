@@ -81,6 +81,8 @@ object PluginSources {
         val u = s.stream.url ?: return false
         val host = runCatching { java.net.URI(u).host }.getOrNull().orEmpty().lowercase()
         if ("hubcdn" in host || "hubcdn" in u.lowercase().substringBefore('?')) return false
+        // Links named after hubcdn (web pages, not videos) go too.
+        if (listOfNotNull(s.stream.name, s.stream.title, s.stream.behaviorHints?.filename).any { it.contains("hubcdn", true) }) return false
         val r = s.resolution()
         return r == 0 || r >= 720
     }
@@ -180,6 +182,24 @@ object PluginSources {
     }.flowOn(kotlinx.coroutines.Dispatchers.IO)
 
     private val noSearch = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * One answer per provider + title for 10 minutes, shared by everything (title page, Quick Play, Upgrade to 4K, Play
+     * manually, the player's sources): asking a plugin twice for the same title is never done, and a second caller waits
+     * for the request already running instead of starting another.
+     */
+    private val answers = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, kotlinx.coroutines.Deferred<List<StreamItem>>>>()
+    private val bg = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    private suspend fun shared(api: MainAPI, id: String, fetch: suspend () -> List<StreamItem>): List<StreamItem> {
+        val k = "${api.name}|$id"
+        val now = System.currentTimeMillis()
+        val cur = answers[k]
+        val d = if (cur != null && now - cur.first < 10 * 60_000L && !(cur.second.isCompleted && runCatching { cur.second.getCompleted() }.getOrNull().isNullOrEmpty() && now - cur.first > 60_000L)) cur.second
+            else bg.async { runCatching { fetch() }.getOrDefault(emptyList()) }.also { answers[k] = now to it }
+        if (answers.size > 400) answers.entries.filter { now - it.value.first > 10 * 60_000L }.forEach { answers.remove(it.key) }
+        return d.await()
+    }
+    fun forget(id: String) { answers.keys.filter { it.endsWith("|$id") }.forEach { answers.remove(it) } }
     private val metas = java.util.concurrent.ConcurrentHashMap<String, Meta>()
     /** The title's name and year (Cinemeta) — plugins search by name. */
     suspend fun metaFor(type: String, id: String): Meta? {
@@ -219,7 +239,7 @@ object PluginSources {
                 done++
                 send(acc.distinctBy { it.stream.url } to (done == total))
             }
-            apis.forEach { api -> jobs += launch { add(runCatching { linksFrom(api, meta.name, year, series, season, episode) }.getOrDefault(emptyList())) } }
+            apis.forEach { api -> jobs += launch { add(shared(api, id) { linksFrom(api, meta.name, year, series, season, episode) }) } }
             if (nuvio.isNotEmpty()) jobs += launch {
                 val all = ArrayList<StreamItem>()
                 runCatching { nuvio(ctx, vm, meta, id).collect { all.clear(); all += it } }

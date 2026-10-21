@@ -386,7 +386,7 @@ object Prepare {
 
     fun cancel() { job?.cancel(); job = null; saveJob?.cancel(); saveJob = null; csPending.value = null }
 
-    fun qualityName(res: Int): String = when { res >= 1440 -> "4K"; res >= 1080 -> "1080p"; res >= 720 -> "720p"; res > 0 -> "${res}p"; else -> "SD" }
+    fun qualityName(res: Int): String = when { res >= 1440 -> "4K"; res >= 1080 -> "1080p"; res >= 720 -> "720p"; res > 0 -> "${res}p"; else -> "Auto" }
 
     /**
      * While a video plays: save one minute (from the current point) of the top-ranked links in the other quality groups,

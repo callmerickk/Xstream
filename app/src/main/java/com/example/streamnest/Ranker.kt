@@ -54,6 +54,7 @@ object Ranker {
         dir = ctx.filesDir
         observed += prefs?.getStringSet("observed", emptySet()).orEmpty()
         deadHosts += prefs?.getStringSet("deadHosts", emptySet()).orEmpty()
+        loadUnseekable()
         runCatching { use(Api.json.decodeFromString<RankFile>(File(ctx.filesDir, "ranking.json").readText())) }
     }
 
@@ -139,7 +140,20 @@ object Ranker {
         return if (k in unseekable && s.isPlaylist()) sc + 60 else sc
     }
 
-    fun knownUnseekable(s: StreamItem): Boolean = groupKey(s) in unseekable && !s.isPlaylist()
+    fun knownUnseekable(s: StreamItem): Boolean = !s.isPlaylist() && (groupKey(s) in unseekable || s.stream.url?.let { hostKey(it) in unseekableHosts } == true)
+
+    /** Servers where a jump lands back at the start (found by a real jump test or while you watch): kept as last backup. */
+    private val unseekableHosts: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    fun markUnseekable(url: String) {
+        val h = hostKey(url)
+        if (h.isBlank() || !unseekableHosts.add(h)) return
+        prefs?.edit()?.putStringSet("unseekHosts", unseekableHosts.toSet())?.apply()
+        ActLog.add("RANK", "can't jump inside: $h (last backup from now on)")
+    }
+    fun loadUnseekable() { prefs?.getStringSet("unseekHosts", null)?.let { unseekableHosts += it } }
+
+    /** Never checked by the Source Test (no score yet): shown "Unidentified" until the next test. */
+    fun untested(s: StreamItem): Boolean = !anyScores.containsKey(groupKey(s))
 
     /** Dead link: its provider group never plays (web pages, "not found", "bad request"), it failed that way this session,
      *  or it is a signed link that has already expired. Hidden from Sources and never chosen. */
@@ -311,6 +325,7 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
     fun tierCost(s: StreamItem): Int { val t = Ranker.tier(s.effectiveRes()); return if (t == targetTier) 0 else if (t < targetTier) targetTier - t else 10 + t }
     val sorted = pool.sortedWith(
         compareBy<StreamItem>({ if (Ranker.score(it) <= -1000.0) 1 else 0 }, { if (Ranker.knownUnseekable(it)) 1 else 0 }, { if (it.unplayableHere()) 1 else 0 },
+            { if (it.isEmbedBackup()) 1 else 0 },
             { tierCost(it) }, { HostStats.penalty(it.stream.url.orEmpty()) }, { langRank(it) }, { if (it.isHeavy()) 1 else 0 })
             .thenByDescending { Ranker.score(it) }.thenByDescending { it.effectiveRes() },
     )
@@ -327,6 +342,14 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
     val out = sorted.toMutableList()
     slots.forEachIndexed { i, at -> out[at] = mb[i] }
     return out
+}
+
+/** Web-player embeds (Vidstack & co.): used only when nothing else plays, together with servers that can't seek. */
+fun StreamItem.isEmbedBackup(): Boolean {
+    val u = stream.url.orEmpty().lowercase()
+    val txt = listOfNotNull(stream.name, stream.title, addonName).joinToString(" ").lowercase()
+    return "vidstack" in txt || "vidstack" in u || "/embed/" in u || Regex("^https?://[^/]+/e/").containsMatchIn(u) ||
+        runCatching { java.net.URI(stream.url).host?.startsWith("embed") }.getOrNull() == true
 }
 
 /** A MovieBox link (directly from PenguPlay, or through AIOStreams …): every dub of a title is a separate link. */

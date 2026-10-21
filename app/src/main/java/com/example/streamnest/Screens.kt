@@ -370,7 +370,12 @@ fun App(vm: AppViewModel = viewModel()) {
         LaunchedEffect(profile?.id) { if (profile != null) { runCatching { BuiltIns.sync(vm) }; runCatching { DevDefaults.sync(vm) }; runCatching { AppLook.fetch(vm.appContext) } } }
         // CloudStream plugins "kept warm" (Source Test › CloudStream): loaded and woken in the background.
         // Plugin mode: every switched-on plugin is loaded and woken at start, so a title page gets its links at once.
-        LaunchedEffect(profile?.id) { if (profile != null && (vm.store("csWarm") == "yes" || vm.pluginMode())) runCatching { CsPlugins.init(vm.appContext); if (CsPlugins.catalog.value.isEmpty()) CsPlugins.refresh(); CsPlugins.warmAll() } }
+        LaunchedEffect(profile?.id) {
+            if (profile == null || !(vm.store("csWarm") == "yes" || vm.pluginMode())) return@LaunchedEffect
+            runCatching { CsPlugins.init(vm.appContext); if (CsPlugins.catalog.value.isEmpty()) CsPlugins.refresh(); CsPlugins.warmAll() }
+            // Kept warm: woken again every 15 minutes while the app is open (sites close idle connections).
+            while (true) { kotlinx.coroutines.delay(15 * 60_000L); if (vm.pluginMode()) runCatching { CsPlugins.warmAll() } }
+        }
         // Xstream: no "Connect PenguPlay" prompt — servers come from Developer's Corner.
         val askWl by WatchlistAsk.pending.collectAsState()
         askWl?.let { m -> AddToWatchlistSheet(vm, m) { WatchlistAsk.pending.value = null } }

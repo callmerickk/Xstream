@@ -201,6 +201,14 @@ fun DetailScreen(
         if (!instantOn) { runCatching { if (quick) vm.quickStreams(meta.type, playTarget.target.videoId) else vm.allStreams(meta.type, playTarget.target.videoId) }; return@LaunchedEffect }
         Prepare.start(vm, ctx, meta.type, playTarget.target.videoId, playTarget.resumeMs, runtimeMs(meta.runtime), quick, level, meta)
     }
+    // Plugin mode: the Upgrade to 4K plugins are asked as soon as the page opens (their answers are kept), so the player
+    // can ready the 4K file the moment the first picture of Quick Play is on.
+    LaunchedEffect(playTarget.target.videoId) {
+        if (!vm.pluginMode()) return@LaunchedEffect
+        PluginSources.noteMeta(meta)
+        val names = vm.qs4kNames()
+        if (names.isNotEmpty()) runCatching { vm.streamsFlow(meta.type, playTarget.target.videoId, only = names).collect { } }
+    }
     val prep by Prepare.state.collectAsStateWithLifecycle()
     // Play pressed while it is still saving: stay here; start as soon as enough is saved (or fall back).
     var waitingFor by remember { mutableStateOf<SourceTarget?>(null) }

@@ -29,6 +29,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             ImageLoader.Builder(this).components {
                 if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory()) else add(GifDecoder.Factory())
                 add(VideoFrameDecoder.Factory())
+                if (!BuildConfig.IS_TV) add(HdPoster)
             }.okHttpClient { Api.http }.crossfade(!BuildConfig.IS_TV).allowRgb565(BuildConfig.IS_TV).build()
         )
         WidgetOpen.take(intent)
@@ -97,4 +98,17 @@ object AutoPip {
         ctx.getSharedPreferences("player_misc", android.content.Context.MODE_PRIVATE).getBoolean("autoPip", true)
     fun set(ctx: android.content.Context, v: Boolean) =
         ctx.getSharedPreferences("player_misc", android.content.Context.MODE_PRIVATE).edit().putBoolean("autoPip", v).apply()
+}
+
+/** Phone: posters on Home and the title page load in HD (metahub large, TMDB w780) instead of the small sizes. */
+object HdPoster : coil.map.Mapper<String, String> {
+    private val tmdb = Regex("(image\\.tmdb\\.org/t/p/)w(92|154|185|200|300|342)(/)")
+    override fun map(data: String, options: coil.request.Options): String? {
+        if (!data.startsWith("http")) return null
+        return when {
+            "images.metahub.space/poster/" in data -> data.replace("/poster/small/", "/poster/large/").replace("/poster/medium/", "/poster/large/")
+            "image.tmdb.org/t/p/w" in data -> data.replace(tmdb, "$1w780$3")
+            else -> null
+        }.takeIf { it != data }
+    }
 }

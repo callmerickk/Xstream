@@ -47,8 +47,12 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
     @Volatile private var latest = -1L
     @Volatile private var emptyInARow = 0
     @Volatile private var succeeded = false
-    @Volatile private var dead = (!src.startsWith("http://", true) && !src.startsWith("https://", true) && !Relay.isWrapped(playing)) ||
-        Regex("\\.(m3u8|mpd)(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(src)
+    /** HLS (Netflix / Prime Video / Hotstar plugin links, MovieBox playlists): frames come from the playlist's segments. */
+    private val hls: Boolean = (src.startsWith("http", true)) &&
+        (Regex("\\.m3u8(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(src) || StreamType.quick(src) == StreamType.HLS || StreamType.quick(playing) == StreamType.HLS)
+    private val hlsFrames: HlsFrames? = if (hls) HlsFrames(src, hdrs) else null
+    @Volatile private var dead = !hls && ((!src.startsWith("http://", true) && !src.startsWith("https://", true) && !Relay.isWrapped(playing)) ||
+        Regex("\\.(m3u8|mpd)(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(src))
     @Volatile private var closed = false
 
     init {
@@ -121,7 +125,7 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
         scope.cancel()
         // Released on the worker thread, after any frame it is still reading (the native calls are serialized).
         runCatching {
-            executor.execute { runCatching { retriever?.release() }; retriever = null }
+            executor.execute { runCatching { retriever?.release() }; retriever = null; hlsFrames?.close() }
             executor.shutdown()
         }
     }
@@ -137,6 +141,7 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
 
     /** Runs on the worker thread only. Tries the real link first, then the link the player uses (in-app relay). */
     private fun open(): MediaMetadataRetriever? {
+        if (hlsFrames != null) { opened = true; return null }
         retriever?.let { return it }
         if (closed || dead) return null
         for (link in listOf(src, playing).distinct()) {
@@ -154,6 +159,7 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
     /** Runs on the worker thread only. */
     private fun extract(ms: Long): ImageBitmap? {
         if (closed) return null
+        hlsFrames?.let { h -> return h.frame(ms, W)?.let { it.prepareToDraw(); it.asImageBitmap() } }
         val r = open() ?: return null
         val us = ms * 1000L
         val bmp: Bitmap = (if (Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, W, H)
@@ -180,4 +186,95 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
             return runCatching { String(Base64.decode(token, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)) }.getOrDefault(url)
         }
     }
+}
+
+
+/**
+ * Seek previews for HLS: the lowest-quality variant's segment holding the time is downloaded (a few hundred KB, with
+ * the stream's headers; AES-128 segments are decrypted) and one frame is read from it. Worker thread only.
+ */
+class HlsFrames(private val master: String, private val headers: Map<String, String>) {
+    private data class Seg(val start: Long, val dur: Long, val url: String, val key: String?, val iv: ByteArray?, val seq: Long)
+    private var segs: List<Seg>? = null
+    private var initSeg: ByteArray? = null
+    private var failed = false
+    private val keys = HashMap<String, ByteArray>()
+    private val dir = java.io.File(System.getProperty("java.io.tmpdir") ?: "/data/local/tmp", "xs-hls-thumbs").apply { mkdirs() }
+
+    private fun get(url: String): ByteArray? = runCatching {
+        val b = okhttp3.Request.Builder().url(url)
+        headers.forEach { (k, v) -> runCatching { b.header(k, v) } }
+        Api.http.newCall(b.build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null }
+    }.getOrNull()
+    private fun text(url: String) = get(url)?.toString(Charsets.UTF_8)
+    private fun abs(base: String, u: String) = runCatching { java.net.URI(base).resolve(u.trim()).toString() }.getOrDefault(u)
+    private fun attr(line: String, name: String) = Regex("$name=(\"[^\"]*\"|[^,]*)").find(line)?.groupValues?.get(1)?.trim('"')
+
+    private fun load(): List<Seg>? {
+        segs?.let { return it }
+        if (failed) return null
+        var url = master
+        var body = text(url) ?: run { failed = true; return null }
+        if (body.contains("#EXT-X-STREAM-INF")) {
+            // The smallest variant: least to download per preview.
+            val lines = body.lines()
+            val best = lines.indices.filter { lines[it].startsWith("#EXT-X-STREAM-INF") }.mapNotNull { i ->
+                val u = lines.drop(i + 1).firstOrNull { it.isNotBlank() && !it.startsWith("#") } ?: return@mapNotNull null
+                (attr(lines[i], "BANDWIDTH")?.toLongOrNull() ?: Long.MAX_VALUE) to abs(url, u)
+            }.minByOrNull { it.first }?.second ?: run { failed = true; return null }
+            url = best
+            body = text(url) ?: run { failed = true; return null }
+        }
+        val out = ArrayList<Seg>()
+        var t = 0L; var dur = 0L; var key: String? = null; var iv: ByteArray? = null
+        var seq = Regex("#EXT-X-MEDIA-SEQUENCE:(\\d+)").find(body)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+        for (raw in body.lines()) {
+            val l = raw.trim()
+            when {
+                l.startsWith("#EXT-X-MAP") -> attr(l, "URI")?.let { initSeg = get(abs(url, it)) }
+                l.startsWith("#EXT-X-KEY") -> {
+                    val m = attr(l, "METHOD")
+                    key = if (m == "AES-128") attr(l, "URI")?.let { abs(url, it) } else null
+                    iv = attr(l, "IV")?.removePrefix("0x")?.removePrefix("0X")?.let { h -> runCatching { h.padStart(32, '0').chunked(2).map { it.toInt(16).toByte() }.toByteArray() }.getOrNull() }
+                }
+                l.startsWith("#EXTINF:") -> dur = ((l.removePrefix("#EXTINF:").substringBefore(',').toDoubleOrNull() ?: 0.0) * 1000).toLong()
+                l.isNotEmpty() && !l.startsWith("#") -> { out += Seg(t, dur, abs(url, l), key, iv, seq); t += dur; seq++ }
+            }
+        }
+        if (out.isEmpty()) { failed = true; return null }
+        segs = out
+        return out
+    }
+
+    private fun decrypt(s: Seg, data: ByteArray): ByteArray? {
+        val k = s.key ?: return data
+        val keyBytes = keys.getOrPut(k) { get(k) ?: return null }
+        val iv = s.iv ?: java.nio.ByteBuffer.allocate(16).putLong(8, s.seq).array()
+        return runCatching {
+            val c = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
+            c.init(javax.crypto.Cipher.DECRYPT_MODE, javax.crypto.spec.SecretKeySpec(keyBytes, "AES"), javax.crypto.spec.IvParameterSpec(iv))
+            c.doFinal(data)
+        }.getOrNull()
+    }
+
+    fun frame(ms: Long, width: Int): android.graphics.Bitmap? {
+        val list = load() ?: return null
+        val s = list.lastOrNull { it.start <= ms } ?: list.first()
+        val raw = get(s.url) ?: return null
+        val data = decrypt(s, raw) ?: return null
+        val f = java.io.File(dir, "seg-${s.seq}.${if (initSeg != null) "mp4" else "ts"}")
+        runCatching { f.outputStream().use { o -> initSeg?.let { o.write(it) }; o.write(data) } }.getOrElse { return null }
+        val mr = MediaMetadataRetriever()
+        return try {
+            mr.setDataSource(f.absolutePath)
+            val us = ((ms - s.start).coerceAtLeast(0L)) * 1000L
+            val bmp = mr.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: mr.getFrameAtTime(0) ?: return null
+            if (bmp.width > width + 8) {
+                val h = (bmp.height * (width.toFloat() / bmp.width)).toInt().coerceAtLeast(1)
+                android.graphics.Bitmap.createScaledBitmap(bmp, width, h, true).also { if (it !== bmp) bmp.recycle() }
+            } else bmp
+        } catch (_: Throwable) { null } finally { runCatching { mr.release() }; f.delete() }
+    }
+
+    fun close() { runCatching { dir.listFiles()?.forEach { it.delete() } } }
 }

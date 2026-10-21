@@ -462,6 +462,8 @@ fun PlayerScreen(
     /** After "Upgrade": the MovieBox link it came from (if the HD file fails, playback goes back to it) and the HD link. */
     var upgradedFrom by remember { mutableStateOf<StreamItem?>(null) }
     var upgradedUrl by remember { mutableStateOf<String?>(null) }
+    /** When the viewer last jumped: a 4K file loading after a jump gets a full minute before any fallback. */
+    var seekedAt by remember { mutableLongStateOf(0L) }
     /** HD files made ready during a quick play (start + index saved): "4k" → 1 file, "fhd" → up to 2. Quality menu + upgrade. */
     var hdReady by remember { mutableStateOf<Map<String, List<StreamItem>>>(emptyMap()) }
     /** Files whose start + index are saved for the top visual-tag groups in Sources (first file of the top 3 groups). */
@@ -679,8 +681,17 @@ fun PlayerScreen(
     fun roomState(play: Boolean, pos: Long = curPos()) =
         RoomState(url = now?.url.orEmpty(), key = p.key, title = p.title, image = p.image, type = type, pos = pos, playing = play)
     fun seekAbs(ms: Long) {
+        seekedAt = SystemClock.uptimeMillis()
         if (usingVlc) vlc?.seek(ms) else player.seekTo(ms)
         if (firstFrame) Together.local(roomState(isPlayingNow(), ms))
+        // A jump that lands back at the start: this server can't seek — remembered, it becomes a last backup.
+        val u0 = now?.url
+        if (!usingVlc && u0 != null && ms > 90_000 && !(itemFor(u0)?.isPlaylist() ?: StreamType.quick(u0).let { it == StreamType.HLS || it == StreamType.DASH })) scope.launch {
+            delay(6_000)
+            if (now?.url == u0 && !buffering && curPos() < ms - 60_000 && curPos() < 60_000) {
+                Ranker.markUnseekable(u0); PlayTiming.late("jump to ${fmtTime(ms)} landed at ${fmtTime(curPos())} — server can't seek")
+            }
+        }
     }
     fun setRate(f: Float) { if (usingVlc) vlc?.rate = f else player.setPlaybackSpeed(f) }
     fun rateNow(): Float = if (usingVlc) vlc?.rate ?: 1f else player.playbackParameters.speed
@@ -916,6 +927,8 @@ fun PlayerScreen(
         val ranked = vm.rankedCandidates(candidates + listOfNotNull(curItem), quality, quickOnly = false)
         val best = ranked.firstOrNull { okNext(it) && hostOk(it) } ?: return@LaunchedEffect
         if (curItem != null && ranked.indexOf(curItem) in 0 until ranked.indexOf(best)) return@LaunchedEffect
+        // Never trade a 4K / 1080p link that's still loading for a lower-quality one just because it answered faster.
+        if (curItem != null && best.effectiveRes() < curItem.effectiveRes()) return@LaunchedEffect
         lateRaced = true
         val ok = withContext(Dispatchers.IO) { StreamCache.firstBytes(best.stream.url!!, 128 * 1024) } || isPlaylistLink(best, best.stream.url!!)
         if (ok && !firstFrame && now?.url == cur.url) {
@@ -1353,7 +1366,7 @@ fun PlayerScreen(
                     // Fire TV start take 18 s even though 26 links had come back in under half a second.
                     if (BuildConfig.IS_TV) { delay(1_500); withTimeoutOrNull(4_500) { pool.first { vm.filtered(it).list.any { s -> !s.slowMp4() } } } } else delay(6_000)
                     if (started) return@launch
-                    PlayTiming.mark("no quick playlist in 6 s — racing backup servers (${vm.filtered(pool.value).list.size} known)", once = "rescue")
+                    if (!vm.pluginMode()) PlayTiming.mark("no quick playlist in 6 s — racing backup servers (${vm.filtered(pool.value).list.size} known)", once = "rescue")
                     status = "Quick play is slow — trying backup servers"
                     add(known)
                     val raced = HashSet<String>()
@@ -1370,7 +1383,7 @@ fun PlayerScreen(
                         }
                         val el = SystemClock.elapsedRealtime() - findT0
                         // Nothing playing 10 s after Play: CNCVerse is asked again (every 2 s until it returns links).
-                        if (!askedAgain && el >= 10_000) {
+                        if (!askedAgain && el >= 10_000 && !vm.pluginMode()) {
                             askedAgain = true
                             PlayTiming.mark("nothing playing 10 s — CNCVerse asked again", once = "cnc10")
                             SlowAddons.poll(vm, type, p.key)
@@ -1788,7 +1801,16 @@ fun PlayerScreen(
                 StreamCache.register(c)
                 if (isPlaylistLink(c, url)) { hdReady = hdReady + ("4k" to listOf(c)); PlayTiming.late("4K: $label ready (playlist)"); break }
                 val pr = StreamCache.probe(url)
-                if (!pr.ok || !pr.seekable || pr.size <= 0) { PlayTiming.late("4K: $label refused (${pr.error ?: "HTTP ${pr.status}"})"); continue }
+                if (!pr.ok || !pr.seekable || pr.size <= 0) {
+                    if (pr.ok && !pr.seekable) Ranker.markUnseekable(url)
+                    PlayTiming.late("4K: $label refused (${pr.error ?: "HTTP ${pr.status}"}${if (pr.ok && !pr.seekable) ", can't jump inside" else ""})"); continue
+                }
+                // A real jump test: a piece from the middle must come back (servers that only send the start can't seek —
+                // they'd show the first picture after every jump).
+                val mid = (pr.size / 2) / (1024 * 1024) * (1024 * 1024)
+                val jumpOk = withTimeoutOrNull(12_000) { StreamCache.saveParts(ctx, url, mid, 256L * 1024, 1, null) { } } == null &&
+                    StreamCache.savedBytes(ctx, url, mid, 256L * 1024) > 0
+                if (!jumpOk) { Ranker.markUnseekable(url); PlayTiming.late("4K: $label can't jump inside — next (kept as last backup)"); continue }
                 val ok = withTimeoutOrNull(45_000) {
                     kotlinx.coroutines.coroutineScope {
                         val head = async { StreamCache.saveParts(ctx, url, 0, minOf(3L * 1024 * 1024, pr.size), 1, null) { } }
@@ -1962,7 +1984,10 @@ fun PlayerScreen(
     LaunchedEffect(buffering, now?.url, firstFrame) {
         if (!buffering || !firstFrame || upgradedUrl == null || now?.url != upgradedUrl) return@LaunchedEffect
         delay(8_000)
-        if (buffering && now?.url == upgradedUrl) backToMovieBox("stalled 8 s")
+        // Right after a jump the 4K file needs time to load from the new point: give it a full minute.
+        val sinceJump = SystemClock.uptimeMillis() - seekedAt
+        if (sinceJump < 60_000) delay(60_000 - sinceJump)
+        if (buffering && now?.url == upgradedUrl) backToMovieBox("stalled after waiting")
     }
     // Online subtitles drawn by the app, in step with the video (moved by "Adjust timing"); while Size is dragged, two
     // sample lines (one line, then two) show at the real size and place.
@@ -2261,8 +2286,8 @@ fun PlayerScreen(
             val res = cur.resolution()
             val t = SystemClock.uptimeMillis()
             if (buffering || stalls > 0) smoothSince = t
-            val longStall = buffering && t - stallAt > 5000
-            if (stalls >= 2 || longStall) {
+            val longStall = buffering && t - stallAt > 5000 && t - seekedAt > 60_000
+            if ((stalls >= 2 && t - seekedAt > 60_000) || longStall) {
                 val lower = ladder.filter { it < res }.sortedDescending().firstNotNullOfOrNull { r -> streamAt(r, cur) }
                 if (lower != null) { stalls = 0; switchTo(lower, "Auto · ${lower.resolution()}p (slow connection)"); return@LaunchedEffect }
             } else if (!usingVlc && t - smoothSince > 90_000 && player.bufferedPosition - player.currentPosition > 45_000) {
@@ -3040,9 +3065,25 @@ fun PlayerScreen(
                     enter = fadeIn(tween(260)) + slideInHorizontally(tween(360)) { it / 3 },
                     exit = fadeOut(tween(200))) {
                     val u = upgrade
-                    if (u != null) UpgradePill(u.is4k, upLeft) {
-                        upgradedFrom = now?.url?.let { itemFor(it) }; upgradedUrl = u.item.stream.url
-                        upgrade = null; poke++; switchTo(u.item, if (u.is4k) "4K" else "Better quality")
+                    // Slide it right or up (anywhere) to send it away.
+                    var dx by remember { mutableFloatStateOf(0f) }
+                    var dy by remember { mutableFloatStateOf(0f) }
+                    if (u != null) Box(Modifier
+                        .offset { androidx.compose.ui.unit.IntOffset(dx.toInt(), dy.toInt()) }
+                        .graphicsLayer { alpha = (1f - (dx - dy) / 500f).coerceIn(0f, 1f) }
+                        .pointerInput(u) {
+                            androidx.compose.foundation.gestures.detectDragGestures(
+                                onDragEnd = {
+                                    if (dx > 110f || dy < -110f) { upgrade = null; PlayTiming.late("Upgrade offer swiped away") }
+                                    dx = 0f; dy = 0f
+                                },
+                                onDragCancel = { dx = 0f; dy = 0f },
+                            ) { ch, d -> ch.consume(); dx = (dx + d.x).coerceAtLeast(0f); dy = (dy + d.y).coerceAtMost(0f) }
+                        }) {
+                        UpgradePill(u.is4k, upLeft) {
+                            upgradedFrom = now?.url?.let { itemFor(it) }; upgradedUrl = u.item.stream.url
+                            upgrade = null; poke++; switchTo(u.item, if (u.is4k) "4K" else "Better quality")
+                        }
                     }
                 }
                 AnimatedVisibility(nearEnd && !locked,
@@ -3503,7 +3544,8 @@ fun PlayerScreen(
                         .groupBy { if (it.isPlaylist()) "Instant" else VisualTags.primary(it) }.toList()
                         .sortedBy { (g, _) -> if (g == "Instant") -1 else picOrder.indexOf(g).let { i -> if (i < 0) 99 else i } }
                         .map { (g, l) -> g to l.sortedWith(compareBy<StreamItem>({ vm.langRank(it) }, { -Ranker.score(it) })).take(if (vm.pluginMode()) 60 else 4) }
-                    listOf("4K" to col(1440, 100_000), "1080p" to col(1080, 1440), "720p" to col(700, 1080))
+                    (if (vm.pluginMode()) listOf("Auto" to col(0, 1)) else emptyList()) +
+                        listOf("4K" to col(1440, 100_000), "1080p" to col(1080, 1440), "720p" to col(700, 1080))
                 }.getOrDefault(emptyList()) }
             }
             // The first file of each quality gets its start + index saved (opens in about a second from the menu). On mobile
@@ -3541,7 +3583,17 @@ fun PlayerScreen(
                 val onQuick = curItem?.isMovieBox() == true || curItem?.let { vm.isQuick(it) } == true
                 val readySet = tagReady + hdReady.values.flatten().mapNotNull { it.stream.url }
                 val focusUrl = qCols.flatMap { c -> c.second.flatMap { it.second } }.let { all -> all.firstOrNull { it.stream.url == playing } ?: all.firstOrNull() }?.stream?.url
-                if (vm.pluginMode()) PluginQualityBar(qCols, playing, readySet, Modifier.onFocusChanged {
+                val vgNow = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 1 }
+                val ladder = vgNow?.let { g -> (0 until g.length).map { g.getTrackFormat(it).height }.filter { it > 0 }.distinct().sortedDescending() }.orEmpty()
+                val pinnedH = vgNow?.takeIf { g -> player.trackSelectionParameters.overrides.keys.any { it == g.mediaTrackGroup } }
+                    ?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it).height } }
+                if (vm.pluginMode()) PluginQualityBar(qCols, playing, readySet, ladder, pinnedH, onVariant = { h ->
+                    val g = vgNow ?: return@PluginQualityBar
+                    player.trackSelectionParameters = if (h == null) player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
+                        else player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                            .setOverrideForType(androidx.media3.common.TrackSelectionOverride(g.mediaTrackGroup, (0 until g.length).filter { g.getTrackFormat(it).height == h })).build()
+                    qualityMenu = false; poke++
+                }, modifier = Modifier.onFocusChanged {
                     val had = menuHasFocus
                     menuHasFocus = it.hasFocus
                     if (had && !it.hasFocus) qualityMenu = false
@@ -5573,61 +5625,87 @@ internal fun liftCues(cues: List<Cue>, lift: Float): List<Cue> = cues.map { c ->
 
 
 /**
- * Plugin mode's quality picker: 4K · Full HD · Mid HD in one line. Tap = play the best stream of that quality (ranked by
- * your filters); long-press = every stream of that quality, stacked, to pick one.
+ * Plugin mode's quality picker, inside the bubble: the playing stream's own qualities (Auto / 1080p / 720p, for Netflix,
+ * Prime Video, Hotstar, MPlayer playlists) first, then Auto · 4K · Full HD · Mid HD downwards. Tap = play the best of that
+ * quality; long-press = every stream of it, ranked 1, 2, 3… (servers the Source Test hasn't checked yet say Unidentified).
  */
 @kotlin.OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun PluginQualityBar(
-    cols: List<Pair<String, List<Pair<String, List<StreamItem>>>>>, playing: String?, ready: Set<String>, modifier: Modifier,
+    cols: List<Pair<String, List<Pair<String, List<StreamItem>>>>>, playing: String?, ready: Set<String>,
+    ladder: List<Int>, pinnedH: Int?, onVariant: (Int?) -> Unit, modifier: Modifier,
     onPoke: () -> Unit, onPick: (StreamItem) -> Unit,
 ) {
     var open by remember { mutableStateOf<String?>(null) }
     val shape = RoundedCornerShape(20.dp)
-    Column(modifier.widthIn(max = 560.dp).clip(shape).background(Color(0xF0141418)).border(1.dp, Color(0x1FFFFFFF), shape).padding(8.dp)) {
-        if (cols.all { it.second.isEmpty() }) { Text("Finding qualities…", Modifier.padding(16.dp), fontSize = 13.sp, color = Color(0xFF9AA3B5)); return@Column }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            cols.forEach { (title, groups) ->
-                val files = groups.flatMap { it.second }
-                val label = when (title) { "4K" -> "4K"; "1080p" -> "Full HD"; else -> "Mid HD" }
-                val here = files.any { it.stream.url == playing }
-                val ps = RoundedCornerShape(14.dp)
-                Column(
-                    Modifier.clip(ps).background(if (here) Color(0x33E50914) else if (open == title) Color(0x26FFFFFF) else Color(0x0FFFFFFF))
-                        .border(1.dp, if (here) Color(0xCCE50914) else Color(0x14FFFFFF), ps)
-                        .focusFill()
-                        .combinedClickable(enabled = files.isNotEmpty(),
-                            onClick = { onPoke(); files.firstOrNull { it.stream.url != playing }?.takeIf { !here }?.let(onPick) ?: run { open = if (open == title) null else title } },
-                            onLongClick = { onPoke(); open = if (open == title) null else title })
-                        .padding(horizontal = 18.dp, vertical = 10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (files.isEmpty()) Color(0xFF6E7687) else Color.White)
-                    Text(if (files.isEmpty()) "Not available" else if (here) "Playing · ${files.size}" else "${files.size} streams", fontSize = 11.sp,
-                        color = if (here) Color(0xFFFF8D94) else Color(0xFF9AA3B5))
+    val red = Color(0xFFFF4D57)
+    Column(modifier.width(300.dp).heightIn(max = 340.dp).clip(shape).background(Color(0xF0141418)).border(1.dp, Color(0x1FFFFFFF), shape)
+        .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (ladder.size > 1) {
+            Text("THIS STREAM", Modifier.padding(start = 6.dp, top = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
+            (listOf<Int?>(null) + ladder).forEach { h ->
+                val sel = h == pinnedH
+                val rs = RoundedCornerShape(12.dp)
+                Row(Modifier.fillMaxWidth().clip(rs).background(if (sel) Color(0x26E50914) else Color(0x0DFFFFFF))
+                    .border(1.dp, if (sel) Color(0xCCE50914) else Color(0x12FFFFFF), rs).focusFill().clickable { onVariant(h) }
+                    .padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(h?.let { if (it >= 1440) "4K" else "${it}p" } ?: "Auto", Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    if (sel) Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = red)
                 }
             }
+            Spacer(Modifier.height(4.dp))
+            Text("OTHER STREAMS", Modifier.padding(start = 6.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
         }
-        val list = open?.let { o -> cols.firstOrNull { it.first == o }?.second?.flatMap { it.second } }.orEmpty()
-        AnimatedVisibility(list.isNotEmpty(), enter = androidx.compose.animation.expandVertically(tween(260)) + fadeIn(tween(200)),
-            exit = androidx.compose.animation.shrinkVertically(tween(220)) + fadeOut(tween(160))) {
-            LazyColumn(Modifier.padding(top = 8.dp).heightIn(max = 230.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                items(list, key = { it.stream.url ?: it.hashCode().toString() }) { st ->
-                    val on = st.stream.url == playing
-                    val rs = RoundedCornerShape(10.dp)
-                    Column(
-                        Modifier.fillMaxWidth().clip(rs).background(if (on) Color(0x26E50914) else Color(0x0DFFFFFF))
-                            .border(1.dp, if (on) Color(0xCCE50914) else Color(0x12FFFFFF), rs).focusFill()
-                            .clickable(enabled = !on) { onPick(st) }.padding(horizontal = 10.dp, vertical = 7.dp),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text((VisualTags.video(st).ifEmpty { listOf(VisualTags.primary(st)) } + st.addonName.removePrefix("CloudStream · ").removePrefix("Nuvio · ")).joinToString(" · "),
-                                Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (on) Icon(Icons.Default.Check, null, Modifier.size(15.dp), tint = Color(0xFFFF3B47))
+        if (cols.all { it.second.isEmpty() }) Text("Finding qualities…", Modifier.padding(12.dp), fontSize = 13.sp, color = Color(0xFF9AA3B5))
+        cols.forEach { (title, groups) ->
+            val files = groups.flatMap { it.second }
+            if (files.isEmpty() && title == "Auto") return@forEach
+            val label = when (title) { "4K" -> "4K"; "1080p" -> "Full HD"; "720p" -> "Mid HD"; else -> "Auto" }
+            val here = files.any { it.stream.url == playing }
+            val ps = RoundedCornerShape(14.dp)
+            Row(
+                Modifier.fillMaxWidth().clip(ps).background(if (here) Color(0x33E50914) else if (open == title) Color(0x26FFFFFF) else Color(0x0FFFFFFF))
+                    .border(1.dp, if (here) Color(0xCCE50914) else Color(0x14FFFFFF), ps).focusFill()
+                    .combinedClickable(enabled = files.isNotEmpty(),
+                        onClick = { onPoke(); if (!here) files.firstOrNull()?.let(onPick) else open = if (open == title) null else title },
+                        onLongClick = { onPoke(); open = if (open == title) null else title })
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (files.isEmpty()) Color(0xFF6E7687) else Color.White)
+                    Text(if (files.isEmpty()) "Not available" else if (here) "Playing · ${files.size} streams · hold for all" else "${files.size} streams · hold for all",
+                        fontSize = 11.sp, color = if (here) Color(0xFFFF8D94) else Color(0xFF9AA3B5))
+                }
+                if (here) Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = red)
+            }
+            AnimatedVisibility(open == title && files.isNotEmpty(), enter = androidx.compose.animation.expandVertically(tween(260)) + fadeIn(tween(200)),
+                exit = androidx.compose.animation.shrinkVertically(tween(220)) + fadeOut(tween(160))) {
+                Column(Modifier.padding(start = 6.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    files.forEachIndexed { i, st ->
+                        val on = st.stream.url == playing
+                        val rs = RoundedCornerShape(10.dp)
+                        Row(
+                            Modifier.fillMaxWidth().clip(rs).background(if (on) Color(0x26E50914) else Color(0x0DFFFFFF))
+                                .border(1.dp, if (on) Color(0xCCE50914) else Color(0x12FFFFFF), rs).focusFill()
+                                .clickable(enabled = !on) { onPick(st) }.padding(horizontal = 10.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("${i + 1}", Modifier.width(22.dp), fontSize = 15.sp, fontWeight = FontWeight.Black, color = red)
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text((VisualTags.video(st).ifEmpty { listOf(VisualTags.primary(st)) } + st.addonName.removePrefix("CloudStream · ").removePrefix("Nuvio · ")).joinToString(" · "),
+                                        Modifier.weight(1f, fill = false), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (Ranker.untested(st)) Text("Unidentified", Modifier.padding(start = 6.dp).clip(RoundedCornerShape(5.dp)).background(Color(0x1FFFFFFF))
+                                        .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB6BDCC))
+                                }
+                                Text(listOfNotNull(VisualTags.audio(st), VisualTags.size(st), st.languagesOrOriginal().joinToString(" + ") { langLabel(it) },
+                                    if (Ranker.knownUnseekable(st) || st.isEmbedBackup()) "backup" else null).joinToString(" · "),
+                                    fontSize = 10.5.sp, color = Color(0xFF9AA3B5), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (on) Icon(Icons.Default.Check, null, Modifier.size(15.dp), tint = red)
                             else if (st.stream.url in ready || st.isPlaylist()) Icon(Icons.Default.Check, "Ready", Modifier.size(14.dp), tint = Color(0x99FF3B47))
                         }
-                        Text(listOfNotNull(VisualTags.audio(st), VisualTags.size(st), st.languagesOrOriginal().joinToString(" + ") { langLabel(it) }).joinToString(" · "),
-                            fontSize = 10.5.sp, color = Color(0xFF9AA3B5), maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }

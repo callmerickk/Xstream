@@ -235,7 +235,7 @@ suspend fun AppViewModel.allStreams(type: String, id: String): List<StreamItem> 
 fun forgetAllStreams() { prefetchAll.clear(); prefetch.clear() }
 
 /** Forget the remembered streams of a title (e.g. when all of them failed). */
-fun forgetStreams(id: String) { prefetchAll.remove(id); prefetch.remove(id); AddonCalls.forgetTitle(id) }
+fun forgetStreams(id: String) { prefetchAll.remove(id); prefetch.remove(id); AddonCalls.forgetTitle(id); PluginSources.forget(id) }
 
 fun cachedAll(id: String): List<StreamItem>? = prefetchAll[id]?.takeIf { System.currentTimeMillis() - it.first < STREAM_CACHE_MS }?.second
 
