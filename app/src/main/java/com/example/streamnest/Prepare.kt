@@ -65,7 +65,8 @@ object Prepare {
             // CloudStream won the race: MovieBox's preparing goes on quietly (backup links) but no longer changes the status.
             csWonFor = null
             fun put(p: Prepared) { if (csWonFor != id) state.value = p }
-            val csPicked = if (quick && meta != null) vm.qsCs() else emptySet()
+            // The 20-second CloudStream race is off: plugin mode's Quick Play is plugins already, addon mode never loads them.
+            val csPicked = emptySet<String>()
             if (csPicked.isNotEmpty() && meta != null) launch {
                 csPending.value = id
                 try { csRace(vm, ctx, meta, id, csPicked, resumeMs) { state.value?.list.orEmpty() } }
@@ -105,11 +106,13 @@ object Prepare {
                 // 6-second rule: no streaming playlist (MPD / HLS) from quick play within 6 s → the other addons' links are
                 // prepared instead (MovieBox MP4s start late; they're used only when nothing else exists).
                 // Instant plays never reach this (MovieBox answers in well under a second).
-                val timer = launch { delay(6_000); if (quickL.none { it.isPlaylist() }) goWide("Quick play is slow — preparing a backup server…") }
+                val plug = vm.pluginMode()
+                // Plugin mode: the picked plugins get 20 s (they search the sites by name), then every plugin is asked.
+                val timer = launch { delay(if (plug) 20_000 else 6_000); if (if (plug) quickL.isEmpty() else quickL.none { it.isPlaylist() }) goWide("Quick play is slow — preparing a backup server…") }
                 runCatching { vm.progressiveStreams(type, id, true).collect { (l, d) -> quickL = l; quickDone = d; if (l.isNotEmpty() || wideOn) publish() } }
                 quickDone = true
                 // Quick play's addons had nothing (MovieBox empty / busy): straight on with every addon.
-                if (quickL.none { it.isPlaylist() }) { timer.cancel(); goWide("Quick play had nothing — checking backup servers…") }
+                if (if (plug) quickL.isEmpty() else quickL.none { it.isPlaylist() }) { timer.cancel(); goWide("Quick play had nothing — checking backup servers…") }
                 if (!wideOn) publish() else wide?.join()
             }
             // Nothing playing or being saved 10 s after the title page opened: CNCVerse is asked again (every 2 s until
@@ -124,10 +127,12 @@ object Prepare {
             }
             val subsJob = async { withTimeoutOrNull(2500) { runCatching { vm.subtitles(type, id) }.getOrDefault(emptyList()) }.orEmpty() }
             // Wait for the first links, then up to 2 s more so a better addon can still answer.
-            val first = withTimeoutOrNull(30_000) { live.first { (l, d) -> d || (if (quick && !wideOn) l.any { it.isPlaylist() } else l.isNotEmpty()) } }
+            val plugMode = vm.pluginMode()
+            val first = withTimeoutOrNull(if (plugMode) 45_000 else 30_000) { live.first { (l, d) -> d || (if (quick && !wideOn && !plugMode) l.any { it.isPlaylist() } else l.isNotEmpty()) } }
             // A link in your top language that starts at once (MovieBox playlist) needs no waiting; otherwise ~1 s more.
             val instant = live.value.first.any { vm.langRank(it) == 0 && it.isPlaylist() && (!quick || vm.isQuick(it)) }
-            if (first != null && !first.second && !instant) withTimeoutOrNull(1_000) { live.first { it.second } }
+            // Plugin mode: a few seconds more so the best quality (not just the fastest plugin) goes first.
+            if (first != null && !first.second && !instant) withTimeoutOrNull(if (plugMode) 4_000 else 1_000) { live.first { it.second } }
             var list = live.value.first
             // Subtitles never hold the preparing back: whatever answered within 0.7 s goes along (the player finds the rest).
             val subs = withTimeoutOrNull(700) { subsJob.await() }.orEmpty()
@@ -215,7 +220,7 @@ object Prepare {
                 list = live.value.first.ifEmpty { list }
                 val all0 = vm.rankedCandidates(list, level, quickOnly = useQuick).filter { it.stream.url !in tried }
                     .let { if (quick && level == "auto") vm.movieBoxFirst(it) else it }
-                    .let { l -> if (quick && !wideOn) l.filter { it.isPlaylist() } else l }
+                    .let { l -> if (quick && !wideOn && !plugMode) l.filter { it.isPlaylist() } else l }
                 // MovieBox MP4s through PenguPlay's server: only when nothing else can play.
                 val cands = (all0.filter { !it.slowMp4() }.ifEmpty { all0 }).take(5)
                 // Race the best three at once: the first server to answer with a video is prepared first.

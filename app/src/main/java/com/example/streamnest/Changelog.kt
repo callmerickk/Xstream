@@ -13,6 +13,16 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.4.7 beta", "21 Oct 2026", "Plugin mode (testing) and Cinematic zoom", listOf(
+        "Settings › Content & Discovery: Source mode — Addons (as before, plugins off) or Plugins (every stream from your CloudStream / Nuvio plugins, addons off)",
+        "Plugin mode: Quick Start lets you pick the plugins for Quick Play and, separately, the ones for Upgrade to 4K",
+        "Plugin mode: the best 4K link is readied in the background and \"Upgrade to 4K\" pops up when it can start instantly",
+        "Plugin mode: Quality is one line — 4K · Full HD · Mid HD; tap to play the best, long-press to see every stream of that quality",
+        "Plugin links follow your quality, audio and picture filters; only 4K, 1080p and 720p are kept and hubcdn links are left out",
+        "MovieBox plugins are switched on; VegaMovies finds its current site again",
+        "Cinematic zoom: pinch out once more after Zoomed to fill to zoom a bit further (pinch in to step back)",
+        "Quick Start › CloudStream picks now stay ticked",
+    )),
     Release("0.4.6 beta", "21 Oct 2026", "CloudStream in Quick Play", listOf(
         "Quick Start › CloudStream: tick the plugins (Netflix, Hotstar, Prime Video…) Quick Play should try first — each repository folds open",
         "Opening a title fetches their links at once; the best quality plays if it's ready within 20 seconds, otherwise MovieBox plays straight away",
@@ -244,6 +254,17 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.4.7 beta", "21 Oct 2026", "Plugin mode, Upgrade to 4K from plugins, quality bar, cinematic zoom", listOf(
+        "srcMode (plugins/addons): vm.streamsFlow → PluginSources.modeStreams in plugin mode (CS providers + Nuvio, only/except by link name); qsAddons() = picked CS link names; SlowAddons off (slowStreamAddons empty); forgetAllStreams on switch",
+        "QuickStartPage: SourceModeCard; QuickCsSection(qsCs) + QuickCsSection(qs4k) only in plugin mode; group-1 addons hidden there; qsCs/qs4k saved one per line (plugin keys contain |)",
+        "Prepare: CS 20 s race off; plugin quick: 20 s before going wide, no playlist-only rule, waits ≤4 s more for the best quality",
+        "Player: plugin 4K effect (qs4kNames → rankedCandidates 4k + langRank + PicturePref; probe + head/tail save; playlists ready at once) fills hdReady[4k] → existing offer shows Upgrade to 4K; addon HD effect skipped in plugin mode",
+        "PluginQualityBar (plugin mode): one row 4K / Full HD / Mid HD, combinedClickable tap = best, long-press = stacked list; qCols keep 60 per tag in plugin mode",
+        "PluginSources.keep: drop hubcdn and res 1..719; noSearch set skips providers without search (Disney/Marvel shelves); search(query,page) null → search(query)",
+        "CsPlugins: plugin OkHttp client without cache (VegaMovies read a stale urls.json → 1vegamovies.pics 404); MovieBoxProvider* switched on once (seededMovieBox)",
+        "Sources page / dev sources: plugin chips fed from the main list (plugin mode only); no separate plugin fetch in addon mode",
+        "Cinematic zoom: phone graphicsLayer 1.2× after Zoomed to fill (second pinch-out), pinch in steps back",
+    )),
     Release("0.4.6 beta", "21 Oct 2026", "CloudStream Quick Play race, plugin subtitles, CS library gaps", listOf(
         "qsCs (pluginKey#provider) picked in QuickStartPage › QuickCsSection (TriStateCheckbox per repo, foldable); backed up with qsAddons",
         "Prepare.csRace: PluginSources.selected() from page open; best resolution first (waits ≤3 s for ≥6 links); csOpen = paused ExoPlayer until first frame; replaces MovieBox Preloader; 20 s deadline; csWonFor stops MovieBox status/preloader overrides; Detail waits on Prepare.csPending",

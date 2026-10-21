@@ -587,6 +587,7 @@ private fun AppIconPicker() {
 private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> Unit) {
     Page("Content & Discovery", onBack) {
         SectionLabel("Sources")
+        if (!BuildConfig.IS_TV) SourceModeCard(vm)
         SettingsCard {
             SettingRow(null, "Addons", "Install, remove, refresh, and sort your content sources.") { open("addons") }
             RowDivider(20.dp)
@@ -1566,6 +1567,32 @@ private fun NotificationsPage(vm: AppViewModel, onBack: () -> Unit) {
             if (inbox.isNotEmpty()) {
                 RowDivider(20.dp)
                 SettingRow(null, "Clear the list", "Remove these alerts.") { EpisodeAlerts.clearInbox(ctx); inbox = emptyList() }
+            }
+        }
+    }
+}
+
+
+/**
+ * Xstream phones (testing): where every stream comes from. Addons = as always (plugins are never loaded). Plugins = only
+ * CloudStream / Nuvio plugins everywhere — Quick Play, Upgrade to 4K, Play manually, the player's sources.
+ */
+@Composable
+internal fun SourceModeCard(vm: AppViewModel) {
+    val texts by vm.texts.collectAsStateWithLifecycle()
+    val plugins = texts["srcMode"] == "plugins"
+    SettingsCard {
+        Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+            Text("Source mode", fontSize = 17.sp, fontWeight = FontWeight.Medium)
+            Text(if (plugins) "Plugins: every stream comes from your CloudStream / Nuvio plugins. Addons are off."
+                else "Addons: streams come from your addons. Plugins are off.", fontSize = 13.sp, color = Muted, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0x14FFFFFF)).padding(4.dp)) {
+                listOf("addons" to "Addons", "plugins" to "Plugins").forEach { (k, label) ->
+                    val sel = (k == "plugins") == plugins
+                    Text(label, Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(if (sel) Color.White else Color.Transparent)
+                        .clickable { vm.setText("srcMode", k); forgetAllStreams() }.padding(vertical = 10.dp),
+                        fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (sel) Color.Black else Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
             }
         }
     }

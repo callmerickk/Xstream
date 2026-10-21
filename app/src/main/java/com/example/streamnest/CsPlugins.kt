@@ -45,7 +45,8 @@ object CsPlugins {
         "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json",
         "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json",
     )
-    private val defaultOn = setOf("FourKHDHub", "HDhub4u", "MPlayerProvider", "UHDmoviesProvider", "VegaMovies", "CNC Verse", "CNC Verse Mobile")
+    private val defaultOn = setOf("FourKHDHub", "HDhub4u", "MPlayerProvider", "UHDmoviesProvider", "VegaMovies", "CNC Verse", "CNC Verse Mobile",
+        "MovieBoxProvider", "MovieBoxProviderIN")
 
     val repos = MutableStateFlow<List<CsRepo>>(emptyList())
     val catalog = MutableStateFlow<List<CsPluginEntry>>(emptyList())
@@ -64,12 +65,18 @@ object CsPlugins {
         appCtx = ctx.applicationContext
         CloudStreamApp.context = appCtx
         // Plugins' requests: Xstream's network, with a hard 25 s limit per request (one hung request stalled a whole test).
-        com.lagradost.cloudstream3.app.baseClient = Api.http.newBuilder().callTimeout(25, java.util.concurrent.TimeUnit.SECONDS).build()
+        // No HTTP cache: plugins read their current site addresses from small JSON files (an old cached copy sent
+        // VegaMovies to a dead domain).
+        com.lagradost.cloudstream3.app.baseClient = Api.http.newBuilder().cache(null).callTimeout(25, java.util.concurrent.TimeUnit.SECONDS).build()
         val p = ctx.getSharedPreferences("cs_plugins", Context.MODE_PRIVATE); prefs = p
         repos.value = runCatching { Api.json.decodeFromString<List<CsRepo>>(p.getString("repos", null) ?: "") }.getOrNull() ?: defaultRepos.map { CsRepo(it) }
         catalog.value = runCatching { Api.json.decodeFromString<List<CsPluginEntry>>(p.getString("catalog", null) ?: "") }.getOrDefault(emptyList())
         enabled.value = p.getStringSet("enabled", null)?.toSet() ?: emptySet()
         installed.value = runCatching { Api.json.decodeFromString<Map<String, Int>>(p.getString("installed", null) ?: "") }.getOrDefault(emptyMap())
+        if (!p.getBoolean("seededMovieBox", false) && catalog.value.any { it.internalName.startsWith("MovieBoxProvider") }) {
+            enabled.value = enabled.value + catalog.value.filter { it.internalName.startsWith("MovieBoxProvider") }.map { it.key }
+            p.edit().putBoolean("seededMovieBox", true).putStringSet("enabled", enabled.value).apply()
+        }
     }
     private fun save() {
         prefs?.edit()?.putString("repos", Api.json.encodeToString(repos.value))?.putString("catalog", Api.json.encodeToString(catalog.value))
@@ -109,6 +116,11 @@ object CsPlugins {
             if (prefs?.getBoolean("seeded", false) != true) {
                 enabled.value = enabled.value + out.filter { it.internalName in defaultOn }.map { it.key }
                 prefs?.edit()?.putBoolean("seeded", true)?.apply()
+            }
+            // 0.4.7: MovieBox plugins (every repository that has one) switched on once — they were easy to miss.
+            if (prefs?.getBoolean("seededMovieBox", false) != true && out.any { it.internalName.startsWith("MovieBoxProvider") }) {
+                enabled.value = enabled.value + out.filter { it.internalName.startsWith("MovieBoxProvider") }.map { it.key }
+                prefs?.edit()?.putBoolean("seededMovieBox", true)?.apply()
             }
             save()
         }

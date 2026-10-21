@@ -598,7 +598,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     // ───────────── Addon backup / move (Settings › Addons › Export / Import) ─────────────
     /** Settings that travel with the addons. */
-    private val backupKeys = listOf("qsAddons", "qsCs", "qsOn", "qsLangs", "qsQuality", "qsUpgrade", "subLangs", "tagRules", "srcAutoManage",
+    private val backupKeys = listOf("qsAddons", "qsCs", "qs4k", "srcMode", "qsOn", "qsLangs", "qsQuality", "qsUpgrade", "subLangs", "tagRules", "srcAutoManage",
         "testedOnly", "hideDead", "autoOnlineSubs", "subAutoSync")
 
     /** Everything about your addons as a small JSON text: links in order, on / off, pins, Quick play and the play settings. */
@@ -659,7 +659,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     /** Switched-on addons that keep loading on their server (CNCVerse): asked again every 5 s (SlowAddons.kt). */
-    fun slowStreamAddons(type: String, id: String): List<Addon> = active.filter { it.supports("stream", type, id) && SlowAddons.isSlow(it) }
+    fun slowStreamAddons(type: String, id: String): List<Addon> = if (pluginMode()) emptyList() else active.filter { it.supports("stream", type, id) && SlowAddons.isSlow(it) }
     fun streamUrl(a: Addon, type: String, id: String) = "${a.baseUrl}/stream/$type/${enc(id)}.json"
 
     /** Puts the addons in this order (by name; the ones not named keep their place after them). Source Test uses it. */
@@ -817,7 +817,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     /** Streams arriving addon by addon: emits (list so far in addon order, finished?) so the page fills in fast. */
-    fun streamsFlow(type: String, id: String, only: Set<String>? = null, except: Set<String>? = null): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
+    fun streamsFlow(type: String, id: String, only: Set<String>? = null, except: Set<String>? = null): Flow<Pair<List<StreamItem>, Boolean>> =
+        if (pluginMode()) PluginSources.modeStreams(this, type, id, only, except) else addonStreamsFlow(type, id, only, except)
+
+    private fun addonStreamsFlow(type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
         val addons = active.filter { it.supports("stream", type, id) && (only == null || it.label() in only) && (except == null || it.label() !in except) }
         // Plugins (Settings › Content & Discovery › Plugins) are asked alongside the addons.
         val plugins = if (BuildConfig.IS_TV) emptyList() else Plugins.enabled().filter { type in it.types && (only == null || it.name in only) && (except == null || it.name !in except) }

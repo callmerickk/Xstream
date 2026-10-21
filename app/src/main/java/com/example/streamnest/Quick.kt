@@ -96,7 +96,19 @@ fun StreamItem.languages(): List<String> {
     return out
 }
 
-fun AppViewModel.qsAddons(): Set<String> = (texts.value["qsAddons"] ?: "").split("|").filter { it.isNotBlank() }.toSet()
+/**
+ * Plugin mode (Xstream phones, Settings › Sources: Addons / Plugins): every stream comes from CloudStream / Nuvio plugins
+ * and no addon is asked. Addon mode (default): addons only, plugins are never loaded.
+ */
+fun AppViewModel.pluginMode(): Boolean = !BuildConfig.IS_TV && texts.value["srcMode"] == "plugins"
+/** The name a CloudStream provider's links carry (StreamItem.addonName). */
+fun csDisplayName(provider: String) = "CloudStream · $provider"
+/** Quick Start: in plugin mode the picked CloudStream providers (by their link name), else the picked addons. */
+fun AppViewModel.qsAddons(): Set<String> = if (pluginMode()) qsCs().map { csDisplayName(it.substringAfter('#')) }.toSet()
+    else (texts.value["qsAddons"] ?: "").split("|").filter { it.isNotBlank() }.toSet()
+/** Plugin mode: providers whose 4K links "Upgrade to 4K" may use ("pluginKey#provider", one per line). */
+fun AppViewModel.qs4k(): Set<String> = if (!pluginMode()) emptySet() else qsCsParse(texts.value["qs4k"])
+fun AppViewModel.qs4kNames(): Set<String> = qs4k().map { csDisplayName(it.substringAfter('#')) }.toSet()
 /** CloudStream providers picked for Quick Play (Settings › Quick Start › CloudStream), as "pluginKey#provider". Phones only. */
 fun AppViewModel.qsCs(): Set<String> = if (BuildConfig.IS_TV) emptySet() else qsCsParse(texts.value["qsCs"])
 /** Saved one per line (plugin keys contain "|" themselves, so "|" can't separate them). */
@@ -218,6 +230,9 @@ suspend fun AppViewModel.allStreams(type: String, id: String): List<StreamItem> 
     if (l.isNotEmpty()) prefetchAll[id] = System.currentTimeMillis() to l
     return l
 }
+
+/** Source mode changed: every remembered list is from the other mode. */
+fun forgetAllStreams() { prefetchAll.clear(); prefetch.clear() }
 
 /** Forget the remembered streams of a title (e.g. when all of them failed). */
 fun forgetStreams(id: String) { prefetchAll.remove(id); prefetch.remove(id); AddonCalls.forgetTitle(id) }

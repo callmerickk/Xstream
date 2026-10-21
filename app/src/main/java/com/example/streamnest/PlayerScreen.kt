@@ -30,6 +30,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -513,6 +514,10 @@ fun PlayerScreen(
     var manualSync by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { Speech.clear() }
     var aspectLabel by remember { mutableStateOf<String?>(null) }
+    // Cinematic zoom (phones): a second pinch-out after "Zoomed to fill" zooms a little further (like YouTube), cutting
+    // the black bars that are part of the picture in wide films. Pinch in steps back.
+    var cinematic by remember { mutableStateOf(false) }
+    val cineScale by animateFloatAsState(if (cinematic && !BuildConfig.IS_TV) 1.2f else 1f, tween(260), label = "cine")
     var hud by remember { mutableStateOf<Pair<String, Float>?>(null) }
     // ───── Remote / keyboard (TV): a focusable root that reads the keys; D-pad seeking moves a pending target first ─────
     val rootFocus = remember { FocusRequester() }
@@ -1643,6 +1648,7 @@ fun PlayerScreen(
     LaunchedEffect(firstFrame) { if (firstFrame) everPictured = true }
     LaunchedEffect(everPictured, p.key) {
         if (!everPictured || BuildConfig.IS_TV || usingVlc || !isOn(opt("qsUpgrade")) || !vm.upgradeAllowed()) return@LaunchedEffect
+        if (vm.pluginMode()) return@LaunchedEffect      // plugin mode: "Upgrade to 4K" below
         val nowUrl = now?.url ?: return@LaunchedEffect
         val cur = itemFor(nowUrl) ?: StreamItem(now?.addon ?: "", StreamInfo(url = nowUrl, name = now?.source))
         // Searched while what plays is a quick / lower-quality file (MovieBox, a playlist, or under Full HD).
@@ -1749,6 +1755,53 @@ fun PlayerScreen(
                 if (ready(next.second)) hdReady = hdReady + (next.first to (hdReady[next.first].orEmpty() + next.second))
             }
             if (hdReady.isEmpty()) PlayTiming.late("HD: nothing ready (${pool.size} links seen)")
+        } finally { gather.cancel() }
+    }
+    // ── Plugin mode: "Upgrade to 4K". The 4K links of the plugins picked in Quick Start › Upgrade to 4K are ranked with
+    //    your filters (quality, audio, picture tags), the best is checked and its start + index saved (playlists need
+    //    nothing saved), then the button pops up; one tap plays it from the same second.
+    LaunchedEffect(everPictured, p.key) {
+        if (!everPictured || BuildConfig.IS_TV || usingVlc || !vm.pluginMode()) return@LaunchedEffect
+        val names = vm.qs4kNames().ifEmpty { return@LaunchedEffect }
+        val cur0 = now?.url?.let { itemFor(it) }
+        if (cur0 != null && cur0.effectiveRes() >= 2160) return@LaunchedEffect
+        PlayTiming.late("4K: asking ${names.size} plugin(s) for a 4K link")
+        val pool = java.util.concurrent.ConcurrentHashMap<String, StreamItem>()
+        var done = false
+        val gather = scope.launch {
+            runCatching { vm.streamsFlow(type, p.key, only = names).collect { (l, d) -> l.forEach { s0 -> s0.stream.url?.let { u -> pool.putIfAbsent(u, s0) } }; done = d } }
+            done = true
+        }
+        try {
+            val tried = HashSet<String>()
+            val t0 = SystemClock.elapsedRealtime()
+            while (SystemClock.elapsedRealtime() - t0 < 180_000 && hdReady["4k"].isNullOrEmpty()) {
+                if (buffering) { delay(1_000); continue }
+                val cands = vm.rankedCandidates(vm.filtered(pool.values.toList()).list.filter { it.effectiveRes() >= 2160 && it.stream.url !in tried }, "4k", quickOnly = false)
+                    .filter { !Ranker.isDead(it) && !Ranker.keepsFailing(it) && !it.unplayableHere() }
+                    .sortedWith(compareBy<StreamItem>({ vm.langRank(it) }, { PicturePref.rank(vm, it) }))
+                val c = cands.firstOrNull()
+                if (c == null) { if (done) break; delay(1_500); continue }
+                val url = c.stream.url!!
+                tried += url
+                val label = "${Prepare.qualityName(c.effectiveRes())} · ${c.addonName.removePrefix("CloudStream · ")}"
+                StreamCache.register(c)
+                if (isPlaylistLink(c, url)) { hdReady = hdReady + ("4k" to listOf(c)); PlayTiming.late("4K: $label ready (playlist)"); break }
+                val pr = StreamCache.probe(url)
+                if (!pr.ok || !pr.seekable || pr.size <= 0) { PlayTiming.late("4K: $label refused (${pr.error ?: "HTTP ${pr.status}"})"); continue }
+                val ok = withTimeoutOrNull(45_000) {
+                    kotlinx.coroutines.coroutineScope {
+                        val head = async { StreamCache.saveParts(ctx, url, 0, minOf(3L * 1024 * 1024, pr.size), 1, null) { } }
+                        val mp4 = url.contains(".mp4", true) || c.fileName()?.endsWith(".mp4", true) == true
+                        val tl = if (mp4) minOf(24L * 1024 * 1024, pr.size / 60) else minOf(8L * 1024 * 1024, pr.size / 200)
+                        val tail = async { if (pr.size > 40L * 1024 * 1024) StreamCache.saveParts(ctx, url, pr.size - tl, tl, 2, null) { } else null }
+                        head.await() == null && tail.await() == null
+                    }
+                } == true
+                if (ok) { hdReady = hdReady + ("4k" to listOf(c)); PlayTiming.late("4K: $label ready (start + index saved)") }
+                else PlayTiming.late("4K: $label didn't save in time")
+            }
+            if (hdReady["4k"].isNullOrEmpty()) PlayTiming.late("4K: nothing ready (${pool.size} plugin links seen)")
         } finally { gather.cancel() }
     }
     // ── TV: better quality, no background saving. Quick play starts; CNCVerse (asked on the title page) is asked again if
@@ -2174,6 +2227,7 @@ fun PlayerScreen(
         if (st.stream.url != now?.url) switchTo(st, AllQualityLevels.firstOrNull { it.id == id }?.label)
     }
     fun setAspect(i: Int, label: String = AspectModes[i].first) {
+        cinematic = false
         aspectIdx = i; resize = AspectModes[i].second; aspectLabel = label
         vlc?.setAspect(i)
         vm.setPlayerPref("aspect", i.toString())
@@ -2674,7 +2728,7 @@ fun PlayerScreen(
                     // black bars instead: Crop = 1.33× (fills a wide film), Stretch = taller only.
                     modifier = Modifier.fillMaxSize().then(if (BuildConfig.IS_TV) Modifier.graphicsLayer {
                         when (aspectIdx) { 1 -> { scaleX = 1.33f; scaleY = 1.33f }; 2 -> { scaleX = 1f; scaleY = 1.33f }; else -> { scaleX = 1f; scaleY = 1f } }
-                    } else Modifier),
+                    } else Modifier.graphicsLayer { scaleX = cineScale; scaleY = cineScale }),
                 )
                 // Subtitles live outside the video frame, so zoom / crop never moves or enlarges them.
                 // Like Netflix: while the controls are on screen the subtitles glide up above the timeline and buttons,
@@ -2848,6 +2902,8 @@ fun PlayerScreen(
                             2 -> { setRate(baseSpeed); holdSpeed = null }
                             3 -> when {
                                 pinchRatio > 1.12f && aspectIdx != 1 -> setAspect(1, "Zoomed to fill")
+                                pinchRatio > 1.12f && aspectIdx == 1 && !cinematic -> { cinematic = true; aspectLabel = "Cinematic zoom" }
+                                pinchRatio < 0.9f && cinematic -> { cinematic = false; aspectLabel = "Zoomed to fill" }
                                 pinchRatio < 0.9f && aspectIdx != 0 -> setAspect(0, "Original")
                             }
                         }
@@ -3446,7 +3502,7 @@ fun PlayerScreen(
                     fun col(lo: Int, hi: Int) = all.filter { it.effectiveRes() in lo until hi }
                         .groupBy { if (it.isPlaylist()) "Instant" else VisualTags.primary(it) }.toList()
                         .sortedBy { (g, _) -> if (g == "Instant") -1 else picOrder.indexOf(g).let { i -> if (i < 0) 99 else i } }
-                        .map { (g, l) -> g to l.sortedWith(compareBy<StreamItem>({ vm.langRank(it) }, { -Ranker.score(it) })).take(4) }
+                        .map { (g, l) -> g to l.sortedWith(compareBy<StreamItem>({ vm.langRank(it) }, { -Ranker.score(it) })).take(if (vm.pluginMode()) 60 else 4) }
                     listOf("4K" to col(1440, 100_000), "1080p" to col(1080, 1440), "720p" to col(700, 1080))
                 }.getOrDefault(emptyList()) }
             }
@@ -3485,7 +3541,15 @@ fun PlayerScreen(
                 val onQuick = curItem?.isMovieBox() == true || curItem?.let { vm.isQuick(it) } == true
                 val readySet = tagReady + hdReady.values.flatten().mapNotNull { it.stream.url }
                 val focusUrl = qCols.flatMap { c -> c.second.flatMap { it.second } }.let { all -> all.firstOrNull { it.stream.url == playing } ?: all.firstOrNull() }?.stream?.url
-                Row(
+                if (vm.pluginMode()) PluginQualityBar(qCols, playing, readySet, Modifier.onFocusChanged {
+                    val had = menuHasFocus
+                    menuHasFocus = it.hasFocus
+                    if (had && !it.hasFocus) qualityMenu = false
+                }, onPoke = { poke++ }) { st ->
+                    qualityMenu = false; poke++
+                    upgrade = null
+                    switchTo(st, VisualTags.quality(st))
+                } else Row(
                     Modifier.widthIn(max = 660.dp).heightIn(max = 330.dp).clip(shape).background(Color(0xF0141418)).border(1.dp, Color(0x1FFFFFFF), shape)
                         .onFocusChanged {
                             val had = menuHasFocus
@@ -4399,15 +4463,7 @@ private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playing
         if (reload > 0) SlowAddons.poll(vm, type, key, forMs = 6_000) else SlowAddons.watch(vm, type, key)
         vm.streamsFlow(type, key, except = if (vm.qsActive()) vm.qsAddons() else null).collect { (l, d) -> all = l; done = d }
     }
-    // CloudStream and Nuvio plugins (phones): every switched-on plugin, grouped like the addons.
-    LaunchedEffect(key, reload) {
-        if (BuildConfig.IS_TV || meta == null) return@LaunchedEffect
-        csItems = emptyList(); runCatching { PluginSources.cloudstream(pctx, meta, key).collect { csItems = it } }
-    }
-    LaunchedEffect(key, reload) {
-        if (BuildConfig.IS_TV || meta == null) return@LaunchedEffect
-        nuItems = emptyList(); runCatching { PluginSources.nuvio(pctx, vm, meta, key).collect { nuItems = it } }
-    }
+    // Plugin mode: the plugins' links come through streamsFlow like an addon's (grouped by provider below).
     val slow by SlowAddons.links.collectAsStateWithLifecycle()
     val others = remember(all, slow[key], qs, csItems, nuItems) {
         val qUrls = qs.mapNotNull { it.stream.url }.toSet()
@@ -5512,5 +5568,69 @@ internal fun liftCues(cues: List<Cue>, lift: Float): List<Cue> = cues.map { c ->
         (c.lineType == Cue.LINE_TYPE_FRACTION && c.line >= 0.6f) || (c.lineType == Cue.LINE_TYPE_NUMBER && c.line < 0f) ->
             c.buildUpon().setLine(Cue.DIMEN_UNSET, Cue.TYPE_UNSET).setLineAnchor(Cue.TYPE_UNSET).build()
         else -> c
+    }
+}
+
+
+/**
+ * Plugin mode's quality picker: 4K · Full HD · Mid HD in one line. Tap = play the best stream of that quality (ranked by
+ * your filters); long-press = every stream of that quality, stacked, to pick one.
+ */
+@kotlin.OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun PluginQualityBar(
+    cols: List<Pair<String, List<Pair<String, List<StreamItem>>>>>, playing: String?, ready: Set<String>, modifier: Modifier,
+    onPoke: () -> Unit, onPick: (StreamItem) -> Unit,
+) {
+    var open by remember { mutableStateOf<String?>(null) }
+    val shape = RoundedCornerShape(20.dp)
+    Column(modifier.widthIn(max = 560.dp).clip(shape).background(Color(0xF0141418)).border(1.dp, Color(0x1FFFFFFF), shape).padding(8.dp)) {
+        if (cols.all { it.second.isEmpty() }) { Text("Finding qualities…", Modifier.padding(16.dp), fontSize = 13.sp, color = Color(0xFF9AA3B5)); return@Column }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            cols.forEach { (title, groups) ->
+                val files = groups.flatMap { it.second }
+                val label = when (title) { "4K" -> "4K"; "1080p" -> "Full HD"; else -> "Mid HD" }
+                val here = files.any { it.stream.url == playing }
+                val ps = RoundedCornerShape(14.dp)
+                Column(
+                    Modifier.clip(ps).background(if (here) Color(0x33E50914) else if (open == title) Color(0x26FFFFFF) else Color(0x0FFFFFFF))
+                        .border(1.dp, if (here) Color(0xCCE50914) else Color(0x14FFFFFF), ps)
+                        .focusFill()
+                        .combinedClickable(enabled = files.isNotEmpty(),
+                            onClick = { onPoke(); files.firstOrNull { it.stream.url != playing }?.takeIf { !here }?.let(onPick) ?: run { open = if (open == title) null else title } },
+                            onLongClick = { onPoke(); open = if (open == title) null else title })
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (files.isEmpty()) Color(0xFF6E7687) else Color.White)
+                    Text(if (files.isEmpty()) "Not available" else if (here) "Playing · ${files.size}" else "${files.size} streams", fontSize = 11.sp,
+                        color = if (here) Color(0xFFFF8D94) else Color(0xFF9AA3B5))
+                }
+            }
+        }
+        val list = open?.let { o -> cols.firstOrNull { it.first == o }?.second?.flatMap { it.second } }.orEmpty()
+        AnimatedVisibility(list.isNotEmpty(), enter = androidx.compose.animation.expandVertically(tween(260)) + fadeIn(tween(200)),
+            exit = androidx.compose.animation.shrinkVertically(tween(220)) + fadeOut(tween(160))) {
+            LazyColumn(Modifier.padding(top = 8.dp).heightIn(max = 230.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                items(list, key = { it.stream.url ?: it.hashCode().toString() }) { st ->
+                    val on = st.stream.url == playing
+                    val rs = RoundedCornerShape(10.dp)
+                    Column(
+                        Modifier.fillMaxWidth().clip(rs).background(if (on) Color(0x26E50914) else Color(0x0DFFFFFF))
+                            .border(1.dp, if (on) Color(0xCCE50914) else Color(0x12FFFFFF), rs).focusFill()
+                            .clickable(enabled = !on) { onPick(st) }.padding(horizontal = 10.dp, vertical = 7.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text((VisualTags.video(st).ifEmpty { listOf(VisualTags.primary(st)) } + st.addonName.removePrefix("CloudStream · ").removePrefix("Nuvio · ")).joinToString(" · "),
+                                Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (on) Icon(Icons.Default.Check, null, Modifier.size(15.dp), tint = Color(0xFFFF3B47))
+                            else if (st.stream.url in ready || st.isPlaylist()) Icon(Icons.Default.Check, "Ready", Modifier.size(14.dp), tint = Color(0x99FF3B47))
+                        }
+                        Text(listOfNotNull(VisualTags.audio(st), VisualTags.size(st), st.languagesOrOriginal().joinToString(" + ") { langLabel(it) }).joinToString(" · "),
+                            fontSize = 10.5.sp, color = Color(0xFF9AA3B5), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
     }
 }

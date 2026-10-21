@@ -67,10 +67,16 @@ internal fun QuickStartPage(vm: AppViewModel, onBack: () -> Unit) {
             ToggleRow("Quick Play", if (Public.dev) "Play from the addons below with the quality selector." else "Starts videos instantly from the fastest servers.", isOn(v("qsOn"))) { vm.setText("qsOn", if (it) "yes" else "no") }
         }
 
-        if (!BuildConfig.IS_TV) QuickCsSection(vm)
+        if (!BuildConfig.IS_TV) SourceModeCard(vm)
+        if (!BuildConfig.IS_TV && vm.pluginMode()) {
+            QuickCsSection(vm, "qsCs", "Quick Play plugins",
+                "Tick the plugins Quick Play uses. Their links are ranked with your quality, audio and picture filters; the best one is opened in the background so Play starts at once.")
+            QuickCsSection(vm, "qs4k", "Upgrade to 4K",
+                "Tick the plugins whose 4K links \"Upgrade to 4K\" may use while a video plays. The best 4K link is readied in the background; the button shows once it can start instantly.")
+        }
         if (!Public.dev) Text("Xstream picks the fastest servers for Quick Play for you — just switch it on or off.",
             Modifier.padding(horizontal = 24.dp, vertical = 8.dp), fontSize = 13.sp, color = Muted)
-        if (Public.dev) {
+        if (Public.dev && !vm.pluginMode()) {
         SectionLabel("Quick Start addons (group 1)")
         SettingsCard {
             if (!Public.dev && addons.any { Public.isDevChoice(it) }) Text("The built-in quick server always plays first. Addons you tick here join it.", Modifier.padding(20.dp), color = Muted)
@@ -202,11 +208,11 @@ internal fun DetailPageSettings(vm: AppViewModel, onBack: () -> Unit) {
  * within 20 seconds plays first, else MovieBox.
  */
 @Composable
-private fun QuickCsSection(vm: AppViewModel) {
+private fun QuickCsSection(vm: AppViewModel, key: String, title: String, desc: String) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val texts by vm.texts.collectAsStateWithLifecycle()
-    val picked = qsCsParse(texts["qsCs"])
-    fun save(s: Set<String>) = vm.setText("qsCs", s.joinToString("\n"))
+    val picked = qsCsParse(texts[key])
+    fun save(s: Set<String>) = vm.setText(key, s.joinToString("\n"))
     val repos by CsPlugins.repos.collectAsStateWithLifecycle()
     val catalog by CsPlugins.catalog.collectAsStateWithLifecycle()
     val enabled by CsPlugins.enabled.collectAsStateWithLifecycle()
@@ -225,10 +231,9 @@ private fun QuickCsSection(vm: AppViewModel) {
         loading = false
     }
     var open by remember { mutableStateOf<Set<String>>(emptySet()) }
-    SectionLabel("CloudStream")
+    SectionLabel(title)
     SettingsCard {
-        Text("Tick the plugins Quick Play should try first. Their best quality plays if it's ready within 20 seconds of opening a title; otherwise MovieBox plays.",
-            Modifier.padding(horizontal = 20.dp, vertical = 12.dp), fontSize = 13.sp, color = Muted)
+        Text(desc, Modifier.padding(horizontal = 20.dp, vertical = 12.dp), fontSize = 13.sp, color = Muted)
         val on = catalog.filter { it.key in enabled }
         if (on.isEmpty()) Text("No CloudStream plugins switched on. Add them in Settings › Plugins › CloudStream.", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), fontSize = 14.sp, color = Muted)
         repos.filter { r -> on.any { it.repo == r.url } }.forEach { r ->

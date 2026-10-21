@@ -133,12 +133,8 @@ fun SourcesScreen(
         all = emptyList(); done = false
         vm.streamsFlow(meta.type, target.videoId).collect { (l, d) -> all = l; done = d }
     }
-    // Xstream: CloudStream and Nuvio plugins, two extra sections (hidden while they have nothing).
-    val pctx = androidx.compose.ui.platform.LocalContext.current
-    var csItems by remember(target.videoId) { mutableStateOf<List<StreamItem>>(emptyList()) }
-    var nuItems by remember(target.videoId) { mutableStateOf<List<StreamItem>>(emptyList()) }
-    LaunchedEffect(target.videoId, reload) { csItems = emptyList(); runCatching { PluginSources.cloudstream(pctx, meta, target.videoId).collect { csItems = it } } }
-    LaunchedEffect(target.videoId, reload) { nuItems = emptyList(); runCatching { PluginSources.nuvio(pctx, vm, meta, target.videoId).collect { nuItems = it } } }
+    // Xstream: plugin mode's links (CloudStream / Nuvio) come in the main list; they get their own chips. Addon mode: none.
+    fun isPlugin(s: StreamItem) = s.addonName.startsWith("CloudStream · ") || s.addonName.startsWith("Nuvio · ")
     var showAll by remember(target.videoId) { mutableStateOf(false) }
     val rules = remember(texts["tagRules"]) { parseTagRules(v("tagRules")) }
     // Links a slow-server addon (CNCVerse) finds later appear here by themselves (asked again every 5 s).
@@ -148,7 +144,9 @@ fun SourcesScreen(
     val f = remember(merged, rules, showAll) { if (showAll) Filtered(merged, 0, false, emptyList()) else applyTagRules(merged, rules) }
     // Three sections: Quick play (the built-in quick server), Backup play (the built-in HD servers, grouped by picture tag;
     // a group plays its best-ranked file) and Your addons (the ones you installed, with every detail).
-    val own = remember(f.list) { f.list.filter { !Public.isDevChoice(it.addonName) } }
+    val own = remember(f.list) { f.list.filter { !Public.isDevChoice(it.addonName) && !isPlugin(it) } }
+    val csItems = remember(f.list) { f.list.filter { it.addonName.startsWith("CloudStream · ") } }
+    val nuItems = remember(f.list) { f.list.filter { it.addonName.startsWith("Nuvio · ") } }
     val quickItems = remember(f.list) {
         f.list.filter { Public.isDevChoice(it.addonName) && vm.isQuick(it) }.distinctBy { it.stream.url }
             .sortedWith(compareBy<StreamItem> { vm.langRank(it) }.thenByDescending { it.effectiveRes() })

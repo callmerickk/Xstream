@@ -73,12 +73,29 @@ object PluginSources {
         return item
     }
 
+    /**
+     * Only 4K, 1080p and 720p (links that say a lower quality are dropped; unlabelled ones stay), and never hubcdn
+     * (HDHub4U / 4KHDHub carry those; they answer 403).
+     */
+    fun keep(s: StreamItem): Boolean {
+        val u = s.stream.url ?: return false
+        val host = runCatching { java.net.URI(u).host }.getOrNull().orEmpty().lowercase()
+        if ("hubcdn" in host || "hubcdn" in u.lowercase().substringBefore('?')) return false
+        val r = s.resolution()
+        return r == 0 || r >= 720
+    }
+
     /** One provider's links for this title; every step is logged (Activity log › CSPLAY) so a silent plugin can be traced. */
     suspend fun linksFrom(api: MainAPI, name: String, year: Int?, series: Boolean, season: Int?, episode: Int?,
                           onLink: ((StreamItem) -> Unit)? = null): List<StreamItem> {
         fun log(s: String) = ActLog.add("CSPLAY", "${api.name}: $s")
+        if (api.name in noSearch) return emptyList()          // a browse-only provider (Disney / Marvel shelves…)
         val found = try {
-            withDeadline(20_000) { try { api.search(name, 1)?.items ?: api.search(name) } catch (_: NotImplementedError) { api.search(name) } }
+            withDeadline(20_000) {
+                val paged = try { api.search(name, 1) } catch (_: NotImplementedError) { null }
+                paged?.items ?: try { api.search(name) } catch (e: NotImplementedError) { if (paged == null) throw e else null }
+            }
+        } catch (e: NotImplementedError) { noSearch += api.name; log("has no search — skipped from now on"); null
         } catch (e: Throwable) { log("search failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
         if (found == null) { log("search gave nothing (timeout or no answer)"); return emptyList() }
         val hit = bestMatch(found, name, year, series, season)
@@ -102,8 +119,9 @@ object PluginSources {
                     cb@{ l ->
                         if (l is com.lagradost.cloudstream3.utils.DrmExtractorLink) return@cb   // protected: can't play
                         if (isInstantDownloadName(l.name, l.source)) return@cb
-                        links += l
-                        val item = l.toItem(api.name, subs.toList()); out += item; onLink?.invoke(item)
+                        val item = l.toItem(api.name, subs.toList())
+                        if (!keep(item)) return@cb
+                        links += l; out += item; onLink?.invoke(item)
                     })
             }
         } catch (e: Throwable) { log("links failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)) }
@@ -157,6 +175,55 @@ object PluginSources {
                         launch { runCatching { linksFrom(api, meta.name, year, series, season, episode) { trySend(it) } } }
                     }
                 }
+            }
+        }
+    }.flowOn(kotlinx.coroutines.Dispatchers.IO)
+
+    private val noSearch = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val metas = java.util.concurrent.ConcurrentHashMap<String, Meta>()
+    /** The title's name and year (Cinemeta) — plugins search by name. */
+    suspend fun metaFor(type: String, id: String): Meta? {
+        val imdb = id.substringBefore(':')
+        metas[imdb]?.let { return it }
+        return runCatching { Api.fetch<MetaResponse>("$CINEMETA/meta/$type/$imdb.json").meta }.getOrNull()?.also { metas[imdb] = it }
+    }
+    fun noteMeta(m: Meta) { metas[m.id.substringBefore(':')] = m }
+
+    /**
+     * Plugin mode's stream source (replaces the addons everywhere): every switched-on CloudStream provider and Nuvio
+     * plugin, as (links so far, all answered?). [only] / [except] are link names ("CloudStream · Netflix").
+     */
+    fun modeStreams(vm: AppViewModel, type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
+        val ctx = vm.appContext
+        CsPlugins.init(ctx)
+        if (CsPlugins.catalog.value.isEmpty()) runCatching { CsPlugins.refresh() }
+        val meta = metaFor(type, id)
+        if (meta == null) { send(emptyList<StreamItem>() to true); return@channelFlow }
+        val series = type == "series"
+        val season = id.split(":").getOrNull(1)?.toIntOrNull()
+        val episode = id.split(":").getOrNull(2)?.toIntOrNull()
+        val year = meta.releaseInfo?.take(4)?.toIntOrNull()
+        fun wanted(name: String) = (only == null || name in only) && (except == null || name !in except)
+        val acc = ArrayList<StreamItem>(); val lock = Mutex()
+        val jobs = ArrayList<kotlinx.coroutines.Job>()
+        coroutineScope {
+            val regs = CsPlugins.enabledEntries().map { e -> async { runCatching { CsPlugins.ensureLoaded(e) }.getOrNull() } }.awaitAll().filterNotNull()
+            val apis = regs.flatMap { it.apis }.filter { wanted(csDisplayName(it.name)) }
+            val nuvio = if (only != null) emptyList() else runCatching { NuvioPlugins.init(ctx); NuvioPlugins.enabledScrapers() }.getOrDefault(emptyList())
+                .filter { s -> wanted("Nuvio · ${s.name}") && (s.types.isEmpty() || (if (series) ("tv" in s.types || "series" in s.types) else "movie" in s.types)) }
+            val total = apis.size + (if (nuvio.isEmpty()) 0 else 1)
+            if (total == 0) { send(emptyList<StreamItem>() to true); return@coroutineScope }
+            var done = 0
+            suspend fun add(l: List<StreamItem>) = lock.withLock {
+                acc += l.filter { keep(it) && !it.isInstantDownload() && !TitleMatch.wrong(it, type, id) }
+                done++
+                send(acc.distinctBy { it.stream.url } to (done == total))
+            }
+            apis.forEach { api -> jobs += launch { add(runCatching { linksFrom(api, meta.name, year, series, season, episode) }.getOrDefault(emptyList())) } }
+            if (nuvio.isNotEmpty()) jobs += launch {
+                val all = ArrayList<StreamItem>()
+                runCatching { nuvio(ctx, vm, meta, id).collect { all.clear(); all += it } }
+                add(all.toList())
             }
         }
     }.flowOn(kotlinx.coroutines.Dispatchers.IO)
