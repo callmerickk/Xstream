@@ -228,6 +228,8 @@ object Prepare {
                 var backup: StreamItem? = null
                 var shown = 0
                 while (isActive) {
+                    // Play was pressed on MovieBox: the player itself swaps to the Netflix-type link now.
+                    if (backup != null && !Preloader.has(id)) return@launch
                     list = live.value.first.ifEmpty { list }
                     val ranked = vm.rankedCandidates(list, level, quickOnly = false).filter { it.stream.url !in tried && it.stream.url !in bad }
                     val ott = ranked.filter { it.isOtt() && (backup == null || vm.langRank(it) <= vm.langRank(backup!!)) }
@@ -334,7 +336,8 @@ object Prepare {
      * in a fraction of a second (the player is handed over). Not on TV (memory).
      */
     private fun readyPlayer(vm: AppViewModel, ctx: Context, id: String, s: StreamItem, url: String, mime: String?, subs: List<Subtitle>, list: List<StreamItem>, resumeMs: Long, replace: Boolean = false) {
-        if (BuildConfig.IS_TV || (Preloader.has(id) && !replace)) return
+        // replace: only while the title page still holds the MovieBox one (Play may have taken it meanwhile).
+        if (BuildConfig.IS_TV || Preloader.has(id) != replace) return
         runCatching {
             StreamHeaders.use(url)
             val p = buildPlayer(ctx, vm, true)

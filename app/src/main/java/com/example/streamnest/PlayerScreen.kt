@@ -2303,6 +2303,7 @@ fun PlayerScreen(
         now = Now(url, subsNow, c.stream.name ?: c.addonName, c.addonName)
         vm.rememberLink(p.key, url, now?.source, now?.addon)
         if (speed != 1f) sp.setPlaybackSpeed(speed)
+        playing = sp.isPlaying; buffering = false
         return true
     }
     LaunchedEffect(firstFrame) {
