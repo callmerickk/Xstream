@@ -1,5 +1,6 @@
 package com.example.streamnest
 
+import androidx.compose.foundation.gestures.detectDragGestures
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ActivityInfo
@@ -686,7 +687,7 @@ fun PlayerScreen(
         if (firstFrame) Together.local(roomState(isPlayingNow(), ms))
         // A jump that lands back at the start: this server can't seek — remembered, it becomes a last backup.
         val u0 = now?.url
-        if (!usingVlc && u0 != null && ms > 90_000 && !(itemFor(u0)?.isPlaylist() ?: StreamType.quick(u0).let { it == StreamType.HLS || it == StreamType.DASH })) scope.launch {
+        if (!usingVlc && u0 != null && ms > 90_000 && StreamType.quick(u0).let { it != StreamType.HLS && it != StreamType.DASH }) scope.launch {
             delay(6_000)
             if (now?.url == u0 && !buffering && curPos() < ms - 60_000 && curPos() < 60_000) {
                 Ranker.markUnseekable(u0); PlayTiming.late("jump to ${fmtTime(ms)} landed at ${fmtTime(curPos())} — server can't seek")
@@ -3072,7 +3073,7 @@ fun PlayerScreen(
                         .offset { androidx.compose.ui.unit.IntOffset(dx.toInt(), dy.toInt()) }
                         .graphicsLayer { alpha = (1f - (dx - dy) / 500f).coerceIn(0f, 1f) }
                         .pointerInput(u) {
-                            androidx.compose.foundation.gestures.detectDragGestures(
+                            detectDragGestures(
                                 onDragEnd = {
                                     if (dx > 110f || dy < -110f) { upgrade = null; PlayTiming.late("Upgrade offer swiped away") }
                                     dx = 0f; dy = 0f
