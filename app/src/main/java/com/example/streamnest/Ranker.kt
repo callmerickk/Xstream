@@ -329,6 +329,8 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
             { if (it.isEmbedBackup()) 1 else 0 },
             // Plugin mode, Auto: Netflix / Prime Video / Hotstar / MPlayer first, MovieBox (DASH first) as the backup, then the rest.
             { if (plugTiers) it.ottTier() else 0 },
+            // M Player's DASH link often shows nothing (its HLS starts in ~1 s): HLS first for these.
+            { if (plugTiers && it.isOtt() && StreamType.mimeFor(it.stream.url.orEmpty(), it.fileName()) == StreamType.DASH) 1 else 0 },
             { tierCost(it) }, { HostStats.penalty(it.stream.url.orEmpty()) }, { langRank(it) }, { if (it.isHeavy()) 1 else 0 })
             .thenByDescending { Ranker.score(it) }.thenByDescending { it.effectiveRes() },
     )

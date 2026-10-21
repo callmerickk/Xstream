@@ -46,7 +46,10 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                     // Source Test running: the screen stays awake; afterwards your normal screen timeout applies again.
                     val srcTesting by SourceTester.running.collectAsState()
                     val labRunning by RefreshLab.running.collectAsState()
-                    val testing = srcTesting || labRunning
+                    // Plugin tests (CloudStream / Nuvio) too: a sleeping phone froze their timers (a "60 s" limit took 165 s).
+                    val csTesting by CsTester.running.collectAsState()
+                    val nuvioTesting by NuvioTester.running.collectAsState()
+                    val testing = srcTesting || labRunning || csTesting || nuvioTesting
                     val view = androidx.compose.ui.platform.LocalView.current
                     DisposableEffect(testing) { view.keepScreenOn = testing; onDispose { view.keepScreenOn = false } }
                     CrashNotice()

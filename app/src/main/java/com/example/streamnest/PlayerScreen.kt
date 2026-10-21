@@ -2081,6 +2081,31 @@ fun PlayerScreen(
     }
     /** Subtitles chosen by hand during this play (then the automatic defaults leave them alone). */
     var subsByHand by remember { mutableStateOf(false) }
+    // Netflix / Prime Video playlists name their audio tracks ("1. Czech, 2. German … 6. Hindi") without a language
+    // code, so the player started on the first one (Czech). Once per video: the track whose name matches your language
+    // order (or your remembered audio language) is picked.
+    var audioAutoFor by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(tracks, now?.url) {
+        val u = now?.url ?: return@LaunchedEffect
+        if (usingVlc || audioAutoFor == u) return@LaunchedEffect
+        val groups = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+        if (groups.size < 2) return@LaunchedEffect
+        audioAutoFor = u
+        val want = (listOfNotNull(vm.playerPref("audio").takeIf { it.isNotBlank() && it != "off" }?.let { runCatching { java.util.Locale(it).displayLanguage.lowercase() }.getOrNull() }) +
+            vm.qsLangs().filter { it != "original" }).distinct()
+        fun nameOf(f: androidx.media3.common.Format): String = ((f.label ?: "") + " " + (f.language?.takeIf { it != "und" }?.let { runCatching { java.util.Locale(it).displayLanguage }.getOrNull() } ?: "")).lowercase()
+        val cur = groups.firstNotNullOfOrNull { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it) } }
+        val curRank = cur?.let { f -> want.indexOfFirst { it in nameOf(f) } }?.takeIf { it >= 0 } ?: Int.MAX_VALUE
+        var best: Pair<Tracks.Group, Int>? = null; var bestRank = curRank
+        groups.forEach { g -> (0 until g.length).forEach { i ->
+            val r = want.indexOfFirst { it in nameOf(g.getTrackFormat(i)) }
+            if (r in 0 until bestRank && g.isTrackSupported(i)) { bestRank = r; best = g to i }
+        } }
+        val b = best ?: return@LaunchedEffect
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setOverrideForType(TrackSelectionOverride(b.first.mediaTrackGroup, b.second)).build()
+        PlayTiming.late("audio: picked ${b.first.getTrackFormat(b.second).label ?: "?"} (your language)")
+    }
     /** Is Hindi what you hear now? (the selected audio track, else the stream's language) */
     fun hindiAudioNow(): Boolean {
         val f = (if (tracks.groups.none { it.type == C.TRACK_TYPE_AUDIO }) player.currentTracks else tracks).groups

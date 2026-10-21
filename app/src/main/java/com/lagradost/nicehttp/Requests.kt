@@ -13,6 +13,7 @@ import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.File
@@ -45,8 +46,11 @@ class NiceResponse(val okhttpResponse: Response, val parser: ResponseParser?) {
     val isSuccessful: Boolean get() = okhttpResponse.isSuccessful
     val headers: Headers get() = okhttpResponse.headers
     val url: String get() = okhttpResponse.request.url.toString()
-    val body get() = okhttpResponse.body
-    val text: String by lazy { runCatching { okhttpResponse.body?.string() }.getOrNull().orEmpty() }
+    /** The body is read once (off the main thread); [body] hands out a fresh copy each time, so a plugin that reads
+     *  body.string() after .text (MovieBox v52, MovieBoxIN) no longer fails with "closed". */
+    private val raw: ByteArray by lazy { runCatching { okhttpResponse.body?.bytes() }.getOrNull() ?: ByteArray(0) }
+    val body: okhttp3.ResponseBody get() = raw.toResponseBody(okhttpResponse.body?.contentType())
+    val text: String by lazy { String(raw, okhttpResponse.body?.contentType()?.charset() ?: Charsets.UTF_8) }
     /** Same as [text] (CloudStream reads big pages this way). */
     val textLarge: String get() = text
     val document: Document by lazy { Jsoup.parse(text, url) }
