@@ -217,7 +217,7 @@ private fun realKeys(e: androidx.compose.ui.input.key.KeyEvent): Boolean {
         ((src and android.view.InputDevice.SOURCE_KEYBOARD) == android.view.InputDevice.SOURCE_KEYBOARD && (android.os.Build.VERSION.SDK_INT < 29 || dev.isExternal))
 }
 
-fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, cache: Boolean = !BuildConfig.IS_TV, meter: Boolean = !BuildConfig.IS_TV): ExoPlayer {
+fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, cache: Boolean = !BuildConfig.IS_TV, meter: Boolean = !BuildConfig.IS_TV, hold: HeaderHold? = null): ExoPlayer {
     // Smooth like Nuvio: start after ~1.5 s of video, then keep up to a minute ready (capped at ~200 MB so
     // big 4K files can't run the device out of memory), plus 20 s behind you so short rewinds don't reload.
     // TV sticks (Fire TV: 1 GB RAM) get a smaller budget: 64 MB, up to 40 s ahead and 10 s behind.
@@ -240,7 +240,7 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     // Streams go through the app's HTTP client (DNS setting) with the addon's request headers.
     val http = OkHttpDataSource.Factory(Api.http).setUserAgent(PlayerUserAgent)
     // Phones: read the saved video first (instant play), then the network. (Source Test measures without it.)
-    val dataSource = DefaultDataSource.Factory(ctx, withStreamHeaders(http)).let { if (cache) StreamCache.factory(ctx, it) else it }
+    val dataSource = DefaultDataSource.Factory(ctx, withStreamHeaders(http, hold)).let { if (cache) StreamCache.factory(ctx, it) else it }
     // The phone's own hardware decoders first (smoothest); FFmpeg only for audio the phone can't decode
     // (Dolby Digital / DD+ / DTS / TrueHD). Asynchronous decoder feeding = steadier frame pacing.
     // Dolby Vision on phones without a Dolby Vision decoder (like Nuvio): play the picture layer underneath with the
@@ -463,6 +463,10 @@ fun PlayerScreen(
     /** After "Upgrade": the MovieBox link it came from (if the HD file fails, playback goes back to it) and the HD link. */
     var upgradedFrom by remember { mutableStateOf<StreamItem?>(null) }
     var upgradedUrl by remember { mutableStateOf<String?>(null) }
+    // Plugin mode's quiet swap: the second player shown above the main picture (it fades in, then stays as the screen).
+    var shadow by remember { mutableStateOf<ExoPlayer?>(null) }
+    var shadowAlpha by remember { mutableFloatStateOf(0f) }
+    var ottSwapping by remember { mutableStateOf(false) }
     /** When the viewer last jumped: a 4K file loading after a jump gets a full minute before any fallback. */
     var seekedAt by remember { mutableLongStateOf(0L) }
     /** HD files made ready during a quick play (start + index saved): "4k" → 1 file, "fhd" → up to 2. Quality menu + upgrade. */
@@ -633,12 +637,13 @@ fun PlayerScreen(
     }
 
     // Faster start: begin playing after ~1 s of video instead of the default 2.5 s (Playback > Fast start).
-    val player = remember { pre?.player ?: buildPlayer(ctx, vm, isOn(texts["fastStart"] ?: Defaults["fastStart"] ?: "yes")) }
+    // A var: plugin mode's quiet swap (MovieBox → Netflix-type link) hands the screen over to a second player.
+    var player by remember { mutableStateOf(pre?.player ?: buildPlayer(ctx, vm, isOn(texts["fastStart"] ?: Defaults["fastStart"] ?: "yes"))) }
 
     // ───── Sound (Audio boost / Night mode), Sleep timer, Picture-in-picture ─────
     var boost by remember { mutableStateOf(vm.playerPref("boost") == "yes") }
     var night by remember { mutableStateOf(vm.playerPref("night") == "yes") }
-    LaunchedEffect(boost, night) { SoundFx.apply(player.audioSessionId, boost, night) }
+    LaunchedEffect(boost, night, player) { SoundFx.apply(player.audioSessionId, boost, night) }
     DisposableEffect(Unit) { onDispose { SoundFx.release() } }
     /** Sleep timer: stops at this time (elapsed realtime), or at the end of this video. */
     var sleepAt by remember { mutableStateOf<Long?>(null) }
@@ -1162,7 +1167,7 @@ fun PlayerScreen(
     }
 
     // Start straight away when a link was given; the player is preparing while the loading screen shows.
-    LaunchedEffect(player) {
+    LaunchedEffect(Unit) {
         if (pre != null) {
             ways = waysFor(pre.url, "exo"); wayIdx = 0
             buffering = player.playbackState == Player.STATE_BUFFERING
@@ -1777,6 +1782,8 @@ fun PlayerScreen(
     LaunchedEffect(everPictured, p.key) {
         if (!everPictured || BuildConfig.IS_TV || usingVlc || !vm.pluginMode()) return@LaunchedEffect
         val names = vm.qs4kNames().ifEmpty { return@LaunchedEffect }
+        // The Netflix-type swap comes first (three downloads at once would slow all of them).
+        delay(300); while (ottSwapping) delay(500)
         val cur0 = now?.url?.let { itemFor(it) }
         if (cur0 != null && cur0.effectiveRes() >= 2160) return@LaunchedEffect
         PlayTiming.late("4K: asking ${names.size} plugin(s) for a 4K link")
@@ -2227,6 +2234,108 @@ fun PlayerScreen(
         Snack.show("The HD file stopped — back to the quick server")
         switchTo(from, "Back to the quick server")
         return true
+    }
+    // ───── Plugin mode: playing MovieBox because Netflix / Prime Video / Hotstar / MPlayer weren't ready yet ─────
+    // Their links keep loading in the background; the best one (same or better language) opens in a second, silent
+    // player a few seconds ahead, paused on that exact frame. When the video reaches that frame the second player starts,
+    // fades in over 0.3 s (sound crossfades too) and simply becomes the player — no loading, no message. If the two
+    // copies aren't the same length (another cut), there's no swap: "Upgrade quality" pops up instead.
+    var ottSwapStarted by remember(p.key) { mutableStateOf(false) }
+    suspend fun ottSwapTo(c: StreamItem): Boolean {
+        val url = c.stream.url ?: return false
+        val name = c.addonName.removePrefix("CloudStream · ")
+        val hold = HeaderHold(StreamHeaders.forUrl(url))
+        val sp = buildPlayer(ctx, vm, true, hold = hold)
+        sp.setSeekParameters(androidx.media3.exoplayer.SeekParameters.EXACT)
+        sp.volume = 0f
+        var failed = false
+        sp.addListener(object : Player.Listener { override fun onPlayerError(error: PlaybackException) { failed = true } })
+        val mime = StreamType.mimeFor(url, c.fileName())
+        val subsNow = withSubs(c, now?.subs.orEmpty())
+        val lead = 8_000L
+        var target = curPos() + lead
+        sp.setMediaItem(MediaItem.Builder().setUri(url).apply { if (mime != null) setMimeType(mime) }.setSubtitleConfigurations(subtitleConfigs(subsNow)).build(), target)
+        sp.playWhenReady = false
+        sp.prepare()
+        shadow = sp; shadowAlpha = 0f
+        fun drop() { if (shadow === sp) { shadow = null; shadowAlpha = 0f }; runCatching { sp.release() } }
+        suspend fun ready(ms: Long): Boolean {
+            val t0 = SystemClock.elapsedRealtime()
+            while (SystemClock.elapsedRealtime() - t0 < ms) { if (failed) return false; if (sp.playbackState == Player.STATE_READY) return true; delay(100) }
+            return false
+        }
+        PlayTiming.late("swap: opening $name quietly at ${fmtTime(target)}")
+        if (!ready(25_000)) { PlayTiming.late("swap: $name didn't open in time"); drop(); return false }
+        val dMain = curDur(); val dSh = sp.duration
+        if (dMain <= 0 || dSh <= 0 || kotlin.math.abs(dMain - dSh) > 1_500) {
+            PlayTiming.late("swap: lengths differ (${fmtTime(dMain)} vs ${fmtTime(dSh)}) — Upgrade quality offered instead")
+            drop()
+            if (upgrade == null) { upgrade = UpgradeOffer(c, false); upLeft = 30 }
+            return true
+        }
+        // Wait for the picture to reach the second player's frame; aim again if you jumped or paused for long.
+        while (true) {
+            if (failed) { drop(); return false }
+            val n = now ?: run { drop(); return true }
+            if (usingVlc || itemFor(n.url)?.isOtt() == true) { drop(); return true }
+            val pos = curPos()
+            if (pos > target - 40 && pos < target + 250 && isPlayingNow()) break
+            if (pos >= target + 250 || pos < target - 90_000) {
+                target = pos + lead
+                sp.seekTo(target)
+                if (!ready(15_000)) { drop(); return false }
+                continue
+            }
+            delay(((target - 40 - pos) / 2).coerceIn(5, 100))
+        }
+        // Go: the second player starts and fades in, the sound crossfades, then it IS the player.
+        sp.play()
+        val old = player
+        repeat(10) { i -> val f = (i + 1) / 10f; shadowAlpha = f; sp.volume = f; runCatching { old.volume = 1f - f }; delay(30) }
+        PlayTiming.late("swap: now playing $name (frame-matched, ${kotlin.math.abs(curPos() - (sp.currentPosition))} ms apart)")
+        hold.map = null
+        StreamHeaders.active = StreamHeaders.forUrl(url)
+        known = (known + c).distinctBy { it.stream.url }
+        sp.setSeekParameters(androidx.media3.exoplayer.SeekParameters(300_000L, 300_000L))
+        player = sp
+        runCatching { old.release() }
+        ways = waysFor(url, "exo", manifest = mime != null); wayIdx = 0
+        now = Now(url, subsNow, c.stream.name ?: c.addonName, c.addonName)
+        vm.rememberLink(p.key, url, now?.source, now?.addon)
+        if (speed != 1f) sp.setPlaybackSpeed(speed)
+        return true
+    }
+    LaunchedEffect(firstFrame) {
+        if (!firstFrame || BuildConfig.IS_TV || usingVlc || !vm.pluginMode() || ottSwapStarted) return@LaunchedEffect
+        val cur = now?.url?.let { itemFor(it) } ?: return@LaunchedEffect
+        if (cur.isOtt()) return@LaunchedEffect
+        ottSwapStarted = true
+        ottSwapping = true
+        scope.launch {
+            val pool = java.util.concurrent.ConcurrentHashMap<String, StreamItem>()
+            var done = false
+            val gather = scope.launch {
+                runCatching { vm.streamsFlow(type, p.key).collect { (l, d) -> vm.filtered(l).list.filter { it.isOtt() }.forEach { s -> s.stream.url?.let { u -> pool.putIfAbsent(u, s) } }; done = d } }
+                done = true
+            }
+            try {
+                val t0 = SystemClock.elapsedRealtime()
+                val triedOtt = HashSet<String>()
+                while (SystemClock.elapsedRealtime() - t0 < 120_000) {
+                    val playing = now?.url?.let { itemFor(it) } ?: cur
+                    if (playing.isOtt() || usingVlc) break
+                    val c = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false)
+                        .firstOrNull { it.stream.url !in triedOtt && vm.langRank(it) <= vm.langRank(playing) && !it.unplayableHere() }
+                    if (c == null) { if (done) break; delay(800); continue }
+                    triedOtt += c.stream.url!!
+                    if (ottSwapTo(c)) break
+                }
+            } finally {
+                gather.cancel()
+                shadow?.takeIf { it !== player }?.let { runCatching { it.release() }; shadow = null; shadowAlpha = 0f }
+                ottSwapping = false
+            }
+        }
     }
     /** An online subtitle: reload this link from the same second with it added first, and pick it. */
     fun addOnlineSub(sub: Subtitle) {
@@ -2748,7 +2857,7 @@ fun PlayerScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else AndroidView(
-                    factory = { c -> PlayerView(c).apply { useController = false; this.player = player; keepScreenOn = true; videoView = this } },
+                    factory = { c -> PlayerView(c).apply { useController = false; this.player = if (shadow === player) null else player; keepScreenOn = true; if (shadow == null) videoView = this } },
                     update = { v -> v.resizeMode = if (BuildConfig.IS_TV) AspectRatioFrameLayout.RESIZE_MODE_FIT else resize; v.subtitleView?.visibility = View.GONE },
                     // TV: most videos are 16:9 like the TV, so Crop / Stretch changed nothing. On TV they zoom past the
                     // black bars instead: Crop = 1.33× (fills a wide film), Stretch = taller only.
@@ -2756,6 +2865,27 @@ fun PlayerScreen(
                         when (aspectIdx) { 1 -> { scaleX = 1.33f; scaleY = 1.33f }; 2 -> { scaleX = 1f; scaleY = 1.33f }; else -> { scaleX = 1f; scaleY = 1f } }
                     } else Modifier.graphicsLayer { scaleX = cineScale; scaleY = cineScale }),
                 )
+                // Plugin mode's quiet swap: the second player's picture, above the main one (fades in, then stays).
+                val sh = shadow
+                if (sh != null && !usingVlc) key(sh) {
+                    AndroidView(
+                        factory = { c ->
+                            val outer = android.widget.FrameLayout(c)
+                            val arf = AspectRatioFrameLayout(c)
+                            val tv = android.view.TextureView(c)
+                            arf.addView(tv, android.widget.FrameLayout.LayoutParams(-1, -1))
+                            outer.addView(arf, android.widget.FrameLayout.LayoutParams(-1, -1, android.view.Gravity.CENTER))
+                            sh.setVideoTextureView(tv)
+                            fun aspect(vs: androidx.media3.common.VideoSize) { if (vs.width > 0 && vs.height > 0) arf.setAspectRatio(vs.width * vs.pixelWidthHeightRatio / vs.height) }
+                            aspect(sh.videoSize)
+                            sh.addListener(object : Player.Listener { override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) { aspect(videoSize) } })
+                            outer.tag = arf
+                            outer
+                        },
+                        update = { v -> (v.tag as? AspectRatioFrameLayout)?.resizeMode = resize; if (sh === player) videoView = v },
+                        modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shadowAlpha; scaleX = cineScale; scaleY = cineScale },
+                    )
+                }
                 // Subtitles live outside the video frame, so zoom / crop never moves or enlarges them.
                 // Like Netflix: while the controls are on screen the subtitles glide up above the timeline and buttons,
                 // and back down when they hide.

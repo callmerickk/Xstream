@@ -1,5 +1,6 @@
 package com.example.streamnest
 
+import kotlinx.coroutines.flow.first
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -373,8 +374,18 @@ fun App(vm: AppViewModel = viewModel()) {
         LaunchedEffect(profile?.id) {
             if (profile == null || !(vm.store("csWarm") == "yes" || vm.pluginMode())) return@LaunchedEffect
             runCatching { CsPlugins.init(vm.appContext); if (CsPlugins.catalog.value.isEmpty()) CsPlugins.refresh(); CsPlugins.warmAll() }
-            // Kept warm: woken again every 15 minutes while the app is open (sites close idle connections).
-            while (true) { kotlinx.coroutines.delay(15 * 60_000L); if (vm.pluginMode()) runCatching { CsPlugins.warmAll() } }
+            // Plugin mode: the first two Continue Watching titles get their Quick Play links fetched now (kept 10 minutes),
+            // so tapping them starts at once.
+            suspend fun cwAhead() {
+                if (!vm.pluginMode() || vm.qsAddons().isEmpty()) return
+                vm.progress.value.filter { !(it.durationMs > 0 && it.positionMs >= it.durationMs * 0.95) }.take(2).forEach { pr ->
+                    val type = if (pr.key.contains(":")) "series" else "movie"
+                    runCatching { kotlinx.coroutines.withTimeoutOrNull(40_000) { vm.streamsFlow(type, pr.key, only = vm.qsAddons()).first { it.second } } }
+                }
+            }
+            cwAhead()
+            // Kept warm: woken again every 9 minutes while the app is open (sites close idle connections; links expire).
+            while (true) { kotlinx.coroutines.delay(9 * 60_000L); if (vm.pluginMode()) { runCatching { CsPlugins.warmAll() }; cwAhead() } }
         }
         // Xstream: no "Connect PenguPlay" prompt — servers come from Developer's Corner.
         val askWl by WatchlistAsk.pending.collectAsState()

@@ -8,6 +8,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -64,7 +65,9 @@ object Prepare {
         job = vm.viewModelScope.launch {
             // CloudStream won the race: MovieBox's preparing goes on quietly (backup links) but no longer changes the status.
             csWonFor = null
-            fun put(p: Prepared) { if (csWonFor != id) state.value = p }
+            /** Plugin mode: a Netflix-type link being checked while MovieBox is already ready keeps the "Ready" showing. */
+            var quiet = false
+            fun put(p: Prepared) { if (csWonFor != id && !(quiet && !p.ready)) state.value = p }
             // The 20-second CloudStream race is off: plugin mode's Quick Play is plugins already, addon mode never loads them.
             val csPicked = emptySet<String>()
             if (csPicked.isNotEmpty() && meta != null) launch {
@@ -120,7 +123,7 @@ object Prepare {
             launch {
                 delay(10_000)
                 val st = state.value
-                if (st != null && st.key == id && !st.ready && !st.status.startsWith("Saving")) {
+                if (st != null && st.key == id && !st.ready && !st.status.startsWith("Saving") && !vm.pluginMode()) {
                     PlayTiming.mark("nothing ready 10 s after the title page opened — CNCVerse asked again")
                     SlowAddons.poll(vm, type, id)
                 }
@@ -128,7 +131,8 @@ object Prepare {
             val subsJob = async { withTimeoutOrNull(2500) { runCatching { vm.subtitles(type, id) }.getOrDefault(emptyList()) }.orEmpty() }
             // Wait for the first links, then up to 2 s more so a better addon can still answer.
             val plugMode = vm.pluginMode()
-            val first = withTimeoutOrNull(if (plugMode) 45_000 else 30_000) { live.first { (l, d) -> d || (if (quick && !wideOn && !plugMode) l.any { it.isPlaylist() } else l.isNotEmpty()) } }
+            val ottFirst = plugMode
+            val first = if (ottFirst) null else withTimeoutOrNull(if (plugMode) 45_000 else 30_000) { live.first { (l, d) -> d || (if (quick && !wideOn && !plugMode) l.any { it.isPlaylist() } else l.isNotEmpty()) } }
             // A link in your top language that starts at once (MovieBox playlist) needs no waiting; otherwise ~1 s more.
             val instant = live.value.first.any { vm.langRank(it) == 0 && it.isPlaylist() && (!quick || vm.isQuick(it)) }
             // Plugin mode: a few seconds more so the best quality (not just the fastest plugin) goes first.
@@ -141,7 +145,7 @@ object Prepare {
             var lastWhy = ""
 
             /** Checks one link and saves its start. true = ready. */
-            suspend fun attempt(s: StreamItem, i: Int, n: Int, known: LinkProbe? = null): Boolean {
+            suspend fun attempt(s: StreamItem, i: Int, n: Int, known: LinkProbe? = null, replace: Boolean = false): Boolean {
                 val url = s.stream.url ?: return false
                 val label = if (Public.dev) "${Ranker.labelOf(Ranker.groupKey(s)).substringAfter(" · ", "")} · ${qualityName(s.resolution())}" else qualityName(s.resolution())
                 put(Prepared(id, "Checking ${i + 1}/$n · $label", list = list, subs = subs))
@@ -159,7 +163,7 @@ object Prepare {
                 val mime = StreamType.mimeFor(url, s.fileName())
                 if (mime != null) {
                     put(Prepared(id, "Ready · streaming playlist · $label", 1f, ready = true, item = s, list = list, subs = subs))
-                    readyPlayer(vm, ctx, id, s, url, mime, subs, list, resumeMs)
+                    readyPlayer(vm, ctx, id, s, url, mime, subs, list, resumeMs, replace)
                     return true
                 }
                 if (!pr.seekable) { lastWhy = "file can't be jumped inside (not seekable)"; bad += url; return false }
@@ -190,7 +194,7 @@ object Prepare {
                 val savedNow = java.util.concurrent.atomic.AtomicLong(0)
                 val saver = async {
                     // 4 pieces at once; the first piece done = enough to start.
-                    StreamCache.saveParts(ctx, url, startByte, len, 4, onHeadDone = { enough.set(true) }) { f ->
+                    StreamCache.saveParts(ctx, url, startByte, len, 8, onHeadDone = { enough.set(true) }) { f ->
                         val done = (len * f).toLong()
                         savedNow.set(done)
                         if (!enough.get()) put(Prepared(id, "Saving ${(f * 100).toInt()}% · $label", f, item = s, list = list, subs = subs, saved = done, target = len))
@@ -201,14 +205,14 @@ object Prepare {
                     saver.cancel()
                     put(Prepared(id, "⚡ Ready to play instantly · ${if (big) "15 s" else "1:00"} start saved · $label", 1f, ready = true,
                         item = s, list = list, subs = subs, saved = savedNow.get(), target = len))
-                    readyPlayer(vm, ctx, id, s, url, null, subs, list, resumeMs)
+                    readyPlayer(vm, ctx, id, s, url, null, subs, list, resumeMs, replace)
                     return true
                 }
                 val err = runCatching { saver.await() }.getOrNull()
                 if (err == null) {
                     put(Prepared(id, "⚡ Ready to play instantly · ${if (big) "15 s" else "1:00"} saved · $label", 1f, ready = true,
                         item = s, list = list, subs = subs, saved = len, target = len))
-                    readyPlayer(vm, ctx, id, s, url, null, subs, list, resumeMs)
+                    readyPlayer(vm, ctx, id, s, url, null, subs, list, resumeMs, replace)
                     return true
                 }
                 lastWhy = err
@@ -216,10 +220,49 @@ object Prepare {
                 return false
             }
 
+            // ── Plugin mode: Netflix / Prime Video / Hotstar / MPlayer first. MovieBox (DASH first) is readied at once as the
+            //    backup; a Netflix-type link that gets ready afterwards (up to 30 s) replaces it before Play. Played on
+            //    MovieBox anyway: the player swaps to the Netflix-type link at the same frame once it's loaded.
+            if (ottFirst) {
+                val t0 = System.currentTimeMillis()
+                var backup: StreamItem? = null
+                var shown = 0
+                while (isActive) {
+                    list = live.value.first.ifEmpty { list }
+                    val ranked = vm.rankedCandidates(list, level, quickOnly = false).filter { it.stream.url !in tried && it.stream.url !in bad }
+                    val ott = ranked.filter { it.isOtt() && (backup == null || vm.langRank(it) <= vm.langRank(backup!!)) }
+                    if (ott.isNotEmpty() && shown == 0) { shown = 1; PlayTiming.mark("plugin: first Netflix-type link in ${System.currentTimeMillis() - t0} ms (${ott.size})") }
+                    var won = false
+                    for ((i, s) in ott.take(3).withIndex()) {
+                        s.stream.url?.let { tried += it }
+                        quiet = backup != null
+                        if (attempt(s, i, minOf(3, ott.size), replace = backup != null)) { won = true; break }
+                    }
+                    quiet = false
+                    if (won) {
+                        PlayTiming.mark("plugin: Netflix-type link ready on the title page in ${System.currentTimeMillis() - t0} ms")
+                        return@launch
+                    }
+                    if (backup == null && ott.isEmpty()) {
+                        for (s in ranked.filter { it.isMovieBox() }.take(3)) {
+                            s.stream.url?.let { tried += it }
+                            if (attempt(s, 0, 1)) { backup = s; PlayTiming.mark("plugin: MovieBox backup ready in ${System.currentTimeMillis() - t0} ms"); break }
+                        }
+                    }
+                    val done = live.value.second
+                    val noMoreOtt = done && ranked.none { it.isOtt() }
+                    if (System.currentTimeMillis() - t0 > 30_000 || (noMoreOtt && (backup != null || ranked.none { it.isMovieBox() }))) break
+                    val size0 = live.value.first.size
+                    withTimeoutOrNull(1_000) { live.first { it.first.size != size0 || (it.second && !done) } }
+                }
+                if (backup != null) return@launch
+                list = live.value.first.ifEmpty { list }
+            }
+
             while (true) {
                 list = live.value.first.ifEmpty { list }
                 val all0 = vm.rankedCandidates(list, level, quickOnly = useQuick).filter { it.stream.url !in tried }
-                    .let { if (quick && level == "auto") vm.movieBoxFirst(it) else it }
+                    .let { if (quick && level == "auto" && !plugMode) vm.movieBoxFirst(it) else it }
                     .let { l -> if (quick && !wideOn && !plugMode) l.filter { it.isPlaylist() } else l }
                 // MovieBox MP4s through PenguPlay's server: only when nothing else can play.
                 val cands = (all0.filter { !it.slowMp4() }.ifEmpty { all0 }).take(5)
@@ -250,7 +293,7 @@ object Prepare {
                         }
                         // Prepared another addon's file because quick play was slow: if MovieBox's instant playlist
                         // still answers before Play, it takes over (it starts like Netflix and plays more smoothly).
-                        if (quick && !vm.isQuick(s)) {
+                        if (quick && !vm.isQuick(s) && !plugMode) {
                             val mb = withTimeoutOrNull(90_000) {
                                 live.first { (l, _) -> l.any { it.isMovieBox() && it.isPlaylist() && vm.langRank(it) <= vm.langRank(s) && it.stream.url !in tried } }
                             }?.first?.filter { it.isMovieBox() && it.isPlaylist() && vm.langRank(it) <= vm.langRank(s) && it.stream.url !in tried }?.minByOrNull { vm.langRank(it) }
@@ -290,8 +333,8 @@ object Prepare {
      * Phones: once the start is saved, a player opens it in the background and waits, paused, so Play shows the video
      * in a fraction of a second (the player is handed over). Not on TV (memory).
      */
-    private fun readyPlayer(vm: AppViewModel, ctx: Context, id: String, s: StreamItem, url: String, mime: String?, subs: List<Subtitle>, list: List<StreamItem>, resumeMs: Long) {
-        if (BuildConfig.IS_TV || Preloader.has(id)) return
+    private fun readyPlayer(vm: AppViewModel, ctx: Context, id: String, s: StreamItem, url: String, mime: String?, subs: List<Subtitle>, list: List<StreamItem>, resumeMs: Long, replace: Boolean = false) {
+        if (BuildConfig.IS_TV || (Preloader.has(id) && !replace)) return
         runCatching {
             StreamHeaders.use(url)
             val p = buildPlayer(ctx, vm, true)

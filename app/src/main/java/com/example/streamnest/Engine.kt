@@ -62,15 +62,24 @@ object StreamHeaders {
      */
     fun forRequest(uri: Uri): Map<String, String> = byUrl[uri.toString()] ?: active.takeIf { it.isNotEmpty() } ?: uri.host?.let { byHost[it] }.orEmpty()
 
+    fun exact(uri: Uri): Map<String, String>? = byUrl[uri.toString()]
+
     /** Headers for a link's own requests and its pieces, set while it is prepared, tested or played. */
     fun use(url: String) { active = forUrl(url) }
 }
 
+/**
+ * Headers of a second player that plays at the same time as the main one (plugin mode's quiet Netflix-type swap): its
+ * own link's headers until it becomes the main player ([map] = null → the usual rules).
+ */
+class HeaderHold(@Volatile var map: Map<String, String>?)
+
 /** Wraps the HTTP source so every request carries the stream's headers. */
 @OptIn(UnstableApi::class)
-fun withStreamHeaders(upstream: DataSource.Factory): DataSource.Factory =
+fun withStreamHeaders(upstream: DataSource.Factory, hold: HeaderHold? = null): DataSource.Factory =
     ResolvingDataSource.Factory(upstream) { spec ->
-        val h = StreamHeaders.forRequest(spec.uri)
+        val own = hold?.map
+        val h = if (own != null) StreamHeaders.exact(spec.uri) ?: own else StreamHeaders.forRequest(spec.uri)
         if (h.isEmpty()) spec else spec.withAdditionalHeaders(h)
     }
 

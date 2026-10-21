@@ -13,6 +13,15 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.4.9 beta", "21 Oct 2026", "Netflix-type streams first, with a seamless switch", listOf(
+        "Plugin mode: Netflix, Prime Video, Hotstar and MPlayer streams come first; MovieBox is only the instant backup",
+        "If you press Play before they're ready, MovieBox starts at once — then, as soon as the Netflix-type stream is loaded, it takes over at the same frame with a soft crossfade (no loading, no message)",
+        "If the two versions don't line up exactly, an \"Upgrade quality\" button appears instead, so you never see a jump",
+        "Upgrade to 4K gets ready after that, then pops up as before",
+        "Your first two Continue Watching titles are fetched in the background, so they start instantly",
+        "Videos are readied with 8 downloads at once (was 4)",
+        "Removing a series from Continue Watching now also clears its episode progress — it starts from the beginning next time",
+    )),
     Release("0.4.8 beta", "21 Oct 2026", "Faster plugin play, smarter 4K and a new quality menu", listOf(
         "Plugin mode: your Quick Play plugins stay warm all the time, and the title page readies the first picture so Play starts at once",
         "Plugin mode: the 4K plugins start working as soon as a title opens; Upgrade to 4K appears the moment it's ready — swipe it right or up to dismiss",
@@ -267,6 +276,16 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.4.9 beta", "21 Oct 2026", "OTT-first plugin mode, frame-matched swap, CW prefetch", listOf(
+        "Ranker: plugin mode + Auto → ottTier (Netflix/Prime/Hotstar/MPlayer 0, MovieBox 1, rest 2); MovieBox order mbKind (DASH, HLS, MP4)",
+        "qsAddons (plugin mode) + MB_ANY: MovieBox plugins always in Quick Play; isQuick counts MovieBox in plugin mode",
+        "Prepare (plugin mode): OTT links tried first; MovieBox readied at once as backup; an OTT link ready within 30 s replaces it (quiet put, readyPlayer replace); movieBoxFirst / MovieBox takeover / CNCVerse 10 s poll off in plugin mode",
+        "Player: player is a state var; ottSwapTo: second ExoPlayer (HeaderHold own headers, EXACT seek) on a TextureView overlay, prepared 8 s ahead; duration diff > 1.5 s → UpgradeOffer instead; at the frame: play + 300 ms alpha/volume crossfade, then it becomes the player (old released)",
+        "4K effect waits while the swap runs",
+        "Screens: first 2 unfinished CW titles prefetched (plugin Quick Play) at start and every 9 min with warmAll",
+        "removeProgress: also epProgress of the series, done marks, remembered links",
+        "Prepare saveParts 8 pieces (cap 8); PluginSources logs per-plugin timing (ActLog PLUGIN)",
+    )),
     Release("0.4.8 beta", "21 Oct 2026", "Warm plugins, 4K prefetch, vertical quality bubble, seek tests", listOf(
         "Screens: warmAll at start + every 15 min in plugin mode; PluginSources.shared(api,id) Deferred cache (10 min) so title-page and player share answers; forget(id) on forgetStreams",
         "Detail: plugin mode prefetches qs4kNames via streamsFlow(only) on open",

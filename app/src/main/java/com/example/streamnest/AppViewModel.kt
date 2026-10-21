@@ -458,8 +458,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         // Xstream: removing a title from Continue Watching also takes it out of My Space's charts (and its episodes).
         WatchLog.remove(appContext, current.value?.id, key)
         progress.value = progress.value.filter { it.key != key }
-        lib.edit().putString("progress", Api.json.encodeToString(progress.value)).apply()
+        val ed = lib.edit().putString("progress", Api.json.encodeToString(progress.value))
+        // A series: every episode's place and watched mark goes too, so opening it again starts from the beginning.
+        val base = key.substringBefore(":")
+        val epKeys = epProgress.value.keys.filter { it.substringBefore(":") == base }
+        if (epKeys.isNotEmpty()) {
+            epProgress.value = epProgress.value - epKeys.toSet()
+            ed.putString("eprog", Api.json.encodeToString(epProgress.value))
+        }
+        val doneEps = doneKeys.value.filter { it == key || (it.contains(":") && it.substringBefore(":") == base) }
+        if (doneEps.isNotEmpty()) { doneKeys.value = doneKeys.value - doneEps.toSet(); ed.putStringSet("done", doneKeys.value) }
+        (epKeys + key).forEach { ed.remove("link_$it") }
+        ed.apply()
         markCur("prog")
+        if (epKeys.isNotEmpty()) markCur("eprog")
+        if (doneEps.isNotEmpty()) markCur("done")
     }
 
     fun clearHistory() {

@@ -223,7 +223,7 @@ object PluginSources {
         val season = id.split(":").getOrNull(1)?.toIntOrNull()
         val episode = id.split(":").getOrNull(2)?.toIntOrNull()
         val year = meta.releaseInfo?.take(4)?.toIntOrNull()
-        fun wanted(name: String) = (only == null || name in only) && (except == null || name !in except)
+        fun wanted(name: String) = (only == null || name in only || (MB_ANY in only && name.contains("moviebox", true))) && (except == null || name !in except)
         val acc = ArrayList<StreamItem>(); val lock = Mutex()
         val jobs = ArrayList<kotlinx.coroutines.Job>()
         coroutineScope {
@@ -239,7 +239,13 @@ object PluginSources {
                 done++
                 send(acc.distinctBy { it.stream.url } to (done == total))
             }
-            apis.forEach { api -> jobs += launch { add(shared(api, id) { linksFrom(api, meta.name, year, series, season, episode) }) } }
+            val t0 = System.currentTimeMillis()
+            apis.forEach { api -> jobs += launch {
+                val l = shared(api, id) { linksFrom(api, meta.name, year, series, season, episode) }
+                // Timing of each plugin (Activity log → PLUGIN), to see which one is slow.
+                ActLog.add("PLUGIN", "${api.name}: ${l.size} links in ${System.currentTimeMillis() - t0} ms · $id")
+                add(l)
+            } }
             if (nuvio.isNotEmpty()) jobs += launch {
                 val all = ArrayList<StreamItem>()
                 runCatching { nuvio(ctx, vm, meta, id).collect { all.clear(); all += it } }

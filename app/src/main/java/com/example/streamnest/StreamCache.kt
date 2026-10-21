@@ -129,7 +129,7 @@ object StreamCache {
     suspend fun saveParts(ctx: Context, url: String, start: Long, length: Long, parts0: Int, onHeadDone: (() -> Unit)?, onProgress: (Float) -> Unit): String? =
         withContext(Dispatchers.IO) {
             val host = runCatching { Uri.parse(url).host }.getOrNull().orEmpty()
-            val parts = if (!parallel || host in singleHosts || length < 4L * 1024 * 1024) 1 else parts0.coerceIn(1, 6)
+            val parts = if (!parallel || host in singleHosts || length < 4L * 1024 * 1024) 1 else parts0.coerceIn(1, 8)
             val piece = (length + parts - 1) / parts
             val got = LongArray(parts)
             val headSent = java.util.concurrent.atomic.AtomicBoolean(false)

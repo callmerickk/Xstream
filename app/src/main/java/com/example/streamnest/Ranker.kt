@@ -320,12 +320,15 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
     val pool = list.filter { it.stream.url != null && (!quickOnly || isQuick(it)) && !Ranker.isDead(it) && !(testedOnly && Ranker.keepsFailing(it)) }
         .distinctBy { it.stream.url }
     val target = AllQualityLevels.firstOrNull { it.id == level }?.res ?: 0
+    val plugTiers = pluginMode() && target == 0
     // Auto: Full HD (TV and phone start fast), else the best below, else anything.
     val targetTier = if (target == 0) 3 else Ranker.tier(target)
     fun tierCost(s: StreamItem): Int { val t = Ranker.tier(s.effectiveRes()); return if (t == targetTier) 0 else if (t < targetTier) targetTier - t else 10 + t }
     val sorted = pool.sortedWith(
         compareBy<StreamItem>({ if (Ranker.score(it) <= -1000.0) 1 else 0 }, { if (Ranker.knownUnseekable(it)) 1 else 0 }, { if (it.unplayableHere()) 1 else 0 },
             { if (it.isEmbedBackup()) 1 else 0 },
+            // Plugin mode, Auto: Netflix / Prime Video / Hotstar / MPlayer first, MovieBox (DASH first) as the backup, then the rest.
+            { if (plugTiers) it.ottTier() else 0 },
             { tierCost(it) }, { HostStats.penalty(it.stream.url.orEmpty()) }, { langRank(it) }, { if (it.isHeavy()) 1 else 0 })
             .thenByDescending { Ranker.score(it) }.thenByDescending { it.effectiveRes() },
     )
@@ -336,13 +339,21 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
     val mb = slots.map { sorted[it] }.sortedWith(
         compareBy<StreamItem>({ if (Ranker.score(it) <= -1000.0) 1 else 0 }, { if (it.unplayableHere()) 1 else 0 }, { langRank(it) },
             // Streaming playlists (.mpd) start at once, the single .mp4 file needs opening first: playlists first.
-            { if (it.isPlaylist()) 0 else 1 }, { tierCost(it) })
+            { it.mbKind() }, { tierCost(it) })
             .thenByDescending { Ranker.score(it) }.thenByDescending { it.effectiveRes() },
     )
     val out = sorted.toMutableList()
     slots.forEachIndexed { i, at -> out[at] = mb[i] }
     return out
 }
+
+/** Netflix / Prime Video / Hotstar / MPlayer plugin links: plugin mode's first choice (they start like the apps). */
+fun StreamItem.isOtt(): Boolean = addonName.lowercase().let { n -> "netflix" in n || "prime" in n || "hotstar" in n || "mplayer" in n }
+/** 0 = Netflix-type, 1 = MovieBox, 2 = anything else. */
+fun StreamItem.ottTier(): Int = if (isOtt()) 0 else if (isMovieBox()) 1 else 2
+/** MovieBox order: DASH (.mpd) starts at once, then HLS, then the single MP4 file. */
+fun StreamItem.mbKind(): Int = when (StreamType.mimeFor(stream.url.orEmpty(), fileName())) {
+    StreamType.DASH -> 0; null -> 2; else -> 1 }
 
 /** Web-player embeds (Vidstack & co.): used only when nothing else plays, together with servers that can't seek. */
 fun StreamItem.isEmbedBackup(): Boolean {

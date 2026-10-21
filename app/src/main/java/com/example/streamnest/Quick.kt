@@ -104,11 +104,13 @@ fun AppViewModel.pluginMode(): Boolean = !BuildConfig.IS_TV && texts.value["srcM
 /** The name a CloudStream provider's links carry (StreamItem.addonName). */
 fun csDisplayName(provider: String) = "CloudStream · $provider"
 /** Quick Start: in plugin mode the picked CloudStream providers (by their link name), else the picked addons. */
-fun AppViewModel.qsAddons(): Set<String> = if (pluginMode()) qsCs().map { csDisplayName(it.substringAfter('#')) }.toSet()
+fun AppViewModel.qsAddons(): Set<String> = if (pluginMode()) qsCs().map { csDisplayName(it.substringAfter('#')) }.toSet().let { s -> if (s.isEmpty()) s else s + MB_ANY }
     else (texts.value["qsAddons"] ?: "").split("|").filter { it.isNotBlank() }.toSet()
 /** Plugin mode: providers whose 4K links "Upgrade to 4K" may use ("pluginKey#provider", one per line). */
 fun AppViewModel.qs4k(): Set<String> = if (!pluginMode()) emptySet() else qsCsParse(texts.value["qs4k"])
 fun AppViewModel.qs4kNames(): Set<String> = qs4k().map { csDisplayName(it.substringAfter('#')) }.toSet()
+/** Plugin mode: Quick Play always includes the MovieBox plugins (the instant backup), whether ticked or not. */
+const val MB_ANY = "CloudStream · *moviebox*"
 /** CloudStream providers picked for Quick Play (Settings › Quick Start › CloudStream), as "pluginKey#provider". Phones only. */
 fun AppViewModel.qsCs(): Set<String> = if (BuildConfig.IS_TV) emptySet() else qsCsParse(texts.value["qsCs"])
 /** Saved one per line (plugin keys contain "|" themselves, so "|" can't separate them). */
@@ -118,7 +120,7 @@ fun AppViewModel.qsActive(): Boolean = isOn(texts.value["qsOn"] ?: "yes") && qsA
 fun AppViewModel.qsLangs(): List<String> = (texts.value["qsLangs"] ?: "hindi,english,original").split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
 /** Does this stream come from a Quick Start addon? */
-fun AppViewModel.isQuick(s: StreamItem) = s.addonName in qsAddons() &&
+fun AppViewModel.isQuick(s: StreamItem) = (pluginMode() && s.isMovieBox() && qsAddons().isNotEmpty()) || s.addonName in qsAddons() &&
     // An all-in-one addon (AIOStreams) in Quick Start: only its MovieBox links count for quick play (its other servers
     // mostly answer nothing in time); everything else of it stays in All sources.
     (!(s.addonName.contains("aio", ignoreCase = true) || addons.value.firstOrNull { it.label() == s.addonName }?.baseUrl?.contains("aiostreams", true) == true) || s.isMovieBox())
