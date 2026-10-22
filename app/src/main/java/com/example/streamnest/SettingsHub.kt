@@ -346,21 +346,58 @@ private fun HomeLayoutPage(vm: AppViewModel, onBack: () -> Unit) {
             }
         }
         if (rows.isEmpty()) Text("Rows appear here once Home has loaded.", Modifier.padding(horizontal = 24.dp), color = Muted)
-        else SettingsCard {
-            rows.forEachIndexed { i, shelf ->
-                if (i > 0) RowDivider(20.dp)
-                val visible = shelf.title !in hidden
-                Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(shelf.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${shelf.items.size} titles · ${if (visible) "Visible" else "Hidden"}", fontSize = 13.sp, color = Muted)
+        else {
+            val dev = Public.dev
+            // Developer: tick the rows every account should get on top of Home, then publish (your order is kept).
+            var push by remember { mutableStateOf(vm.pushedRows().map { it.src }.toSet()) }
+            var pubMsg by remember { mutableStateOf<String?>(null) }
+            val scope = rememberCoroutineScope()
+            if (dev) Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(CardShape).background(Color(0x14E50914))
+                .border(1.dp, Color(0x55E50914), CardShape).padding(16.dp)) {
+                Text("Publish rows for everyone", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Tick rows below (Push). They show first on every account's Home, in your order, locked; each account's own rows follow under them.",
+                    fontSize = 13.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
+                Button({
+                    val out = rows.filter { it.src != null && it.src in push }.map { PushedRow(it.title, it.src!!, it.items.firstNotNullOfOrNull { m -> m.posterShape }) }
+                    vm.setText("homeRows", Api.json.encodeToString(kotlinx.serialization.builtins.ListSerializer(PushedRow.serializer()), out))
+                    pubMsg = "Publishing ${out.size} row(s)…"
+                    scope.launch { pubMsg = DevDefaults.publish(vm) ?: "Published ${out.size} row(s) — every account gets them the next time a profile opens." }
+                }, Modifier.padding(top = 10.dp).fillMaxWidth().height(48.dp), shape = RoundedCornerShape(24.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)) { Text("Publish ${push.size} row(s)", fontWeight = FontWeight.Bold) }
+                pubMsg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Muted) }
+            }
+            if (!dev && rows.any { it.pinned }) Text("Rows with a lock are set by Xstream for everyone. Hold and drag your own rows to move them.",
+                Modifier.padding(horizontal = 24.dp, vertical = 4.dp), fontSize = 13.sp, color = Muted)
+            SettingsCard {
+                ReorderColumn(rows, key = { it.title }, locked = { it.pinned }, onMove = { f, to ->
+                    val own = rows.filter { !it.pinned }.map { it.title }.toMutableList()
+                    val pinnedN = rows.count { it.pinned }
+                    val x = own.removeAt(f - pinnedN); own.add((to - pinnedN).coerceIn(0, own.size), x)
+                    vm.setText("rowsOrder", own.joinToString("|"))
+                }) { shelf, i, dragging, handle ->
+                    val visible = shelf.pinned || shelf.title !in hidden
+                    Column(Modifier.background(if (dragging) Color(0xFF26262C) else Color.Transparent)) {
+                        if (i > 0) RowDivider(20.dp)
+                        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 4.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (shelf.pinned) Icon(Icons.Default.Lock, "Set by Xstream", Modifier.padding(end = 10.dp).size(18.dp), tint = Accent)
+                            Column(Modifier.weight(1f)) {
+                                Text(shelf.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${shelf.items.size} titles · ${if (shelf.pinned) "Set by Xstream" else if (visible) "Visible" else "Hidden"}", fontSize = 13.sp, color = Muted)
+                            }
+                            if (dev && shelf.src != null) {
+                                val on = shelf.src in push
+                                FilterChip(on, { push = if (on) push - shelf.src else push + shelf.src }, { Text("Push") })
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            if (!shelf.pinned) {
+                                Switch(visible, { on ->
+                                    val h = hidden.toMutableSet(); if (on) h.remove(shelf.title) else h.add(shelf.title)
+                                    vm.setText("rowsHidden", h.joinToString("|"))
+                                })
+                                DragGrip(handle)
+                            }
+                        }
                     }
-                    Switch(visible, { on ->
-                        val h = hidden.toMutableSet(); if (on) h.remove(shelf.title) else h.add(shelf.title)
-                        vm.setText("rowsHidden", h.joinToString("|"))
-                    })
-                    IconButton({ move(vm, rows, i, -1) }, enabled = i > 0) { Icon(Icons.Default.KeyboardArrowUp, "Move up") }
-                    IconButton({ move(vm, rows, i, 1) }, enabled = i < rows.lastIndex) { Icon(Icons.Default.KeyboardArrowDown, "Move down") }
                 }
             }
         }
@@ -716,8 +753,12 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
             Text("Built-in servers", fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text("The quick server and HD servers are set up and looked after by Xstream.", fontSize = 14.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
         }
-        addons.forEachIndexed { i, a ->
-            if (!devView && Public.isDevChoice(a)) return@forEachIndexed
+        val listed = addons.filter { devView || !Public.isDevChoice(it) }
+        ReorderColumn(listed, key = { it.baseUrl }, locked = { it.baseUrl == CINEMETA || it.baseUrl.contains("opensubtitles", true) }, holdWholeRow = false, onMove = { f, to ->
+            // Moved in the shown list: the same jump in the full list (hidden built-ins keep their places).
+            val a = listed[f]; val b = listed[to]
+            vm.moveAddon(a, addons.indexOf(b) - addons.indexOf(a))
+        }) { a, i, _, handle ->
             val on = vm.isAddonOn(a)
             Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(CardShape).background(CardBg).padding(18.dp)) {
                 val borrowed = isOn(texts["addonBorrowed:${a.baseUrl}"] ?: "no")
@@ -789,8 +830,7 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
                     }
                     val prevPinned = addons.getOrNull(i - 1)?.let { vm.isPinned(it) } == true
                     val nextPinned = addons.getOrNull(i + 1)?.let { vm.isPinned(it) } == true
-                    IconButton({ vm.moveAddon(a, -1) }, enabled = i > 0 && !fixed && (pinned || !prevPinned)) { Icon(Icons.Default.ArrowUpward, "Move up") }
-                    IconButton({ vm.moveAddon(a, 1) }, enabled = i < addons.lastIndex && !fixed && (!pinned || nextPinned)) { Icon(Icons.Default.ArrowDownward, "Move down") }
+                    if (!fixed) DragGrip(handle)
                     IconButton({ vm.reloadAddon(a) }) { Icon(Icons.Default.Refresh, "Refresh") }
                     if (a.baseUrl != CINEMETA) IconButton({ vm.removeAddon(a) }) { Icon(Icons.Default.Delete, "Remove", tint = Color(0xFFE86F8A)) }
                 }
@@ -970,7 +1010,7 @@ private fun UpdateLogPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -
             androidx.compose.ui.window.Dialog(
                 onDismissRequest = { found = null },
                 properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-            ) { UpdateDialog(i, onLater = { found = null }, onSkip = { Updater.skip(ctx, i); found = null }) { scope.launch { Updater.downloadAndInstall(ctx, i) } } }
+            ) { UpdateDialog(i, onLater = { found = null }, onSkip = { Updater.skip(ctx, i); found = null }, onBackground = { Updater.inBackground.value = true; if (Updater.progress.value == null) Updater.start(ctx, i); found = null }) { Updater.start(ctx, i) } }
         }
         Text("Installed: Version ${vm.appVersion}", Modifier.fillMaxWidth(), textAlign = TextAlign.Center, fontSize = 13.sp, color = Muted)
     }
@@ -1027,13 +1067,12 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
                 Text("Which picture comes first in every quality, the upgrade and Sources.", fontSize = 13.sp, color = Muted)
                 val order = (v("picPref").split("|").filter { it in PicturePref.ALL } + PicturePref.ALL).distinct()
                 fun save(l: List<String>) = vm.setText("picPref", l.joinToString("|"))
-                order.forEachIndexed { i, tag ->
+                ReorderColumn(order, key = { it }, onMove = { f, to -> save(order.toMutableList().apply { add(to, removeAt(f)) }) }) { tag, i, _, handle ->
                     Row(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF222228)).padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Text("${i + 1}", Modifier.width(24.dp), fontWeight = FontWeight.Bold, color = Accent)
                         Text(tag, Modifier.weight(1f), fontSize = 15.sp)
-                        IconButton({ if (i > 0) save(order.toMutableList().also { java.util.Collections.swap(it, i, i - 1) }) }, enabled = i > 0) { Icon(Icons.Default.ArrowUpward, "Move up") }
-                        IconButton({ if (i < order.lastIndex) save(order.toMutableList().also { java.util.Collections.swap(it, i, i + 1) }) }, enabled = i < order.lastIndex) { Icon(Icons.Default.ArrowDownward, "Move down") }
+                        DragGrip(handle)
                     }
                 }
                 Text("Default: SDR first · HDR and HDR10 last", Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Muted)
@@ -1445,7 +1484,7 @@ private fun CollectionsSettingsPage(vm: AppViewModel, onBack: () -> Unit) {
         if (busy) Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) { CircularProgressIndicator(color = Accent) }
         if (list.isNotEmpty()) {
             SectionLabel("Your collections")
-            list.forEachIndexed { i, c ->
+            ReorderColumn(list, key = { it.id }, onMove = { f, to -> setOrder(list.map { it.id }.toMutableList().apply { add(to, removeAt(f)) }) }) { c, _, _, handle ->
                 val shown = c.id !in hidden
                 Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().clip(CardShape).background(CardBg).padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically) {
@@ -1454,8 +1493,7 @@ private fun CollectionsSettingsPage(vm: AppViewModel, onBack: () -> Unit) {
                             color = if (shown) Color.White else Muted)
                         Text("${c.folders.size} folder" + (if (c.folders.size == 1) "" else "s") + if (shown) "" else " · Hidden", fontSize = 13.sp, color = Muted)
                     }
-                    IconButton({ setOrder(list.map { it.id }.toMutableList().apply { add(i - 1, removeAt(i)) }) }, enabled = i > 0) { Icon(Icons.Default.ArrowUpward, "Move up") }
-                    IconButton({ setOrder(list.map { it.id }.toMutableList().apply { add(i + 1, removeAt(i)) }) }, enabled = i < list.lastIndex) { Icon(Icons.Default.ArrowDownward, "Move down") }
+                    DragGrip(handle)
                     IconButton({ toggleHidden(c.id) }) {
                         Icon(if (shown) Icons.Default.Visibility else Icons.Default.VisibilityOff, if (shown) "Hide" else "Show", tint = if (shown) Color.White else Muted)
                     }

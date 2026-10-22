@@ -13,6 +13,16 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.5.4 beta", "22 Oct 2026", "Faster posters, smarter backups, drag to reorder", listOf(
+        "Posters load much faster on Home and in Search",
+        "New streams join Quick Play; when the instant backup has played a minute, an HD file can take over smoothly",
+        "Play manually: Quick Play first (the ready stream, then the backups in order), then Turbo and Extensions",
+        "Seek previews cover the whole video and are kept for next time",
+        "Follow the speaker: each line picks its place once and stays there; works with one person too",
+        "Hold and drag to reorder rows, add-ons, languages, collections and picture order",
+        "Updates download much faster and keep going in the background (with a Download in background button)",
+        "Fixes: plugin settings on Android 12+ no longer close the app; the profile picker's highlight is round",
+    )),
     Release("0.5.3 beta", "22 Oct 2026", "Fixes", listOf(
         "Opening a plugin's own settings (the gear) no longer closes the app",
         "Follow the speaker now works with two or more people on screen",
@@ -309,6 +319,20 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.5.4 beta", "22 Oct 2026", "AllForU, Vega chain, code names, pushed rows, updater", listOf(
+        "values-v31 theme → MaterialComponents (CNCVerse settings crash on Android 12+)",
+        "CsPlugins: AllForU repo default + seeded054 (AllOtt + MovieBox on; Vega only from CNCVerse)",
+        "ottTier: 0 OTT · 1 MovieBox DASH/HLS · 2 Vega · 3 other · 4 MovieBox MP4 · 5 Nuvio; OTT_ANY/VEGA_ANY wildcards; isQuick covers OTT/MB/Vega",
+        "Prepare backup: MovieBox → (8 s / all answered) Vega 720–1080 → MovieBox MP4; player swap chain OTT any time, Vega 1080 after 60 s, MB MP4 same lang last",
+        "4K: Vega always asked and first within the same language",
+        "Public.streamName: Mercury Swift / Mercury Prime; Code names page (codeNames text, published with dev defaults)",
+        "Sources: plugin mode tabs Quick Play (ready + ranked backups) / Turbo / Extensions; real names masked in badges",
+        "SeekThumbs: coarse-first full timeline (Wi-Fi ≤400, mobile 120, HLS every 30 s), RGB565, JPEG disk cache per title, DASH via MovieBox MP4",
+        "Speaker: nose-base jaw metric, single face, per-cue vote lock",
+        "Posters: own OkHttp client, metahub medium / TMDB w342, 25% memory + 400 MB disk cache, warm Home/Search",
+        "Pushed Home rows (homeRows via dev defaults, pinned + locked); ReorderColumn drag everywhere",
+        "Updater: 4-part parallel ranged download + foreground service, DownloadManager fallback, background button",
+    )),
     Release("0.5.3 beta", "22 Oct 2026", "Plugin settings crash, speaker landmarks, thumb prefetch", listOf(
         "Theme.Xstream parent Theme.MaterialComponents.NoActionBar (CNCVerseSettings MaterialButton needed a Material theme); CsSettingsActivity guards the main loop: a plugin exception closes only that screen",
         "SpeakerTracker: landmarks (MOUTH_BOTTOM / LEFT / RIGHT) instead of contours (ML Kit contours = biggest face only); thresholds 0.008 / 1.5×",

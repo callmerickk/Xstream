@@ -34,7 +34,7 @@ object SpeakerTracker {
 
     /** Where the speaker is across the picture (0 = left edge, 1 = right edge), or null = keep the line centred. */
     suspend fun speakerX(frame: Bitmap): Float? {
-        val small = if (frame.width > 480) Bitmap.createScaledBitmap(frame, 480, (480f * frame.height / frame.width).toInt().coerceAtLeast(1), true) else frame
+        val small = if (frame.width > 400) Bitmap.createScaledBitmap(frame, 400, (400f * frame.height / frame.width).toInt().coerceAtLeast(1), true) else frame
         val faces = suspendCancellableCoroutine { c ->
             detector.process(InputImage.fromBitmap(small, 0))
                 .addOnSuccessListener { c.resume(it) }
@@ -43,24 +43,30 @@ object SpeakerTracker {
         val now = System.currentTimeMillis()
         val seen = faces.mapNotNull { f ->
             val id = f.trackingId ?: return@mapNotNull null
+            val h = f.boundingBox.height().coerceAtLeast(1).toFloat()
             val bottom = f.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position ?: return@mapNotNull null
             val left = f.getLandmark(FaceLandmark.MOUTH_LEFT)?.position ?: return@mapNotNull null
             val right = f.getLandmark(FaceLandmark.MOUTH_RIGHT)?.position ?: return@mapNotNull null
-            // Lower lip below the mouth corners, as a share of the face: grows and shrinks while someone talks.
-            val open = (bottom.y - (left.y + right.y) / 2f) / f.boundingBox.height().coerceAtLeast(1)
+            // The jaw moves against the nose while talking: lower lip to nose base (falls back to the mouth corners).
+            val nose = f.getLandmark(FaceLandmark.NOSE_BASE)?.position
+            val open = if (nose != null) (bottom.y - nose.y) / h else (bottom.y - (left.y + right.y) / 2f) / h
             val q = mouths.getOrPut(id) { ArrayDeque() }
             q.addLast(open); while (q.size > 8) q.removeFirst()
             lastSeen[id] = now
             Triple(id, f.boundingBox.exactCenterX() / small.width, q)
         }
+        if (small !== frame) small.recycle()
         lastSeen.filterValues { now - it > 4_000 }.keys.toList().forEach { mouths.remove(it); lastSeen.remove(it) }
-        if (seen.size < 2) return null
+        if (seen.isEmpty()) return null
         // How much each mouth moved lately (spread of its opening); the talker moves clearly more than the others.
-        val moving = seen.filter { it.third.size >= 4 }.map { (_, x, q) ->
+        val moving = seen.filter { it.third.size >= 3 }.map { (_, x, q) ->
             val m = q.average().toFloat(); x to kotlin.math.sqrt(q.map { (it - m) * (it - m) }.average()).toFloat()
         }.sortedByDescending { it.second }
-        if (moving.size < 2) return null
-        val (bx, bs) = moving[0]; val second = moving[1].second
-        return if (bs > 0.008f && bs > second * 1.5f) bx.coerceIn(0f, 1f) else null
+        if (moving.isEmpty()) return null
+        val (bx, bs) = moving[0]
+        // One face on screen: follow it only when it is clearly talking and away from the middle.
+        if (moving.size == 1) return if (bs > 0.012f && kotlin.math.abs(bx - 0.5f) > 0.12f) bx.coerceIn(0f, 1f) else null
+        val second = moving[1].second
+        return if (bs > 0.008f && bs > second * 1.4f) bx.coerceIn(0f, 1f) else null
     }
 }

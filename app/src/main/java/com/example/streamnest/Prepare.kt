@@ -245,15 +245,22 @@ object Prepare {
                         PlayTiming.mark("plugin: Netflix-type link ready on the title page in ${System.currentTimeMillis() - t0} ms")
                         return@launch
                     }
+                    val doneNow = live.value.second
                     if (backup == null && ott.isEmpty()) {
-                        for (s in ranked.filter { it.isMovieBox() }.take(3)) {
+                        // MovieBox's instant playlist first; no MovieBox (all answered, or 8 s gone): VegaMovies 1080p;
+                        // MovieBox's MP4 only when neither exists.
+                        val late = doneNow || System.currentTimeMillis() - t0 > 8_000
+                        val pick = ranked.filter { it.ottTier() == 1 }.take(3)
+                            .ifEmpty { if (late) ranked.filter { it.isVega() && it.effectiveRes() in 720..1080 }.take(3) else emptyList() }
+                            .ifEmpty { if (late && ranked.none { it.ottTier() in 1..3 }) ranked.filter { it.ottTier() == 4 }.take(2) else emptyList() }
+                        for (s in pick) {
                             s.stream.url?.let { tried += it }
-                            if (attempt(s, 0, 1)) { backup = s; PlayTiming.mark("plugin: MovieBox backup ready in ${System.currentTimeMillis() - t0} ms"); break }
+                            if (attempt(s, 0, 1)) { backup = s; PlayTiming.mark("plugin: backup (${Public.streamName(s)}) ready in ${System.currentTimeMillis() - t0} ms"); break }
                         }
                     }
                     val done = live.value.second
                     val noMoreOtt = done && ranked.none { it.isOtt() }
-                    if (System.currentTimeMillis() - t0 > 30_000 || (noMoreOtt && (backup != null || ranked.none { it.isMovieBox() }))) break
+                    if (System.currentTimeMillis() - t0 > 30_000 || (noMoreOtt && (backup != null || ranked.none { it.ottTier() in 1..2 }))) break
                     val size0 = live.value.first.size
                     withTimeoutOrNull(1_000) { live.first { it.first.size != size0 || (it.second && !done) } }
                 }

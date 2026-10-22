@@ -133,10 +133,41 @@ object Public {
      * Plugin streams get code names everywhere in the app (same first letter as the real one): MovieBox → Mercury,
      * Netflix → Nova… Developer accounts see the real names.
      */
-    private val codes = listOf(
+    /** The built-in code names: (what the real name starts with / contains, code name). Developer's Corner › Code names edits them. */
+    val defaultCodes = listOf(
         "moviebox" to "Mercury", "netflix" to "Nova", "prime" to "Pulsar", "hotstar" to "Helios", "m player" to "Mars", "mplayer" to "Mars",
-        "4k hdhub" to "Fornax", "4khdhub" to "Fornax", "hdhub" to "Hydra", "rogmovies" to "Rigel", "vegamovies" to "Vesta", "uhdmovies" to "Umbra",
+        "allott" to "Atlas", "4k hdhub" to "Fornax", "4khdhub" to "Fornax", "hdhub" to "Hydra", "rogmovies" to "Rigel", "vegamovies" to "Vesta",
+        "uhdmovies" to "Umbra",
     )
+    /** MovieBox's two kinds of file get their own names: DASH / HLS (starts fast) and MP4 (sharper, slower to open). */
+    val defaultKinds = listOf("moviebox dash" to "Mercury Swift", "moviebox mp4" to "Mercury Prime")
+    @Volatile private var codesRaw: String? = null
+    @Volatile private var parsed: List<Pair<String, String>> = defaultCodes + defaultKinds
+    /** The code names in use: the edited ones (texts["codeNames"], "real=code" per line) over the built-in list. */
+    fun codes(): List<Pair<String, String>> {
+        val raw = vm?.texts?.value?.get("codeNames")
+        if (raw != codesRaw) {
+            codesRaw = raw
+            val edits = (raw ?: "").lines().mapNotNull { l -> l.split('=', limit = 2).takeIf { it.size == 2 && it[0].isNotBlank() }?.let { it[0].trim().lowercase() to it[1].trim() } }
+            val keys = edits.map { it.first }.toSet()
+            parsed = edits.filter { it.second.isNotBlank() } + (defaultCodes + defaultKinds).filter { it.first !in keys }
+        }
+        return parsed
+    }
+    private val codes get() = codes().filter { !it.first.endsWith(" dash") && !it.first.endsWith(" mp4") }
+    private fun kindName(key: String) = codes().firstOrNull { it.first == key }?.second
+    /** Real provider / site names that never show to normal users (badges, file names). */
+    val realNames = Regex("(?i)netflix|prime ?video|amazon|hotstar|disney|jio ?cinema|movie ?box|vega ?movies|hd ?hub|rog ?movies|uhd ?movies|m ?player|allott|cnc ?verse|phisher")
+
+    /** A stream's name for the screen: the code name, and for MovieBox which kind of file (Mercury Swift / Mercury Prime). */
+    fun streamName(s: StreamItem): String {
+        if (s.isMovieBox() && (s.addonName.startsWith("CloudStream · ") || s.addonName.startsWith("Nuvio · "))) {
+            val mp4 = s.mbKind() == 2
+            val k = kindName(if (mp4) "moviebox mp4" else "moviebox dash") ?: if (mp4) "Mercury Prime" else "Mercury Swift"
+            return if (dev) "${codeName(s.addonName)} · ${if (mp4) "MP4" else if (s.mbKind() == 0) "DASH" else "HLS"} ($k)" else k
+        }
+        return addonLabel(s.addonName)
+    }
     private val stars = mapOf('a' to "Antares", 'b' to "Bellatrix", 'c' to "Castor", 'd' to "Deneb", 'e' to "Electra", 'f' to "Fomalhaut",
         'g' to "Gemma", 'h' to "Hadar", 'i' to "Izar", 'j' to "Juno", 'k' to "Kepler", 'l' to "Lyra", 'm' to "Mira", 'n' to "Nashira",
         'o' to "Orion", 'p' to "Pollux", 'q' to "Quasar", 'r' to "Regulus", 's' to "Sirius", 't' to "Titan", 'u' to "Ursa", 'v' to "Vela",

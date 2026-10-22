@@ -243,7 +243,7 @@ object PluginSources {
         val season = id.split(":").getOrNull(1)?.toIntOrNull()
         val episode = id.split(":").getOrNull(2)?.toIntOrNull()
         val year = meta.releaseInfo?.take(4)?.toIntOrNull()
-        fun wanted(name: String) = (only == null || name in only || (MB_ANY in only && name.contains("moviebox", true))) && (except == null || name !in except)
+        fun wanted(name: String) = (only == null || name in only || (MB_ANY in only && name.contains("moviebox", true)) || (VEGA_ANY in only && name.contains("vega", true)) || (OTT_ANY in only && isOttName(name))) && (except == null || name !in except)
         val acc = ArrayList<StreamItem>(); val lock = Mutex()
         val jobs = ArrayList<kotlinx.coroutines.Job>()
         coroutineScope {

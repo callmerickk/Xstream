@@ -63,6 +63,12 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import okhttp3.Request
 import java.io.File
+import android.app.DownloadManager
+import android.os.Environment
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 
 /** A newer build on GitHub Releases. */
 data class UpdateInfo(val versionName: String, val versionCode: Int, val notes: String, val apkUrl: String, val size: Long)
@@ -132,13 +138,78 @@ object Updater {
                 ?: rel?.s("body")
                 ?: runCatching { Api.json.parseToJsonElement(Api.get("https://api.github.com/repos/$REPO/releases/latest")).jsonObject.s("body") }.getOrNull()
                 ?: ""
-            UpdateInfo(name, code, notes.substringBefore("\n---").trim(), url, 0L)
+            UpdateInfo(name, code, notesFor(notes, tv), url, 0L)
         } else null
         available.value = info
         info
     }
 
+    /** The release notes block for this device (phone or TV): blocks are separated by "---"; the newest matching one. */
+    private fun notesFor(all: String, tv: Boolean): String {
+        val blocks = all.split(Regex("\\n\\s*-{3,}\\s*\\n")).map { it.trim() }.filter { it.isNotBlank() }
+        fun head(b: String) = b.lineSequence().first().trim()
+        val mine = blocks.firstOrNull { if (tv) head(it).contains("TV") else !head(it).startsWith("Xstream TV") }
+        return mine ?: blocks.firstOrNull().orEmpty()
+    }
+
     private fun apkFile(ctx: Context) = File(File(ctx.cacheDir, "updates").apply { mkdirs() }, "Xstream-update.apk")
+    /** Where Android's download manager saves the update (keeps going when Xstream is in the background or closed). */
+    private fun dmFile(ctx: Context) = File(ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: File(ctx.filesDir, "dl").apply { mkdirs() }, "Xstream-update.apk")
+    /** Downloads outlive the pop-up and the screen: they run here, not in the dialog. */
+    private val bg = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** The app is on screen (the installer can only open then); otherwise it opens when Xstream comes back. */
+    @Volatile var foreground = false
+    @Volatile private var installWaiting = false
+    /** Background download chosen: the pop-up stays hidden while it runs. */
+    val inBackground = MutableStateFlow(false)
+
+    /** Starts the download in the background (safe to minimise Xstream); the installer opens when it's done. */
+    fun start(ctx: Context, info: UpdateInfo) {
+        val app = ctx.applicationContext
+        bg.launch { downloadAndInstall(app, info) }
+    }
+
+    /** Xstream came to the front: open the installer for a download that finished meanwhile. */
+    fun onResume(ctx: Context) {
+        foreground = true
+        if (installWaiting) { installWaiting = false; install(ctx.applicationContext) }
+    }
+
+    /** Android's download manager: survives minimising and closing the app, shows its own notification. */
+    private suspend fun dmDownload(ctx: Context, info: UpdateInfo): Boolean? = withContext(Dispatchers.IO) {
+        val dm = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return@withContext null
+        val f = dmFile(ctx); runCatching { f.delete() }
+        val id = runCatching {
+            dm.enqueue(DownloadManager.Request(Uri.parse(info.apkUrl))
+                .setTitle("Xstream ${info.versionName}")
+                .setDescription("Downloading the update")
+                .setMimeType("application/vnd.android.package-archive")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setAllowedOverMetered(true).setAllowedOverRoaming(true)
+                .setDestinationUri(Uri.fromFile(f)))
+        }.getOrNull() ?: return@withContext null
+        prefs(ctx).edit().putLong("dmId", id).apply()
+        var lastBytes = -1L; var still = 0
+        while (true) {
+            delay(500)
+            val c = runCatching { dm.query(DownloadManager.Query().setFilterById(id)) }.getOrNull() ?: return@withContext null
+            c.use {
+                if (!it.moveToFirst()) return@withContext null
+                val st = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                val done = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                val total = it.getLong(it.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)).takeIf { t -> t > 0 } ?: info.size
+                if (total > 0) progress.value = (done.toFloat() / total).coerceIn(0f, 1f)
+                when (st) {
+                    DownloadManager.STATUS_SUCCESSFUL -> return@withContext true
+                    DownloadManager.STATUS_FAILED -> return@withContext false
+                }
+                // Nothing at all for 40 s (stuck before the first byte): let the app's own downloader try.
+                if (done == lastBytes && done <= 0L) { if (++still > 80) { runCatching { dm.remove(id) }; return@withContext null } } else still = 0
+                lastBytes = done
+            }
+        }
+        @Suppress("UNREACHABLE_CODE") null
+    }
 
     /** Downloads the APK (progress in [progress]) and opens the installer. */
     suspend fun downloadAndInstall(ctx: Context, info0: UpdateInfo) {
@@ -147,37 +218,89 @@ object Updater {
         progress.value = 0f
         // A newer build may have come out since the pop-up appeared: always the newest.
         val info = runCatching { check(ctx, force = true) }.getOrNull()?.takeIf { it.versionCode >= info0.versionCode } ?: info0
-        val f = apkFile(ctx)
-        val ok = withContext(Dispatchers.IO) {
-            runCatching {
-                Api.http.newCall(Request.Builder().url(info.apkUrl).build()).execute().use { r ->
-                    val body = r.body
-                    if (!r.isSuccessful || body == null) return@runCatching false
-                    val total = body.contentLength().takeIf { it > 0 } ?: info.size
-                    body.byteStream().use { i ->
-                        f.outputStream().use { o ->
-                            val buf = ByteArray(128 * 1024)
-                            var done = 0L
-                            while (true) {
-                                val n = i.read(buf); if (n < 0) break
-                                o.write(buf, 0, n); done += n
-                                if (total > 0) progress.value = (done.toFloat() / total).coerceIn(0f, 1f)
+        UpdateService.start(ctx, info.versionName)
+        try {
+            // 1) Fast: the APK in 4 parts at once (GitHub's file servers give each connection its own speed).
+            val fast = runCatching { fastDownload(ctx, info) }.getOrDefault(false)
+            // 2) Android's downloader (slow but sure), 3) a plain single download.
+            val ok = fast || runCatching { dmDownload(ctx, info) }.getOrNull() == true || run { progress.value = 0f; plainDownload(info, apkFile(ctx)) }
+            progress.value = null; inBackground.value = false
+            if (!ok) { error.value = "Download failed. Check your connection and try again."; return }
+            if (foreground) install(ctx) else installWaiting = true
+        } finally { UpdateService.stop(ctx) }
+    }
+
+    private fun client() = Api.http.newBuilder().readTimeout(25, java.util.concurrent.TimeUnit.SECONDS).build()
+
+    /** Parallel ranged download into [apkFile]; resumes each part a few times if a connection drops. */
+    private suspend fun fastDownload(ctx: Context, info: UpdateInfo): Boolean = withContext(Dispatchers.IO) {
+        val c = client()
+        // Follow GitHub's redirect once, then ask the file server for the size.
+        val (url, total) = c.newCall(Request.Builder().url(info.apkUrl).header("Range", "bytes=0-0").build()).execute().use { r ->
+            if (r.code != 206) return@withContext false
+            val len = r.header("Content-Range")?.substringAfter('/')?.toLongOrNull() ?: return@withContext false
+            r.request.url.toString() to len
+        }
+        if (total < 1_000_000) return@withContext false
+        val f = apkFile(ctx); runCatching { f.delete() }
+        java.io.RandomAccessFile(f, "rw").use { it.setLength(total) }
+        val parts = 4
+        val size = (total + parts - 1) / parts
+        val got = java.util.concurrent.atomic.AtomicLongArray(parts)
+        val jobs = (0 until parts).map { k ->
+            async {
+                val from = k * size; val to = minOf(total, from + size) - 1
+                var tries = 0
+                while (from + got[k] <= to && tries < 5) {
+                    tries++
+                    runCatching {
+                        c.newCall(Request.Builder().url(url).header("Range", "bytes=${from + got[k]}-$to").build()).execute().use { r ->
+                            if (r.code != 206) error("no range")
+                            java.io.RandomAccessFile(f, "rw").use { raf ->
+                                raf.seek(from + got[k])
+                                val inp = r.body!!.byteStream(); val buf = ByteArray(64 * 1024)
+                                while (true) {
+                                    val n = inp.read(buf); if (n < 0) break
+                                    raf.write(buf, 0, n); got.addAndGet(k, n.toLong())
+                                    var sum = 0L; for (j in 0 until parts) sum += got[j]
+                                    val pr = (sum.toFloat() / total).coerceIn(0f, 1f)
+                                    if (pr - (progress.value ?: 0f) > 0.005f || pr >= 1f) { progress.value = pr; UpdateService.progress(ctx, pr) }
+                                }
                             }
                         }
                     }
-                    true
                 }
-            }.getOrDefault(false)
+                from + got[k] > to
+            }
         }
-        progress.value = null
-        if (!ok) { error.value = "Download failed. Check your connection and try again."; return }
-        install(ctx)
+        jobs.awaitAll().all { it } && f.length() == total
+    }
+
+    private suspend fun plainDownload(info: UpdateInfo, f: File): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            client().newCall(Request.Builder().url(info.apkUrl).build()).execute().use { r ->
+                val body = r.body
+                if (!r.isSuccessful || body == null) return@runCatching false
+                val total = body.contentLength().takeIf { it > 0 } ?: info.size
+                body.byteStream().use { i ->
+                    f.outputStream().use { o ->
+                        val buf = ByteArray(128 * 1024)
+                        var done = 0L
+                        while (true) {
+                            val n = i.read(buf); if (n < 0) break
+                            o.write(buf, 0, n); done += n
+                            if (total > 0) progress.value = (done.toFloat() / total).coerceIn(0f, 1f)
+                        }
+                    }
+                }
+                true
+            }
+        }.getOrDefault(false)
     }
 
     /** Opens Android's installer for the downloaded APK (or the "allow installs" screen first). */
     fun install(ctx: Context) {
-        val f = apkFile(ctx)
-        if (!f.exists()) return
+        val f = listOf(dmFile(ctx), apkFile(ctx)).filter { it.exists() && it.length() > 0 }.maxByOrNull { it.lastModified() } ?: return
         if (Build.VERSION.SDK_INT >= 26 && !ctx.packageManager.canRequestPackageInstalls()) {
             error.value = "Allow Xstream to install updates, then press Update again."
             runCatching {
@@ -212,6 +335,12 @@ fun UpdatePrompt() {
     val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     LaunchedEffect(owner) {
         owner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            Updater.onResume(ctx)
+            try { kotlinx.coroutines.awaitCancellation() } finally { Updater.foreground = false }
+        }
+    }
+    LaunchedEffect(owner) {
+        owner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
             delay(1500)
             val i = runCatching { Updater.check(ctx) }.getOrNull()
             if (i != null && i.versionCode > Updater.skipped(ctx) && System.currentTimeMillis() - Updater.laterAt > 3 * 3600_000L && Updater.progress.value == null
@@ -219,13 +348,15 @@ fun UpdatePrompt() {
         }
     }
     val i = info ?: return
-    UpdateDialog(i, onLater = { Updater.laterThisRun = true; Updater.laterAt = System.currentTimeMillis(); info = null }, onSkip = { Updater.skip(ctx, i); info = null }) {
-        scope.launch { Updater.downloadAndInstall(ctx, i) }
+    UpdateDialog(i, onLater = { Updater.laterThisRun = true; Updater.laterAt = System.currentTimeMillis(); info = null }, onSkip = { Updater.skip(ctx, i); info = null },
+        onBackground = { Updater.inBackground.value = true; if (Updater.progress.value == null) Updater.start(ctx, i); info = null
+            android.widget.Toast.makeText(ctx, "Downloading in the background — the installer opens when it's done.", android.widget.Toast.LENGTH_LONG).show() }) {
+        Updater.start(ctx, i)
     }
 }
 
 @Composable
-fun UpdateDialog(i: UpdateInfo, onLater: () -> Unit, onSkip: (() -> Unit)? = null, onUpdate: () -> Unit) {
+fun UpdateDialog(i: UpdateInfo, onLater: () -> Unit, onSkip: (() -> Unit)? = null, onBackground: (() -> Unit)? = null, onUpdate: () -> Unit) {
     var p by remember { mutableStateOf<Float?>(null) }
     var err by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { Updater.progress.collect { p = it } }
@@ -259,7 +390,10 @@ fun UpdateDialog(i: UpdateInfo, onLater: () -> Unit, onSkip: (() -> Unit)? = nul
                     DialogBtn("Later", primary = false, Modifier) { onLater() }
                     DialogBtn(if (prog != null) "Downloading…" else "Update now", primary = true, Modifier.focusRequester(updateFr)) { if (prog == null) onUpdate() }
                 }
-                if (onSkip != null) Box(Modifier.fillMaxWidth().padding(top = 10.dp), Alignment.CenterEnd) {
+                if (onBackground != null && !BuildConfig.IS_TV) Box(Modifier.fillMaxWidth().padding(top = 10.dp), Alignment.CenterEnd) {
+                    DialogBtn(if (prog != null) "Continue in background" else "Download in background", primary = false, Modifier) { onBackground() }
+                }
+                if (onSkip != null && prog == null) Box(Modifier.fillMaxWidth().padding(top = 10.dp), Alignment.CenterEnd) {
                     DialogBtn("Skip this version", primary = false, Modifier) { onSkip() }
                 }
                 // Every update remembers where it started.

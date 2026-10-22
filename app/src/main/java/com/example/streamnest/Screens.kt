@@ -536,13 +536,15 @@ fun BottomNav(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) ->
             profiles.forEachIndexed { i, pr ->
                 val on = hover == i
                 val grow by animateFloatAsState(if (on) 1.18f else 1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 500f), label = "grow")
-                Row(Modifier.clip(RoundedCornerShape(26.dp)).clickable { bubble = false; if (pr.id != current?.id) ProfileLock.ask(pr) { vm.selectProfile(pr); onTab(2) } },
+                Row(Modifier.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { bubble = false; if (pr.id != current?.id) ProfileLock.ask(pr) { vm.selectProfile(pr); onTab(2) } },
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(pr.name + if (pr.id == current?.id) " · you" else "", fontSize = 12.sp, fontWeight = FontWeight.Bold,
                         color = if (on) Color.White else Color(0xFFB6BDCC))
                     Box(Modifier.size(52.dp).onGloballyPositioned { slots[i] = it.boundsInRoot() }, Alignment.Center) {
                         if (on) WaterRipple(Modifier.matchParentSize())
-                        ProfileAvatar(vm, pr, 46.dp, Modifier.graphicsLayer { scaleX = grow; scaleY = grow }, animate = false)
+                        // Hovered: a round ring that hugs the avatar (not a square highlight).
+                        ProfileAvatar(vm, pr, 46.dp, Modifier.graphicsLayer { scaleX = grow; scaleY = grow }
+                            .then(if (on) Modifier.border(2.dp, Color.White, CircleShape) else Modifier), animate = false)
                     }
                 }
             }

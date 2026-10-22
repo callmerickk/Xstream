@@ -26,9 +26,23 @@ import java.util.concurrent.Executors
  * stops for good when the file can't be opened at all (HLS / DASH, a refused link) or several frames in a row come
  * back empty. While a frame is on its way, [nearest] gives the closest one already made.
  */
-class SeekThumbs(url: String, headers: Map<String, String>) {
+class SeekThumbs(url: String, headers: Map<String, String>, key: String? = null, cacheRoot: java.io.File? = null, alt: String? = null) {
     private val playing: String = url
-    private val src: String = original(url)
+    /** DASH (MovieBox's .mpd) can't be read frame by frame: the same title's MP4 is read instead when there is one. */
+    private val isDash = Regex("\\.mpd(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(original(url)) || StreamType.quick(original(url)) == StreamType.DASH
+    private val src: String = if (isDash && alt != null) original(alt) else original(url)
+    /** Frames saved on the phone per title (small JPEGs): watching it again costs no data. */
+    private val disk: java.io.File? = if (key == null || cacheRoot == null) null else runCatching {
+        val root = java.io.File(cacheRoot, "seek-thumbs").apply { mkdirs() }
+        // Only the 25 most recent titles are kept.
+        root.listFiles()?.sortedByDescending { it.lastModified() }?.drop(25)?.forEach { it.deleteRecursively() }
+        java.io.File(root, Integer.toHexString(key.hashCode())).apply { mkdirs(); setLastModified(System.currentTimeMillis()) }
+    }.getOrNull()
+    private fun diskFile(b: Long) = disk?.let { java.io.File(it, "$b.jpg") }
+    private fun fromDisk(b: Long): ImageBitmap? = diskFile(b)?.takeIf { it.exists() }?.let { f ->
+        runCatching { android.graphics.BitmapFactory.decodeFile(f.path, android.graphics.BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 })?.also { it.prepareToDraw() }?.asImageBitmap() }.getOrNull()
+    }
+    private fun toDisk(b: Long, bmp: Bitmap) { diskFile(b)?.takeIf { !it.exists() }?.let { f -> runCatching { f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 72, it) } } } }
     private val hdrs: Map<String, String> = run {
         val h = if (src != url || headers.isEmpty()) StreamHeaders.forUrl(src) else headers
         if (h.keys.any { it.equals("User-Agent", true) }) h else h + ("User-Agent" to PlayerUserAgent)
@@ -52,7 +66,7 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
         (Regex("\\.m3u8(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(src) || StreamType.quick(src) == StreamType.HLS || StreamType.quick(playing) == StreamType.HLS)
     private val hlsFrames: HlsFrames? = if (hls) HlsFrames(src, hdrs) else null
     @Volatile private var dead = !hls && ((!src.startsWith("http://", true) && !src.startsWith("https://", true) && !Relay.isWrapped(playing)) ||
-        Regex("\\.(m3u8|mpd)(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(src))
+        Regex("\\.(m3u8|mpd)(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(src) || (isDash && alt == null))
     @Volatile private var closed = false
 
     init {
@@ -80,22 +94,39 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
      * seconds), so the seek bar shows a picture the moment you drag — the nearest one while the exact one is made.
      * A seek request always goes first.
      */
-    fun prefetch(durMs: Long) {
+    fun prefetch(durMs: Long, wifi: Boolean = true) {
         if (dead || closed || prefetching || durMs <= 0) return
         prefetching = true
         scope.launch {
-            val spots = 40
-            val gap = (durMs / spots).coerceAtLeast(STEP)
-            var t = gap / 2
-            while (t < durMs && !closed && !dead) {
-                kotlinx.coroutines.delay(1_200)
-                val busy = synchronized(lock) { waiting.isNotEmpty() }
-                if (busy) continue
+            // The whole video: Wi-Fi every 10 s (at most 400 frames), mobile data 120 frames. Coarse first, then finer
+            // (halves, quarters, eighths…), so any seek soon has a frame close by.
+            val every = if (hls) 30_000L else STEP   // HLS: each preview needs a whole segment, so one every 30 s
+            val spots = if (wifi) (durMs / every).toInt().coerceIn(1, MAX_FRAMES - 20) else 120.coerceAtMost((durMs / STEP).toInt().coerceAtLeast(1))
+            val gap = durMs / spots
+            val order = coarseFirst(spots)
+            for (i in order) {
+                if (closed || dead) break
+                while (synchronized(lock) { waiting.isNotEmpty() } && !closed) kotlinx.coroutines.delay(150)   // a seek goes first
+                val t = i * gap + gap / 2
                 val b = t / STEP
-                if (!has(t)) runCatching { extract(b * STEP) }.getOrNull()?.let { img -> synchronized(lock) { cache[b] = img }; succeeded = true }
-                t += gap
+                if (has(t)) continue
+                val img = fromDisk(b) ?: run { kotlinx.coroutines.delay(if (wifi) 60 else 300); runCatching { extract(b * STEP) }.getOrNull() }
+                if (img != null) { synchronized(lock) { cache[b] = img }; succeeded = true }
             }
         }
+    }
+
+    /** 0..n-1 in the order 1/2, 1/4, 3/4, 1/8, 3/8… of the timeline. */
+    private fun coarseFirst(n: Int): List<Int> {
+        val seen = BooleanArray(n); val out = ArrayList<Int>(n)
+        var den = 2
+        while (out.size < n && den <= 4 * n) {
+            var k = 1
+            while (k < den) { val i = (k.toLong() * n / den).toInt().coerceIn(0, n - 1); if (!seen[i]) { seen[i] = true; out += i }; k += 2 }
+            den *= 2
+        }
+        for (i in 0 until n) if (!seen[i]) out += i
+        return out
     }
 
     /** Opens the file in the background (call when the seek bar is touched) so the first frame comes sooner. */
@@ -131,11 +162,13 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
             val h = (bmp.height * (W.toFloat() / bmp.width)).toInt().coerceAtLeast(1)
             Bitmap.createScaledBitmap(bmp, W, h, true).also { if (it !== bmp) bmp.recycle() }
         } else bmp
-        synchronized(lock) { cache[ms.coerceAtLeast(0L) / STEP] = small.asImageBitmap() }
+        val b = ms.coerceAtLeast(0L) / STEP
+        synchronized(lock) { cache[b] = small.asImageBitmap() }
+        scope.launch { toDisk(b, small) }
     }
 
     /** The closest frame already made, within [withinMs] of [ms] (shown while the exact one loads). */
-    fun nearest(ms: Long, withinMs: Long = 120_000L): ImageBitmap? {
+    fun nearest(ms: Long, withinMs: Long = 300_000L): ImageBitmap? {
         val b = ms.coerceAtLeast(0L) / STEP
         return synchronized(lock) {
             cache.keys.minByOrNull { kotlin.math.abs(it - b) }?.takeIf { kotlin.math.abs(it - b) * STEP <= withinMs }?.let { cache[it] }
@@ -184,7 +217,8 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
     /** Runs on the worker thread only. */
     private fun extract(ms: Long): ImageBitmap? {
         if (closed) return null
-        hlsFrames?.let { h -> return h.frame(ms, W)?.let { it.prepareToDraw(); it.asImageBitmap() } }
+        fromDisk(ms / STEP)?.let { return it }
+        hlsFrames?.let { h -> return h.frame(ms, W)?.let { small(it) }?.also { toDisk(ms / STEP, it) }?.let { it.prepareToDraw(); it.asImageBitmap() } }
         val r = open() ?: return null
         val us = ms * 1000L
         val bmp: Bitmap = (if (Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, W, H)
@@ -193,17 +227,22 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
             val h = (bmp.height * (W.toFloat() / bmp.width)).toInt().coerceAtLeast(1)
             Bitmap.createScaledBitmap(bmp, W, h, true).also { if (it !== bmp) bmp.recycle() }
         } else bmp
-        out.prepareToDraw()
-        return out.asImageBitmap()
+        val s = small(out)
+        toDisk(ms / STEP, s)
+        s.prepareToDraw()
+        return s.asImageBitmap()
     }
+
+    /** RGB 565: half the memory, so the whole film's previews fit (≈ 40 KB each). */
+    private fun small(b: Bitmap): Bitmap = if (b.config == Bitmap.Config.RGB_565) b else (b.copy(Bitmap.Config.RGB_565, false)?.also { b.recycle() } ?: b)
 
     private companion object {
         const val STEP = 10_000L
         const val OPEN = -2L
-        const val MAX_FRAMES = 120
+        const val MAX_FRAMES = 420
         // Small previews (Netflix-size): quicker to make and to send through the network.
-        const val W = 192
-        const val H = 108
+        const val W = 176
+        const val H = 99
 
         /** The real link behind an in-app relay link (http://127.0.0.1:port/r/<base64>/v.ext). */
         fun original(url: String): String {

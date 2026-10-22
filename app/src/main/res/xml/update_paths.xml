@@ -2,6 +2,7 @@
 <!-- In-app updates: the downloaded APK, handed to Android's installer. -->
 <paths>
     <cache-path name="updates" path="updates/" />
+    <external-files-path name="updates_dl" path="Download/" />
     <!-- Source Test logs (Developer's Corner › Source Test › Share log) -->
     <cache-path name="logs" path="logs/" />
     <files-path name="tests" path="source-tests/" />

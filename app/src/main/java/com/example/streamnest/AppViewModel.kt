@@ -708,6 +708,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     private var refreshJob: Job? = null
 
+    /** Rows the developer pushed to every account (texts["homeRows"], sent with the developer's defaults). */
+    fun pushedRows(): List<PushedRow> = runCatching { Api.json.decodeFromString<List<PushedRow>>(texts.value["homeRows"].orEmpty()) }.getOrDefault(emptyList())
+
     fun refresh() {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
@@ -723,7 +726,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                                     // take it when they don't say themselves.
                                     val items = Api.fetch<CatalogResponse>("${a.baseUrl}/catalog/${c.type}/${enc(c.id)}.json").metas
                                         .map { m -> if (m.posterShape == null && c.posterShape != null) m.copy(posterShape = c.posterShape) else m }
-                                    Shelf("${c.name ?: c.id} ${typeLabel(c.type)}", items)
+                                    Shelf("${c.name ?: c.id} ${typeLabel(c.type)}", items, src = "${a.baseUrl}/catalog/${c.type}/${enc(c.id)}.json")
                                 }.getOrNull()
                             }
                         }
@@ -731,8 +734,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 // showed); 48 at most.
                 }.take(48).awaitAll()
             }
-            shelves.value = result.filterNotNull().filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.map { posterFromPattern(it) }) }
+            // The developer's published rows (Home Layout › Publish): fetched for every account, shown first and locked.
+            val pushed = if (current.value?.kids == true || BuildConfig.IS_TV || Public.dev) emptyList() else pushedRows().map { r ->
+                async { runCatching {
+                    val items = Api.fetch<CatalogResponse>(r.src).metas.map { m -> if (m.posterShape == null && r.shape != null) m.copy(posterShape = r.shape) else m }
+                    Shelf(r.title, items, src = r.src, pinned = true)
+                }.getOrNull() }
+            }.awaitAll().filterNotNull()
+            val pushedSrc = pushed.mapNotNull { it.src }.toSet()
+            shelves.value = (pushed + result.filterNotNull().filter { it.src == null || it.src !in pushedSrc })
+                .filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.map { posterFromPattern(it) }) }
             loading.value = false
+            if (!BuildConfig.IS_TV) runCatching { Posters.warm(appContext, shelves.value.take(12).flatMap { s -> s.items.take(8).map { it.poster } }) }
             // Remembered for the next start, so Home shows its cards at once (then refreshes).
             val pid = dataPid
             val snap = shelves.value
@@ -814,6 +827,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             fun publish() {
                 val all = synchronized(lock) { parts.filterNotNull().flatten() }
                 searchResults.value = all.distinctBy { it.type + it.id }
+                if (!BuildConfig.IS_TV) runCatching { Posters.warm(appContext, searchResults.value.take(40).map { it.poster }) }
             }
             coroutineScope {
                 jobs.forEachIndexed { i, (a, c) ->

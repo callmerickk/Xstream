@@ -31,7 +31,11 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory(enforceMinimumFrameDelay = true)) else add(GifDecoder.Factory(enforceMinimumFrameDelay = true))
                 add(VideoFrameDecoder.Factory())
                 if (!BuildConfig.IS_TV) add(HdPoster)
-            }.okHttpClient { Api.http }.crossfade(!BuildConfig.IS_TV).allowRgb565(BuildConfig.IS_TV).build()
+            }.okHttpClient { Posters.client() }.crossfade(if (BuildConfig.IS_TV) 0 else 120).allowRgb565(true)
+                .memoryCache { coil.memory.MemoryCache.Builder(this).maxSizePercent(0.25).build() }
+                .diskCache { coil.disk.DiskCache.Builder().directory(cacheDir.resolve("posters")).maxSizeBytes(400L * 1024 * 1024).build() }
+                .respectCacheHeaders(false)
+                .build()
         )
         WidgetOpen.take(intent)
         JoinIntent.take(intent)
@@ -106,13 +110,42 @@ object AutoPip {
 
 /** Phone: posters on Home and the title page load in HD (metahub large, TMDB w780) instead of the small sizes. */
 object HdPoster : coil.map.Mapper<String, String> {
-    private val tmdb = Regex("(image\\.tmdb\\.org/t/p/)w(92|154|185|200|300|342)(/)")
+    private val tmdb = Regex("(image\\.tmdb\\.org/t/p/)w(92|154|185|200|300|500)(/)")
     override fun map(data: String, options: coil.request.Options): String? {
         if (!data.startsWith("http")) return null
+        // Phone-sized (≈ 340 px wide, ~30 KB) instead of large (≈ 1000 px, ~200 KB): a screen of posters loads at once.
+        // The big cards ask for the sharp copy themselves (hiResArt).
         return when {
-            "images.metahub.space/poster/" in data -> data.replace("/poster/small/", "/poster/large/").replace("/poster/medium/", "/poster/large/")
-            "image.tmdb.org/t/p/w" in data -> data.replace(tmdb, "$1w780$3")
+            "images.metahub.space/poster/small/" in data -> data.replace("/poster/small/", "/poster/medium/")
+            "image.tmdb.org/t/p/w" in data -> data.replace(tmdb, "$1w342$3")
             else -> null
         }.takeIf { it != data }
+    }
+}
+
+
+/**
+ * Posters: their own connection (no VPN retry or activity log on every picture, more pictures at once from one server)
+ * and a quiet download ahead of what's about to scroll into view, so they show the moment a row or search appears.
+ */
+object Posters {
+    @Volatile private var c: okhttp3.OkHttpClient? = null
+    fun client(): okhttp3.OkHttpClient = c ?: okhttp3.OkHttpClient.Builder()
+        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS).readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .connectionPool(okhttp3.ConnectionPool(12, 5, java.util.concurrent.TimeUnit.MINUTES))
+        .dispatcher(okhttp3.Dispatcher().apply { maxRequests = 48; maxRequestsPerHost = 16 })
+        .dns(Api.http.dns)
+        .build().also { c = it }
+
+    private val asked = java.util.Collections.newSetFromMap(object : java.util.LinkedHashMap<String, Boolean>(512, 0.75f, true) {
+        override fun removeEldestEntry(e: MutableMap.MutableEntry<String, Boolean>?) = size > 2000
+    })
+
+    /** Downloads these pictures to the disk cache now (not decoded), so drawing them later is instant. */
+    fun warm(ctx: android.content.Context, urls: List<String?>) {
+        val loader = Coil.imageLoader(ctx)
+        urls.filterNotNull().filter { it.startsWith("http") && asked.add(it) }.take(80).forEach { u ->
+            loader.enqueue(coil.request.ImageRequest.Builder(ctx).data(u).memoryCachePolicy(coil.request.CachePolicy.DISABLED).size(1, 1).build())
+        }
     }
 }

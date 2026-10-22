@@ -59,7 +59,7 @@ fun StreamCard(
 ) {
     val shape = RoundedCornerShape(if (compact) 16.dp else 20.dp)
     // The built-in servers: no names, file names or descriptions for normal users — quality, language and tags only.
-    val masked = !Public.dev && Public.isDevChoice(s.addonName)
+    val masked = !Public.dev && (Public.isDevChoice(s.addonName) || s.addonName.startsWith("CloudStream · ") || s.addonName.startsWith("Nuvio · "))
     Column(
         Modifier.fillMaxWidth().clip(shape).background(StreamCardBg)
             .border(1.dp, if (playing) Accent.copy(alpha = 0.8f) else Color(0x0FFFFFFF), shape)
@@ -67,7 +67,7 @@ fun StreamCard(
             .padding(horizontal = if (compact) 14.dp else 18.dp, vertical = if (compact) 12.dp else 16.dp),
     ) {
         if (fusion || masked) {
-            val badges = remember(s, pack) { s.badges(pack) }
+            val badges = remember(s, pack, masked) { s.badges(pack).filter { b -> !masked || !Public.realNames.containsMatchIn(b.text) } }
             if (badges.isNotEmpty()) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 10.dp)) {
                     badges.forEach { BadgeChip(it) }
@@ -76,7 +76,7 @@ fun StreamCard(
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                if (masked) listOfNotNull(Public.serverName(s.addonName), Prepare.qualityName(s.effectiveRes()), VisualTags.primary(s)).joinToString(" · ")
+                if (masked) listOfNotNull(if (s.addonName.startsWith("CloudStream · ") || s.addonName.startsWith("Nuvio · ")) Public.streamName(s) else Public.serverName(s.addonName), Prepare.qualityName(s.effectiveRes()), VisualTags.primary(s)).joinToString(" · ")
                 else (s.stream.name ?: addonLabel(s.addonName)).replace("\n", " "), Modifier.weight(1f),
                 fontSize = if (compact) 15.sp else 17.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
@@ -89,7 +89,7 @@ fun StreamCard(
             Text(line, fontSize = if (compact) 13.sp else 15.sp, color = Color(0xFFC9CDD6), lineHeight = if (compact) 18.sp else 21.sp,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
         }
-        if (showAddon && !masked) Text("via ${addonLabel(s.addonName)}", color = Accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
+        if (showAddon && !masked) Text("via ${Public.streamName(s)}", color = Accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
     }
 }
 
@@ -166,7 +166,23 @@ fun SourcesScreen(
             ?: quickItems.firstOrNull()
     }
     val addons = remember(own) { own.map { it.addonName }.distinct() }
-    var addon by remember(target.videoId) { mutableStateOf<String?>(null) }
+    // Turbo (plugin mode): Quick Play is the first tab — the one ready stream, then the backups in the order they'd
+    // play (MovieBox, VegaMovies 1080p…); Turbo holds every other plugin link, then Extensions.
+    val plug = vm.pluginMode()
+    var addon by remember(target.videoId) { mutableStateOf<String?>(if (plug) QP_TAB else null) }
+    val csRanked = remember(f.list) { if (plug) vm.rankedCandidates(f.list.filter { it.addonName.startsWith("CloudStream · ") }, "auto", quickOnly = false) else emptyList() }
+    val plugQuick = remember(csRanked, prep) {
+        if (!plug) null else prep?.takeIf { it.key == target.videoId }?.item?.let { pi -> csRanked.firstOrNull { it.stream.url == pi.stream.url } ?: pi }
+            ?: vm.lastLink(target.videoId)?.let { ll -> csRanked.firstOrNull { it.stream.url == ll.url } }
+            ?: csRanked.firstOrNull()
+    }
+    val plugBackups = remember(csRanked, plugQuick) {
+        csRanked.filter { it.stream.url != plugQuick?.stream?.url && it.ottTier() in setOf(0, 1, 2, 4) }.distinctBy { it.stream.url }.take(12)
+    }
+    val turboList = remember(csRanked, plugQuick, plugBackups) {
+        val skip = (plugBackups.mapNotNull { it.stream.url } + listOfNotNull(plugQuick?.stream?.url)).toSet()
+        csRanked.filter { it.stream.url !in skip }.distinctBy { it.stream.url }
+    }
     // distinctBy: the list below uses this as its key, and LazyColumn crashes on duplicate keys.
     val shown = remember(own, addon) {
         (if (addon == null) own else own.filter { it.addonName == addon }).distinctBy { it.addonName + (it.stream.url ?: "") + (it.stream.name ?: "") }
@@ -175,7 +191,8 @@ fun SourcesScreen(
     val csList = remember(csItems) { csItems.distinctBy { it.stream.url } }
     val nuList = remember(nuItems) { nuItems.distinctBy { it.stream.url } }
     val nothing = when (addon) {
-        CS_TAB -> csList.isEmpty()
+        QP_TAB -> if (plug) plugQuick == null else quickOne == null
+        CS_TAB -> (if (plug) turboList else csList).isEmpty()
         NU_TAB -> nuList.isEmpty()
         else -> shown.isEmpty() && (addon != null || (quickItems.isEmpty() && backupGroups.isEmpty() && csList.isEmpty() && nuList.isEmpty()))
     }
@@ -215,9 +232,14 @@ fun SourcesScreen(
                             Icon(Icons.Default.Refresh, "Refresh", Modifier.size(22.dp))
                         }
                     }
-                    item { Pill("All", addon == null, big = true, mod = if (resumeMs > 0) Modifier else Modifier.focusRequester(firstFr)) { addon = null } }
-                    if (quickOne != null) item { Pill("Quick Play", addon == QP_TAB, big = true) { addon = QP_TAB } }
-                    if (csList.isNotEmpty()) item { Pill((if (Public.dev) "CloudStream" else "Turbo") + " · ${csList.size}", addon == CS_TAB, big = true) { addon = CS_TAB } }
+                    if (plug) {
+                        item { Pill("Quick Play", addon == QP_TAB, big = true, mod = if (resumeMs > 0) Modifier else Modifier.focusRequester(firstFr)) { addon = QP_TAB } }
+                        if (turboList.isNotEmpty()) item { Pill("Turbo · ${turboList.size}", addon == CS_TAB, big = true) { addon = CS_TAB } }
+                    } else {
+                        item { Pill("All", addon == null, big = true, mod = if (resumeMs > 0) Modifier else Modifier.focusRequester(firstFr)) { addon = null } }
+                        if (quickOne != null) item { Pill("Quick Play", addon == QP_TAB, big = true) { addon = QP_TAB } }
+                        if (csList.isNotEmpty()) item { Pill("Turbo · ${csList.size}", addon == CS_TAB, big = true) { addon = CS_TAB } }
+                    }
                     if (nuList.isNotEmpty()) item { Pill((if (Public.dev) "Nuvio" else "Extensions") + " · ${nuList.size}", addon == NU_TAB, big = true) { addon = NU_TAB } }
                     items(addons) { a -> Pill(Public.serverName(a), addon == a, big = true) { addon = a } }
                 }
@@ -231,6 +253,22 @@ fun SourcesScreen(
                 }
                 nothing && done -> item {
                     EmptyBox(Icons.Default.CloudOff, t("noStreams"), "Try again") { reload++ }
+                }
+                plug && addon == QP_TAB -> {
+                    plugQuick?.let { s ->
+                        item { SectionHead("Quick play", "ready to play") }
+                        item(key = "pq1") { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, true, false, pack) { onPick(s, f.list, if (resume) resumeMs else 0L) } } }
+                    }
+                    if (plugBackups.isNotEmpty()) {
+                        item { SectionHead("Backup play", "best first") }
+                        items(plugBackups, key = { "pb" + it.stream.url }) { s ->
+                            Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, true, false, pack, compact = true) { onPick(s, f.list, if (resume) resumeMs else 0L) } }
+                        }
+                    }
+                    if (!done) item { Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { SkeletonCard() } }
+                }
+                plug && addon == CS_TAB -> items(turboList, key = { "tb" + it.addonName + it.stream.url }) { s ->
+                    Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, turboList, if (resume) resumeMs else 0L) } }
                 }
                 addon == QP_TAB -> quickOne?.let { s -> item(key = "qp1") {
                     Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, true, false, pack) { onPick(s, f.list, if (resume) resumeMs else 0L) } }
@@ -258,18 +296,18 @@ fun SourcesScreen(
                     }
                     // Plugins sit above your addons so they are easy to reach (each also has its own chip).
                     if (addon == null && csList.isNotEmpty()) {
-                        item { SectionHead("CloudStream", "from your CloudStream plugins") }
+                        item { SectionHead("Turbo", "more streams") }
                         items(csList.take(6), key = { "cs" + it.addonName + it.stream.url }) { s ->
                             Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, csList, if (resume) resumeMs else 0L) } }
                         }
-                        if (csList.size > 6) item { MoreLink("All ${csList.size} CloudStream links") { addon = CS_TAB } }
+                        if (csList.size > 6) item { MoreLink("All ${csList.size} Turbo links") { addon = CS_TAB } }
                     }
                     if (addon == null && nuList.isNotEmpty()) {
-                        item { SectionHead("Nuvio", "from your Nuvio plugins") }
+                        item { SectionHead(if (Public.dev) "Nuvio" else "Extensions", "more streams") }
                         items(nuList.take(6), key = { "nu" + it.addonName + it.stream.url }) { s ->
                             Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, nuList, if (resume) resumeMs else 0L) } }
                         }
-                        if (nuList.size > 6) item { MoreLink("All ${nuList.size} Nuvio links") { addon = NU_TAB } }
+                        if (nuList.size > 6) item { MoreLink("All ${nuList.size} links") { addon = NU_TAB } }
                     }
                     if (shown.isNotEmpty() && (quickItems.isNotEmpty() || backupGroups.isNotEmpty() || csList.isNotEmpty() || nuList.isNotEmpty()) && addon == null) item { SectionHead("Your addons", "every detail") }
                     items(shown, key = { it.addonName + (it.stream.url ?: "") + (it.stream.name ?: "") }) { s ->

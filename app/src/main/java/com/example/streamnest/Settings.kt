@@ -422,6 +422,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             "official" -> OfficialSetPage(vm) { subPage = null }
             "plugins" -> XPluginsPage(vm) { subPage = null }
             "quickStart" -> QuickStartPage(vm) { subPage = null }
+            "codeNames" -> CodeNamesPage(vm) { subPage = null }
             else -> StreamFiltersPage(vm) { subPage = null }
         }
         return
@@ -429,6 +430,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 130.dp)) {
         item { PageHeader("Developer's Corner", onBack) }
 
+        item { DevFold("Code names", "Hotstar → Helios, MovieBox → Mercury Swift / Prime… see and edit every name", false) { subPage = "codeNames" } }
         item { DevFold("Sources & plugins", "Official set for everyone, CloudStream plugins, Quick Start, filters, built-in servers", devOpen == "src") { devOpen = if (devOpen == "src") null else "src" } }
         if (devOpen == "src") {
         item {

@@ -81,7 +81,9 @@ data class Meta(
 @Serializable data class StreamResponse(val streams: List<StreamInfo> = emptyList())
 @Serializable data class SubsResponse(val subtitles: List<Subtitle> = emptyList())
 
-@Serializable data class Shelf(val title: String, val items: List<Meta>)
+@Serializable data class Shelf(val title: String, val items: List<Meta>, val src: String? = null, val pinned: Boolean = false)
+/** A Home row the developer published for every account (shown first, locked): its catalog link and look. */
+@Serializable data class PushedRow(val title: String, val src: String, val shape: String? = null)
 data class StreamItem(val addonName: String, val stream: StreamInfo)
 
 @Serializable

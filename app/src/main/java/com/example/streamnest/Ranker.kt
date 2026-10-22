@@ -336,7 +336,8 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
     )
     // MovieBox only: your language before quality (Hindi → English → Original audio → unlabelled → other dubs), in the
     // places MovieBox links already hold — every other server keeps its order.
-    val slots = sorted.indices.filter { sorted[it].isMovieBox() }
+    // Plugin mode: MovieBox MP4s keep their own (last) place; only the playlists are re-ordered among themselves.
+    val slots = sorted.indices.filter { sorted[it].isMovieBox() && (!plugTiers || sorted[it].mbKind() != 2) }
     if (slots.size < 2) return sorted
     val mb = slots.map { sorted[it] }.sortedWith(
         compareBy<StreamItem>({ if (Ranker.score(it) <= -1000.0) 1 else 0 }, { if (it.unplayableHere()) 1 else 0 }, { langRank(it) },
@@ -350,9 +351,20 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
 }
 
 /** Netflix / Prime Video / Hotstar / MPlayer plugin links: plugin mode's first choice (they start like the apps). */
-fun StreamItem.isOtt(): Boolean = addonName.lowercase().let { n -> "netflix" in n || "prime" in n || "hotstar" in n || "mplayer" in n }
-/** 0 = Netflix-type, 1 = MovieBox, 2 = anything else. */
-fun StreamItem.ottTier(): Int = if (addonName.startsWith("Nuvio · ")) 3 else if (isOtt()) 0 else if (isMovieBox()) 1 else 2
+fun StreamItem.isOtt(): Boolean = addonName.lowercase().let { n -> "netflix" in n || "prime" in n || "hotstar" in n || "mplayer" in n || "m player" in n || "allott" in n || "disney" in n }
+/** VegaMovies (CNCVerse): the HD backup — first in Backup Play, and first for Upgrade to 4K. */
+fun StreamItem.isVega(): Boolean = addonName.contains("vega", true)
+/**
+ * Plugin mode's order: 0 = Netflix-type, 1 = MovieBox DASH / HLS (instant backup), 2 = VegaMovies, 3 = anything else,
+ * 4 = MovieBox MP4 (the last fallback), 5 = Extensions (Nuvio).
+ */
+fun StreamItem.ottTier(): Int = when {
+    addonName.startsWith("Nuvio · ") -> 5
+    isOtt() -> 0
+    isMovieBox() -> if (mbKind() == 2) 4 else 1
+    isVega() -> 2
+    else -> 3
+}
 /** Extensions (Nuvio) are a last backup: never raced or auto-played while anything else is there. */
 /** MovieBox order: DASH (.mpd) starts at once, then HLS, then the single MP4 file. */
 fun StreamItem.mbKind(): Int = when (StreamType.mimeFor(stream.url.orEmpty(), fileName())) {

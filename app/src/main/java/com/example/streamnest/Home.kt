@@ -187,7 +187,7 @@ fun HomeScreen(
     val rowsHidden = t("rowsHidden")
     val arranged = remember(allShelves, rowsOrder, rowsHidden) {
         val hidden = rowsHidden.split("|").toSet()
-        arrangeShelves(allShelves, rowsOrder).filter { it.title !in hidden }
+        arrangeShelves(allShelves, rowsOrder).filter { it.pinned || it.title !in hidden }
     }
     val shelves = remember(arranged, filter) {
         arranged.filter { s ->
@@ -411,7 +411,9 @@ val PosterCorners = linkedMapOf("Sharp" to 0, "Subtle" to 4, "Classic" to 8, "Ro
 /** Applies the row order chosen in Home Layout; rows not in the list keep their original order at the end. */
 fun arrangeShelves(all: List<Shelf>, order: String): List<Shelf> {
     val wanted = order.split("|").filter { it.isNotBlank() }
-    return all.withIndex().sortedBy { (i, s) -> wanted.indexOf(s.title).let { if (it < 0) 10_000 + i else it } }.map { it.value }
+    // The developer's published rows stay on top, in the developer's order; your own rows follow in yours.
+    val (pinned, own) = all.partition { it.pinned }
+    return pinned + own.withIndex().sortedBy { (i, s) -> wanted.indexOf(s.title).let { if (it < 0) 10_000 + i else it } }.map { it.value }
 }
 
 /**

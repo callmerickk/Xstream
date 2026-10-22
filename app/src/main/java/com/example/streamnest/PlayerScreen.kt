@@ -581,7 +581,11 @@ fun PlayerScreen(
     // Seek-bar preview frames for the link that is playing (made only while you seek).
     val nowUrl = now?.url
     val thumbsOn = isOn(opt("seekThumbs"))
-    val thumbs = remember(nowUrl, thumbsOn) { if (thumbsOn && nowUrl != null) SeekThumbs(nowUrl, StreamHeaders.forUrl(nowUrl)) else null }
+    val thumbs = remember(nowUrl, thumbsOn) {
+        if (thumbsOn && nowUrl != null) SeekThumbs(nowUrl, StreamHeaders.forUrl(nowUrl), p.key, ctx.cacheDir,
+            // MovieBox DASH: previews from the same title's MovieBox MP4 (same cut).
+            alt = known.firstOrNull { it.isMovieBox() && it.mbKind() == 2 && it.stream.url != nowUrl }?.stream?.url) else null
+    }
     DisposableEffect(thumbs) { onDispose { thumbs?.close() } }
     // Open the file for previews a little after playback starts, so the first seek-bar frame shows quickly.
     LaunchedEffect(thumbs, firstFrame) { if (firstFrame && thumbs != null) { delay(8000); thumbs.warmUp() } }
@@ -687,10 +691,11 @@ fun PlayerScreen(
     LaunchedEffect(thumbs, firstFrame) {
         val th = thumbs ?: return@LaunchedEffect
         if (!firstFrame || BuildConfig.IS_TV) return@LaunchedEffect
-        delay(10_000)
+        delay(6_000)
         val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        if (cm.isActiveNetworkMetered) delay(30_000)
-        val d = curDur(); if (d > 0) th.prefetch(d)
+        val metered = cm.isActiveNetworkMetered
+        if (metered) delay(15_000)
+        val d = curDur(); if (d > 0) th.prefetch(d, wifi = !metered)
     }
     fun curBuffered(): Long = if (usingVlc) curPos() else player.bufferedPosition
     fun isPlayingNow(): Boolean = if (usingVlc) vlc?.isPlaying == true else player.isPlaying
@@ -1799,7 +1804,7 @@ fun PlayerScreen(
         if (!everPictured || BuildConfig.IS_TV || usingVlc || !vm.pluginMode()) return@LaunchedEffect
         val names = vm.qs4kNames().ifEmpty { return@LaunchedEffect }
         // The Netflix-type swap comes first (three downloads at once would slow all of them).
-        delay(300); while (ottSwapping) delay(500)
+        delay(300); withTimeoutOrNull(20_000) { while (ottSwapping) delay(500) }
         val cur0 = now?.url?.let { itemFor(it) }
         if (cur0 != null && cur0.effectiveRes() >= 2160) return@LaunchedEffect
         PlayTiming.late("4K: asking ${names.size} plugin(s) for a 4K link")
@@ -1816,7 +1821,7 @@ fun PlayerScreen(
                 if (buffering) { delay(1_000); continue }
                 val cands = vm.rankedCandidates(vm.filtered(pool.values.toList()).list.filter { it.effectiveRes() >= 2160 && it.stream.url !in tried }, "4k", quickOnly = false)
                     .filter { !Ranker.isDead(it) && !Ranker.keepsFailing(it) && !it.unplayableHere() }
-                    .sortedWith(compareBy<StreamItem>({ vm.langRank(it) }, { PicturePref.rank(vm, it) }))
+                    .sortedWith(compareBy<StreamItem>({ vm.langRank(it) }, { if (it.isVega()) 0 else 1 }, { PicturePref.rank(vm, it) }))
                 val c = cands.firstOrNull()
                 if (c == null) { if (done) break; delay(1_500); continue }
                 val url = c.stream.url!!
@@ -2094,16 +2099,25 @@ fun PlayerScreen(
         if (!isOn(opt("subFollow")) || usingVlc || BuildConfig.IS_TV) { speakerAt = 0.5f; return@LaunchedEffect }
         SpeakerTracker.reset()
         var away = 0
+        // Each subtitle line picks its place once (from its first few looks) and keeps it: no jumping mid-line.
+        var cueKey = ""
+        val votes = ArrayList<Float?>()
         while (true) {
-            delay(330)
+            delay(200)
             val v = videoView
-            if (cues.isEmpty() || v == null || !isPlayingNow()) { if (cues.isEmpty() && ++away > 6) speakerAt = 0.5f; continue }
+            if (cues.isEmpty() || v == null || !isPlayingNow()) { if (cues.isEmpty() && ++away > 6) { speakerAt = 0.5f; cueKey = "" }; continue }
             away = 0
+            val key = cues.joinToString("|") { it.text?.toString().orEmpty() }
+            if (key != cueKey) { cueKey = key; votes.clear() }
+            if (votes.size >= 5) continue
             val got = kotlinx.coroutines.CompletableDeferred<android.graphics.Bitmap?>()
             captureFrame(v) { b -> got.complete(b) }
             val bmp = withTimeoutOrNull(1_000) { got.await() } ?: continue
             val x = runCatching { withContext(Dispatchers.Default) { SpeakerTracker.speakerX(bmp) } }.getOrNull()
-            speakerAt = x ?: 0.5f
+            votes += x
+            val found = votes.filterNotNull().sorted()
+            // Half or more of the looks agree on a talker: the line goes under them; otherwise it stays in the middle.
+            speakerAt = if (found.isNotEmpty() && found.size * 2 >= votes.size && found.last() - found.first() < 0.25f) found[found.size / 2] else 0.5f
         }
     }
     /** Subtitles chosen by hand during this play (then the automatic defaults leave them alone). */
@@ -2295,7 +2309,7 @@ fun PlayerScreen(
     var ottSwapStarted by remember(p.key) { mutableStateOf(false) }
     suspend fun ottSwapTo(c: StreamItem): Boolean {
         val url = c.stream.url ?: return false
-        val name = c.addonName.removePrefix("CloudStream · ")
+        val name = Public.streamName(c)
         val hold = HeaderHold(StreamHeaders.forUrl(url))
         val sp = buildPlayer(ctx, vm, true, hold = hold)
         sp.setSeekParameters(androidx.media3.exoplayer.SeekParameters.EXACT)
@@ -2365,23 +2379,37 @@ fun PlayerScreen(
         ottSwapStarted = true
         ottSwapping = true
         scope.launch {
+            // Fade switches, best first: Netflix-type (any time) → after 60 s on the backup without one: VegaMovies 1080p →
+            // MovieBox's MP4 in the same language (the last one). Each opens quietly and fades in at the same frame.
             val pool = java.util.concurrent.ConcurrentHashMap<String, StreamItem>()
             var done = false
             val gather = scope.launch {
-                runCatching { vm.streamsFlow(type, p.key).collect { (l, d) -> vm.filtered(l).list.filter { it.isOtt() }.forEach { s -> s.stream.url?.let { u -> pool.putIfAbsent(u, s) } }; done = d } }
+                runCatching { vm.streamsFlow(type, p.key).collect { (l, d) -> vm.filtered(l).list.filter { it.ottTier() in setOf(0, 2, 4) }.forEach { s -> s.stream.url?.let { u -> pool.putIfAbsent(u, s) } }; done = d } }
                 done = true
             }
             try {
                 val t0 = SystemClock.elapsedRealtime()
-                val triedOtt = HashSet<String>()
-                while (SystemClock.elapsedRealtime() - t0 < 120_000) {
+                val triedSwap = HashSet<String>()
+                while (SystemClock.elapsedRealtime() - t0 < 600_000) {
                     val playing = now?.url?.let { itemFor(it) } ?: cur
                     if (playing.isOtt() || usingVlc) break
-                    val c = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false)
-                        .firstOrNull { it.stream.url !in triedOtt && vm.langRank(it) <= vm.langRank(playing) && !it.unplayableHere() }
-                    if (c == null) { if (done) break; delay(800); continue }
-                    triedOtt += c.stream.url!!
-                    if (ottSwapTo(c)) break
+                    val pt = playing.ottTier()
+                    val waited = SystemClock.elapsedRealtime() - t0 >= 60_000
+                    val all = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false)
+                        .filter { it.stream.url !in triedSwap && vm.langRank(it) <= vm.langRank(playing) && !it.unplayableHere() }
+                    val c = all.firstOrNull { it.isOtt() }
+                        ?: (if (waited && pt != 2) all.filter { it.isVega() && it.effectiveRes() in 720..1080 }.maxByOrNull { it.effectiveRes() } else null)
+                        ?: (if (waited && pt in setOf(1, 3) && all.none { it.isVega() }) all.firstOrNull { it.ottTier() == 4 && vm.langRank(it) == vm.langRank(playing) } else null)
+                    if (c == null) {
+                        if (done && pool.values.none { it.isOtt() && it.stream.url !in triedSwap } && (waited || pool.isEmpty())) {
+                            // Nothing better will come: stop once every later option was tried too.
+                            if (all.none { it.isVega() || it.ottTier() == 4 }) break
+                        }
+                        delay(1_000); continue
+                    }
+                    triedSwap += c.stream.url!!
+                    PlayTiming.late("swap: trying ${Public.streamName(c)}")
+                    runCatching { ottSwapTo(c) }
                 }
             } finally {
                 gather.cancel()
@@ -4798,7 +4826,7 @@ private fun DevFileCard(s: StreamItem, playing: Boolean, pack: List<PackBadge>, 
             Text(langs, Modifier.weight(1f), fontSize = 11.5.sp, color = Color(0xFFC9CED9), maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (playing) Text("▶ Playing", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF8D94))
         }
-        Text(listOfNotNull(addonLabel(s.addonName), VisualTags.size(s), hostOf(s.stream.url).takeIf { it.isNotBlank() }).joinToString(" · "),
+        Text(listOfNotNull(Public.streamName(s), VisualTags.size(s), hostOf(s.stream.url).takeIf { it.isNotBlank() }).joinToString(" · "),
             fontSize = 10.sp, color = Color(0xFF8A94A8), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -5928,7 +5956,7 @@ private fun PluginQualityBar(
                             Text("${i + 1}", Modifier.width(22.dp), fontSize = 15.sp, fontWeight = FontWeight.Black, color = red)
                             Column(Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text((VisualTags.video(st).ifEmpty { listOf(VisualTags.primary(st)) } + Public.codeName(st.addonName)).joinToString(" · "),
+                                    Text((VisualTags.video(st).ifEmpty { listOf(VisualTags.primary(st)) } + Public.streamName(st)).joinToString(" · "),
                                         Modifier.weight(1f, fill = false), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     if (Ranker.untested(st)) Text("Unidentified", Modifier.padding(start = 6.dp).clip(RoundedCornerShape(5.dp)).background(Color(0x1FFFFFFF))
                                         .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB6BDCC))

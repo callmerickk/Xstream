@@ -45,7 +45,10 @@ object CsPlugins {
         "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
         "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json",
         "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json",
+        ALLFORU,
     )
+    const val ALLFORU = "https://raw.githubusercontent.com/RVRBEAST76/allforu-repo/builds/repo.json"
+    private const val CNC = "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json"
     private val defaultOn = setOf("FourKHDHub", "HDhub4u", "MPlayerProvider", "UHDmoviesProvider", "VegaMovies", "CNC Verse", "CNC Verse Mobile",
         "MovieBoxProvider", "MovieBoxProviderIN")
 
@@ -74,6 +77,11 @@ object CsPlugins {
         catalog.value = runCatching { Api.json.decodeFromString<List<CsPluginEntry>>(p.getString("catalog", null) ?: "") }.getOrDefault(emptyList())
         enabled.value = p.getStringSet("enabled", null)?.toSet() ?: emptySet()
         installed.value = runCatching { Api.json.decodeFromString<Map<String, Int>>(p.getString("installed", null) ?: "") }.getOrDefault(emptyMap())
+        // 0.5.4: AllForU (AllOtt: Netflix / Prime Video / Hotstar, and its MovieBox) and CNCVerse join every phone once.
+        if (!p.getBoolean("seeded054", false)) {
+            repos.value = repos.value + listOf(CNC, ALLFORU).filter { u -> repos.value.none { it.url == u } }.map { CsRepo(it) }
+            p.edit().putString("repos", Api.json.encodeToString(repos.value)).apply()
+        }
         if (!p.getBoolean("seededMovieBox", false) && catalog.value.any { it.internalName.startsWith("MovieBoxProvider") }) {
             enabled.value = enabled.value + catalog.value.filter { it.internalName.startsWith("MovieBoxProvider") }.map { it.key }
             p.edit().putBoolean("seededMovieBox", true).putStringSet("enabled", enabled.value).apply()
@@ -122,6 +130,15 @@ object CsPlugins {
             if (prefs?.getBoolean("seededMovieBox", false) != true && out.any { it.internalName.startsWith("MovieBoxProvider") }) {
                 enabled.value = enabled.value + out.filter { it.internalName.startsWith("MovieBoxProvider") }.map { it.key }
                 prefs?.edit()?.putBoolean("seededMovieBox", true)?.apply()
+            }
+            // 0.5.4: AllOtt + MovieBox from AllForU on; VegaMovies only from CNCVerse (the other copies point at a dead site).
+            if (prefs?.getBoolean("seeded054", false) != true && out.any { it.repo == ALLFORU }) {
+                val on = out.filter { (it.repo == ALLFORU && (it.internalName.contains("allott", true) || it.internalName.contains("moviebox", true))) ||
+                    (it.repo == CNC && it.internalName.contains("vega", true)) }.map { it.key }
+                val off = out.filter { it.repo != CNC && it.internalName.contains("vega", true) }.map { it.key }
+                enabled.value = enabled.value - off.toSet() + on
+                loaded.keys.filter { it in off }.forEach { loaded.remove(it) }
+                prefs?.edit()?.putBoolean("seeded054", true)?.apply()
             }
             save()
         }
@@ -206,7 +223,7 @@ object CsPlugins {
      * once, so their sites keep the connection and the sign-in cookie alive — the next title starts like in CloudStream.
      */
     suspend fun warmSome(names: Set<String>) = kotlinx.coroutines.coroutineScope {
-        providers().filter { (_, api) -> "CloudStream · ${api.name}" in names }.forEach { (_, api) ->
+        providers().filter { (_, api) -> "CloudStream · ${api.name}" in names || (MB_ANY in names && api.name.contains("moviebox", true)) || (VEGA_ANY in names && api.name.contains("vega", true)) || (OTT_ANY in names && isOttName(api.name)) }.forEach { (_, api) ->
             launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { kotlinx.coroutines.withTimeoutOrNull(15_000) { api.search("a", 1) ?: api.search("a") } } }
         }
     }

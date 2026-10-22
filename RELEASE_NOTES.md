@@ -1,3 +1,16 @@
+Xstream 0.5.4 beta
+
+• Posters load much faster on Home and in Search.
+• Quick Play gets more streams; after a minute on the instant backup, an HD file can take over smoothly.
+• Play manually: Quick Play first (ready stream, then backups in order), then Turbo and Extensions.
+• Seek previews cover the whole video and are kept for next time.
+• Follow the speaker picks each line's place once; works with one person too.
+• Hold and drag to reorder rows, add-ons, languages and more.
+• Updates download faster and keep going in the background.
+• Fixes: plugin settings no longer close the app on Android 12+; round highlight in the profile picker.
+
+---
+
 Xstream 0.4.5 beta
 
 • Choosing a CloudStream or Nuvio link plays that link (it no longer swaps in the link prepared in the background).

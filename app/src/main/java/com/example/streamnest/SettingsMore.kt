@@ -128,14 +128,12 @@ internal fun QuickStartPage(vm: AppViewModel, onBack: () -> Unit) {
         SettingsCard {
             Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
                 Text("Tried in this order. The language is read from the file name, title and description. \"Original audio\" only counts when the file says Original / Org; files with no language written are \"Unlabelled\".", fontSize = 13.sp, color = Muted)
-                langs.forEachIndexed { i, l ->
+                ReorderColumn(langs, key = { it }, onMove = { f, to -> vm.setText("qsLangs", langs.toMutableList().apply { add(to, removeAt(f)) }.joinToString(",")) }) { l, i, _, handle ->
                     Row(Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF222228)).padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Text("${i + 1}", Modifier.width(24.dp), fontWeight = FontWeight.Bold, color = Accent)
                         Text(langLabel(l), Modifier.weight(1f), fontSize = 16.sp)
-                        if (i > 0) Text("↑", Modifier.clip(RoundedCornerShape(8.dp)).clickable {
-                            val m = langs.toMutableList(); m.add(i - 1, m.removeAt(i)); vm.setText("qsLangs", m.joinToString(","))
-                        }.padding(horizontal = 10.dp, vertical = 2.dp), fontSize = 18.sp)
+                        DragGrip(handle)
                         Icon(Icons.Default.Close, "Remove", Modifier.size(28.dp).clip(RoundedCornerShape(14.dp)).clickable {
                             vm.setText("qsLangs", (langs - l).joinToString(","))
                         }.padding(4.dp), tint = Muted)
