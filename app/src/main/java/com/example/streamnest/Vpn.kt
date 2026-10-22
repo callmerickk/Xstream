@@ -89,7 +89,13 @@ object Vpn {
     private object T : Tunnel {
         override fun getName() = "streamx"
         override fun onStateChange(newState: Tunnel.State) {
-            if (newState == Tunnel.State.DOWN && state.value == St.ON) { state.value = St.OFF; via.value = null }
+            // Switched off outside the app (Android's VPN settings / quick tile, another VPN taking over): it stays off —
+            // it used to come back on by itself the next time Xstream opened, so it looked "connected" all the time.
+            if (newState == Tunnel.State.DOWN && state.value == St.ON) {
+                state.value = St.OFF; via.value = null; current.value = null; message.value = ""
+                runCatching { prefs().edit().putBoolean("wasOn", false).apply() }
+                io.launch { delay(1_500); app?.let { checkOtherVpn(it) } }
+            }
         }
     }
 
@@ -268,8 +274,11 @@ object Vpn {
     suspend fun disconnect() = lock.withLock {
         withContext(Dispatchers.IO) {
             runCatching { be().setState(T, Tunnel.State.DOWN, null) }
+            // The tunnel's Android service is stopped too, so Android's key icon and "VPN connected" go away with it.
+            runCatching { app?.let { it.stopService(android.content.Intent(it, GoBackend.VpnService::class.java)) } }
             state.value = St.OFF; via.value = null; current.value = null; message.value = ""
             save { putBoolean("wasOn", false) }
+            io.launch { delay(1_500); app?.let { checkOtherVpn(it) } }
         }
     }
 
@@ -384,7 +393,14 @@ object Vpn {
     /** Is another VPN app on (and not ours)? */
     fun checkOtherVpn(ctx: Context) {
         val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        val vpnOn = runCatching { cm.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true }.getOrDefault(false)
+        // Only a VPN that belongs to another app counts (ours, still closing after Off, was shown as "Your VPN app is on").
+        val vpnOn = runCatching {
+            @Suppress("DEPRECATION") cm.allNetworks.any { n ->
+                val c = cm.getNetworkCapabilities(n) ?: return@any false
+                c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) &&
+                    (android.os.Build.VERSION.SDK_INT < 29 || (c.ownerUid != android.os.Process.myUid() && c.ownerUid > 0))
+            }
+        }.getOrDefault(false)
         otherVpn.value = vpnOn && state.value != St.ON && state.value != St.CONNECTING
     }
 

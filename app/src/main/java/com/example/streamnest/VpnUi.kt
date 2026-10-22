@@ -60,6 +60,8 @@ fun VpnSection() {
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { Vpn.init(ctx); Vpn.checkOtherVpn(ctx); if (Vpn.direct.value == null) Vpn.direct.value = withContext(Dispatchers.IO) { Vpn.trace("1.1.1.1") } }
     val st by Vpn.state.collectAsState()
+    // Kept true to life while this card is open (a VPN switched off elsewhere, or ours closing).
+    LaunchedEffect(st) { while (true) { Vpn.checkOtherVpn(ctx); kotlinx.coroutines.delay(3_000) } }
     val msg by Vpn.message.collectAsState()
     val cur by Vpn.current.collectAsState()
     val direct by Vpn.direct.collectAsState()

@@ -81,6 +81,9 @@ object CsPlugins {
         if (!p.getBoolean("seeded054", false)) {
             repos.value = repos.value + listOf(CNC, ALLFORU).filter { u -> repos.value.none { it.url == u } }.map { CsRepo(it) }
             p.edit().putString("repos", Api.json.encodeToString(repos.value)).apply()
+            // The plugin lists are read again once, so AllOtt / MovieBox (AllForU) and CNCVerse's VegaMovies get switched on
+            // (it only happened when the list was empty, so phones that had plugins already never got them).
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO).launch { runCatching { refresh() } }
         }
         if (!p.getBoolean("seededMovieBox", false) && catalog.value.any { it.internalName.startsWith("MovieBoxProvider") }) {
             enabled.value = enabled.value + catalog.value.filter { it.internalName.startsWith("MovieBoxProvider") }.map { it.key }

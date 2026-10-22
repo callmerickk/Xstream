@@ -33,6 +33,11 @@ import kotlinx.serialization.json.jsonPrimitive
  * Each plugin is asked in parallel; results arrive as they come. Not used by Quick Play or auto-play.
  */
 object PluginSources {
+    /**
+     * One provider of one plugin. Two repositories can each have a "MovieBox" / "Netflix" provider: keyed by name they
+     * shared one answer, so the slow (or failing) copy held back the fast one.
+     */
+    fun apiKey(api: MainAPI): String = "${api.javaClass.name}|${api.name}|${runCatching { api.mainUrl }.getOrDefault("")}"
     private fun words(s: String) = s.lowercase().replace(Regex("[^a-z0-9 ]"), " ").split(" ").filter { it.isNotBlank() && it !in setOf("the", "a", "an", "of", "and") }.toSet()
     private fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
     private fun yearOf(r: SearchResponse): Int? = (r as? MovieSearchResponse)?.year ?: (r as? TvSeriesSearchResponse)?.year
@@ -54,7 +59,8 @@ object PluginSources {
             }
             val isSeries = r.type in setOf(TvType.TvSeries, TvType.Anime, TvType.AsianDrama, TvType.Cartoon, TvType.Documentary) || Regex("(?i)season|web series|episode").containsMatchIn(r.name)
             // A series: a result marked as a film is out (unless its name says it's a season).
-            if (series && r.type == TvType.Movie && !Regex("(?i)season|web series|episode|\\bS\\d{1,2}\\b").containsMatchIn(r.name)) sc -= 1.0
+            // (An exact name is kept: some sites mark every page as a film; a real film is still caught when its page loads.)
+            if (series && r.type == TvType.Movie && !Regex("(?i)season|web series|episode|\\bS\\d{1,2}\\b").containsMatchIn(r.name)) sc -= if (sc >= 1.0) 0.0 else 1.0
             if (r.type != null && !(r.type == TvType.Movie && Regex("(?i)season|web series").containsMatchIn(r.name))) sc += if (isSeries == series) 0.05 else -0.2
             r to sc
         }.maxByOrNull { it.second }?.takeIf { it.second >= 0.7 }?.first
@@ -94,10 +100,10 @@ object PluginSources {
     suspend fun linksFrom(api: MainAPI, name: String, year: Int?, series: Boolean, season: Int?, episode: Int?,
                           onLink: ((StreamItem) -> Unit)? = null): List<StreamItem> {
         fun log(s: String) = ActLog.add("CSPLAY", "${api.name}: $s")
-        if (api.name in noSearch) return emptyList()          // a browse-only provider (Disney / Marvel shelves…)
+        if (apiKey(api) in noSearch) return emptyList()          // a browse-only provider (Disney / Marvel shelves…)
         // The show's page (search + load) is kept 15 minutes: any other episode then needs only its links (~0.5 s),
         // so episode 4 or 10 starts as fast as episode 1.
-        val pageKey = "${api.name}|$name|$series|${if (series) season else year}"
+        val pageKey = "${apiKey(api)}|$name|$series|${if (series) season else year}"
         pages[pageKey]?.takeIf { System.currentTimeMillis() - it.first < 15 * 60_000L }?.second?.let { cached ->
             return linksFromPage(api, cached, name, series, season, episode, onLink, ::log)
         }
@@ -106,7 +112,7 @@ object PluginSources {
                 val paged = try { api.search(name, 1) } catch (_: NotImplementedError) { null }
                 paged?.items ?: try { api.search(name) } catch (e: NotImplementedError) { if (paged == null) throw e else null }
             }
-        } catch (e: NotImplementedError) { noSearch += api.name; log("has no search — skipped from now on"); null
+        } catch (e: NotImplementedError) { noSearch += apiKey(api); log("has no search — skipped from now on"); null
         } catch (e: Throwable) { log("search failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
         if (found == null) { log("search gave nothing (timeout or no answer)"); return emptyList() }
         val hit = bestMatch(found, name, year, series, season)
@@ -211,7 +217,7 @@ object PluginSources {
     private val answers = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, kotlinx.coroutines.Deferred<List<StreamItem>>>>()
     private val bg = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
     private suspend fun shared(api: MainAPI, id: String, fetch: suspend () -> List<StreamItem>): List<StreamItem> {
-        val k = "${api.name}|$id"
+        val k = "${apiKey(api)}|$id"
         val now = System.currentTimeMillis()
         val cur = answers[k]
         val d = if (cur != null && now - cur.first < 10 * 60_000L && !(cur.second.isCompleted && runCatching { cur.second.getCompleted() }.getOrNull().isNullOrEmpty() && now - cur.first > 60_000L)) cur.second

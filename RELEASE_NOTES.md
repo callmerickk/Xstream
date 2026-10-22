@@ -1,3 +1,12 @@
+Xstream 0.5.5 beta
+
+• Streams start faster: the quickest copy of each server is used.
+• More shows found (an exact title match is no longer missed).
+• "Not available" shows as soon as no server has the title.
+• VPN: switched off stays off (it came back on by itself).
+
+---
+
 Xstream 0.5.4 beta
 
 • Posters load much faster on Home and in Search.

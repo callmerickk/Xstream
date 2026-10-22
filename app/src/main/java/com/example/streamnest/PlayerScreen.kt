@@ -1408,6 +1408,8 @@ fun PlayerScreen(
                         }
                         val el = SystemClock.elapsedRealtime() - findT0
                         // Nothing playing 10 s after Play: CNCVerse is asked again (every 2 s until it returns links).
+                        // Turbo has no slow server to ask again: "not available" can show as soon as everything answered.
+                        if (!askedAgain && vm.pluginMode()) askedAgain = true
                         if (!askedAgain && el >= 10_000 && !vm.pluginMode()) {
                             askedAgain = true
                             PlayTiming.mark("nothing playing 10 s — CNCVerse asked again", once = "cnc10")

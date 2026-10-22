@@ -13,6 +13,12 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.5.5 beta", "22 Oct 2026", "Faster starts, VPN fix", listOf(
+        "Streams start faster: the quickest copy of each server is used (a slow copy no longer holds it back)",
+        "More shows found (an exact title match is no longer missed)",
+        "\"Not available\" shows as soon as no server has the title, instead of spinning",
+        "VPN: switched off stays off (it came back on by itself and looked connected all the time)",
+    )),
     Release("0.5.4 beta", "22 Oct 2026", "Faster posters, smarter backups, drag to reorder", listOf(
         "Posters load much faster on Home and in Search",
         "New streams join Quick Play; when the instant backup has played a minute, an HD file can take over smoothly",
@@ -319,6 +325,13 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.5.5 beta", "22 Oct 2026", "Plugin key collisions, VPN state", listOf(
+        "PluginSources.apiKey (class|name|mainUrl) for shared answers, page cache and noSearch — duplicate provider names (MovieBox ×3, Netflix ×2) shared one slot",
+        "bestMatch: exact name not penalised when a site types a series as Movie (4K HDHUB Crystal Lake / Terminal List)",
+        "CsPlugins: one-time refresh when seeded054 missing (AllOtt / AllForU MovieBox / CNC Vega never switched on with a non-empty catalog)",
+        "Player: Turbo sets askedAgain so the not-available message appears",
+        "Vpn: external DOWN clears current + wasOn; disconnect stops GoBackend.VpnService; otherVpn ignores our own uid; card re-checks every 3 s",
+    )),
     Release("0.5.4 beta", "22 Oct 2026", "AllForU, Vega chain, code names, pushed rows, updater", listOf(
         "values-v31 theme → MaterialComponents (CNCVerse settings crash on Android 12+)",
         "CsPlugins: AllForU repo default + seeded054 (AllOtt + MovieBox on; Vega only from CNCVerse)",
