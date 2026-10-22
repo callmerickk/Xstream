@@ -30,11 +30,12 @@ fun QuickPlayPage(vm: AppViewModel, onBack: () -> Unit) {
     val texts by vm.texts.collectAsStateWithLifecycle()
     fun v(k: String) = texts[k] ?: Defaults[k] ?: ""
     val langs = v("qsLangs").split(",").map { it.trim() }.filter { it.isNotEmpty() }
-    val rules = remember(texts["tagRules"]) { parseTagRules(texts["tagRules"] ?: "") }
-    fun setRule(id: String, r: TagRule) = vm.setText("tagRules", encodeTagRules(rules + (id to r)))
+    // What you see = Xstream's own picks with your changes on top; a tap changes only your layer.
+    val rules = remember(texts["tagRules"], texts["devTagRules"]) { effectiveRules(texts["devTagRules"], texts["tagRules"]) }
+    fun setRule(id: String, r: TagRule) = vm.setText("tagRules", encodeUserRules(parseUserRules(texts["tagRules"] ?: "") + (id to r)))
     val red = Accent
     Column(Modifier.fillMaxSize().background(Bg).verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 60.dp)) {
-        PageHeader("Quick Play & filters", onBack)
+        PageHeader("Filters", onBack)
         // Quick Play
         val shape = RoundedCornerShape(22.dp)
         Row(
@@ -76,6 +77,32 @@ fun QuickPlayPage(vm: AppViewModel, onBack: () -> Unit) {
                 val on = rules[d.id] == TagRule.Include
                 PChip(d.label, on) { setRule(d.id, if (on) TagRule.Off else TagRule.Include) }
             }
+        }
+        // Every tag, for those who want more: tap cycles Prefer → Hide → Only → off (your layer on top of Xstream's).
+        var allOpen by remember { mutableStateOf(false) }
+        Text(if (allOpen) "Hide all tags" else "All tags…", Modifier.padding(horizontal = 18.dp).padding(top = 16.dp).clip(RoundedCornerShape(14.dp))
+            .background(Color(0x14FFFFFF)).clickable { allOpen = !allOpen }.padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        if (allOpen) TagDefs.groupBy { it.group }.forEach { (g, defs) ->
+            ChipBlock("$g · tap: prefer → hide → only → off") {
+                defs.forEach { d ->
+                    val r = rules[d.id] ?: TagRule.Off
+                    val label = when (r) { TagRule.Include -> "${d.label} · prefer"; TagRule.Exclude -> "${d.label} · hide"; TagRule.Forced -> "${d.label} · only"; else -> d.label }
+                    PChip(label, r != TagRule.Off) {
+                        setRule(d.id, when (r) { TagRule.Off -> TagRule.Include; TagRule.Include -> TagRule.Exclude; TagRule.Exclude -> TagRule.Forced; else -> TagRule.Off })
+                    }
+                }
+            }
+        }
+        // Regex, one pattern per line: "Hide" lines remove matching streams (unless nothing would be left — the fallback),
+        // "Prefer" lines put matching streams first, in line order.
+        Column(Modifier.padding(horizontal = 18.dp).padding(top = 18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("REGEX · ONE PATTERN PER LINE", fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, color = Muted)
+            var rin by remember { mutableStateOf(texts["userRegexIn"].orEmpty()) }
+            var rout by remember { mutableStateOf(texts["userRegexOut"].orEmpty()) }
+            androidx.compose.material3.OutlinedTextField(rin, { rin = it; vm.setText("userRegexIn", it) }, Modifier.fillMaxWidth(), minLines = 2,
+                label = { Text("Prefer (first line first)") }, placeholder = { Text("hindi.*1080p\nweb-?dl") }, shape = RoundedCornerShape(14.dp))
+            androidx.compose.material3.OutlinedTextField(rout, { rout = it; vm.setText("userRegexOut", it) }, Modifier.fillMaxWidth(), minLines = 2,
+                label = { Text("Hide") }, placeholder = { Text("hdr|dolby ?vision") }, shape = RoundedCornerShape(14.dp))
         }
         ChipBlock("Get the video ready on the title page") {
             listOf("off" to "Off", "wifi" to "Wi-Fi only", "always" to "Always").forEach { (k, n) -> PChip(n, v("qsPreload") == k) { vm.setText("qsPreload", k) } }

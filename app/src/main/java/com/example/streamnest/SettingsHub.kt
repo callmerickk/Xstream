@@ -81,6 +81,7 @@ fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) 
         "about" -> LicensesPage(back)
         "manual" -> ManualPage(back)
         "plugins" -> XPluginsPage(vm, back)
+        "extensions" -> ExtensionsPage(vm, back)
         "notifications" -> NotificationsPage(vm, back)
         "updates" -> UpdateLogPage(vm, back, open)
         "playback" -> PlaybackPage(vm, back)
@@ -112,7 +113,7 @@ private fun SettingsRootPage(vm: AppViewModel, onClose: () -> Unit, open: (Strin
             SettingsCard {
                 SettingRow(Icons.Default.Palette, "Layout", "Themes, home, posters and navigation bar.") { open("layout") }
                 RowDivider()
-                SettingRow(Icons.Default.Extension, "Content & Discovery", "Manage addons and discovery sources.") { open("content") }
+                SettingRow(Icons.Default.Extension, "Sources & Extensions", "Turbo or Classic, your sources, extensions and filters.") { open("content") }
                 RowDivider()
                 SettingRow(Icons.Default.PlayArrow, "Playback", "Player, subtitles, and auto-play.") { open("playback") }
                 RowDivider()
@@ -585,24 +586,21 @@ private fun AppIconPicker() {
 
 @Composable
 private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> Unit) {
-    Page("Content & Discovery", onBack) {
-        SectionLabel("Sources")
-        if (!BuildConfig.IS_TV) SourceModeCard(vm)
+    Page("Sources & Extensions", onBack) {
+        // 1 · How you watch (Turbo / Classic), 2 · Sources, Extensions and Filters, 3 · Recommendations — each its own card.
+        if (!BuildConfig.IS_TV) {
+            SectionLabel("How you watch")
+            WatchModeCard(vm)
+        }
+        SectionLabel("Sources & extensions")
         SettingsCard {
-            SettingRow(null, "Addons", "Install, remove, refresh, and sort your content sources.") { open("addons") }
-            RowDivider(20.dp)
-            // Xstream: Quick Play and Stream Filters are one page for users; the detailed pages stay for the developer.
-            SettingRow(null, "Quick Play & filters", "Quick Play, quality, audio language and what to hide.") { open("quickPlay") }
-            if (Public.dev) {
-                RowDivider(20.dp)
-                SettingRow(null, "Stream Filters (all)", "Include, exclude or force every tag.") { open("streamFilters") }
-                RowDivider(20.dp)
-                SettingRow(null, "Quick Start servers", "Pick the Quick Play addons and see their speed.") { open("quickStart") }
-            }
+            SettingRow(null, "Sources", "Install, remove, refresh and sort your add-ons.") { open("addons") }
             if (!BuildConfig.IS_TV) {
                 RowDivider(20.dp)
-                SettingRow(null, "Plugins", "CloudStream, Nuvio and JavaScript plugins.") { open("plugins") }
+                SettingRow(null, "Extensions", "Add Nuvio extension repositories and switch providers on or off.") { open("extensions") }
             }
+            RowDivider(20.dp)
+            SettingRow(null, "Filters", "Quality, audio language, what to hide — on top of Xstream's own picks.") { open("quickPlay") }
         }
         SectionLabel("Recommendations")
         SettingsCard {
@@ -617,7 +615,7 @@ private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> 
 // ───────────── Stream filters (visual tags) ─────────────
 
 @Composable
-private fun StreamFiltersPage(vm: AppViewModel, onBack: () -> Unit) {
+internal fun StreamFiltersPage(vm: AppViewModel, onBack: () -> Unit) {
     val texts by vm.texts.collectAsStateWithLifecycle()
     val rules = remember(texts["tagRules"]) { parseTagRules(texts["tagRules"] ?: "") }
     fun set(id: String, r: TagRule) = vm.setText("tagRules", encodeTagRules(rules + (id to r)))

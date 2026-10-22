@@ -34,7 +34,7 @@ val Defaults: Map<String, String> = linkedMapOf(
     "chooseSource" to "Choose source",
     "noStreams" to "No playable (direct URL) streams found. Install an addon that provides streams.",
     "emptyMsg" to "Nothing to show. Check your connection or add an addon.",
-    "addonsTitle" to "Addons",
+    "addonsTitle" to "Sources",
     "addonsHint" to "Paste an addon link (https:// or stremio://). Addons provide catalogs, streams and subtitles.",
     "addonUrlHint" to "Addon URL",
     "installBtn" to "Install",

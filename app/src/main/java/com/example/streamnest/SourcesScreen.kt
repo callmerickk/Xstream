@@ -157,6 +157,14 @@ fun SourcesScreen(
             .sortedWith(compareByDescending<StreamItem> { Ranker.score(it) }.thenByDescending { it.effectiveRes() })
         tagGroups(l, PicturePref.order(vm))
     }
+    // Quick Play = the ONE stream that is ready (prepared on the title page, else the link that played last, else the
+    // best quick one); every other source follows as a backup.
+    val prep by Prepare.state.collectAsState()
+    val quickOne = remember(f.list, prep) {
+        prep?.takeIf { it.key == target.videoId }?.item?.let { pi -> f.list.firstOrNull { it.stream.url == pi.stream.url } ?: pi }
+            ?: vm.lastLink(target.videoId)?.let { ll -> f.list.firstOrNull { it.stream.url == ll.url } }
+            ?: quickItems.firstOrNull()
+    }
     val addons = remember(own) { own.map { it.addonName }.distinct() }
     var addon by remember(target.videoId) { mutableStateOf<String?>(null) }
     // distinctBy: the list below uses this as its key, and LazyColumn crashes on duplicate keys.
@@ -208,8 +216,9 @@ fun SourcesScreen(
                         }
                     }
                     item { Pill("All", addon == null, big = true, mod = if (resumeMs > 0) Modifier else Modifier.focusRequester(firstFr)) { addon = null } }
-                    if (csList.isNotEmpty()) item { Pill("CloudStream · ${csList.size}", addon == CS_TAB, big = true) { addon = CS_TAB } }
-                    if (nuList.isNotEmpty()) item { Pill("Nuvio · ${nuList.size}", addon == NU_TAB, big = true) { addon = NU_TAB } }
+                    if (quickOne != null) item { Pill("Quick Play", addon == QP_TAB, big = true) { addon = QP_TAB } }
+                    if (csList.isNotEmpty()) item { Pill((if (Public.dev) "CloudStream" else "Turbo") + " · ${csList.size}", addon == CS_TAB, big = true) { addon = CS_TAB } }
+                    if (nuList.isNotEmpty()) item { Pill((if (Public.dev) "Nuvio" else "Extensions") + " · ${nuList.size}", addon == NU_TAB, big = true) { addon = NU_TAB } }
                     items(addons) { a -> Pill(Public.serverName(a), addon == a, big = true) { addon = a } }
                 }
             }
@@ -223,6 +232,9 @@ fun SourcesScreen(
                 nothing && done -> item {
                     EmptyBox(Icons.Default.CloudOff, t("noStreams"), "Try again") { reload++ }
                 }
+                addon == QP_TAB -> quickOne?.let { s -> item(key = "qp1") {
+                    Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, true, false, pack) { onPick(s, f.list, if (resume) resumeMs else 0L) } }
+                } }
                 addon == CS_TAB -> items(csList, key = { "cs" + it.addonName + it.stream.url }) { s ->
                     Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, csList, if (resume) resumeMs else 0L) } }
                 }
@@ -230,9 +242,9 @@ fun SourcesScreen(
                     Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) { StreamCard(s, fusion, true, pack) { onPick(s, nuList, if (resume) resumeMs else 0L) } }
                 }
                 else -> {
-                    if (addon == null && quickItems.isNotEmpty()) {
+                    if (addon == null && quickOne != null) {
                         item { SectionHead("Quick play", "starts instantly") }
-                        items(quickItems, key = { "q" + it.stream.url }) { s ->
+                        items(listOf(quickOne), key = { "q" + it.stream.url }) { s ->
                             Box(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) {
                                 StreamCard(s, true, false, pack, compact = true) { onPick(s, f.list, if (resume) resumeMs else 0L) }
                             }
@@ -340,6 +352,7 @@ fun fmtTime(ms: Long): String {
 
 private const val CS_TAB = "\u0001cloudstream"
 private const val NU_TAB = "\u0001nuvio"
+private const val QP_TAB = "\u0001quickplay"
 
 @Composable
 private fun MoreLink(label: String, onClick: () -> Unit) {

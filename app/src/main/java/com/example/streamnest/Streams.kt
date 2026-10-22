@@ -76,6 +76,23 @@ fun parseTagRules(s: String): Map<String, TagRule> = s.split("|").mapNotNull { p
     id to rule
 }.toMap()
 
+/** The user's own filter changes, Off included ("hdr:off" = "show HDR even though the developer hid it"). */
+fun parseUserRules(s: String): Map<String, TagRule> = s.split("|").mapNotNull { part ->
+    val (id, r) = part.split(":").takeIf { it.size == 2 } ?: return@mapNotNull null
+    id to (if (r == "off") TagRule.Off else TagRule.entries.firstOrNull { it.key == r && it != TagRule.Off } ?: return@mapNotNull null)
+}.toMap()
+fun encodeUserRules(m: Map<String, TagRule>) = m.entries.joinToString("|") { "${it.key}:${if (it.value == TagRule.Off) "off" else it.value.key}" }
+
+/**
+ * Filters = the developer's published picks with the user's own changes on top, tag by tag: hiding HDR yourself while
+ * the developer hides CAM keeps both; showing something the developer hid only changes that one tag.
+ */
+fun effectiveRules(dev: String?, user: String?): Map<String, TagRule> {
+    val m = parseTagRules(dev.orEmpty()).toMutableMap()
+    parseUserRules(user.orEmpty()).forEach { (k, r) -> if (r == TagRule.Off) m.remove(k) else m[k] = r }
+    return m
+}
+
 fun encodeTagRules(m: Map<String, TagRule>) = m.filterValues { it != TagRule.Off }.entries.joinToString("|") { "${it.key}:${it.value.key}" }
 
 data class Filtered(

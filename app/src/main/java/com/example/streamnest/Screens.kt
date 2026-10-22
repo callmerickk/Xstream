@@ -394,8 +394,10 @@ fun App(vm: AppViewModel = viewModel()) {
             }
         }
         if (profile != null && texts["guideDone"].isNullOrEmpty()) QuickGuide { vm.setText("guideDone", "1") }
+        // First start on a profile: Turbo or Classic (each profile chooses once; Settings › Sources & Extensions later).
+        if (!BuildConfig.IS_TV && profile != null && texts["srcMode"].isNullOrEmpty()) FirstWatchChooser(vm)
         // Built-in servers (CNCVerse / HdHub links published from Developer's Corner) and the Connect PenguPlay card.
-        LaunchedEffect(profile?.id) { if (profile != null) { runCatching { BuiltIns.sync(vm) }; runCatching { DevDefaults.sync(vm) }; runCatching { AppLook.fetch(vm.appContext) } } }
+        LaunchedEffect(profile?.id) { if (profile != null) { runCatching { BuiltIns.sync(vm) }; runCatching { DevDefaults.sync(vm) }; runCatching { Official.apply(vm, vm.appContext) }; runCatching { AppLook.fetch(vm.appContext) } } }
         // CloudStream plugins "kept warm" (Source Test › CloudStream): loaded and woken in the background.
         // Plugin mode: every switched-on plugin is loaded and woken at start, so a title page gets its links at once.
         LaunchedEffect(profile?.id) {

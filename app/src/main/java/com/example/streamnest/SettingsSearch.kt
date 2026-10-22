@@ -36,7 +36,7 @@ data class SettingEntry(val title: String, val sub: String, val pages: List<Stri
 
 private val P = mapOf(
     "account" to "Account", "layout" to "Layout", "homeLayout" to "Home Layout", "cw" to "Continue Watching",
-    "poster" to "Poster Card Style", "streams" to "Streams", "content" to "Content & Discovery", "addons" to "Addons",
+    "poster" to "Poster Card Style", "streams" to "Streams", "content" to "Sources & Extensions", "addons" to "Sources", "extensions" to "Extensions",
     "streamFilters" to "Stream Filters", "collections" to "Collections", "integrations" to "Integrations", "quickStart" to "Quick Start", "detailPage" to "Detail Page", "playback" to "Playback", "network" to "Network & DNS", "about" to "Licenses",
     "updates" to "Update Log", "advanced" to "Advanced", "dev" to "Developer's Corner",
 )

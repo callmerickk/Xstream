@@ -49,6 +49,8 @@ object DevDefaults {
             o.forEach { (k, v) ->
                 val value = runCatching { v.jsonPrimitive.contentOrNull }.getOrNull() ?: return@forEach
                 when {
+                    // The developer's filters are the base; the user's own filter changes stay on top (never replaced).
+                    k == "t_tagRules" -> if (vm.texts.value["devTagRules"] != value) { vm.setText("devTagRules", value); changed += "devTagRules" }
                     k.startsWith("t_") -> { val key = k.removePrefix("t_"); if (vm.texts.value[key] != value) { vm.setText(key, value); changed += key } }
                     k.startsWith("s_") -> { val key = k.removePrefix("s_"); if (vm.store(key) != value) { vm.storePut(key, value); changed += key } }
                 }

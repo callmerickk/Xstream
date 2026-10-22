@@ -1199,7 +1199,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             alive.sortedWith(compareBy<StreamItem> { order.indexOf(it.addonName).let { i -> if (i < 0) Int.MAX_VALUE else i } }
                 .thenByDescending { Ranker.score(it) })
         } else alive
-        return applyTagRules(dropCams(ranked), parseTagRules(texts.value["tagRules"] ?: ""))
+        // Your own regex on top: lines that must NOT match are hidden (unless nothing would be left), lines you prefer go first.
+        val out = regexList(texts.value["userRegexOut"].orEmpty()).mapNotNull { runCatching { Regex(it, RegexOption.IGNORE_CASE) }.getOrNull() }
+        val pref = regexList(texts.value["userRegexIn"].orEmpty()).mapNotNull { runCatching { Regex(it, RegexOption.IGNORE_CASE) }.getOrNull() }
+        fun txt(s: StreamItem) = listOfNotNull(s.stream.name, s.stream.title, s.stream.description, s.stream.behaviorHints?.filename).joinToString(" ")
+        val rx = (if (out.isEmpty()) ranked else ranked.filterNot { s -> out.any { it.containsMatchIn(txt(s)) } }.ifEmpty { ranked })
+            .let { l -> if (pref.isEmpty()) l else l.sortedBy { s -> pref.indexOfFirst { it.containsMatchIn(txt(s)) }.let { i -> if (i < 0) Int.MAX_VALUE else i } } }
+        return applyTagRules(dropCams(rx), effectiveRules(texts.value["devTagRules"], texts.value["tagRules"]))
     }
 
     /**

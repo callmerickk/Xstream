@@ -413,9 +413,65 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
     if (refreshLab) { RefreshLabScreen(vm) { refreshLab = false }; return }
     var defaultsPage by remember { mutableStateOf(false) }
     if (defaultsPage) { androidx.activity.compose.BackHandler { defaultsPage = false }; IntegrationsPage(vm, { defaultsPage = false }, dev = true); return }
+    // Sub pages opened from the groups (Official set, CloudStream plugins, Quick Start, all stream filters).
+    var subPage by remember { mutableStateOf<String?>(null) }
+    var devOpen by remember { mutableStateOf<String?>("src") }
+    subPage?.let { sp ->
+        androidx.activity.compose.BackHandler { subPage = null }
+        when (sp) {
+            "official" -> OfficialSetPage(vm) { subPage = null }
+            "plugins" -> XPluginsPage(vm) { subPage = null }
+            "quickStart" -> QuickStartPage(vm) { subPage = null }
+            else -> StreamFiltersPage(vm) { subPage = null }
+        }
+        return
+    }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 130.dp)) {
         item { PageHeader("Developer's Corner", onBack) }
 
+        item { DevFold("Sources & plugins", "Official set for everyone, CloudStream plugins, Quick Start, filters, built-in servers", devOpen == "src") { devOpen = if (devOpen == "src") null else "src" } }
+        if (devOpen == "src") {
+        item {
+            SettingsCard {
+                SettingRow(Icons.Default.Public, "Official set for everyone", "The add-ons and plugins every account gets. Anything else stays a test.") { subPage = "official" }
+                SettingRow(Icons.Default.Extension, "CloudStream plugins", "Repositories and plugins (developer only).") { subPage = "plugins" }
+                SettingRow(Icons.Default.Speed, "Quick Start servers", "Quick Play add-ons / plugins and their speed.") { subPage = "quickStart" }
+                SettingRow(Icons.Default.FilterList, "Stream filters (all)", "Include, exclude or force every tag — the defaults users build on.") { subPage = "streamFilters" }
+            }
+        }
+        item { SectionLabel("Built-in servers for everyone") }
+        item {
+            val scope = rememberCoroutineScope()
+            val vals = remember { mutableStateMapOf<String, String>() }
+            var msg by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(Unit) {
+                val m = BuiltIns.fetch()
+                BuiltIns.keys.forEach { (k, _) ->
+                    vals[k] = m[k] ?: when (k) {
+                        "penguConnect" -> QuickServer.DEFAULT_CONNECT
+                        "quickPlay" -> vm.texts.value["qpUrl"]?.let { "$it/manifest.json" } ?: ""
+                        else -> vm.addons.value.firstOrNull { k in (it.manifest.name + " " + it.baseUrl).lowercase() }?.let { it.baseUrl + "/manifest.json" } ?: ""
+                    }
+                }
+            }
+            SettingsCard {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Every phone installs these when the app opens, and picks up changes on its next launch. Users never see their names.",
+                        fontSize = 13.sp, color = Color(0xFF9AA3B5))
+                    BuiltIns.keys.forEach { (k, label) ->
+                        androidx.compose.material3.OutlinedTextField(vals[k] ?: "", { vals[k] = it }, Modifier.fillMaxWidth().padding(top = 10.dp), singleLine = true, label = { Text(label) })
+                    }
+                    androidx.compose.material3.Button({
+                        msg = "Publishing…"
+                        scope.launch { msg = BuiltIns.publish(vals.toMap()) ?: "Published ✓ — phones update on their next launch" }
+                    }, Modifier.padding(top = 12.dp).fillMaxWidth()) { Text("Publish to everyone") }
+                    msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Color(0xFF9AA3B5)) }
+                }
+            }
+        }
+        }
+        item { DevFold("Playback & tests", "Source Test, auto-play logic, Refresh Lab, defaults for everyone", devOpen == "play") { devOpen = if (devOpen == "play") null else "play" } }
+        if (devOpen == "play") {
         item { SectionLabel("Streaming") }
         item {
             SettingsCard {
@@ -426,6 +482,183 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             }
         }
 
+        }
+        item { DevFold("Publish for everyone", "Watch together call relay", devOpen == "pub") { devOpen = if (devOpen == "pub") null else "pub" } }
+        if (devOpen == "pub") {
+        item { SectionLabel("Watch together call relay (everyone)") }
+        item {
+            val scope = rememberCoroutineScope()
+            val cur by AppLook.turn.collectAsStateWithLifecycle()
+            var url by remember { mutableStateOf(cur.first) }
+            var user by remember { mutableStateOf(cur.second) }
+            var pass by remember { mutableStateOf(cur.third) }
+            var msg by remember { mutableStateOf<String?>(null) }
+            SettingsCard {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Voice / video calls go straight between phones. Some mobile networks block that; a relay (TURN) server from your own Cloudflare or Metered account carries those calls. Paste its details here. Leave empty to use direct calls only. Note: everyone's app can read these details.",
+                        fontSize = 13.sp, color = Color(0xFF9AA3B5))
+                    androidx.compose.material3.OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth().padding(top = 10.dp), singleLine = true, label = { Text("TURN url(s), comma separated (turn:… / turns:…)") })
+                    androidx.compose.material3.OutlinedTextField(user, { user = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Username") })
+                    androidx.compose.material3.OutlinedTextField(pass, { pass = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Password / credential") })
+                    androidx.compose.material3.Button({ msg = "Publishing…"; scope.launch { msg = AppLook.publishTurn(url, user, pass) ?: "Published ✓ — used for calls from the next room" } }, Modifier.padding(top = 10.dp)) { Text("Publish for everyone") }
+                    msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Color(0xFF9AA3B5)) }
+                }
+            }
+        }
+        }
+        item { DevFold("Look, logo & AI", "App logo, start animation, app identity", devOpen == "look") { devOpen = if (devOpen == "look") null else "look" } }
+        if (devOpen == "look") {
+        item { SectionLabel("Logo & animation (everyone)") }
+        item {
+            val scope = rememberCoroutineScope()
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            val curLogo by AppLook.logo.collectAsStateWithLifecycle()
+            val curAnim by AppLook.anim.collectAsStateWithLifecycle()
+            var logo by remember { mutableStateOf(curLogo) }
+            var anim by remember { mutableStateOf(curAnim) }
+            var msg by remember { mutableStateOf<String?>(null) }
+            SettingsCard {
+                Column(Modifier.padding(16.dp)) {
+                    Text("The app's logo and the Home logo animation for everyone. Phones pick it up the next time Xstream opens; the app icon changes on the next fresh start (unless someone chose their own icon in Settings).",
+                        fontSize = 13.sp, color = Color(0xFF9AA3B5))
+                    Row(Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AppIcons.all.forEach { o ->
+                            val on = o.id == logo
+                            Column(Modifier.width(76.dp).clip(RoundedCornerShape(14.dp)).clickable { logo = o.id }.padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(o.res), o.label,
+                                    Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)).then(if (on) Modifier.border(2.dp, Color.White, RoundedCornerShape(14.dp)) else Modifier))
+                                Text(o.label, Modifier.padding(top = 4.dp), fontSize = 11.sp, color = if (on) Color.White else Color(0xFF8A94A8), maxLines = 1)
+                            }
+                        }
+                    }
+                    Text("Home animation", Modifier.padding(top = 14.dp, bottom = 6.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    AppLook.ANIMS.forEach { (id, label) ->
+                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { anim = id }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.RadioButton(anim == id, { anim = id })
+                            Text(label + if (id == "broadcast_living") " (default)" else "", fontSize = 14.sp)
+                        }
+                    }
+                    if (anim != "hanging" && anim != "none" && logo != "signal") Text("The Broadcast, Tune in and Living signal animations draw the Signal X logo; with another logo the logo stays still and only the name slides in.",
+                        Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Color(0xFF8A94A8))
+                    Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.material3.OutlinedButton({ AppLook.set(ctx, logo, anim); msg = "On this phone now (restart Xstream to see the animation)" }) { Text("Use on this phone") }
+                        androidx.compose.material3.Button({
+                            msg = "Publishing…"
+                            scope.launch { msg = AppLook.publish(logo, anim) ?: run { AppLook.set(ctx, logo, anim); "Published ✓ — every phone switches when Xstream opens next" } }
+                        }) { Text("Publish for everyone") }
+                    }
+                    msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Color(0xFF9AA3B5)) }
+                }
+            }
+        }
+        item { SectionLabel("App identity") }
+        item {
+            SettingsCard {
+                Column(Modifier.padding(20.dp)) {
+                    key(resetN) {
+                        var name by remember { mutableStateOf(texts["appName"] ?: Defaults["appName"] ?: "") }
+                        OutlinedTextField(name, { name = it; vm.setText("appName", it) }, Modifier.fillMaxWidth().tvOkKeyboard(top = 8.dp), singleLine = true, label = { Text("App name") }, shape = RoundedCornerShape(14.dp), keyboardOptions = tvKeyboard())
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(72.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF232B40)), Alignment.Center) {
+                            if (logo != null) AsyncImage(logo, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                            else Icon(Icons.Default.Image, null, tint = Muted)
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        Column {
+                            Button({ pickLogo.launch("image/*") }, colors = ButtonDefaults.buttonColors(containerColor = Accent)) { Text("Upload logo") }
+                            if (logo != null) TextButton({ vm.clearLogo() }) { Text("Remove logo") }
+                        }
+                    }
+                    Text(
+                        "The name and logo update inside the app instantly. The icon and name under the app on your phone's home screen are fixed at build time (res/values/strings.xml and the launcher icon).",
+                        fontSize = 13.sp, color = Muted, modifier = Modifier.padding(top = 14.dp),
+                    )
+                }
+            }
+        }
+
+        }
+        item { DevFold("Tests & logs", "Activity log, play timing, playback log, developer changelog", devOpen == "logs") { devOpen = if (devOpen == "logs") null else "logs" } }
+        if (devOpen == "logs") {
+        // Play timing log: every Play, step by step (tap → player → link → tracks → first picture).
+        item { SectionLabel("Activity log") }
+        item {
+            var open by remember { mutableStateOf(false) }
+            SettingsCard {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Everything Xstream did in the last 3 days on this phone and on your TV: every tap and remote key, screens, network, playback, Watch together, sync, VPN and errors. Older days are deleted automatically. Typed text is never recorded.",
+                        fontSize = 13.sp, color = Color(0xFF9AA3B5))
+                    androidx.compose.material3.Button({ open = true }, Modifier.padding(top = 10.dp)) { Text("Open activity log") }
+                }
+            }
+            if (open) ActLogScreen { open = false }
+        }
+        item { SectionLabel("Play timing log") }
+        item {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            val clip = androidx.compose.ui.platform.LocalClipboardManager.current
+            var logs by remember { mutableStateOf(PlayTiming.all()) }
+            SettingsCard {
+                Column(Modifier.padding(20.dp)) {
+                    Text("Every time you press Play: how long each step took, and how much came from the saved video. Newest first (last 30).",
+                        fontSize = 13.sp, color = Muted)
+                    if (logs.isEmpty()) Text("Nothing yet — play something, then come back.", Modifier.padding(top = 10.dp), fontSize = 14.sp)
+                    logs.take(10).forEach { l ->
+                        Text(l, Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color(0xFF1C1D23)).padding(10.dp),
+                            fontSize = 11.sp, color = Color(0xFFD5D8DF), lineHeight = 15.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    }
+                    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TextButton({ logs = PlayTiming.all() }) { Text("Refresh") }
+                        if (logs.isNotEmpty()) {
+                            TextButton({ clip.setText(androidx.compose.ui.text.AnnotatedString(logs.joinToString("\n\n"))) }) { Text("Copy all") }
+                            TextButton({
+                                runCatching {
+                                    ctx.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                                        .putExtra(android.content.Intent.EXTRA_TEXT, logs.joinToString("\n\n")), "Play timing log").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                                }
+                            }) { Text("Share") }
+                            TextButton({ PlayTiming.clear(); logs = emptyList() }) { Text("Clear", color = Color(0xFFFF6B6B)) }
+                        }
+                    }
+                }
+            }
+        }
+
+        item { SectionLabel("Playback log") }
+        item {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            var lines by remember { mutableStateOf(PlaybackLog.all(ctx)) }
+            SettingsCard {
+                Column(Modifier.padding(20.dp)) {
+                    Text("Why links failed (newest first): title · addon · way tried · error · server answer. Send a line to fix a stubborn file.",
+                        fontSize = 13.sp, color = Muted)
+                    if (lines.isEmpty()) Text("Nothing failed yet.", Modifier.padding(top = 10.dp), fontSize = 14.sp)
+                    lines.take(25).forEach { l ->
+                        Text(l, Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color(0xFF1C1D23)).padding(10.dp),
+                            fontSize = 12.sp, color = Color(0xFFD5D8DF), lineHeight = 16.sp)
+                    }
+                    if (lines.isNotEmpty()) Row(Modifier.padding(top = 10.dp)) {
+                        val clip = androidx.compose.ui.platform.LocalClipboardManager.current
+                        TextButton({ clip.setText(androidx.compose.ui.text.AnnotatedString(lines.joinToString("\n"))); Snack.show("Playback log copied") }) { Text("Copy all") }
+                        TextButton({ PlaybackLog.clear(ctx); lines = emptyList() }) { Text("Clear") }
+                    }
+                }
+            }
+        }
+
+        item { SectionLabel("Developer changelog") }
+        item {
+            var showLog by remember { mutableStateOf(false) }
+            SettingsCard {
+                SettingRow(Icons.Default.NewReleases, "Full changelog", "Every technical change, with server and addon names. Users only see What's new.") { showLog = !showLog }
+            }
+            if (showLog) Column { Changelog.forEach { ReleaseCard(it, current = it === Changelog.first()) } }
+        }
+        }
+        item { DevFold("Access & security", "Dev access, fingerprint, password, customize UI", devOpen == "sec") { devOpen = if (devOpen == "sec") null else "sec" } }
+        if (devOpen == "sec") {
         // Who sees "Dev sources" in the player (› More): every source with its server and provider names, as before.
         item { SectionLabel("Dev access") }
         item {
@@ -485,201 +718,6 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             }
         }
 
-        // Play timing log: every Play, step by step (tap → player → link → tracks → first picture).
-        item { SectionLabel("Activity log") }
-        item {
-            var open by remember { mutableStateOf(false) }
-            SettingsCard {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Everything Xstream did in the last 3 days on this phone and on your TV: every tap and remote key, screens, network, playback, Watch together, sync, VPN and errors. Older days are deleted automatically. Typed text is never recorded.",
-                        fontSize = 13.sp, color = Color(0xFF9AA3B5))
-                    androidx.compose.material3.Button({ open = true }, Modifier.padding(top = 10.dp)) { Text("Open activity log") }
-                }
-            }
-            if (open) ActLogScreen { open = false }
-        }
-        item { SectionLabel("Logo & animation (everyone)") }
-        item {
-            val scope = rememberCoroutineScope()
-            val ctx = androidx.compose.ui.platform.LocalContext.current
-            val curLogo by AppLook.logo.collectAsStateWithLifecycle()
-            val curAnim by AppLook.anim.collectAsStateWithLifecycle()
-            var logo by remember { mutableStateOf(curLogo) }
-            var anim by remember { mutableStateOf(curAnim) }
-            var msg by remember { mutableStateOf<String?>(null) }
-            SettingsCard {
-                Column(Modifier.padding(16.dp)) {
-                    Text("The app's logo and the Home logo animation for everyone. Phones pick it up the next time Xstream opens; the app icon changes on the next fresh start (unless someone chose their own icon in Settings).",
-                        fontSize = 13.sp, color = Color(0xFF9AA3B5))
-                    Row(Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        AppIcons.all.forEach { o ->
-                            val on = o.id == logo
-                            Column(Modifier.width(76.dp).clip(RoundedCornerShape(14.dp)).clickable { logo = o.id }.padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(o.res), o.label,
-                                    Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)).then(if (on) Modifier.border(2.dp, Color.White, RoundedCornerShape(14.dp)) else Modifier))
-                                Text(o.label, Modifier.padding(top = 4.dp), fontSize = 11.sp, color = if (on) Color.White else Color(0xFF8A94A8), maxLines = 1)
-                            }
-                        }
-                    }
-                    Text("Home animation", Modifier.padding(top = 14.dp, bottom = 6.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    AppLook.ANIMS.forEach { (id, label) ->
-                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { anim = id }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            androidx.compose.material3.RadioButton(anim == id, { anim = id })
-                            Text(label + if (id == "broadcast_living") " (default)" else "", fontSize = 14.sp)
-                        }
-                    }
-                    if (anim != "hanging" && anim != "none" && logo != "signal") Text("The Broadcast, Tune in and Living signal animations draw the Signal X logo; with another logo the logo stays still and only the name slides in.",
-                        Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Color(0xFF8A94A8))
-                    Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        androidx.compose.material3.OutlinedButton({ AppLook.set(ctx, logo, anim); msg = "On this phone now (restart Xstream to see the animation)" }) { Text("Use on this phone") }
-                        androidx.compose.material3.Button({
-                            msg = "Publishing…"
-                            scope.launch { msg = AppLook.publish(logo, anim) ?: run { AppLook.set(ctx, logo, anim); "Published ✓ — every phone switches when Xstream opens next" } }
-                        }) { Text("Publish for everyone") }
-                    }
-                    msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Color(0xFF9AA3B5)) }
-                }
-            }
-        }
-        item { SectionLabel("Watch together call relay (everyone)") }
-        item {
-            val scope = rememberCoroutineScope()
-            val cur by AppLook.turn.collectAsStateWithLifecycle()
-            var url by remember { mutableStateOf(cur.first) }
-            var user by remember { mutableStateOf(cur.second) }
-            var pass by remember { mutableStateOf(cur.third) }
-            var msg by remember { mutableStateOf<String?>(null) }
-            SettingsCard {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Voice / video calls go straight between phones. Some mobile networks block that; a relay (TURN) server from your own Cloudflare or Metered account carries those calls. Paste its details here. Leave empty to use direct calls only. Note: everyone's app can read these details.",
-                        fontSize = 13.sp, color = Color(0xFF9AA3B5))
-                    androidx.compose.material3.OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth().padding(top = 10.dp), singleLine = true, label = { Text("TURN url(s), comma separated (turn:… / turns:…)") })
-                    androidx.compose.material3.OutlinedTextField(user, { user = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Username") })
-                    androidx.compose.material3.OutlinedTextField(pass, { pass = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Password / credential") })
-                    androidx.compose.material3.Button({ msg = "Publishing…"; scope.launch { msg = AppLook.publishTurn(url, user, pass) ?: "Published ✓ — used for calls from the next room" } }, Modifier.padding(top = 10.dp)) { Text("Publish for everyone") }
-                    msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Color(0xFF9AA3B5)) }
-                }
-            }
-        }
-        item { SectionLabel("Built-in servers for everyone") }
-        item {
-            val scope = rememberCoroutineScope()
-            val vals = remember { mutableStateMapOf<String, String>() }
-            var msg by remember { mutableStateOf<String?>(null) }
-            LaunchedEffect(Unit) {
-                val m = BuiltIns.fetch()
-                BuiltIns.keys.forEach { (k, _) ->
-                    vals[k] = m[k] ?: when (k) {
-                        "penguConnect" -> QuickServer.DEFAULT_CONNECT
-                        "quickPlay" -> vm.texts.value["qpUrl"]?.let { "$it/manifest.json" } ?: ""
-                        else -> vm.addons.value.firstOrNull { k in (it.manifest.name + " " + it.baseUrl).lowercase() }?.let { it.baseUrl + "/manifest.json" } ?: ""
-                    }
-                }
-            }
-            SettingsCard {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Every phone installs these when the app opens, and picks up changes on its next launch. Users never see their names.",
-                        fontSize = 13.sp, color = Color(0xFF9AA3B5))
-                    BuiltIns.keys.forEach { (k, label) ->
-                        androidx.compose.material3.OutlinedTextField(vals[k] ?: "", { vals[k] = it }, Modifier.fillMaxWidth().padding(top = 10.dp), singleLine = true, label = { Text(label) })
-                    }
-                    androidx.compose.material3.Button({
-                        msg = "Publishing…"
-                        scope.launch { msg = BuiltIns.publish(vals.toMap()) ?: "Published ✓ — phones update on their next launch" }
-                    }, Modifier.padding(top = 12.dp).fillMaxWidth()) { Text("Publish to everyone") }
-                    msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Color(0xFF9AA3B5)) }
-                }
-            }
-        }
-        item { SectionLabel("Developer changelog") }
-        item {
-            var showLog by remember { mutableStateOf(false) }
-            SettingsCard {
-                SettingRow(Icons.Default.NewReleases, "Full changelog", "Every technical change, with server and addon names. Users only see What's new.") { showLog = !showLog }
-            }
-            if (showLog) Column { Changelog.forEach { ReleaseCard(it, current = it === Changelog.first()) } }
-        }
-        item { SectionLabel("Play timing log") }
-        item {
-            val ctx = androidx.compose.ui.platform.LocalContext.current
-            val clip = androidx.compose.ui.platform.LocalClipboardManager.current
-            var logs by remember { mutableStateOf(PlayTiming.all()) }
-            SettingsCard {
-                Column(Modifier.padding(20.dp)) {
-                    Text("Every time you press Play: how long each step took, and how much came from the saved video. Newest first (last 30).",
-                        fontSize = 13.sp, color = Muted)
-                    if (logs.isEmpty()) Text("Nothing yet — play something, then come back.", Modifier.padding(top = 10.dp), fontSize = 14.sp)
-                    logs.take(10).forEach { l ->
-                        Text(l, Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color(0xFF1C1D23)).padding(10.dp),
-                            fontSize = 11.sp, color = Color(0xFFD5D8DF), lineHeight = 15.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-                    }
-                    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        TextButton({ logs = PlayTiming.all() }) { Text("Refresh") }
-                        if (logs.isNotEmpty()) {
-                            TextButton({ clip.setText(androidx.compose.ui.text.AnnotatedString(logs.joinToString("\n\n"))) }) { Text("Copy all") }
-                            TextButton({
-                                runCatching {
-                                    ctx.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
-                                        .putExtra(android.content.Intent.EXTRA_TEXT, logs.joinToString("\n\n")), "Play timing log").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-                                }
-                            }) { Text("Share") }
-                            TextButton({ PlayTiming.clear(); logs = emptyList() }) { Text("Clear", color = Color(0xFFFF6B6B)) }
-                        }
-                    }
-                }
-            }
-        }
-
-        item { SectionLabel("Playback log") }
-        item {
-            val ctx = androidx.compose.ui.platform.LocalContext.current
-            var lines by remember { mutableStateOf(PlaybackLog.all(ctx)) }
-            SettingsCard {
-                Column(Modifier.padding(20.dp)) {
-                    Text("Why links failed (newest first): title · addon · way tried · error · server answer. Send a line to fix a stubborn file.",
-                        fontSize = 13.sp, color = Muted)
-                    if (lines.isEmpty()) Text("Nothing failed yet.", Modifier.padding(top = 10.dp), fontSize = 14.sp)
-                    lines.take(25).forEach { l ->
-                        Text(l, Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color(0xFF1C1D23)).padding(10.dp),
-                            fontSize = 12.sp, color = Color(0xFFD5D8DF), lineHeight = 16.sp)
-                    }
-                    if (lines.isNotEmpty()) Row(Modifier.padding(top = 10.dp)) {
-                        val clip = androidx.compose.ui.platform.LocalClipboardManager.current
-                        TextButton({ clip.setText(androidx.compose.ui.text.AnnotatedString(lines.joinToString("\n"))); Snack.show("Playback log copied") }) { Text("Copy all") }
-                        TextButton({ PlaybackLog.clear(ctx); lines = emptyList() }) { Text("Clear") }
-                    }
-                }
-            }
-        }
-
-        item { SectionLabel("App identity") }
-        item {
-            SettingsCard {
-                Column(Modifier.padding(20.dp)) {
-                    key(resetN) {
-                        var name by remember { mutableStateOf(texts["appName"] ?: Defaults["appName"] ?: "") }
-                        OutlinedTextField(name, { name = it; vm.setText("appName", it) }, Modifier.fillMaxWidth().tvOkKeyboard(top = 8.dp), singleLine = true, label = { Text("App name") }, shape = RoundedCornerShape(14.dp), keyboardOptions = tvKeyboard())
-                    }
-                    Spacer(Modifier.height(16.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(72.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF232B40)), Alignment.Center) {
-                            if (logo != null) AsyncImage(logo, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                            else Icon(Icons.Default.Image, null, tint = Muted)
-                        }
-                        Spacer(Modifier.width(16.dp))
-                        Column {
-                            Button({ pickLogo.launch("image/*") }, colors = ButtonDefaults.buttonColors(containerColor = Accent)) { Text("Upload logo") }
-                            if (logo != null) TextButton({ vm.clearLogo() }) { Text("Remove logo") }
-                        }
-                    }
-                    Text(
-                        "The name and logo update inside the app instantly. The icon and name under the app on your phone's home screen are fixed at build time (res/values/strings.xml and the launcher icon).",
-                        fontSize = 13.sp, color = Muted, modifier = Modifier.padding(top = 14.dp),
-                    )
-                }
-            }
-        }
-
         item { SectionLabel("Security") }
         item {
             SettingsCard {
@@ -722,6 +760,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         }
         item {
             OutlinedButton({ vm.resetTexts(); resetN++ }, Modifier.padding(16.dp)) { Text("Reset to defaults") }
+        }
         }
     }
 }
@@ -795,5 +834,21 @@ fun LiveTvScreen(vm: AppViewModel, onBack: () -> Unit, onPlay: (Screen.Player) -
                 }
             }
         }
+    }
+}
+
+
+/** Developer's Corner: a group you tap to open or close (one open at a time). */
+@Composable
+internal fun DevFold(title: String, sub: String, open: Boolean, onToggle: () -> Unit) {
+    val shape = RoundedCornerShape(20.dp)
+    Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(shape)
+        .background(if (open) Color(0x1AE50914) else CardBg).border(1.dp, if (open) Color(0x66E50914) else Color(0x14FFFFFF), shape)
+        .clickable { onToggle() }.padding(horizontal = 18.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Text(sub, fontSize = 12.5.sp, color = Muted)
+        }
+        Icon(if (open) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, null, tint = Color.White)
     }
 }

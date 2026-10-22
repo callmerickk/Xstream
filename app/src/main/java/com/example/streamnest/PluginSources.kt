@@ -255,7 +255,7 @@ object PluginSources {
             if (total == 0) { send(emptyList<StreamItem>() to true); return@coroutineScope }
             var done = 0
             suspend fun add(l: List<StreamItem>) = lock.withLock {
-                acc += l.filter { keep(it) && !it.isInstantDownload() && !TitleMatch.wrong(it, type, id) }
+                acc += l.filter { keep(it) && !it.isInstantDownload() && !TitleMatch.wrong(it, type, id) && !vm.extHides(it) }
                 done++
                 send(acc.distinctBy { it.stream.url } to (done == total))
             }

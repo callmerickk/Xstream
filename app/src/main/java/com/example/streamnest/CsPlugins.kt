@@ -128,6 +128,9 @@ object CsPlugins {
         errors.takeIf { it.isNotEmpty() }?.joinToString(" · ")
     }
 
+    /** The developer's published plugin set: exactly these switched on (Official.apply). */
+    fun setEnabledSet(keys: Set<String>) { enabled.value = keys; save(); loaded.keys.filter { it !in keys }.forEach { loaded.remove(it) } }
+
     fun setEnabled(key: String, on: Boolean) { enabled.value = if (on) enabled.value + key else enabled.value - key; save(); if (!on) loaded.remove(key) }
 
     private fun fileFor(e: CsPluginEntry): File {

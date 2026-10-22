@@ -352,7 +352,8 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
 /** Netflix / Prime Video / Hotstar / MPlayer plugin links: plugin mode's first choice (they start like the apps). */
 fun StreamItem.isOtt(): Boolean = addonName.lowercase().let { n -> "netflix" in n || "prime" in n || "hotstar" in n || "mplayer" in n }
 /** 0 = Netflix-type, 1 = MovieBox, 2 = anything else. */
-fun StreamItem.ottTier(): Int = if (isOtt()) 0 else if (isMovieBox()) 1 else 2
+fun StreamItem.ottTier(): Int = if (addonName.startsWith("Nuvio · ")) 3 else if (isOtt()) 0 else if (isMovieBox()) 1 else 2
+/** Extensions (Nuvio) are a last backup: never raced or auto-played while anything else is there. */
 /** MovieBox order: DASH (.mpd) starts at once, then HLS, then the single MP4 file. */
 fun StreamItem.mbKind(): Int = when (StreamType.mimeFor(stream.url.orEmpty(), fileName())) {
     StreamType.DASH -> 0; null -> 2; else -> 1 }

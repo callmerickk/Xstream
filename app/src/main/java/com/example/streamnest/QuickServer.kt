@@ -119,7 +119,7 @@ object BuiltIns {
         val body = buildJsonObject { values.forEach { (k, v) -> put(k, v.trim()) }; put("at", System.currentTimeMillis()) }
         runCatching {
             Api.http.newCall(Request.Builder().url("${CloudConfig.DB_URL}/shared/devAddons.json?auth=$t")
-                .put(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r ->
+                .patch(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r ->
                 if (r.isSuccessful) { cur = values; null } else if (r.code == 401 || r.code == 403) "Not allowed: add the Firebase rule for shared/devAddons, and use the owner's account." else "HTTP ${r.code}"
             }
         }.getOrElse { "Couldn't reach the cloud." }

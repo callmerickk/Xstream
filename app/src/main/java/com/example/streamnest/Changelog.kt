@@ -13,6 +13,14 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.5.1 beta", "22 Oct 2026", "Turbo or Classic, Sources & Extensions", listOf(
+        "Pick how you watch: Turbo (straight from big streaming catalogues, starts almost instantly) or Classic (your sources, as before) — asked once per profile",
+        "Settings › Sources & Extensions: How you watch · Sources, Extensions and Filters · Recommendations, neatly spaced",
+        "Extensions: add Nuvio repositories, switch providers on or off per repository, hide qualities you don't want",
+        "Extensions are a backup: they play when nothing else does, or when you pick them yourself",
+        "Filters: every tag (prefer / hide / only) and your own regex, on top of Xstream's own picks — your changes never wipe them",
+        "Play manually: Quick Play shows the one stream that's ready, with every other source below as a backup",
+    )),
     Release("0.5.0 beta", "22 Oct 2026", "Steadier, faster, cleaner", listOf(
         "A series never plays the movie of the same name any more (The Flash, Supergirl)",
         "Subtitle auto sync starts at 0 and keeps listening; it only moves the timing when it's sure",
@@ -289,6 +297,15 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.5.1 beta", "22 Oct 2026", "Watch mode, Sources & Extensions page, official set, additive filters", listOf(
+        "SourcesExt.kt: WatchModeCard (Turbo=plugins / Classic=addons, srcMode is per profile), FirstWatchChooser when srcMode is empty (phones), ExtensionsPage (Nuvio only: overview, extOn, repo chips + enable/disable visible, quality chips extExclude, add/refresh/remove repos, provider switches)",
+        "ContentPage → \"Sources & Extensions\": How you watch / Sources, Extensions, Filters / Recommendations; addonsTitle default \"Sources\"",
+        "Developer's Corner: folding groups (Sources & plugins, Playback & tests, Publish for everyone, Look logo & AI, Tests & logs, Access & security); CloudStream plugins, Quick Start servers, Stream filters (all) and Official set moved inside",
+        "Official.kt: OfficialSet (addons, csRepos, csEnabled, qsCs, qs4k) at shared/devAddons/official; publish (owner), apply on profile open for non-dev (install addons, add repos + refresh, setEnabledSet, qsCs/qs4k); BuiltIns.publish now PATCH",
+        "Nuvio streams: ottTier 3 (last backup), vm.extHides (extOn / extExclude) in modeStreams",
+        "Filters: devTagRules (from published t_tagRules) + user tagRules layered by effectiveRules (user Off kept as :off); userRegexIn (prefer) / userRegexOut (hide, falls back if empty) in filtered(); Filters page: All tags cycle + regex fields",
+        "SourcesScreen: Quick Play chip + section = the one ready stream (prepared item / last link / best quick); CloudStream/Nuvio chips read Turbo/Extensions for users",
+    )),
     Release("0.5.0 beta", "22 Oct 2026", "Exit reasons, series match, sync, 4K once, code names, warm, exit clean", listOf(
         "CrashLog.logExitReasons: ApplicationExitInfo (low memory / native / ANR / signal) → ActLog ERROR once each",
         "PluginSources: series + MovieLoadResponse rejected; bestMatch −1.0 for film results on a series; TitleMatch: episode asked + plain film file (no SxxEyy/season) = wrong",
