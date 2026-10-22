@@ -690,6 +690,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         else -> type.replaceFirstChar { it.uppercase() }
     }
 
+    /**
+     * The poster link pattern from Settings › Layout › Poster Card Style (Posters+, RPDB…), like Nuvio's poster override:
+     * {imdb} / {imdb_id}, {tmdb} / {tmdb_id} and {type} are filled in. Titles without such an id keep their own poster.
+     */
+    fun posterFromPattern(m: Meta): Meta {
+        val pat = texts.value["posterPattern"]?.trim().orEmpty()
+        if (!pat.startsWith("http")) return m
+        val id = m.id.substringBefore(':')
+        val imdb = m.id.takeIf { it.startsWith("tt") }?.substringBefore(':')
+        val tmdb = m.id.takeIf { it.startsWith("tmdb:") }?.removePrefix("tmdb:")?.substringBefore(':')
+        if (("{imdb" in pat && imdb == null) || ("{tmdb" in pat && tmdb == null)) return m
+        val url = pat.replace("{imdb_id}", imdb ?: id).replace("{imdb}", imdb ?: id).replace("{tmdb_id}", tmdb ?: "").replace("{tmdb}", tmdb ?: "")
+            .replace("{type}", m.type).replace("{id}", m.id)
+        return m.copy(poster = url)
+    }
+
     private var refreshJob: Job? = null
 
     fun refresh() {
@@ -703,14 +719,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                         .map { c ->
                             async {
                                 runCatching {
+                                    // A catalog can declare its card shape (Posters+ trending rows: landscape): its cards
+                                    // take it when they don't say themselves.
                                     val items = Api.fetch<CatalogResponse>("${a.baseUrl}/catalog/${c.type}/${enc(c.id)}.json").metas
+                                        .map { m -> if (m.posterShape == null && c.posterShape != null) m.copy(posterShape = c.posterShape) else m }
                                     Shelf("${c.name ?: c.id} ${typeLabel(c.type)}", items)
                                 }.getOrNull()
                             }
                         }
-                }.take(14).awaitAll()
+                // Every addon's rows (it stopped at the first 14 catalogs, so an addon added later — Posters+ — never
+                // showed); 48 at most.
+                }.take(48).awaitAll()
             }
-            shelves.value = result.filterNotNull().filter { it.items.isNotEmpty() }
+            shelves.value = result.filterNotNull().filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.map { posterFromPattern(it) }) }
             loading.value = false
             // Remembered for the next start, so Home shows its cards at once (then refreshes).
             val pid = dataPid

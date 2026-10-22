@@ -517,6 +517,8 @@ fun PlayerScreen(
     /** An online subtitle drawn by the app (no reload), its timing shift, and the size preview while dragging Size. */
     var ext by remember { mutableStateOf<ExtActive?>(null) }
     var subOffsetMs by remember { mutableLongStateOf(0L) }
+    /** Follow the speaker (beta): where the talking person is across the picture (0.5 = centre). */
+    var speakerAt by remember { mutableFloatStateOf(0.5f) }
     var subPreview by remember { mutableStateOf(false) }
     var manualSync by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { Speech.clear() }
@@ -2078,6 +2080,23 @@ fun PlayerScreen(
             } else syncNote = "Auto sync: listening…"
         }
     }
+    // Follow the speaker (beta): while a line is on screen, a small copy of the picture is checked ~3 times a second.
+    LaunchedEffect(isOn(opt("subFollow")), usingVlc) {
+        if (!isOn(opt("subFollow")) || usingVlc || BuildConfig.IS_TV) { speakerAt = 0.5f; return@LaunchedEffect }
+        SpeakerTracker.reset()
+        var away = 0
+        while (true) {
+            delay(330)
+            val v = videoView
+            if (cues.isEmpty() || v == null || !isPlayingNow()) { if (cues.isEmpty() && ++away > 6) speakerAt = 0.5f; continue }
+            away = 0
+            val got = kotlinx.coroutines.CompletableDeferred<android.graphics.Bitmap?>()
+            captureFrame(v) { b -> got.complete(b) }
+            val bmp = withTimeoutOrNull(1_000) { got.await() } ?: continue
+            val x = runCatching { withContext(Dispatchers.Default) { SpeakerTracker.speakerX(bmp) } }.getOrNull()
+            speakerAt = x ?: 0.5f
+        }
+    }
     /** Subtitles chosen by hand during this play (then the automatic defaults leave them alone). */
     var subsByHand by remember { mutableStateOf(false) }
     // Netflix / Prime Video playlists name their audio tracks ("1. Czech, 2. German … 6. Hindi") without a language
@@ -2838,7 +2857,14 @@ fun PlayerScreen(
     BackHandler { handleBack() }
 
     val subSize = opt("subSize").toFloatOrNull() ?: 20f
-    val subStyle = CaptionStyleCompat(
+    // Netflix style (default): clean medium-weight white text, a soft shadow, no box — for every subtitle, inside the
+    // video or online.
+    val netflixSubs = isOn(opt("subNetflix"))
+    val subStyle = if (netflixSubs) CaptionStyleCompat(
+        Color.White.toArgb(), Color.Transparent.toArgb(), Color.Transparent.toArgb(),
+        CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, Color(0xE6000000).toArgb(),
+        Typeface.create("sans-serif-medium", if (isOn(opt("subBold"))) Typeface.BOLD else Typeface.NORMAL),
+    ) else CaptionStyleCompat(
         (parseColor(opt("subColor")) ?: Color.White).toArgb(),
         (parseColor(opt("subBg")) ?: Color.Transparent).toArgb(),
         Color.Transparent.toArgb(),
@@ -2920,6 +2946,8 @@ fun PlayerScreen(
                     tween(if (controls) 220 else 300), label = "subLift",
                 )
                 val screenHdp = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.coerceAtLeast(200)
+                // Follow the speaker (beta): the line slides under the person talking (left / right), else stays centred.
+                val spkX by animateFloatAsState(speakerAt, tween(380), label = "speaker")
                 if (!usingVlc) AndroidView(
                     factory = { c -> SubtitleView(c).apply { setBottomPaddingFraction(0.07f) } },
                     update = { sv ->
@@ -2927,7 +2955,7 @@ fun PlayerScreen(
                         sv.setApplyEmbeddedStyles(false); sv.setApplyEmbeddedFontSizes(false)
                         sv.setStyle(subStyle); sv.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, subSize); sv.setCues(liftCues(cues, subLiftDp / screenHdp))
                     },
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().graphicsLayer { translationX = (spkX - 0.5f) * size.width * 0.55f },
                 )
                 // The video surface can't fade itself, so a black layer on top fades away instead.
                 Box(Modifier.fillMaxSize().graphicsLayer { alpha = 1f - videoAlpha }.background(Color.Black))
@@ -5133,6 +5161,12 @@ private fun SubStyleColumn(
             size, { vm.setText("subSize", it.roundToInt().toString()) }, valueRange = 12f..40f, interactionSource = src,
             colors = SliderDefaults.colors(thumbColor = Color(0xFFE50914), activeTrackColor = Color(0xFFE50914), inactiveTrackColor = Color(0x33FFFFFF)),
         )
+        SubSection("Look")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SubChip("Netflix style", isOn(v("subNetflix"))) { vm.setText("subNetflix", if (isOn(v("subNetflix"))) "no" else "yes") }
+            if (!BuildConfig.IS_TV) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
+        }
+        if (isOn(v("subNetflix"))) Text("Netflix style sets the font, colour and shadow; turn it off to choose your own below.", fontSize = 11.5.sp, color = Color(0xFF8A94A8))
         SubSection("Text colour")
         SubChips(listOf("White" to "#FFFFFF", "Yellow" to "#FFE14D", "Cyan" to "#6FE3FF", "Green" to "#7CFF8A", "Pink" to "#FF8FB1"), v("subColor").uppercase()) { vm.setText("subColor", it) }
         SubSection("Background")
@@ -5227,6 +5261,12 @@ private fun SubsPanel(
 
         SubSection("Size")
         SubChips(listOf("Small" to "16", "Medium" to "20", "Large" to "26", "Extra large" to "32"), v("subSize")) { vm.setText("subSize", it) }
+        SubSection("Look")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SubChip("Netflix style", isOn(v("subNetflix"))) { vm.setText("subNetflix", if (isOn(v("subNetflix"))) "no" else "yes") }
+            if (!BuildConfig.IS_TV) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
+        }
+        if (isOn(v("subNetflix"))) Text("Netflix style sets the font, colour and shadow; turn it off to choose your own below.", fontSize = 11.5.sp, color = Color(0xFF8A94A8))
         SubSection("Text colour")
         SubChips(listOf("White" to "#FFFFFF", "Yellow" to "#FFE14D", "Cyan" to "#6FE3FF", "Green" to "#7CFF8A", "Pink" to "#FF8FB1"), v("subColor").uppercase()) { vm.setText("subColor", it) }
         SubSection("Background")

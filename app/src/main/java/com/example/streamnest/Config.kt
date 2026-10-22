@@ -95,6 +95,8 @@ val Defaults: Map<String, String> = linkedMapOf(
     "subColor" to "#FFFFFF",
     "subBg" to "#00000000",
     "subOutline" to "yes",
+    "subNetflix" to "yes",
+    "subFollow" to "no",
     "subOutlineColor" to "#000000",
     "playerChoice" to "builtin",
     "autoPlayMode" to "manual",

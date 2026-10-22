@@ -441,6 +441,16 @@ private fun PosterStylePage(vm: AppViewModel, onBack: () -> Unit) {
     val w = PosterWidths[wName] ?: 126; val c = PosterCorners[cName] ?: 12
     val landscape = isOn(v("landscapePosters"))
     Page("Poster Card Style", onBack) {
+        // Posters+ / RPDB-style poster link: every Home poster comes from it ({imdb}, {type} and {tmdb} are filled in).
+        SectionLabel("Poster link (Posters+, RPDB…)")
+        SettingsCard {
+            Column(Modifier.padding(20.dp)) {
+                var pat by remember { mutableStateOf(texts["posterPattern"].orEmpty()) }
+                Text("Paste the poster link your poster service gives you (as you would in Nuvio). Leave empty for the add-ons' own posters.", fontSize = 13.sp, color = Muted)
+                OutlinedTextField(pat, { pat = it.trim(); vm.setText("posterPattern", pat) }, Modifier.fillMaxWidth().padding(top = 10.dp), singleLine = true,
+                    placeholder = { Text("https://…/poster/{imdb}.jpg") }, shape = RoundedCornerShape(14.dp))
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) { SectionLabel("Poster card style") }
             TextButton({ listOf("posterWidth", "posterCorner", "landscapePosters", "hideLabels").forEach { vm.setText(it, Defaults[it]!!) } }, Modifier.padding(top = 12.dp)) {

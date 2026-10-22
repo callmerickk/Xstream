@@ -13,6 +13,13 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.5.2 beta", "22 Oct 2026", "Netflix-style subtitles, poster rows, AI logo", listOf(
+        "Subtitles look like Netflix's: clean font, soft shadow, no box — for every subtitle (switch it off under Subtitles › Look)",
+        "Follow the speaker (beta): the line slides under the person who's talking (Subtitles › Look)",
+        "Poster add-ons like Posters+ show on Home: wide trending rows with their ranks, and a poster link setting (Layout › Poster Card Style) like Nuvio's",
+        "Every add-on's rows load now (before, only the first 14 rows came in)",
+        "The shared app look and AI logo are fetched first when a profile opens",
+    )),
     Release("0.5.1 beta", "22 Oct 2026", "Turbo or Classic, Sources & Extensions", listOf(
         "Pick how you watch: Turbo (straight from big streaming catalogues, starts almost instantly) or Classic (your sources, as before) — asked once per profile",
         "Settings › Sources & Extensions: How you watch · Sources, Extensions and Filters · Recommendations, neatly spaced",
@@ -297,6 +304,12 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.5.2 beta", "22 Oct 2026", "Netflix subs, speaker follow, Posters+, look first", listOf(
+        "subNetflix (default yes): CaptionStyleCompat white / transparent / drop shadow / sans-serif-medium; subFollow (beta): SpeakerTracker (ML Kit face-detection 16.1.6, contours + tracking) on captureFrame every 330 ms while cues show; lip-gap spread per face, speaker when > 0.012 and 1.8× the next; subtitle view translationX (x − 0.5) × 0.55 width",
+        "Home: catalogs .take(48) (was 14); CatalogDef.posterShape copied to metas; posterPattern ({imdb}/{imdb_id}/{tmdb}/{type}/{id}) applied to shelf metas (Nuvio-style poster override)",
+        "Screens: AppLook.fetch first on profile open (Public.vm set), then BuiltIns / DevDefaults / Official",
+        "VegaMovies: its urls.json domain (search.php) is dead; the CNCVerse bridge's \"VegaMoviesProvider\" streams are the same plugin's Rogmovies site — use Rogmovies",
+    )),
     Release("0.5.1 beta", "22 Oct 2026", "Watch mode, Sources & Extensions page, official set, additive filters", listOf(
         "SourcesExt.kt: WatchModeCard (Turbo=plugins / Classic=addons, srcMode is per profile), FirstWatchChooser when srcMode is empty (phones), ExtensionsPage (Nuvio only: overview, extOn, repo chips + enable/disable visible, quality chips extExclude, add/refresh/remove repos, provider switches)",
         "ContentPage → \"Sources & Extensions\": How you watch / Sources, Extensions, Filters / Recommendations; addonsTitle default \"Sources\"",

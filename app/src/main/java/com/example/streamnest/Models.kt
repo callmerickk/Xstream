@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
 @Serializable data class ExtraDef(val name: String = "", val isRequired: Boolean = false)
-@Serializable data class CatalogDef(val type: String = "", val id: String = "", val name: String? = null, val extra: List<ExtraDef>? = null)
+@Serializable data class CatalogDef(val type: String = "", val id: String = "", val name: String? = null, val extra: List<ExtraDef>? = null, val posterShape: String? = null)
 
 @Serializable
 data class Manifest(

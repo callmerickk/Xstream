@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.xstream"
         minSdk = 24
         targetSdk = 34
-        versionCode = 16
-        versionName = "0.5.1 beta"
+        versionCode = 17
+        versionName = "0.5.2 beta"
     }
     // Two apps from one project: the phone app and StreamX TV (Fire TV / Android TV).
     // "gradle assembleDebug" builds both APKs.
@@ -137,6 +137,8 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
     implementation("com.google.code.gson:gson:2.11.0")
+    // Subtitles › Follow the speaker (beta): on-device face + lip contours (Apache-licensed ML Kit client, no network).
+    implementation("com.google.mlkit:face-detection:16.1.6")
     implementation("io.ktor:ktor-http:2.3.12")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
