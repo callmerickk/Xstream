@@ -313,8 +313,11 @@ data class Way(val vlc: Boolean, val hw: Boolean, val relay: Boolean) {
  * The order in which a link is tried. Links that need more headers than VLC can send go through the relay straight away.
  * Big files ([big]) stay on hardware decoding: software decoding is only the very last resort for them.
  */
-fun waysFor(url: String, engine: String, big: Boolean = false, manifest: Boolean = false): List<Way> {
+fun waysFor(url: String, engine: String, big: Boolean = false, manifest: Boolean = false, plugin: Boolean = false): List<Way> {
     val h = StreamHeaders.forUrl(url)
+    // A plugin's playlist (Netflix / Prime Video / Hotstar / MovieBox): ExoPlayer only — when it times out the link has
+    // expired, and the next link is tried at once (VLC can't revive it, and closing it froze the app).
+    if (manifest && plugin) return listOf(Way(false, true, false))
     // DASH / HLS: ExoPlayer first whatever the engine setting (it plays manifests best), and never through the relay
     // (a manifest's relative segment links can't be followed through it).
     if (manifest) return listOf(Way(false, true, false), Way(true, true, false), Way(true, false, false))
@@ -781,7 +784,8 @@ fun PlayerScreen(
         }
         StreamHeaders.active = StreamHeaders.forUrl(n.url)
         resumeAt = startMs
-        ways = waysFor(n.url, engine, big = cachingFor(itemFor(n.url)) > 1000, manifest = StreamType.mimeFor(n.url, itemFor(n.url)?.fileName()) != null)
+        ways = waysFor(n.url, engine, big = cachingFor(itemFor(n.url)) > 1000, manifest = StreamType.mimeFor(n.url, itemFor(n.url)?.fileName()) != null,
+            plugin = itemFor(n.url)?.let { it.addonName.startsWith("CloudStream · ") || it.addonName.startsWith("Nuvio · ") } ?: vm.pluginMode())
         wayIdx = 0
         midRetries = 0
         // A link that doesn't show its type: one quick look first (DASH / HLS manifests behind proxy links).
@@ -791,7 +795,7 @@ fun PlayerScreen(
             scope.launch {
                 val mime = withContext(Dispatchers.IO) { StreamType.probe(n.url) }
                 if (seq != probeSeq[0]) return@launch // another link was picked meanwhile
-                if (mime.isNotEmpty()) ways = waysFor(n.url, engine, big = cachingFor(itemFor(n.url)) > 1000, manifest = true)
+                if (mime.isNotEmpty()) ways = waysFor(n.url, engine, big = cachingFor(itemFor(n.url)) > 1000, manifest = true, plugin = vm.pluginMode())
                 startWay(n, startMs)
             }
         } else {
@@ -990,6 +994,8 @@ fun PlayerScreen(
             p.quick && !extendedAll -> {
                 extendedAll = true
                 recovering = true
+                // Turbo: plugin links expire (a few minutes); ask again instead of reusing the remembered ones.
+                if (vm.pluginMode()) forgetStreams(p.key)
                 scope.launch {
                     val more = withTimeoutOrNull(20_000) { runCatching { vm.allStreams(type, p.key) }.getOrNull() }.orEmpty()
                         .filter { it.stream.url != null && it.stream.url.orEmpty() !in tried && it.stream.url != n?.url }
@@ -1823,7 +1829,8 @@ fun PlayerScreen(
                 if (buffering) { delay(1_000); continue }
                 val cands = vm.rankedCandidates(vm.filtered(pool.values.toList()).list.filter { it.effectiveRes() >= 2160 && it.stream.url !in tried }, "4k", quickOnly = false)
                     .filter { !Ranker.isDead(it) && !Ranker.keepsFailing(it) && !it.unplayableHere() }
-                    .sortedWith(compareBy<StreamItem>({ vm.langRank(it) }, { if (it.isVega()) 0 else 1 }, { PicturePref.rank(vm, it) }))
+                    .sortedWith(compareBy<StreamItem>({ if (it.isVega() && vm.langRank(it) < vm.qsLangs().size) 0 else 1 }, { vm.langRank(it) }, { PicturePref.rank(vm, it) }))
+                if (cands.isNotEmpty() && tried.isEmpty()) PlayTiming.late("4K: ${cands.size} candidate(s), best first: " + cands.take(3).joinToString(" / ") { "${Public.streamName(it)} (${it.languagesOrOriginal().joinToString("+")})" })
                 val c = cands.firstOrNull()
                 if (c == null) { if (done) break; delay(1_500); continue }
                 val url = c.stream.url!!
@@ -2309,6 +2316,8 @@ fun PlayerScreen(
     // fades in over 0.3 s (sound crossfades too) and simply becomes the player — no loading, no message. If the two
     // copies aren't the same length (another cut), there's no swap: "Upgrade quality" pops up instead.
     var ottSwapStarted by remember(p.key) { mutableStateOf(false) }
+    /** A stream you picked yourself (Play manually / Sources): it is never swapped for another one. */
+    var byHand by remember(p.key) { mutableStateOf(p.manual) }
     suspend fun ottSwapTo(c: StreamItem): Boolean {
         val url = c.stream.url ?: return false
         val name = Public.streamName(c)
@@ -2375,7 +2384,7 @@ fun PlayerScreen(
         return true
     }
     LaunchedEffect(firstFrame) {
-        if (!firstFrame || BuildConfig.IS_TV || usingVlc || !vm.pluginMode() || ottSwapStarted) return@LaunchedEffect
+        if (!firstFrame || BuildConfig.IS_TV || usingVlc || !vm.pluginMode() || ottSwapStarted || byHand) return@LaunchedEffect
         val cur = now?.url?.let { itemFor(it) } ?: return@LaunchedEffect
         if (cur.isOtt()) return@LaunchedEffect
         ottSwapStarted = true
@@ -2394,7 +2403,7 @@ fun PlayerScreen(
                 val triedSwap = HashSet<String>()
                 while (SystemClock.elapsedRealtime() - t0 < 600_000) {
                     val playing = now?.url?.let { itemFor(it) } ?: cur
-                    if (playing.isOtt() || usingVlc) break
+                    if (playing.isOtt() || usingVlc || byHand) break
                     val pt = playing.ottTier()
                     val waited = SystemClock.elapsedRealtime() - t0 >= 60_000
                     val all = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false)
@@ -4148,6 +4157,7 @@ fun PlayerScreen(
                         else -> {
                           val pickSource: (StreamItem, List<StreamItem>) -> Unit = { st, all ->
                             panel = null
+                            byHand = true   // your choice: no automatic swap afterwards
                             known = all
                             candidates = all.filter { it !== st }
                             val keep = keepPos()
@@ -4157,13 +4167,13 @@ fun PlayerScreen(
                             }
                           }
                           // Sources: by visual tag, no server / provider names. Dev sources (chosen accounts): everything, as before.
-                          if (which == "devsources") DevSourcesPanel(vm, type, p.key, now?.url, quickList, meta, onSwitch = pickSource)
+                          if (which == "devsources") DevSourcesPanel(vm, type, p.key, now?.url, quickList.filter { it.manualOk() }, meta, onSwitch = pickSource)
                           // TV: by quality (Instant · 4K · Full HD · Mid HD) with every link's picture / sound tags.
-                          else if (BuildConfig.IS_TV) TvSourcesPanel(vm, type, p.key, now?.url, (known + quickList).distinctBy { it.stream.url }, panelFocus) { st, all ->
+                          else if (BuildConfig.IS_TV) TvSourcesPanel(vm, type, p.key, now?.url, (known + quickList).distinctBy { it.stream.url }.filter { it.manualOk() }, panelFocus) { st, all ->
                               if (st.stream.url == tvUp?.stream?.url) tvUp = null
                               pickSource(st, all)
                           }
-                          else TagSourcesList(vm, type, p.key, now?.url, (known + quickList).distinctBy { it.stream.url },
+                          else TagSourcesList(vm, type, p.key, now?.url, (known + quickList).distinctBy { it.stream.url }.filter { it.manualOk() },
                               tagReady + hdReady.values.flatten().mapNotNull { it.stream.url }, pickSource)
                         }
                     }
@@ -4741,7 +4751,7 @@ private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playing
         all = emptyList(); done = false
         launch { if (qs.isEmpty()) qs = runCatching { vm.quickStreams(type, key) }.getOrDefault(emptyList()) }
         if (reload > 0) SlowAddons.poll(vm, type, key, forMs = 6_000) else SlowAddons.watch(vm, type, key)
-        vm.streamsFlow(type, key, except = if (vm.qsActive()) vm.qsAddons() else null).collect { (l, d) -> all = l; done = d }
+        vm.streamsFlow(type, key, except = if (vm.qsActive()) vm.qsAddons() else null).collect { (l, d) -> all = l.filter { it.manualOk() }; done = d }
     }
     // Plugin mode: the plugins' links come through streamsFlow like an addon's (grouped by provider below).
     val slow by SlowAddons.links.collectAsStateWithLifecycle()

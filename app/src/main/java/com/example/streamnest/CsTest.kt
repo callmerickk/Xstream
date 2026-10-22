@@ -51,9 +51,14 @@ import java.util.Locale
 
 /** "Instant Download" links (one-time download pages, mostly 403 / broken for players): left out everywhere. */
 // "Instant Download" and "10Gbps" links are download-only: they never play in a player.
-private val instantRx = Regex("(?i)instant[\\s(\\[_-]*download|10\\s*gbps")
+// "V-Cloud (Download)", "Download" servers and Google Drive download links are files to save, not to stream: hidden too.
+private val instantRx = Regex("(?i)instant[\\s(\\[_-]*download|10\\s*gbps|\\(\\s*download\\s*\\)|\\bdownload\\b")
+private val downloadHost = Regex("(?i)video-downloads\\.googleusercontent\\.com|drive\\.google\\.com|drive\\.usercontent\\.google\\.com")
 fun isInstantDownloadName(vararg texts: String?): Boolean = texts.any { it != null && instantRx.containsMatchIn(it) }
-fun StreamItem.isInstantDownload(): Boolean = isInstantDownloadName(stream.name, stream.title, stream.description, stream.behaviorHints?.filename)
+fun isDownloadHost(url: String?): Boolean = url != null && downloadHost.containsMatchIn(url.substringBefore('?'))
+fun StreamItem.isInstantDownload(): Boolean = isInstantDownloadName(stream.name, stream.title, stream.description, stream.behaviorHints?.filename) || isDownloadHost(stream.url)
+/** Play manually shows Full HD and up (and files that don't say): 480p / 720p only play when nothing else can. */
+fun StreamItem.manualOk(): Boolean = !isInstantDownload() && effectiveRes() !in 1..720
 
 /** Runs [block] off the caller with a hard deadline: plugins sometimes block a thread (not cancellable), so on
  *  timeout the work is abandoned instead of waited for. */

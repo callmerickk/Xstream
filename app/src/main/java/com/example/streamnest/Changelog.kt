@@ -13,6 +13,13 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.5.6", "22 Oct 2026", "Stable", listOf(
+        "No more freezes when a stream fails: the next stream is tried at once",
+        "A stream you pick yourself stays — it's never swapped for another",
+        "Download-only files are hidden, and Play manually shows Full HD and up",
+        "Links prepared a while ago are looked up again before playing",
+        "VegaMovies 4K is first for Upgrade to 4K",
+    )),
     Release("0.5.5 beta", "22 Oct 2026", "Faster starts, VPN fix", listOf(
         "Streams start faster: the quickest copy of each server is used (a slow copy no longer holds it back)",
         "More shows found (an exact title match is no longer missed)",
@@ -325,6 +332,16 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.5.6", "22 Oct 2026", "Stable: VLC off-main, manual picks, downloads hidden, publish everything", listOf(
+        "VlcEngine: setMedia / play / pause / stop / release on a vlc-control thread (ANR in input_Close)",
+        "waysFor(plugin manifest) = ExoPlayer only → tryNextSource; Turbo extendedAll forgets cached streams",
+        "CrashLog: ANR keeps the main thread's Java frames",
+        "Screen.Player.manual + byHand: no fade swap after Play manually / Sources pick",
+        "Prepared.at: Turbo prepared link > 8 min → re-found",
+        "instantRx + (Download) / download word; isDownloadHost (Google Drive); manualOk hides 480p/720p in every manual list",
+        "seeded056: VegaMovies only from CNCVerse; 4K order Vega (in your languages) first + candidates logged",
+        "PublishAll (addons / plugins / defaults / everything) + PublishBar on Official set, Plugins, Code names, Filters, Add-ons; tagRules in dev defaults",
+    )),
     Release("0.5.5 beta", "22 Oct 2026", "Plugin key collisions, VPN state", listOf(
         "PluginSources.apiKey (class|name|mainUrl) for shared answers, page cache and noSearch — duplicate provider names (MovieBox ×3, Netflix ×2) shared one slot",
         "bestMatch: exact name not penalised when a site types a series as Movie (4K HDHUB Crystal Lake / Terminal List)",

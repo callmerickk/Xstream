@@ -30,6 +30,8 @@ data class Prepared(
     val saved: Long = 0, val target: Long = 0,
     /** The paused player has opened the file and can show a picture at once (the light turns green only then). */
     val playerReady: Boolean = false,
+    /** When this state was made (a plugin's link expires after a few minutes). */
+    val at: Long = System.currentTimeMillis(),
 )
 
 /**

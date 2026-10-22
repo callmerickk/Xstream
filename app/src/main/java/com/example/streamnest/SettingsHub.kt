@@ -667,6 +667,7 @@ internal fun StreamFiltersPage(vm: AppViewModel, onBack: () -> Unit) {
     val rules = remember(texts["tagRules"]) { parseTagRules(texts["tagRules"] ?: "") }
     fun set(id: String, r: TagRule) = vm.setText("tagRules", encodeTagRules(rules + (id to r)))
     Page("Stream Filters", onBack) {
+        if (Public.dev) PublishBar("Publish these filters for everyone") { DevDefaults.publish(vm) }
         DeviceScopeCard(vm, listOf("tagRules"), "stream filters")
         Text("Applies to every addon's streams, on the sources page, in the player and for auto-play.",
             Modifier.padding(horizontal = 24.dp, vertical = 4.dp), fontSize = 14.sp, color = Muted)
@@ -748,6 +749,7 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
         AddonBackupCard(vm)
         SectionLabel("Installed addons")
         val devView = Public.dev
+        if (devView) PublishBar("Publish these add-ons for everyone") { PublishAll.addons(vm) }
         // Normal users: the built-in servers are looked after by Xstream (no names, nothing to change).
         if (!devView && addons.any { Public.isDevChoice(it) }) Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(CardShape).background(CardBg).padding(18.dp)) {
             Text("Built-in servers", fontSize = 20.sp, fontWeight = FontWeight.Bold)

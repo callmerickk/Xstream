@@ -51,5 +51,6 @@ fun XPluginsPage(vm: AppViewModel, onBack: () -> Unit) {
             Text("Test them in Developer's Corner › Source Test. Pick the ones Quick Play tries first in Settings › Quick Start › CloudStream.", Modifier.padding(16.dp), fontSize = 12.5.sp, color = Muted)
             if (tab == 1) CsPluginList(vm) else NuvioPluginList(vm)
         }
+        if (tab == 1) PublishBar("Publish these plugins for everyone") { PublishAll.plugins(vm) }
     }
 }

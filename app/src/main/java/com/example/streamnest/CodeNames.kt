@@ -74,10 +74,8 @@ fun CodeNamesPage(vm: AppViewModel, onBack: () -> Unit) {
                 OutlinedButton({ vm.setText("codeNames", ""); rows.clear(); rows.addAll(Public.codes().sortedBy { it.first }); msg = "Back to the built-in names." },
                     Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(25.dp)) { Text("Reset", color = Color.White) }
             }
-            Button({ save(); msg = "Publishing…"; scope.launch { msg = DevDefaults.publish(vm) ?: "Published — every account gets these names the next time a profile opens." } },
-                Modifier.padding(16.dp).fillMaxWidth().height(52.dp), shape = RoundedCornerShape(26.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)) { Text("Publish for everyone", fontWeight = FontWeight.Bold) }
             msg?.let { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 6.dp), fontSize = 13.sp, color = Muted) }
         }
+        PublishBar("Publish code names for everyone") { save(); DevDefaults.publish(vm) }
     }
 }

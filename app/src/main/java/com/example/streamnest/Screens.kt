@@ -101,6 +101,8 @@ sealed interface Screen {
         val quick: Boolean = false,
         /** the title page already saved the start of [url]: play straight from storage, no loading screen */
         val instant: Boolean = false,
+        /** picked by hand (Play manually): never swapped for another stream */
+        val manual: Boolean = false,
     ) : Screen
     data class Settings(val start: String = "root") : Screen
     data object Live : Screen

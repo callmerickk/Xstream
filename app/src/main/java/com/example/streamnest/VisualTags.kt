@@ -237,7 +237,7 @@ internal fun TagSourcesList(
     val slow by SlowAddons.links.collectAsStateWithLifecycle()
     val list = remember(all, slow[key], extra) {
         val merged = (extra + all + slow[key].orEmpty()).distinctBy { it.stream.url }
-            .filter { !Ranker.isDead(it) && !Ranker.keepsFailing(it) && HostStats.penalty(it.stream.url.orEmpty()) == 0 && !it.unplayableHere() }
+            .filter { it.manualOk() && !Ranker.isDead(it) && !Ranker.keepsFailing(it) && HostStats.penalty(it.stream.url.orEmpty()) == 0 && !it.unplayableHere() }
         vm.filtered(merged).list.sortedWith(compareByDescending<StreamItem> { Ranker.score(it) }.thenByDescending { it.effectiveRes() })
     }
     val groups = remember(list, vm.texts.collectAsStateWithLifecycle().value["picPref"]) { tagGroups(list, PicturePref.order(vm)) }

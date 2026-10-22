@@ -136,11 +136,43 @@ fun OfficialSetPage(vm: AppViewModel, onBack: () -> Unit) {
                     Text("Set the plugins up on this phone first (Developer's Corner › CloudStream plugins, Quick Start), then tap this.", fontSize = 12.sp, color = Muted)
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            Button({ msg = "Publishing…"; scope.launch { msg = Official.publish(set) ?: "Published — every account picks it up the next time a profile opens." } },
-                Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(52.dp), shape = RoundedCornerShape(26.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)) { Text("Publish for everyone", fontWeight = FontWeight.Bold) }
-            msg?.let { Text(it, Modifier.padding(horizontal = 20.dp, vertical = 10.dp), fontSize = 13.sp, color = Muted) }
         }
+        // Always on screen (it used to sit at the very bottom, easy to miss).
+        PublishBar("Publish the official set for everyone") { Official.publish(set) }
+    }
+}
+
+/**
+ * Developer's Corner publishing: one section at a time, or everything at once. Xstream and StreamX (phone and TV)
+ * read the same cloud, so one publish reaches every account on every device.
+ */
+object PublishAll {
+    /** This phone's add-ons into the official set (plugins as published). */
+    suspend fun addons(vm: AppViewModel): String? { val cur = Official.fetch() ?: OfficialSet(); return Official.publish(cur.copy(addons = Official.fromDevice(vm).addons)) }
+    /** This phone's CloudStream repositories, plugins on, Quick Play and Upgrade-to-4K picks into the official set. */
+    suspend fun plugins(vm: AppViewModel): String? {
+        val cur = Official.fetch() ?: OfficialSet(); val d = Official.fromDevice(vm)
+        return Official.publish(cur.copy(csRepos = d.csRepos, csEnabled = d.csEnabled, qsCs = d.qsCs, qs4k = d.qs4k))
+    }
+    /** Code names, Home rows, filters, keys (the developer's defaults). */
+    suspend fun defaults(vm: AppViewModel): String? = DevDefaults.publish(vm)
+    suspend fun everything(vm: AppViewModel): List<Pair<String, String?>> = listOf(
+        "Add-ons, plugins, Quick Play & 4K picks" to Official.publish(Official.fromDevice(vm)),
+        "Code names, Home rows, filters & keys" to DevDefaults.publish(vm),
+        "Logo, animation & AI look" to AppLook.publish(AppLook.logo.value, AppLook.anim.value),
+    )
+}
+
+/** A Publish button with its result line (Developer's Corner pages). */
+@Composable
+fun PublishBar(label: String, modifier: Modifier = Modifier, action: suspend () -> String?) {
+    val scope = rememberCoroutineScope()
+    var msg by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    Column(modifier.fillMaxWidth().background(Color(0xF20E0E12)).padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Button({ busy = true; msg = "Publishing…"; scope.launch { msg = action() ?: "Published ✓ — every account (phone and TV) gets it the next time a profile opens."; busy = false } },
+            Modifier.fillMaxWidth().height(50.dp), enabled = !busy, shape = RoundedCornerShape(25.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)) { Text(label, fontWeight = FontWeight.Bold) }
+        msg?.let { Text(it, Modifier.padding(top = 6.dp), fontSize = 12.5.sp, color = Muted) }
     }
 }

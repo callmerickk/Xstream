@@ -136,8 +136,8 @@ class VlcEngine(ctx: Context, private val listener: VlcListener) {
         if (attached === layout) return
         runCatching { mp.detachViews() }
         mp.attachViews(layout, null, true, false)
-        attached = layout
-        if (pendingPlay) { pendingPlay = false; mp.play() }
+        val go = synchronized(this) { attached = layout; pendingPlay.also { pendingPlay = false } }
+        if (go) work { mp.play() }
     }
 
     private fun pickAudio() {
@@ -167,20 +167,28 @@ class VlcEngine(ctx: Context, private val listener: VlcListener) {
         if (startMs > 1_000) m.addOption(":start-time=${"%.3f".format(java.util.Locale.US, startMs / 1000.0)}")
         headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.let { m.addOption(":http-user-agent=${it.value}") }
         headers.entries.firstOrNull { it.key.equals("Referer", true) }?.let { m.addOption(":http-referrer=${it.value}") }
-        mp.setMedia(m)
-        m.release()
-        subs.filter { it.url.isNotBlank() }.forEach { runCatching { mp.addSlave(IMedia.Slave.Type.Subtitle, Uri.parse(it.url), false) } }
         pendingSeek = startMs
         listener.onBuffering(true)
-        // VLC needs its video views attached before playback starts, or it plays without a picture.
-        if (attached != null) mp.play() else pendingPlay = true
+        // Swapping the video waits for VLC to close the old one (a dead link can take many seconds): done on VLC's own
+        // thread, never the screen's, so the app can't freeze ("not responding").
+        val sub = subs.filter { it.url.isNotBlank() }
+        work {
+            mp.setMedia(m)
+            m.release()
+            sub.forEach { runCatching { mp.addSlave(IMedia.Slave.Type.Subtitle, Uri.parse(it.url), false) } }
+            // VLC needs its video views attached before playback starts, or it plays without a picture.
+            synchronized(this) { if (attached != null) mp.play() else pendingPlay = true }
+        }
     }
+
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "vlc-control").apply { isDaemon = true } }
+    private fun work(f: () -> Unit) { runCatching { worker.execute { runCatching { f() } } } }
 
     val time: Long get() = runCatching { mp.time }.getOrDefault(0L).coerceAtLeast(0L)
     val length: Long get() = runCatching { mp.length }.getOrDefault(0L).coerceAtLeast(0L)
     val isPlaying: Boolean get() = runCatching { mp.isPlaying }.getOrDefault(false)
-    fun play() = mp.play()
-    fun pause() = mp.pause()
+    fun play() = work { mp.play() }
+    fun pause() = work { mp.pause() }
     fun seek(ms: Long) { mp.setTime(ms.coerceAtLeast(0L)) }
     var rate: Float
         get() = runCatching { mp.rate }.getOrDefault(1f)
@@ -200,17 +208,17 @@ class VlcEngine(ctx: Context, private val listener: VlcListener) {
 
     /** Called when switching back to ExoPlayer: the VLC video view goes away, so let go of it too. */
     fun stop() = runCatching {
-        pendingPlay = false
-        mp.stop()
-        mp.detachViews(); attached = null
+        synchronized(this) { pendingPlay = false }
+        runCatching { mp.detachViews() }; attached = null
+        work { mp.stop() }
     }
 
     fun release() {
         runCatching { mp.setEventListener(null as MediaPlayer.EventListener?) }
-        runCatching { mp.stop() }
         runCatching { mp.detachViews() }
-        runCatching { mp.release() }
-        runCatching { lib.release() }
+        // Stopping / freeing VLC can wait on the network: off the screen's thread.
+        work { runCatching { mp.stop() }; runCatching { mp.release() }; runCatching { lib.release() } }
+        runCatching { worker.shutdown() }
     }
 }
 

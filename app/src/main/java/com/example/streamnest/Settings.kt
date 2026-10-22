@@ -430,6 +430,25 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 130.dp)) {
         item { PageHeader("Developer's Corner", onBack) }
 
+        item {
+            // Everything in Developer's Corner, for every account (Xstream and StreamX, phone and TV) in one tap.
+            val scope = rememberCoroutineScope()
+            var res by remember { mutableStateOf<List<Pair<String, String?>>>(emptyList()) }
+            var busy by remember { mutableStateOf(false) }
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color(0x1AE50914))
+                .border(1.dp, Color(0x66E50914), RoundedCornerShape(20.dp)).padding(16.dp)) {
+                Text("Publish everything", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Add-ons, plugins, Quick Play and 4K picks, code names, Home rows, filters, keys and the logo — exactly as on this phone — to every account on every device.",
+                    fontSize = 13.sp, color = Color(0xFF9AA3B5), modifier = Modifier.padding(top = 4.dp))
+                androidx.compose.material3.Button({ busy = true; res = emptyList(); scope.launch { res = PublishAll.everything(vm); busy = false } },
+                    Modifier.padding(top = 10.dp).fillMaxWidth().height(50.dp), enabled = !busy, shape = RoundedCornerShape(25.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)) {
+                    Text(if (busy) "Publishing…" else "Publish everything for everyone", fontWeight = FontWeight.Bold)
+                }
+                res.forEach { (what, err) -> Text((if (err == null) "✓ " else "✗ ") + what + (err?.let { " — $it" } ?: ""), Modifier.padding(top = 6.dp), fontSize = 12.5.sp,
+                    color = if (err == null) Color(0xFF3DDC6B) else Color(0xFFFF8A80)) }
+            }
+        }
         item { DevFold("Code names", "Hotstar → Helios, MovieBox → Mercury Swift / Prime… see and edit every name", false) { subPage = "codeNames" } }
         item { DevFold("Sources & plugins", "Official set for everyone, CloudStream plugins, Quick Start, filters, built-in servers", devOpen == "src") { devOpen = if (devOpen == "src") null else "src" } }
         if (devOpen == "src") {

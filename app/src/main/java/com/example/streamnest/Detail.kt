@@ -249,7 +249,10 @@ fun DetailScreen(
                     st.ready -> "green"; st.failed -> "amber/red"; else -> "grey (still preparing)"
                 } + (st?.takeIf { it.key == t.videoId }?.status?.let { " · $it" } ?: ""))
                 // No waiting here any more: the player opens at once.
-                val mine = st?.takeIf { it.key == t.videoId }
+                // A Turbo link prepared long ago has probably expired (plugin links last a few minutes): looked up again.
+                val stale = st != null && st.key == t.videoId && vm.pluginMode() && System.currentTimeMillis() - st.at > 8 * 60_000L
+                if (stale) { PlayTiming.mark("prepared link is ${(System.currentTimeMillis() - st!!.at) / 60_000} min old — looking it up again"); Prepare.cancel(); Preloader.release(t.videoId); forgetStreams(t.videoId) }
+                val mine = st?.takeIf { it.key == t.videoId && !stale }
                 val item = mine?.item
                 val url = item?.stream?.url
                 val img = t.image ?: meta.background ?: meta.poster
@@ -337,7 +340,7 @@ fun DetailScreen(
             else onPlay(Screen.Player(tg.title, s.stream.url!!, subs, key = tg.videoId, image = tg.image ?: meta.background ?: meta.poster,
                 resumeMs = resume, type = meta.type, meta = meta, source = s.stream.name ?: s.addonName, addon = s.addonName,
                 // If this link fails, the player tries the same source's other links first.
-                candidates = all.filter { it !== s }.sortedBy { if (it.addonName == s.addonName) 0 else 1 }))
+                candidates = all.filter { it !== s }.sortedBy { if (it.addonName == s.addonName) 0 else 1 }, manual = true))
         }
     }
 

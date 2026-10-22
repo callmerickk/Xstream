@@ -342,7 +342,7 @@ fun TvSourcesPanel(
     val slow by SlowAddons.links.collectAsState()
     val all by produceState(emptyList<StreamItem>(), fetched, slow[key], extra) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            runCatching { vm.filtered((extra + fetched + slow[key].orEmpty()).distinctBy { it.stream.url }).list }.getOrDefault(emptyList())
+            runCatching { vm.filtered((extra + fetched + slow[key].orEmpty()).distinctBy { it.stream.url }).list.filter { it.manualOk() } }.getOrDefault(emptyList())
         }
     }
     val groups by produceState(emptyMap<String, List<StreamItem>>(), all) {

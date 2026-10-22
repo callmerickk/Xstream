@@ -141,7 +141,8 @@ fun SourcesScreen(
     LaunchedEffect(target.videoId) { SlowAddons.watch(vm, meta.type, target.videoId) }
     val slow by SlowAddons.links.collectAsStateWithLifecycle()
     val merged = remember(all, slow[target.videoId]) { (all + slow[target.videoId].orEmpty()).distinctBy { it.stream.url } }
-    val f = remember(merged, rules, showAll) { if (showAll) Filtered(merged, 0, false, emptyList()) else applyTagRules(merged, rules) }
+    // Download-only files and 480p / 720p are never offered here (auto-play may still use them as a last resort).
+    val f = remember(merged, rules, showAll) { (if (showAll) Filtered(merged, 0, false, emptyList()) else applyTagRules(merged, rules)).let { r -> r.copy(list = r.list.filter { it.manualOk() }) } }
     // Three sections: Quick play (the built-in quick server), Backup play (the built-in HD servers, grouped by picture tag;
     // a group plays its best-ranked file) and Your addons (the ones you installed, with every detail).
     val own = remember(f.list) { f.list.filter { !Public.isDevChoice(it.addonName) && !isPlugin(it) } }

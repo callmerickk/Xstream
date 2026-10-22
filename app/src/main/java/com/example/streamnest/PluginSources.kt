@@ -146,7 +146,7 @@ object PluginSources {
                 api.loadLinks(data, false, { s -> if (subs.none { it.url == s.url }) subs += Subtitle(id = s.url, url = s.url, lang = s.lang) },
                     cb@{ l ->
                         if (l is com.lagradost.cloudstream3.utils.DrmExtractorLink) return@cb   // protected: can't play
-                        if (isInstantDownloadName(l.name, l.source)) return@cb
+                        if (isInstantDownloadName(l.name, l.source) || isDownloadHost(l.url)) return@cb
                         val item = l.toItem(api.name, subs.toList())
                         if (!keep(item)) return@cb
                         links += l; out += item; onLink?.invoke(item)

@@ -1,3 +1,13 @@
+Xstream 0.5.6
+
+• No more freezes when a stream fails: the next stream is tried at once.
+• A stream you pick yourself stays — it's never swapped for another.
+• Download-only files are hidden; Play manually shows Full HD and up.
+• Links prepared a while ago are looked up again before playing.
+• VegaMovies 4K is first for Upgrade to 4K.
+
+---
+
 Xstream 0.5.5 beta
 
 • Streams start faster: the quickest copy of each server is used.

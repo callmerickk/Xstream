@@ -78,7 +78,7 @@ object CsPlugins {
         enabled.value = p.getStringSet("enabled", null)?.toSet() ?: emptySet()
         installed.value = runCatching { Api.json.decodeFromString<Map<String, Int>>(p.getString("installed", null) ?: "") }.getOrDefault(emptyMap())
         // 0.5.4: AllForU (AllOtt: Netflix / Prime Video / Hotstar, and its MovieBox) and CNCVerse join every phone once.
-        if (!p.getBoolean("seeded054", false)) {
+        if (!p.getBoolean("seeded054", false) || !p.getBoolean("seeded056", false)) {
             repos.value = repos.value + listOf(CNC, ALLFORU).filter { u -> repos.value.none { it.url == u } }.map { CsRepo(it) }
             p.edit().putString("repos", Api.json.encodeToString(repos.value)).apply()
             // The plugin lists are read again once, so AllOtt / MovieBox (AllForU) and CNCVerse's VegaMovies get switched on
@@ -135,6 +135,14 @@ object CsPlugins {
                 prefs?.edit()?.putBoolean("seededMovieBox", true)?.apply()
             }
             // 0.5.4: AllOtt + MovieBox from AllForU on; VegaMovies only from CNCVerse (the other copies point at a dead site).
+            // 0.5.6: VegaMovies only from CNCVerse (the Magix copy points at a dead site) — enforced once more.
+            if (prefs?.getBoolean("seeded056", false) != true && out.any { it.repo == CNC && it.internalName.contains("vega", true) }) {
+                val cncVega = out.filter { it.repo == CNC && it.internalName.contains("vega", true) }.map { it.key }
+                val otherVega = out.filter { it.repo != CNC && it.internalName.contains("vega", true) }.map { it.key }.toSet()
+                enabled.value = enabled.value - otherVega + cncVega
+                loaded.keys.filter { it in otherVega }.forEach { loaded.remove(it) }
+                prefs?.edit()?.putBoolean("seeded056", true)?.apply()
+            }
             if (prefs?.getBoolean("seeded054", false) != true && out.any { it.repo == ALLFORU }) {
                 val on = out.filter { (it.repo == ALLFORU && (it.internalName.contains("allott", true) || it.internalName.contains("moviebox", true))) ||
                     (it.repo == CNC && it.internalName.contains("vega", true)) }.map { it.key }

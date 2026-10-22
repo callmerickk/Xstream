@@ -92,12 +92,21 @@ object CrashLog {
                 } ?: return@forEach
                 val mem = "pss ${e.pss / 1024} MB · rss ${e.rss / 1024} MB"
                 val tomb = if (e.reason == android.app.ApplicationExitInfo.REASON_ANR)
-                    runCatching { e.traceInputStream?.bufferedReader()?.use { r -> r.readText().lines().filter { l -> "backtrace" in l || " #0" in l || "Abort message" in l || "signal" in l || "\"main\"" in l }.take(12).joinToString(" | ") } }.getOrNull().orEmpty()
+                    runCatching { e.traceInputStream?.bufferedReader()?.use { r -> anrMain(r.readText()) } }.getOrNull().orEmpty()
                     else ""
                 ActLog.add("ERROR", "app ended: $why · ${java.text.SimpleDateFormat("dd MMM HH:mm:ss", java.util.Locale.US).format(java.util.Date(e.timestamp))} · $mem${e.description?.let { " · $it" } ?: ""}${if (tomb.isNotBlank()) " · $tomb" else ""}")
             }
             list.maxOfOrNull { it.timestamp }?.let { prefs.edit().putLong("exitSeen", it).apply() }
         }
+    }
+
+    /** The screen thread's stack from an ANR report (its Java frames say what it was waiting for). */
+    private fun anrMain(all: String): String {
+        val lines = all.lines()
+        val i = lines.indexOfFirst { it.startsWith("\"main\"") }
+        if (i < 0) return lines.filter { "\"main\"" in it || " at " in it }.take(20).joinToString(" | ")
+        return lines.drop(i).takeWhile { it.isNotBlank() }.filter { l -> l.startsWith("\"main\"") || l.trimStart().startsWith("at ") || l.trimStart().startsWith("- waiting") || l.trimStart().startsWith("- locked") || "native: #0" in l }
+            .take(28).joinToString(" | ")
     }
 
     fun read(ctx: Context): String? = runCatching { File(ctx.filesDir, FILE).takeIf { it.exists() }?.readText() }.getOrNull()
