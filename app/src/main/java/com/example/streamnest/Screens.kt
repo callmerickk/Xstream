@@ -180,6 +180,33 @@ fun App(vm: AppViewModel = viewModel()) {
     val scope = rememberCoroutineScope()
 
     BackHandler(stack.isNotEmpty() || (profile != null && tab != 0)) { if (stack.isNotEmpty()) pop() else tab = 0 }
+    // Phones: Back on Home asks "Exit Xstream?" — Yes clears the temporary video data (saved starts, first frames,
+    // old logs and downloads) so the phone stays light; posters, settings and sign-ins stay.
+    var askExit by remember { mutableStateOf(false) }
+    val exitCtx = androidx.compose.ui.platform.LocalContext.current
+    BackHandler(!BuildConfig.IS_TV && stack.isEmpty() && profile != null && tab == 0) { askExit = true }
+    if (askExit) {
+        val used = remember { StreamCache.usedBytes(exitCtx) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { askExit = false },
+            containerColor = Color(0xFF1A1720),
+            title = { Text("Exit Xstream?", fontWeight = FontWeight.Bold) },
+            text = { Text("Leaving also clears temporary video data" + (if (used > 1_000_000) " (${used / 1_000_000} MB)" else "") +
+                " so your phone stays light. Posters, your settings and sign-ins are kept.", color = Color(0xFFBDB7C3)) },
+            confirmButton = { androidx.compose.material3.TextButton({
+                askExit = false
+                val act = exitCtx as? android.app.Activity
+                Preloader.release()
+                Thread {
+                    runCatching { StreamCache.clearAll(exitCtx) }
+                    listOf("logs", "avatar_dl", "updates", "xs-hls-thumbs").forEach { d -> runCatching { java.io.File(exitCtx.cacheDir, d).deleteRecursively() } }
+                    exitCtx.cacheDir.listFiles()?.filter { it.isFile && (it.name.endsWith(".ts") || it.name.endsWith(".tmp") || it.name.startsWith("seg")) }?.forEach { runCatching { it.delete() } }
+                }.start()
+                act?.finishAndRemoveTask()
+            }) { Text("Yes, exit", color = Color(0xFFFF4D57), fontWeight = FontWeight.Bold) } },
+            dismissButton = { androidx.compose.material3.TextButton({ askExit = false }) { Text("Stay", color = Color.White) } },
+        )
+    }
 
     // Startup animation: once per app start (Help & Settings > Advanced > Startup animation).
     var voteFor by remember { mutableStateOf<Meta?>(null) }
@@ -385,7 +412,15 @@ fun App(vm: AppViewModel = viewModel()) {
             }
             cwAhead()
             // Kept warm: woken again every 9 minutes while the app is open (sites close idle connections; links expire).
-            while (true) { kotlinx.coroutines.delay(9 * 60_000L); if (vm.pluginMode()) { runCatching { CsPlugins.warmAll() }; cwAhead() } }
+            // Quick Play's plugins stay warm the whole time the app is open: a tiny search every 3 minutes keeps their
+            // sites' connections and cookies alive (that's why CloudStream with Netflix open starts everything at once).
+            var tick = 0
+            while (true) {
+                kotlinx.coroutines.delay(3 * 60_000L); tick++
+                if (!vm.pluginMode()) continue
+                runCatching { CsPlugins.warmSome(vm.qsAddons() + vm.qs4kNames()) }
+                if (tick % 3 == 0) cwAhead()
+            }
         }
         // Xstream: no "Connect PenguPlay" prompt — servers come from Developer's Corner.
         val askWl by WatchlistAsk.pending.collectAsState()

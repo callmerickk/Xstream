@@ -310,6 +310,14 @@ private fun VpnSiteDialog(p: VpnProvider, onClose: () -> Unit, onFiles: (List<Pa
                 WebView(c).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.databaseEnabled = true
+                    settings.loadWithOverviewMode = true
+                    settings.useWideViewPort = true
+                    settings.javaScriptCanOpenWindowsAutomatically = true
+                    // Proton's sign-in stayed blank: it refuses "WebView" browsers. Shown as normal Chrome instead, and
+                    // drawn on its own layer (inside a full-screen dialog the page sometimes never painted).
+                    settings.userAgentString = settings.userAgentString.replace("; wv", "").replace(Regex("Version/[0-9.]+ "), "")
+                    setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                     webViewClient = object : WebViewClient() { override fun onPageFinished(v: WebView, u: String) { url = u } }
@@ -337,8 +345,15 @@ private fun VpnSiteDialog(p: VpnProvider, onClose: () -> Unit, onFiles: (List<Pa
                     loadUrl(p.url)
                 }
             }, modifier = Modifier.weight(1f).fillMaxWidth(), onRelease = { it.destroy() })
-            Text("🛡 Sign in as usual. When the site offers a WireGuard file, download it; Xstream takes it. Xstream can't read what you type here.",
-                Modifier.padding(12.dp), fontSize = 12.sp, color = VMuted)
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("🛡 Sign in as usual. When the site offers a WireGuard file, download it; Xstream takes it. Xstream can't read what you type here.",
+                    Modifier.weight(1f), fontSize = 12.sp, color = VMuted)
+                // Still blank? Sign in in the phone's browser, download the file there, then use "Add a file".
+                Text("Open in browser", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(50)).background(Color(0xFF23242B))
+                    .clickable { runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(p.url))) } }
+                    .padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }

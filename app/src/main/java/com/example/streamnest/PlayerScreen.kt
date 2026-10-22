@@ -1237,7 +1237,7 @@ fun PlayerScreen(
         val rankIt: () -> List<StreamItem> = {
             vm.rankedCandidates(list, quality, quickOnly = false)
                 .filter { it.stream.url != null && it.stream.url.orEmpty() !in triedNow && fileId(it.stream.url!!) !in badNow }
-                .let { if (p.quick && quality == "auto") vm.movieBoxFirst(it) else it }
+                .let { if (p.quick && quality == "auto" && !vm.pluginMode()) vm.movieBoxFirst(it) else it }
         }
         val ranked = if (BuildConfig.IS_TV) withContext(Dispatchers.Default) { rankIt() } else rankIt()
         if (ranked.isEmpty()) return false
@@ -1252,6 +1252,9 @@ fun PlayerScreen(
         // as the best link's.
         val mbp = ranked.firstOrNull { it !in top0 && it.isMovieBox() && it.isPlaylist() && vm.langRank(it) <= vm.langRank(top0.first()) }
         val top = when {
+            // Plugin mode: a Netflix / Prime Video / Hotstar / M Player link on top races only against its own kind
+            // (a 4K file that answered later never beats it — the 4K comes through "Upgrade to 4K").
+            vm.pluginMode() && ranked.first().isOtt() -> ranked.filter { it.isOtt() && vm.langRank(it) <= bestLang }.distinctBy { hostOf(it.stream.url) + it.addonName }.take(2)
             // Quick play with MovieBox's playlist on top: it alone (racing others only slows it down).
             p.quick && ranked.first().isMovieBox() && ranked.first().isPlaylist() -> listOf(ranked.first())
             mbp == null -> top0
@@ -1615,6 +1618,8 @@ fun PlayerScreen(
     // (same language), from where you are. When ~12 s of it are saved — and it is the same cut (lengths within 2.5 s) —
     // "Upgrade to 4K" / "Upgrade quality" appears; tapping it switches using what is already saved.
     var upgrade by remember { mutableStateOf<UpgradeOffer?>(null) }
+    /** The upgrade pop-up was shown for this video (it shows once; the file then waits in Quality). */
+    var offeredOnce by remember(p.key) { mutableStateOf(false) }
     var upLeft by remember { mutableIntStateOf(0) }
     val upTried = remember { mutableSetOf<String>() }
     // Remember which link each language played from (switching back to a language plays that same link).
@@ -1943,6 +1948,9 @@ fun PlayerScreen(
     LaunchedEffect(hdReady.isNotEmpty(), now?.url, firstFrame) {
         upgrade = null
         if (hdReady.isEmpty() || !firstFrame) return@LaunchedEffect
+        // Shown once per video: afterwards the ready file waits in Quality (a "4K READY" badge), so nothing is
+        // downloaded again around every jump (it was re-offered — and re-saved — after each buffer or seek).
+        if (offeredOnce) return@LaunchedEffect
         val cur = now?.url?.let { itemFor(it) } ?: StreamItem(now?.addon ?: "", StreamInfo(url = now?.url))
         // Offered whenever what plays is lower quality than the ready file (it used to need a MovieBox file playing,
         // so after other quick sources started first, the pill never came).
@@ -1965,7 +1973,8 @@ fun PlayerScreen(
             // After a jump: a few MB of the HD file saved at the new spot first, so the tap is instant there too.
             if (round++ > 0) pick.stream.url?.let { u -> saveAround(ctx, u, curPos(), dur) }
             upgrade = UpgradeOffer(pick, pick.effectiveRes() >= 2160)
-            PlayTiming.late("HD: Upgrade quality shown (${Prepare.qualityName(pick.effectiveRes())})")
+            offeredOnce = true
+            PlayTiming.late("HD: Upgrade quality shown (${Prepare.qualityName(pick.effectiveRes())}) — once; then it waits in Quality")
             var left = 30
             var jumped = false
             while (left > 0) {
@@ -1978,13 +1987,8 @@ fun PlayerScreen(
                 if (isPlayingNow()) left--
             }
             upgrade = null
-            var last = curPos()
-            while (!jumped) {
-                delay(500)
-                val here = curPos()
-                if (here < last - 1_500 || here > last + 4_000) break
-                last = here
-            }
+            if (!jumped || round > 0) return@LaunchedEffect
+            // Jumped while it was showing: one more short showing after 5 s of playing at the new place.
             playedInARow(5_000)
         }
     }
@@ -2039,9 +2043,11 @@ fun PlayerScreen(
     LaunchedEffect(ext?.sub?.url, syncTick) {
         val e0 = ext ?: run { syncNote = ""; return@LaunchedEffect }
         if (!isOn(opt("subAutoSync")) || usingVlc) { syncNote = ""; return@LaunchedEffect }
+        // Another subtitle file: its timing starts from 0 again (the last file's shift doesn't carry over).
+        if (syncTick == 0 && !manualSync) subOffsetMs = 0L
         var e = e0
-        /** One check: the best-fitting subtitle and shift for the last 3 minutes heard. Returns the shift, or null. */
-        fun check(): Long? {
+        /** One check: the best-fitting subtitle, its best shift for the last 3 minutes heard, and how well it fits. */
+        fun check(): Pair<Long, Float>? {
             if (manualSync || ext?.sub?.url != e.sub.url || !isPlayingNow()) return null
             val t = curPos()
             val scored = (if (autoPickedSub) subCands else listOf(e)).mapNotNull { c ->
@@ -2049,34 +2055,27 @@ fun PlayerScreen(
             }
             if (scored.isEmpty()) return null
             val (bestSub, fit) = scored.maxBy { it.second.second }
-            if (bestSub.sub.url != e.sub.url) { e = bestSub; ext = bestSub }
-            return fit.first
+            if (bestSub.sub.url != e.sub.url && fit.second >= 0.7f) { e = bestSub; ext = bestSub }
+            return fit
         }
-        // Start: listen (every 15 s) until two checks in a row agree — that's "in sync", then it goes quiet.
-        suspend fun settle(maxTries: Int): Boolean {
-            var last: Long? = null
-            repeat(maxTries) {
-                delay(15_000L)
-                if (manualSync || ext?.sub?.url != e.sub.url) return false
-                val off = check() ?: return@repeat
-                if (kotlin.math.abs(off - subOffsetMs) >= 200) subOffsetMs = off
-                if (last != null && kotlin.math.abs(off - last!!) < 300) {
-                    syncNote = "Auto sync: in step (" + (if (subOffsetMs > 0) "+" else "") + "%.1f s)".format(subOffsetMs / 1000f)
-                    ActLog.add("SUBSYNC", "settled at ${subOffsetMs} ms")
-                    return true
-                }
-                last = off
-                syncNote = "Auto sync: lining up…"
-            }
-            return false
-        }
-        syncNote = "Auto sync: listening…"
-        settle(if (syncTick > 0) 8 else 40)
-        // Then a quiet re-check every 30 minutes (Sync restarts it at once).
+        // Starts at 0 and keeps listening in the background the whole time (every 20 s). The timing only moves when it's
+        // sure: the same shift found in several checks in a row (3 for small shifts, 4 for shifts over 8 s) and a good
+        // fit — so a guess never pushes a subtitle that was already right to -30 s.
+        syncNote = "Auto sync: listening · in step (0.0 s)"
+        var cand: Long? = null; var agree = 0
         while (true) {
-            delay(30 * 60_000L)
+            delay(20_000L)
             if (manualSync || ext?.sub?.url != e.sub.url) return@LaunchedEffect
-            settle(8)
+            val (off, fit) = check() ?: continue
+            if (kotlin.math.abs(off - subOffsetMs) < 300) { cand = null; agree = 0
+                syncNote = "Auto sync: listening · in step (" + (if (subOffsetMs > 0) "+" else "") + "%.1f s)".format(subOffsetMs / 1000f); continue }
+            if (cand != null && kotlin.math.abs(off - cand!!) < 300) agree++ else { cand = off; agree = 1 }
+            val need = if (kotlin.math.abs(off) > 8_000) 4 else 3
+            if (agree >= need && fit >= 0.62f) {
+                subOffsetMs = off; cand = null; agree = 0
+                syncNote = "Auto sync: in step (" + (if (off > 0) "+" else "") + "%.1f s)".format(off / 1000f)
+                ActLog.add("SUBSYNC", "moved to $off ms (fit ${"%.2f".format(fit)}, $need checks agreed)")
+            } else syncNote = "Auto sync: listening…"
         }
     }
     /** Subtitles chosen by hand during this play (then the automatic defaults leave them alone). */
@@ -2366,6 +2365,7 @@ fun PlayerScreen(
     /** An online subtitle: reload this link from the same second with it added first, and pick it. */
     fun addOnlineSub(sub: Subtitle) {
         val cur = now ?: return
+        if (ext?.sub?.url?.let { sameSubUrl(it, sub.url) } == true) return   // already on: no reload, no flicker
         vm.setPlayerPref("subs", sub.lang)
         // Shown by the app itself: no reload, the video keeps playing.
         if (!usingVlc) {
@@ -3289,7 +3289,8 @@ fun PlayerScreen(
                             else if (roomNow != null) Box(Modifier.align(Alignment.TopEnd).padding(top = 5.dp, end = 5.dp).size(9.dp).clip(CircleShape).background(Color(0xFF3CCF7A)).border(2.dp, Color.Black, CircleShape))
                         }
                         if (!BuildConfig.IS_TV) GlassBtn(Icons.Default.LockOpen, null, "Lock") { locked = true; controls = true; poke++ }
-                        if (quickList.isNotEmpty()) GlassBtn(if (qualityMenu) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        val plugQ = !BuildConfig.IS_TV && vm.pluginMode()
+                        if (quickList.isNotEmpty() || plugQ) GlassBtn(if (qualityMenu) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                             run {
                                 // Show what is really playing (a 1080p file is never labelled 4K).
                                 // The real picture height of the playing file when known (wide films: by width), else its name.
@@ -3298,11 +3299,14 @@ fun PlayerScreen(
                                     ?: now?.url?.let { itemFor(it) }?.effectiveRes() ?: 0
                                 val real = when { res >= 1440 -> "4K"; res >= 1080 -> "Full HD"; res >= 720 -> "HD 720p"; res > 0 -> "Low"; else -> null }
                                 val quickNow = now?.url?.let { itemFor(it) }?.let { it.isMovieBox() || vm.isQuick(it) } == true
-                                if (quality == "auto" || quickNow) "Quick" + (real?.let { " · $it" } ?: "") else real ?: (AllQualityLevels.firstOrNull { it.id == quality }?.label ?: "Quick")
+                                // Plugin mode: what plays, plus "4K ready" once a 4K file waits in the menu (the pop-up shows once only).
+                                val ready4k = hdReady["4k"].orEmpty().isNotEmpty() && res < 1440
+                                if (plugQ) (real ?: "Auto") + (if (ready4k) " · 4K READY" else "")
+                                else if (quality == "auto" || quickNow) "Quick" + (real?.let { " · $it" } ?: "") else real ?: (AllQualityLevels.firstOrNull { it.id == quality }?.label ?: "Quick")
                             }, "Quality", iconFirst = false) { qualityMenu = !qualityMenu; poke++ }
                         // Xstream: one stream that carries several qualities (an HLS playlist, like CloudStream's Netflix
                         // server): pick one of them here, or Auto.
-                        if (!BuildConfig.IS_TV && quickList.isEmpty()) {
+                        if (!BuildConfig.IS_TV && quickList.isEmpty() && !vm.pluginMode()) {
                             val vg = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 1 }
                             val heights = vg?.let { g -> (0 until g.length).map { g.getTrackFormat(it).height }.filter { it > 0 }.distinct().sortedDescending() }.orEmpty()
                             if (vg != null && heights.size > 1) Box {
@@ -4987,7 +4991,13 @@ private fun SubtitlesColumn(
                     val f = g.getTrackFormat(i)
                     val lang = f.language?.let { subLangName(it) } ?: "Subtitles"
                     val n = (seenS[lang] ?: 0) + 1; seenS[lang] = n
-                    TrackRow(if (n > 1) "$lang $n" else lang, g.isTrackSelected(i) && activeUrl == null, listOf("Online · loaded with the video", "Switches at once"), true, ready = true) {
+                    // Shown by the app now (sidecars become app-drawn subtitles): its tick follows that, and tapping it
+                    // again does nothing (it used to switch to the player's own copy too — two subtitles flickering).
+                    val src = loaded.firstOrNull { s -> f.id?.contains("side:" + s.url.hashCode()) == true }
+                    val onApp = src != null && activeUrl != null && sameSubUrl(src.url, activeUrl)
+                    TrackRow(if (n > 1) "$lang $n" else lang, onApp || (g.isTrackSelected(i) && activeUrl == null), listOf("Online · loaded with the video", "Switches at once"), true, ready = true) {
+                        if (onApp) return@TrackRow
+                        if (src != null && activeUrl != null) { onPick(src); return@TrackRow }
                         pl.trackSelectionParameters = pl.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                             .setOverrideForType(TrackSelectionOverride(g.mediaTrackGroup, i)).setPreferredTextLanguage(f.language).build()
                         onInside(f.language.orEmpty())
@@ -5004,7 +5014,12 @@ private fun SubtitlesColumn(
                 list.isEmpty() -> Unit
                 else -> {
                     val count = HashMap<String, Int>()
-                    list.take(30).forEach { sub ->
+                    // The subtitle playing came from another list (auto pick) or a link written differently: it's still
+                    // shown first with its tick, so it's clear which one is on.
+                    val shown = list.take(30)
+                    if (activeUrl != null && shown.none { sameSubUrl(it.url, activeUrl) })
+                        TrackRow((online?.firstOrNull { sameSubUrl(it.url, activeUrl) }?.lang?.let { subLangName(it) } ?: "Online") + " · in use", true, listOf("Auto sync on"), true, ready = true) { }
+                    shown.forEach { sub ->
                         val src = when {
                             sub.url.contains("opensubtitles", true) || sub.url.contains("strem.io", true) -> "OpenSubtitles"
                             sub.id?.isNotBlank() == true -> sub.id.substringBefore(':').substringBefore('_').take(14).ifBlank { "Online" }
@@ -5012,9 +5027,10 @@ private fun SubtitlesColumn(
                         }
                         val lang = subLangName(sub.lang)
                         val n = (count[lang] ?: 0) + 1; count[lang] = n
-                        TrackRow(if (n > 1) "$lang $n" else lang, sub.url == activeUrl,
-                            listOfNotNull(src, if (sub.url in ready) "Downloaded · switches at once" else "Downloads when you pick it", if (sub.url == activeUrl) "Auto sync on" else null),
-                            true, ready = sub.url in ready) { onPick(sub) }
+                        val on = activeUrl != null && sameSubUrl(sub.url, activeUrl)
+                        TrackRow(if (n > 1) "$lang $n" else lang, on,
+                            listOfNotNull(src, if (sub.url in ready) "Downloaded · switches at once" else "Downloads when you pick it", if (on) "Auto sync on" else null),
+                            true, ready = sub.url in ready || on) { if (!on) onPick(sub) }
                     }
                 }
             }
@@ -5022,6 +5038,13 @@ private fun SubtitlesColumn(
         Text("Online languages: $langTitle — change in Settings › Playback › Subtitle languages.", Modifier.padding(top = 12.dp), fontSize = 11.sp, color = Color(0xFF8A94A8))
         Spacer(Modifier.height(16.dp))
     }
+}
+
+/** Two links to the same subtitle file (one with %-escapes or extra parameters) count as one. */
+fun sameSubUrl(a: String, b: String): Boolean {
+    if (a == b) return true
+    fun n(u: String) = runCatching { java.net.URLDecoder.decode(u, "UTF-8") }.getOrDefault(u).substringBefore('#').trimEnd('/')
+    return n(a) == n(b)
 }
 
 /** A stack in the Subtitles column: a header you tap to open or close, its rows inside. */
@@ -5819,22 +5842,27 @@ private fun PluginQualityBar(
             if (files.isEmpty() && title == "Auto") return@forEach
             val label = when (title) { "4K" -> "4K"; "1080p" -> "Full HD"; "720p" -> "Mid HD"; else -> "Auto" }
             val here = files.any { it.stream.url == playing }
+            // A file of this quality is ready (start saved / a playlist): tap plays it from where you are.
+            val readyOne = files.firstOrNull { it.stream.url in ready }
             val ps = RoundedCornerShape(14.dp)
             Row(
                 Modifier.fillMaxWidth().clip(ps).background(if (here) Color(0x33E50914) else if (open == title) Color(0x26FFFFFF) else Color(0x0FFFFFFF))
                     .border(1.dp, if (here) Color(0xCCE50914) else Color(0x14FFFFFF), ps).focusFill()
                     .combinedClickable(enabled = files.isNotEmpty(),
-                        onClick = { onPoke(); if (!here) files.firstOrNull()?.let(onPick) else open = if (open == title) null else title },
+                        onClick = { onPoke(); if (!here) (readyOne ?: files.firstOrNull())?.let(onPick) else open = if (open == title) null else title },
                         onLongClick = { onPoke(); open = if (open == title) null else title })
                     .padding(horizontal = 14.dp, vertical = 11.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (files.isEmpty()) Color(0xFF6E7687) else Color.White)
-                    Text(if (files.isEmpty()) "Not available" else if (here) "Playing · ${files.size} streams · hold for all" else "${files.size} streams · hold for all",
-                        fontSize = 11.sp, color = if (here) Color(0xFFFF8D94) else Color(0xFF9AA3B5))
+                    Text(if (files.isEmpty()) "Not available" else if (here) "Playing · ${files.size} streams · hold for all"
+                        else if (readyOne != null && title == "4K") "Ready — tap to play from here" else "${files.size} streams · hold for all",
+                        fontSize = 11.sp, color = if (here || (readyOne != null && title == "4K")) Color(0xFFFF8D94) else Color(0xFF9AA3B5))
                 }
                 if (here) Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = red)
+                else if (readyOne != null && title == "4K") Text("READY", Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFFE50914)).padding(horizontal = 8.dp, vertical = 3.dp),
+                    fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.White)
             }
             AnimatedVisibility(open == title && files.isNotEmpty(), enter = androidx.compose.animation.expandVertically(tween(260)) + fadeIn(tween(200)),
                 exit = androidx.compose.animation.shrinkVertically(tween(220)) + fadeOut(tween(160))) {
@@ -5851,7 +5879,7 @@ private fun PluginQualityBar(
                             Text("${i + 1}", Modifier.width(22.dp), fontSize = 15.sp, fontWeight = FontWeight.Black, color = red)
                             Column(Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text((VisualTags.video(st).ifEmpty { listOf(VisualTags.primary(st)) } + st.addonName.removePrefix("CloudStream · ").removePrefix("Nuvio · ")).joinToString(" · "),
+                                    Text((VisualTags.video(st).ifEmpty { listOf(VisualTags.primary(st)) } + Public.codeName(st.addonName)).joinToString(" · "),
                                         Modifier.weight(1f, fill = false), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     if (Ranker.untested(st)) Text("Unidentified", Modifier.padding(start = 6.dp).clip(RoundedCornerShape(5.dp)).background(Color(0x1FFFFFFF))
                                         .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB6BDCC))

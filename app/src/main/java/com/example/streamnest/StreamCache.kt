@@ -49,6 +49,16 @@ object StreamCache {
             StandaloneDatabaseProvider(ctx.applicationContext)).also { cache = it }
     }
 
+    /** Exit: every saved video start / first frame is deleted (the phone stays light). Returns the bytes freed. */
+    fun clearAll(ctx: Context): Long = runCatching {
+        val c = get(ctx)
+        val before = c.cacheSpace
+        c.keys.toList().forEach { k -> runCatching { c.removeResource(k) } }
+        before - c.cacheSpace
+    }.getOrDefault(0L)
+
+    fun usedBytes(ctx: Context): Long = runCatching { get(ctx).cacheSpace }.getOrDefault(0L)
+
     /** Remembers the stable key of a link (file name + size when the addon gives them). */
     fun register(item: StreamItem) {
         val url = item.stream.url ?: return

@@ -13,6 +13,19 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.5.0 beta", "22 Oct 2026", "Steadier, faster, cleaner", listOf(
+        "A series never plays the movie of the same name any more (The Flash, Supergirl)",
+        "Subtitle auto sync starts at 0 and keeps listening; it only moves the timing when it's sure",
+        "The subtitle in use always shows its tick, and tapping it again no longer flickers",
+        "Upgrade to 4K pops up once; then the Quality button says \"4K READY\" and the 4K row plays from where you are",
+        "Streams have their own names now (Nova, Helios, Mercury…)",
+        "Netflix-type streams start first even when you press Play early; the quality menu always looks the same",
+        "Episodes 4, 10 or any other start as fast as episode 1, and Quick Play stays warm while the app is open",
+        "Leaving the app asks first, then clears temporary video data so your phone stays light",
+        "GIF search: bigger tiles, smooth at the real speed",
+        "Proton VPN sign-in no longer stays blank (and can open in your browser); NordVPN / ExpressVPN buttons removed",
+        "Fixes for more plugins (MovieBox), M Player and the audio language of Netflix / Prime Video streams",
+    )),
     Release("0.4.9 beta", "21 Oct 2026", "Netflix-type streams first, with a seamless switch", listOf(
         "Plugin mode: Netflix, Prime Video, Hotstar and MPlayer streams come first; MovieBox is only the instant backup",
         "If you press Play before they're ready, MovieBox starts at once — then, as soon as the Netflix-type stream is loaded, it takes over at the same frame with a soft crossfade (no loading, no message)",
@@ -276,6 +289,21 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.5.0 beta", "22 Oct 2026", "Exit reasons, series match, sync, 4K once, code names, warm, exit clean", listOf(
+        "CrashLog.logExitReasons: ApplicationExitInfo (low memory / native / ANR / signal) → ActLog ERROR once each",
+        "PluginSources: series + MovieLoadResponse rejected; bestMatch −1.0 for film results on a series; TitleMatch: episode asked + plain film file (no SxxEyy/season) = wrong",
+        "PluginSources: show page (search+load) cached 15 min per provider/title/season → other episodes only loadLinks",
+        "Auto sync: offset reset to 0 per subtitle; checks every 20 s for the whole play; moves only after 3 agreeing checks (4 for > 8 s) and fit ≥ 0.62",
+        "Subtitles: sameSubUrl; active online sub always ticked (in-use row if not listed); sidecar rows tick when shown by the app; re-tap = no reload",
+        "Upgrade offer once per title (offeredOnce); plugin-mode Quality button always shown with \"· 4K READY\"; bubble 4K row READY badge, tap plays the ready file",
+        "Public.codeName (Mercury, Nova, Pulsar, Helios, Mars, Fornax, Hydra, Rigel, Vesta, Umbra; star by first letter otherwise); addonLabel / serverName use it; dev sees real",
+        "Ranker plugTiers for every quality level; raceStart in plugin mode races OTT links only when one is on top; movieBoxFirst off in plugin mode",
+        "CsPlugins.warmSome every 3 min (Quick Play + 4K providers); CW prefetch every 9 min",
+        "Exit dialog on Home back: StreamCache.clearAll + logs/updates/avatar/hls-thumb temp folders, finishAndRemoveTask",
+        "GIFs: 2-column grid of full Tenor GIFs, 140 dp preview, enforceMinimumFrameDelay",
+        "VPN: WebView UA without wv + hardware layer + Open in browser; Nord/Express removed; Xstream VPN servers section removed; penguConnect key removed",
+        "NiceResponse body copy (MovieBox v52 / IN \"closed\"), OTT HLS before DASH, audio track by name, plugin tests keep screen on",
+    )),
     Release("0.4.9 beta", "21 Oct 2026", "OTT-first plugin mode, frame-matched swap, CW prefetch", listOf(
         "Ranker: plugin mode + Auto → ottTier (Netflix/Prime/Hotstar/MPlayer 0, MovieBox 1, rest 2); MovieBox order mbKind (DASH, HLS, MP4)",
         "qsAddons (plugin mode) + MB_ANY: MovieBox plugins always in Quick Play; isQuick counts MovieBox in plugin mode",

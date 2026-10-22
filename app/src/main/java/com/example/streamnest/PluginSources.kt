@@ -2,6 +2,7 @@ package com.example.streamnest
 
 import android.content.Context
 import com.lagradost.cloudstream3.AnimeLoadResponse
+import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MovieLoadResponse
 import com.lagradost.cloudstream3.MovieSearchResponse
@@ -52,6 +53,8 @@ object PluginSources {
                 if (n != null) sc += if (n == (season ?: 1)) 0.25 else -0.6
             }
             val isSeries = r.type in setOf(TvType.TvSeries, TvType.Anime, TvType.AsianDrama, TvType.Cartoon, TvType.Documentary) || Regex("(?i)season|web series|episode").containsMatchIn(r.name)
+            // A series: a result marked as a film is out (unless its name says it's a season).
+            if (series && r.type == TvType.Movie && !Regex("(?i)season|web series|episode|\\bS\\d{1,2}\\b").containsMatchIn(r.name)) sc -= 1.0
             if (r.type != null && !(r.type == TvType.Movie && Regex("(?i)season|web series").containsMatchIn(r.name))) sc += if (isSeries == series) 0.05 else -0.2
             r to sc
         }.maxByOrNull { it.second }?.takeIf { it.second >= 0.7 }?.first
@@ -92,6 +95,12 @@ object PluginSources {
                           onLink: ((StreamItem) -> Unit)? = null): List<StreamItem> {
         fun log(s: String) = ActLog.add("CSPLAY", "${api.name}: $s")
         if (api.name in noSearch) return emptyList()          // a browse-only provider (Disney / Marvel shelves…)
+        // The show's page (search + load) is kept 15 minutes: any other episode then needs only its links (~0.5 s),
+        // so episode 4 or 10 starts as fast as episode 1.
+        val pageKey = "${api.name}|$name|$series|${if (series) season else year}"
+        pages[pageKey]?.takeIf { System.currentTimeMillis() - it.first < 15 * 60_000L }?.second?.let { cached ->
+            return linksFromPage(api, cached, name, series, season, episode, onLink, ::log)
+        }
         val found = try {
             withDeadline(20_000) {
                 val paged = try { api.search(name, 1) } catch (_: NotImplementedError) { null }
@@ -104,8 +113,19 @@ object PluginSources {
         if (hit == null) { log("${found.size} results, none matched \"$name\"" + found.take(4).joinToString("; ", " — top: ") { it.name.take(60) }); return emptyList() }
         val lr = try { withDeadline(20_000) { api.load(hit.url) } } catch (e: Throwable) { log("load failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
         if (lr == null) { log("matched \"${hit.name.take(60)}\" but its page didn't load"); return emptyList() }
+        pages[pageKey] = System.currentTimeMillis() to (hit.name to lr)
+        return linksFromPage(api, hit.name to lr, name, series, season, episode, onLink, ::log)
+    }
+
+    private val pages = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Pair<String, LoadResponse>>>()
+
+    private suspend fun linksFromPage(api: MainAPI, page: Pair<String, LoadResponse>, name: String, series: Boolean, season: Int?, episode: Int?,
+                                      onLink: ((StreamItem) -> Unit)?, log: (String) -> Unit): List<StreamItem> {
+        val (hitName, lr) = page
+        val hit = object { val name = hitName }
         val data = when (lr) {
-            is MovieLoadResponse -> lr.dataUrl
+            // A series asked for and the site gave a film (The Flash / Supergirl have both): never play the film.
+            is MovieLoadResponse -> if (series) { log("\"${hit.name.take(60)}\" is a film, not the series — skipped"); return emptyList() } else lr.dataUrl
             is TvSeriesLoadResponse -> if (!series) lr.episodes.firstOrNull()?.data else
                 (lr.episodes.firstOrNull { (it.season ?: 1) == (season ?: 1) && it.episode == (episode ?: 1) } ?: lr.episodes.firstOrNull { it.episode == episode && it.season == null })?.data
             is AnimeLoadResponse -> lr.episodes.values.flatten().firstOrNull { it.episode == (episode ?: 1) }?.data

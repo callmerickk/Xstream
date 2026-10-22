@@ -33,7 +33,7 @@ fun Addon.label(): String {
 }
 
 /** Names are already the addon's own label (kept for older callers). */
-fun addonLabel(name: String?): String = name ?: ""
+fun addonLabel(name: String?): String = name?.let { if (it.startsWith("CloudStream · ") || it.startsWith("Nuvio · ")) Public.codeName(it) else it } ?: ""
 
 /** Is this a CNCVerse file from Vegamovies (the preferred HD source)? */
 fun StreamItem.isVegamovies(): Boolean =

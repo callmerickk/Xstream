@@ -66,6 +66,40 @@ object CrashLog {
         }
     }
 
+    /**
+     * Why the app's process ended last times (Android 11+): low memory, a crash inside native code, a freeze (ANR)…
+     * Those never reach the handler above, so the log showed nothing. Each new one is written to the Activity log once.
+     */
+    fun logExitReasons(ctx: Context) {
+        if (android.os.Build.VERSION.SDK_INT < 30) return
+        runCatching {
+            val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val prefs = ctx.getSharedPreferences("crashlog", Context.MODE_PRIVATE)
+            val seen = prefs.getLong("exitSeen", 0L)
+            val list = am.getHistoricalProcessExitReasons(ctx.packageName, 0, 8).filter { it.timestamp > seen }
+            list.sortedBy { it.timestamp }.forEach { e ->
+                val why = when (e.reason) {
+                    android.app.ApplicationExitInfo.REASON_LOW_MEMORY -> "low memory (Android closed it)"
+                    android.app.ApplicationExitInfo.REASON_CRASH -> "crash"
+                    android.app.ApplicationExitInfo.REASON_CRASH_NATIVE -> "crash in native code"
+                    android.app.ApplicationExitInfo.REASON_ANR -> "froze (not responding)"
+                    android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "used too many resources"
+                    android.app.ApplicationExitInfo.REASON_SIGNALED -> "killed by the system (signal ${e.status})"
+                    android.app.ApplicationExitInfo.REASON_USER_REQUESTED -> null
+                    android.app.ApplicationExitInfo.REASON_USER_STOPPED -> null
+                    android.app.ApplicationExitInfo.REASON_EXIT_SELF -> null
+                    else -> "other (${e.reason})"
+                } ?: return@forEach
+                val mem = "pss ${e.pss / 1024} MB · rss ${e.rss / 1024} MB"
+                val tomb = if (e.reason == android.app.ApplicationExitInfo.REASON_ANR)
+                    runCatching { e.traceInputStream?.bufferedReader()?.use { r -> r.readText().lines().filter { l -> "backtrace" in l || " #0" in l || "Abort message" in l || "signal" in l || "\"main\"" in l }.take(12).joinToString(" | ") } }.getOrNull().orEmpty()
+                    else ""
+                ActLog.add("ERROR", "app ended: $why · ${java.text.SimpleDateFormat("dd MMM HH:mm:ss", java.util.Locale.US).format(java.util.Date(e.timestamp))} · $mem${e.description?.let { " · $it" } ?: ""}${if (tomb.isNotBlank()) " · $tomb" else ""}")
+            }
+            list.maxOfOrNull { it.timestamp }?.let { prefs.edit().putLong("exitSeen", it).apply() }
+        }
+    }
+
     fun read(ctx: Context): String? = runCatching { File(ctx.filesDir, FILE).takeIf { it.exists() }?.readText() }.getOrNull()
     fun clear(ctx: Context) { runCatching { File(ctx.filesDir, FILE).delete() } }
 }

@@ -404,6 +404,4 @@ val VpnProviders = listOf(
     VpnProvider("Surfshark", 0xFF1EB6A8, "S", "paid", "Sign in · surfshark.com › Manual setup", "https://my.surfshark.com/vpn/manual-setup/main/wireguard"),
     VpnProvider("Windscribe", 0xFF1A5F9E, "W", "paid", "Pro plan · windscribe.com", "https://windscribe.com/getconfig/wireguard"),
     VpnProvider("IVPN", 0xFF3A7BD5, "I", "paid", "Account ID · ivpn.net", "https://www.ivpn.net/account/"),
-    VpnProvider("NordVPN", 0xFF3E5FFF, "N", "no", "Doesn't give WireGuard files — keep its app on", ""),
-    VpnProvider("ExpressVPN", 0xFFDA3940, "E", "no", "Doesn't give WireGuard files — keep its app on", ""),
 )

@@ -320,7 +320,7 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
     val pool = list.filter { it.stream.url != null && (!quickOnly || isQuick(it)) && !Ranker.isDead(it) && !(testedOnly && Ranker.keepsFailing(it)) }
         .distinctBy { it.stream.url }
     val target = AllQualityLevels.firstOrNull { it.id == level }?.res ?: 0
-    val plugTiers = pluginMode() && target == 0
+    val plugTiers = pluginMode()
     // Auto: Full HD (TV and phone start fast), else the best below, else anything.
     val targetTier = if (target == 0) 3 else Ranker.tier(target)
     fun tierCost(s: StreamItem): Int { val t = Ranker.tier(s.effectiveRes()); return if (t == targetTier) 0 else if (t < targetTier) targetTier - t else 10 + t }

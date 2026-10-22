@@ -157,7 +157,7 @@ fun GifPicker(vm: AppViewModel, onPick: (String) -> Unit, onDismiss: () -> Unit)
 
                 // Preview in the round profile frame.
                 Box(Modifier.fillMaxWidth().padding(bottom = 10.dp), Alignment.Center) {
-                    Box(Modifier.size(104.dp).clip(CircleShape).background(Color(0xFF22252E)).border(2.dp, Color.White, CircleShape), Alignment.Center) {
+                    Box(Modifier.size(140.dp).clip(CircleShape).background(Color(0xFF22252E)).border(2.dp, Color.White, CircleShape), Alignment.Center) {
                         val s = sel
                         if (s != null) AsyncImage(s.full, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                         else Text("Tap a GIF", fontSize = 12.sp, color = Color(0xFF9AA3B5))
@@ -177,14 +177,16 @@ fun GifPicker(vm: AppViewModel, onPick: (String) -> Unit, onDismiss: () -> Unit)
                             .padding(horizontal = 10.dp, vertical = 5.dp), fontSize = 12.sp, color = if (q == c) Color.Black else Color.White)
                     }
                 }
-                Box(Modifier.fillMaxWidth().height(300.dp).padding(top = 10.dp)) {
+                Box(Modifier.fillMaxWidth().height(360.dp).padding(top = 10.dp)) {
                     when {
                         loading && hits.isEmpty() -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                         !loading && hits.isEmpty() && !failed -> Text("No GIFs for \"$q\" — try another word.", Modifier.align(Alignment.Center), fontSize = 13.sp, color = Color(0xFF9AA3B5))
                         failed -> Text("Couldn't search right now. Paste a GIF link instead.", Modifier.align(Alignment.Center), fontSize = 13.sp, color = Color(0xFFFF8A80))
-                        else -> LazyVerticalGrid(GridCells.Fixed(3), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // Two big tiles a row, each playing the full GIF (Tenor's tiny previews drop frames and looked
+                        // sped up); the player keeps each frame's real time, so it moves like the film scene.
+                        else -> LazyVerticalGrid(GridCells.Fixed(2), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(hits, key = { it.id }) { h ->
-                                AsyncImage(h.preview, null,
+                                AsyncImage(if (h.id.startsWith("t_")) h.full else h.preview, null,
                                     Modifier.aspectRatio(1f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF22252E))
                                         .then(if (sel?.id == h.id) Modifier.border(3.dp, Color.White, RoundedCornerShape(10.dp)) else Modifier)
                                         .clickable { sel = h },

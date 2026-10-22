@@ -129,10 +129,32 @@ object Public {
     }
     fun isDevChoice(a: Addon): Boolean = isDevChoice(a.manifest.name) || isDevChoice(a.baseUrl) || isDevChoice(a.manifest.id) ||
         a.baseUrl == vm?.texts?.value?.get("qpUrl")
+    /**
+     * Plugin streams get code names everywhere in the app (same first letter as the real one): MovieBox → Mercury,
+     * Netflix → Nova… Developer accounts see the real names.
+     */
+    private val codes = listOf(
+        "moviebox" to "Mercury", "netflix" to "Nova", "prime" to "Pulsar", "hotstar" to "Helios", "m player" to "Mars", "mplayer" to "Mars",
+        "4k hdhub" to "Fornax", "4khdhub" to "Fornax", "hdhub" to "Hydra", "rogmovies" to "Rigel", "vegamovies" to "Vesta", "uhdmovies" to "Umbra",
+    )
+    private val stars = mapOf('a' to "Antares", 'b' to "Bellatrix", 'c' to "Castor", 'd' to "Deneb", 'e' to "Electra", 'f' to "Fomalhaut",
+        'g' to "Gemma", 'h' to "Hadar", 'i' to "Izar", 'j' to "Juno", 'k' to "Kepler", 'l' to "Lyra", 'm' to "Mira", 'n' to "Nashira",
+        'o' to "Orion", 'p' to "Pollux", 'q' to "Quasar", 'r' to "Regulus", 's' to "Sirius", 't' to "Titan", 'u' to "Ursa", 'v' to "Vela",
+        'w' to "Wezen", 'x' to "Xena", 'y' to "Ymir", 'z' to "Zaurak")
+    fun codeName(addon: String): String {
+        val real = addon.removePrefix("CloudStream · ").removePrefix("Nuvio · ")
+        if (dev) return real
+        val n = real.lowercase().replace(Regex("provider(in)?$"), "").trim()
+        codes.firstOrNull { (k, _) -> n.startsWith(k) || n == k }?.let { return it.second }
+        codes.firstOrNull { (k, _) -> k in n }?.let { return it.second }
+        return stars[n.firstOrNull { it.isLetter() } ?: 'n'] ?: "Nova"
+    }
+
     /** "Quick server" / "HD server" for the developer's-choice addons; other addons keep their own name. */
     fun serverName(addon: String?): String {
         if (dev && addon != null) return addonLabel(addon)
         val n = addon?.lowercase() ?: return "Backup server"
+        if (addon.startsWith("CloudStream · ") || addon.startsWith("Nuvio · ")) return codeName(addon)
         return when { quickNames.any { it in n } -> "Quick server"; hdNames.any { it in n } -> "HD server"; else -> addonLabel(addon) }
     }
 

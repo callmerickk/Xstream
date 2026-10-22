@@ -65,6 +65,10 @@ object TitleMatch {
             if (sxS.isNotEmpty() && sxE.isNotEmpty()) return ws !in sxS || we !in sxE
             if (file.isEmpty() || rangeRx.containsMatchIn(file)) return false
             val all = epRx.findAll(file).toList()
+            // An episode asked for, and the file is a whole film ("Supergirl (2026) 2160p … .mkv"): no episode mark,
+            // no season / episode word, a video file name — another title.
+            if (all.isEmpty() && Regex("(?i)\\.(mkv|mp4|avi|webm|m4v)$").containsMatchIn(file) &&
+                !Regex("(?i)season|episode|\\bep\\.?\\s*\\d|\\b\\d{1,2}x\\d{1,3}\\b|complete").containsMatchIn(file)) return true
             if (all.size != 1) return false
             val m = all[0]
             return m.groupValues[1].toIntOrNull() != ws || m.groupValues[2].toIntOrNull() != we

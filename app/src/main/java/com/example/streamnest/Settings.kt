@@ -541,42 +541,6 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                 }
             }
         }
-        item { SectionLabel("Xstream VPN servers (everyone)") }
-        item {
-            val scope = rememberCoroutineScope()
-            val cur by AppLook.vpnJson.collectAsStateWithLifecycle()
-            val list = remember(cur) { mutableStateListOf<SxServer>().apply { addAll(runCatching { Api.json.decodeFromString<List<SxServer>>(cur) }.getOrDefault(emptyList())) } }
-            var name by remember { mutableStateOf("") }
-            var cc by remember { mutableStateOf("") }
-            var ep by remember { mutableStateOf("") }
-            var pub by remember { mutableStateOf("") }
-            var msg by remember { mutableStateOf<String?>(null) }
-            SettingsCard {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Your own WireGuard servers. Users see only the country. Each phone gets its own key and address from the server's helper (setup: tools/vpn-server/setup.sh in the repo prints these values). Needs the Firebase rule for vpnPeers.",
-                        fontSize = 13.sp, color = Color(0xFF9AA3B5))
-                    list.forEachIndexed { i, sv ->
-                        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("${Vpn.flag(sv.cc)} ${sv.name} · ${sv.endpoint}", Modifier.weight(1f), fontSize = 13.sp)
-                            TextButton({ list.removeAt(i) }) { Text("Remove", color = Color(0xFFFF8A80)) }
-                        }
-                    }
-                    androidx.compose.material3.OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Place shown to users (e.g. Singapore)") })
-                    androidx.compose.material3.OutlinedTextField(cc, { cc = it.uppercase().take(2) }, Modifier.fillMaxWidth().padding(top = 6.dp), singleLine = true, label = { Text("Country code (SG, JP, US…)") })
-                    androidx.compose.material3.OutlinedTextField(ep, { ep = it.trim() }, Modifier.fillMaxWidth().padding(top = 6.dp), singleLine = true, label = { Text("Address (IP:51820)") })
-                    androidx.compose.material3.OutlinedTextField(pub, { pub = it.trim() }, Modifier.fillMaxWidth().padding(top = 6.dp), singleLine = true, label = { Text("Server public key") })
-                    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        androidx.compose.material3.OutlinedButton({
-                            if (name.isNotBlank() && cc.length == 2 && ":" in ep && pub.length >= 40) {
-                                list += SxServer(cc.lowercase() + "-" + (list.size + 1), name.trim(), cc, ep, pub); name = ""; cc = ""; ep = ""; pub = ""
-                            } else msg = "Fill in all four (the helper prints them)."
-                        }) { Text("Add") }
-                        androidx.compose.material3.Button({ msg = "Publishing…"; scope.launch { msg = AppLook.publishVpn(Api.json.encodeToString(list.toList())) ?: "Published ✓ — in everyone's Network & DNS › VPN" } }) { Text("Publish for everyone") }
-                    }
-                    msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Color(0xFF9AA3B5)) }
-                }
-            }
-        }
         item { SectionLabel("Watch together call relay (everyone)") }
         item {
             val scope = rememberCoroutineScope()
@@ -614,7 +578,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             }
             SettingsCard {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Every phone installs these when the app opens, and picks up changes on its next launch. Users never see their names. The connect page is where \"Connect PenguPlay\" sends people.",
+                    Text("Every phone installs these when the app opens, and picks up changes on its next launch. Users never see their names.",
                         fontSize = 13.sp, color = Color(0xFF9AA3B5))
                     BuiltIns.keys.forEach { (k, label) ->
                         androidx.compose.material3.OutlinedTextField(vals[k] ?: "", { vals[k] = it }, Modifier.fillMaxWidth().padding(top = 10.dp), singleLine = true, label = { Text(label) })

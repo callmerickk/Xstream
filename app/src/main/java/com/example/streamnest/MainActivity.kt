@@ -22,12 +22,13 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         com.lagradost.cloudstream3.CommonActivity.activity = this
         CrashLog.install(this)
         ActLog.init(this)
+        CrashLog.logExitReasons(this)
         // App icon picked with "Later": apply it now that the app was fully closed and opened again.
         if (!started) { started = true; AppIcons.signalOnce(this); AppIcons.applyPendingOnColdStart(this); AppIcons.keepOne(this) }
         // Image loader that can also play GIFs and show video thumbnails (for profile pictures).
         Coil.setImageLoader(
             ImageLoader.Builder(this).components {
-                if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory()) else add(GifDecoder.Factory())
+                if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory(enforceMinimumFrameDelay = true)) else add(GifDecoder.Factory(enforceMinimumFrameDelay = true))
                 add(VideoFrameDecoder.Factory())
                 if (!BuildConfig.IS_TV) add(HdPoster)
             }.okHttpClient { Api.http }.crossfade(!BuildConfig.IS_TV).allowRgb565(BuildConfig.IS_TV).build()

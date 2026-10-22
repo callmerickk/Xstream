@@ -197,5 +197,15 @@ object CsPlugins {
         }
     }
 
+    /**
+     * Keeps only the given providers warm (Quick Play's: Netflix, Prime Video, Hotstar…): one tiny search each, all at
+     * once, so their sites keep the connection and the sign-in cookie alive — the next title starts like in CloudStream.
+     */
+    suspend fun warmSome(names: Set<String>) = kotlinx.coroutines.coroutineScope {
+        providers().filter { (_, api) -> "CloudStream · ${api.name}" in names }.forEach { (_, api) ->
+            launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { kotlinx.coroutines.withTimeoutOrNull(15_000) { api.search("a", 1) ?: api.search("a") } } }
+        }
+    }
+
     fun providers(): List<Pair<CsPluginEntry, MainAPI>> = enabledEntries().flatMap { e -> loaded[e.key]?.apis?.map { e to it }.orEmpty() }
 }

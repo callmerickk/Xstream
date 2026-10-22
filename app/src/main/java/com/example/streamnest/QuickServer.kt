@@ -77,7 +77,7 @@ object QuickServer {
  */
 object BuiltIns {
     @Volatile private var cur: Map<String, String> = emptyMap()
-    val keys = listOf("cncverse" to "CNCVerse link", "hdhub" to "HdHub link", "penguConnect" to "PenguPlay connect page", "quickPlay" to "Default Quick Play addon")
+    val keys = listOf("cncverse" to "CNCVerse link", "hdhub" to "HdHub link", "quickPlay" to "Default Quick Play addon")
     fun value(k: String): String? = cur[k]?.takeIf { it.isNotBlank() }
 
     suspend fun fetch(): Map<String, String> = withContext(Dispatchers.IO) {
