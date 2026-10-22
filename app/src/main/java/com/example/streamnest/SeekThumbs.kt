@@ -73,6 +73,31 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
         }
     }
 
+    @Volatile private var prefetching = false
+
+    /**
+     * While the video plays, previews across the whole video are made quietly ahead of time (40 spots, one every few
+     * seconds), so the seek bar shows a picture the moment you drag — the nearest one while the exact one is made.
+     * A seek request always goes first.
+     */
+    fun prefetch(durMs: Long) {
+        if (dead || closed || prefetching || durMs <= 0) return
+        prefetching = true
+        scope.launch {
+            val spots = 40
+            val gap = (durMs / spots).coerceAtLeast(STEP)
+            var t = gap / 2
+            while (t < durMs && !closed && !dead) {
+                kotlinx.coroutines.delay(1_200)
+                val busy = synchronized(lock) { waiting.isNotEmpty() }
+                if (busy) continue
+                val b = t / STEP
+                if (!has(t)) runCatching { extract(b * STEP) }.getOrNull()?.let { img -> synchronized(lock) { cache[b] = img }; succeeded = true }
+                t += gap
+            }
+        }
+    }
+
     /** Opens the file in the background (call when the seek bar is touched) so the first frame comes sooner. */
     fun warmUp() { if (!dead && !closed && !opened) requests.trySend(OPEN) }
 
@@ -175,9 +200,10 @@ class SeekThumbs(url: String, headers: Map<String, String>) {
     private companion object {
         const val STEP = 10_000L
         const val OPEN = -2L
-        const val MAX_FRAMES = 80
-        const val W = 320
-        const val H = 180
+        const val MAX_FRAMES = 120
+        // Small previews (Netflix-size): quicker to make and to send through the network.
+        const val W = 192
+        const val H = 108
 
         /** The real link behind an in-app relay link (http://127.0.0.1:port/r/<base64>/v.ext). */
         fun original(url: String): String {

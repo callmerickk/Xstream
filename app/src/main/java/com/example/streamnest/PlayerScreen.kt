@@ -683,6 +683,15 @@ fun PlayerScreen(
 
     fun curPos(): Long = if (usingVlc) vlc?.time ?: 0L else player.currentPosition
     fun curDur(): Long = if (usingVlc) vlc?.length ?: 0L else player.duration.coerceAtLeast(0L)
+    // Seek previews for the whole video, made ahead in the background (phones; on mobile data a little later).
+    LaunchedEffect(thumbs, firstFrame) {
+        val th = thumbs ?: return@LaunchedEffect
+        if (!firstFrame || BuildConfig.IS_TV) return@LaunchedEffect
+        delay(10_000)
+        val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        if (cm.isActiveNetworkMetered) delay(30_000)
+        val d = curDur(); if (d > 0) th.prefetch(d)
+    }
     fun curBuffered(): Long = if (usingVlc) curPos() else player.bufferedPosition
     fun isPlayingNow(): Boolean = if (usingVlc) vlc?.isPlaying == true else player.isPlaying
     /** What this player shows, for Watch together. */

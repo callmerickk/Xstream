@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Black from the very first frame, so the Xstream intro animation starts straight away (no grey/logo flash). -->
-    <style name="Theme.Xstream" parent="Theme.AppCompat.NoActionBar">
+    <!-- MaterialComponents (an AppCompat descendant): CloudStream plugins' own settings build Material buttons from the
+         app's or the screen's context, which crashed with a plain AppCompat theme. -->
+    <style name="Theme.Xstream" parent="Theme.MaterialComponents.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:windowBackground">@android:color/black</item>

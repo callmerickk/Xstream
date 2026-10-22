@@ -13,6 +13,11 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.5.3 beta", "22 Oct 2026", "Fixes", listOf(
+        "Opening a plugin's own settings (the gear) no longer closes the app",
+        "Follow the speaker now works with two or more people on screen",
+        "Seek previews are smaller and made ahead while you watch, so dragging shows a picture at once",
+    )),
     Release("0.5.2 beta", "22 Oct 2026", "Netflix-style subtitles, poster rows, AI logo", listOf(
         "Subtitles look like Netflix's: clean font, soft shadow, no box — for every subtitle (switch it off under Subtitles › Look)",
         "Follow the speaker (beta): the line slides under the person who's talking (Subtitles › Look)",
@@ -304,6 +309,11 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.5.3 beta", "22 Oct 2026", "Plugin settings crash, speaker landmarks, thumb prefetch", listOf(
+        "Theme.Xstream parent Theme.MaterialComponents.NoActionBar (CNCVerseSettings MaterialButton needed a Material theme); CsSettingsActivity guards the main loop: a plugin exception closes only that screen",
+        "SpeakerTracker: landmarks (MOUTH_BOTTOM / LEFT / RIGHT) instead of contours (ML Kit contours = biggest face only); thresholds 0.008 / 1.5×",
+        "SeekThumbs: 192×108 frames, cache 120, prefetch(dur) 40 spots in the background 10 s after the first picture (metered: +30 s); seek requests go first",
+    )),
     Release("0.5.2 beta", "22 Oct 2026", "Netflix subs, speaker follow, Posters+, look first", listOf(
         "subNetflix (default yes): CaptionStyleCompat white / transparent / drop shadow / sans-serif-medium; subFollow (beta): SpeakerTracker (ML Kit face-detection 16.1.6, contours + tracking) on captureFrame every 330 ms while cues show; lip-gap spread per face, speaker when > 0.012 and 1.8× the next; subtitle view translationX (x − 0.5) × 0.55 width",
         "Home: catalogs .take(48) (was 14); CatalogDef.posterShape copied to metas; posterPattern ({imdb}/{imdb_id}/{tmdb}/{type}/{id}) applied to shelf metas (Nuvio-style poster override)",

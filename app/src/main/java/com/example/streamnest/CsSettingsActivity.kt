@@ -32,7 +32,30 @@ class CsSettingsActivity : AppCompatActivity() {
                 if (fm.fragments.none { it !== f && it.isAdded }) finish()
             }
         }, false)
+        guardMainLoop()
         runCatching { open(this) }.onFailure { com.lagradost.cloudstream3.mvvm.logError(it); finish() }
+    }
+
+    /**
+     * A plugin's settings screen that throws while it builds its views would take the whole app down (it happens inside
+     * Android's fragment code, outside our try). While this screen is open, such an error only closes it.
+     */
+    private fun guardMainLoop() {
+        val h = android.os.Handler(android.os.Looper.getMainLooper())
+        h.post {
+            while (!isDestroyed) {
+                try { android.os.Looper.loop() } catch (e: Throwable) {
+                    val fromPlugin = e.stackTrace.any { el -> !el.className.startsWith("android") && !el.className.startsWith("java") &&
+                        !el.className.startsWith("com.example") && !el.className.startsWith("kotlin") && !el.className.startsWith("com.google.android.material") &&
+                        !el.className.startsWith("dalvik") && !el.className.startsWith("com.android") } ||
+                        (e is IllegalArgumentException && e.message?.contains("Theme.MaterialComponents") == true)
+                    if (!fromPlugin || isDestroyed) throw e
+                    ActLog.add("CSPLAY", "plugin settings failed: ${e.javaClass.simpleName} ${e.message?.take(120)}")
+                    Snack.show("This plugin's settings couldn't open")
+                    finish()
+                }
+            }
+        }
     }
 
     override fun onDestroy() {

@@ -2,7 +2,7 @@ package com.example.streamnest
 
 import android.graphics.Bitmap
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.FaceContour
+import com.google.mlkit.vision.face.FaceLandmark
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -18,7 +18,9 @@ object SpeakerTracker {
         FaceDetection.getClient(
             FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
+                // Landmarks, not contours: ML Kit draws contours for the biggest face only, so with two people talking
+                // there was never a second face to compare and the line never moved.
+                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                 .enableTracking()
                 .setMinFaceSize(0.1f)
                 .build()
@@ -41,10 +43,11 @@ object SpeakerTracker {
         val now = System.currentTimeMillis()
         val seen = faces.mapNotNull { f ->
             val id = f.trackingId ?: return@mapNotNull null
-            val up = f.getContour(FaceContour.UPPER_LIP_BOTTOM)?.points
-            val low = f.getContour(FaceContour.LOWER_LIP_TOP)?.points
-            if (up.isNullOrEmpty() || low.isNullOrEmpty()) return@mapNotNull null
-            val open = (low.map { it.y }.average() - up.map { it.y }.average()).toFloat() / f.boundingBox.height().coerceAtLeast(1)
+            val bottom = f.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position ?: return@mapNotNull null
+            val left = f.getLandmark(FaceLandmark.MOUTH_LEFT)?.position ?: return@mapNotNull null
+            val right = f.getLandmark(FaceLandmark.MOUTH_RIGHT)?.position ?: return@mapNotNull null
+            // Lower lip below the mouth corners, as a share of the face: grows and shrinks while someone talks.
+            val open = (bottom.y - (left.y + right.y) / 2f) / f.boundingBox.height().coerceAtLeast(1)
             val q = mouths.getOrPut(id) { ArrayDeque() }
             q.addLast(open); while (q.size > 8) q.removeFirst()
             lastSeen[id] = now
@@ -58,6 +61,6 @@ object SpeakerTracker {
         }.sortedByDescending { it.second }
         if (moving.size < 2) return null
         val (bx, bs) = moving[0]; val second = moving[1].second
-        return if (bs > 0.012f && bs > second * 1.8f) bx.coerceIn(0f, 1f) else null
+        return if (bs > 0.008f && bs > second * 1.5f) bx.coerceIn(0f, 1f) else null
     }
 }
