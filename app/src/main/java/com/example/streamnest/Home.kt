@@ -110,6 +110,8 @@ fun AppLogo(vm: AppViewModel, size: Dp, modifier: Modifier = Modifier) {
 }
 
 private data class DeckItem(val meta: Meta, val catalog: String)
+/** The top cards AIDEN picked for this profile. */
+private const val AIDEN_PICK = "\u0001aiden"
 
 /** LazyColumn key of the top cards (also used to find them in the list's layout info). */
 private const val DeckKey = "deck"
@@ -203,11 +205,18 @@ fun HomeScreen(
     val deck = remember(shelves, recs, filter) {
         val a = shelves.getOrNull(0)?.let { s -> s.items.map { DeckItem(it, s.title) } }.orEmpty()
         val b = shelves.getOrNull(1)?.let { s -> s.items.map { DeckItem(it, s.title) } }.orEmpty()
-        val r = recs.filter { filter == null || filter == "sports" || it.type == filter }.map { DeckItem(it, "Picked for you") }
+        val r = recs.filter { filter == null || filter == "sports" || it.type == filter }.map { DeckItem(it, AIDEN_PICK) }
         val n = shelves.drop(2).firstOrNull { sh -> listOf("new", "latest", "fresh", "release", "arriv").any { sh.title.contains(it, true) } }
             ?.let { sh -> sh.items.map { DeckItem(it, sh.title) } }.orEmpty()
-        (0 until maxOf(a.size, b.size, r.size, n.size)).flatMap { i -> listOfNotNull(a.getOrNull(i), r.getOrNull(i), b.getOrNull(i), n.getOrNull(i)) }
-            .filter { it.meta.poster != null }.distinctBy { it.meta.id }.take(12)
+        // Most of the top cards are AIDEN's picks for you; a few popular / new titles keep it fresh.
+        val rest = (0 until maxOf(a.size, b.size, n.size)).flatMap { i -> listOfNotNull(a.getOrNull(i), b.getOrNull(i), n.getOrNull(i)) }
+        val mixed = ArrayList<DeckItem>()
+        val ri = r.filter { it.meta.poster != null }.iterator(); val oi = rest.filter { it.meta.poster != null }.iterator()
+        while (mixed.size < 12 && (ri.hasNext() || oi.hasNext())) {
+            repeat(3) { if (ri.hasNext()) mixed += ri.next() }
+            if (oi.hasNext()) mixed += oi.next()
+        }
+        mixed.distinctBy { it.meta.id }.take(12)
     }
 
     val autoSlide = t("autoSlide").trim().lowercase() != "no"
@@ -332,7 +341,7 @@ fun HomeScreen(
             if (filter == null) item(key = "collections", contentType = "collections") { CollectionsRows(vm) { c, f -> onOpenCollection(c, f) } }
             // Keys include the index so two catalogs with the same name can never collide (duplicate keys crash).
             itemsIndexed(shelves, key = { i, s -> "shelf:$i:${s.title}" }, contentType = { _, _ -> "shelf" }) { _, shelf ->
-                SectionTitle(if (shelf.title.startsWith("New")) "$newOn · ${shelf.title.removePrefix("New ").trim()}" else shelf.title)
+                SectionTitle(rowName(shelf.title) ?: if (shelf.title.startsWith("New")) "$newOn · ${shelf.title.removePrefix("New ").trim()}" else shelf.title)
                 ShelfRow(shelf.items, onOpen)
             }
             if (recs.isNotEmpty() && filter == null && showRecs && !recsFirst) {
@@ -409,6 +418,29 @@ val PosterCorners = linkedMapOf("Sharp" to 0, "Subtle" to 4, "Classic" to 8, "Ro
 @Composable fun posterCorner(): Dp = (PosterCorners[t("posterCorner")] ?: 12).dp
 
 /** Applies the row order chosen in Home Layout; rows not in the list keep their original order at the end. */
+/** A Home row's name as the developer renamed it for everyone (Home Layout › rename), or null = its own name. */
+fun rowName(original: String): String? = RowNames.map()[original]
+
+object RowNames {
+    @Volatile private var raw: String? = null
+    @Volatile private var parsed: Map<String, String> = emptyMap()
+    /** texts["rowNames"]: one "original=new name" per line (sent with the developer's defaults). */
+    fun map(): Map<String, String> {
+        val r = Public.vm?.texts?.value?.get("rowNames")
+        if (r != raw) {
+            raw = r
+            parsed = (r ?: "").lines().mapNotNull { l -> val i = l.indexOf('='); if (i <= 0) null else l.substring(0, i) to l.substring(i + 1).trim() }
+                .filter { it.second.isNotBlank() }.toMap()
+        }
+        return parsed
+    }
+    fun set(vm: AppViewModel, original: String, name: String) {
+        val m = map().toMutableMap()
+        if (name.isBlank() || name == original) m.remove(original) else m[original] = name.trim()
+        vm.setText("rowNames", m.entries.joinToString("\n") { "${it.key}=${it.value}" })
+    }
+}
+
 fun arrangeShelves(all: List<Shelf>, order: String): List<Shelf> {
     val wanted = order.split("|").filter { it.isNotBlank() }
     // The developer's published rows stay on top, in the developer's order; your own rows follow in yours.
@@ -766,7 +798,7 @@ private fun DeckCard(
     val shape = RoundedCornerShape(Palette.corner.dp)
     val rating = m.imdbRating?.toDoubleOrNull()
     val rankText = when {
-        catalog == "Picked for you" -> "Picked for you"
+        catalog == "Picked for you" || catalog == AIDEN_PICK -> AIDEN_PICK
         listOf("new", "latest", "fresh", "release", "arriv").any { catalog.contains(it, true) } -> "New arrival · $catalog"
         else -> t("badge").replace("{rank}", rank.toString()).replace("{catalog}", catalog)
     }
@@ -783,7 +815,14 @@ private fun DeckCard(
 
         // Badge: IMDb score for highly rated titles, otherwise the rank in its row.
         val badgeShape = RoundedCornerShape(14.dp)
-        if (rating != null && rating >= 7.5) {
+        if (catalog == AIDEN_PICK) {
+            Row(Modifier.padding(16.dp).clip(badgeShape).background(Color(0xB3140A0E)).border(1.dp, Color(0x99FF5A64), badgeShape)
+                .padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(18.dp).clip(CircleShape).background(Brush.radialGradient(listOf(Color(0xFFFFE3E5), Color(0xFFFF5A64), Color(0xFF9E0710)))))
+                Spacer(Modifier.width(8.dp))
+                Text("${aiName().lowercase().replaceFirstChar { it.uppercase() }} picked for you", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            }
+        } else if (rating != null && rating >= 7.5) {
             Row(Modifier.padding(16.dp).clip(badgeShape).background(Color(0x99000000)).border(1.dp, Color(0x33FFFFFF), badgeShape)
                 .padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFF5C518)).padding(horizontal = 5.dp, vertical = 2.dp)) {
@@ -938,6 +977,8 @@ private fun FloatingFilters(
     Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         // Xstream: no TV / Movies / Live capsule — only the AI voice button.
         Box(Modifier.align(Alignment.CenterEnd).tourTarget("ai")) { AiOrbButton(vm, 52.dp, hide, onAi) }
+        // AIDEN wakes up when the app opens: slides out of the button, says hello, and goes back to sleep.
+        Box(Modifier.align(Alignment.CenterEnd).padding(end = 56.dp)) { AidenWake(vm, onAi) }
     }
 }
 

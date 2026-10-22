@@ -363,7 +363,7 @@ private fun HomeLayoutPage(vm: AppViewModel, onBack: () -> Unit) {
                     pubMsg = "Publishing ${out.size} row(s)…"
                     scope.launch { pubMsg = DevDefaults.publish(vm) ?: "Published ${out.size} row(s) — every account gets them the next time a profile opens." }
                 }, Modifier.padding(top = 10.dp).fillMaxWidth().height(48.dp), shape = RoundedCornerShape(24.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)) { Text("Publish ${push.size} row(s)", fontWeight = FontWeight.Bold) }
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)) { Text("Publish ${push.size} row(s) + row names", fontWeight = FontWeight.Bold) }
                 pubMsg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Muted) }
             }
             if (!dev && rows.any { it.pinned }) Text("Rows with a lock are set by Xstream for everyone. Hold and drag your own rows to move them.",
@@ -376,14 +376,17 @@ private fun HomeLayoutPage(vm: AppViewModel, onBack: () -> Unit) {
                     vm.setText("rowsOrder", own.joinToString("|"))
                 }) { shelf, i, dragging, handle ->
                     val visible = shelf.pinned || shelf.title !in hidden
+                    var renaming by remember(shelf.title) { mutableStateOf(false) }
                     Column(Modifier.background(if (dragging) Color(0xFF26262C) else Color.Transparent)) {
                         if (i > 0) RowDivider(20.dp)
                         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 4.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                             if (shelf.pinned) Icon(Icons.Default.Lock, "Set by Xstream", Modifier.padding(end = 10.dp).size(18.dp), tint = Accent)
                             Column(Modifier.weight(1f)) {
-                                Text(shelf.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${shelf.items.size} titles · ${if (shelf.pinned) "Set by Xstream" else if (visible) "Visible" else "Hidden"}", fontSize = 13.sp, color = Muted)
+                                Text(rowName(shelf.title) ?: shelf.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(if (dev && rowName(shelf.title) != null) "Was: ${shelf.title}" else "${shelf.items.size} titles · ${if (shelf.pinned) "Set by Xstream" else if (visible) "Visible" else "Hidden"}",
+                                    fontSize = 13.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
+                            if (dev) IconButton({ renaming = !renaming }) { Icon(Icons.Default.Edit, "Rename row", tint = if (renaming) Accent else Color.White) }
                             if (dev && shelf.src != null) {
                                 val on = shelf.src in push
                                 FilterChip(on, { push = if (on) push - shelf.src else push + shelf.src }, { Text("Push") })
@@ -396,6 +399,16 @@ private fun HomeLayoutPage(vm: AppViewModel, onBack: () -> Unit) {
                                 })
                                 DragGrip(handle)
                             }
+                        }
+                        if (dev && renaming) {
+                            var nm by remember(shelf.title) { mutableStateOf(rowName(shelf.title) ?: shelf.title) }
+                            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(nm, { nm = it.take(60) }, Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(12.dp),
+                                    label = { Text("Name everyone sees") })
+                                TextButton({ RowNames.set(vm, shelf.title, nm); renaming = false }) { Text("Save", color = Color.White) }
+                            }
+                            Text("Empty or the same as the add-on's name = its own name. Publish below sends it to everyone.",
+                                Modifier.padding(start = 20.dp, end = 20.dp, bottom = 10.dp), fontSize = 12.sp, color = Muted)
                         }
                     }
                 }
@@ -653,6 +666,10 @@ private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> 
         SettingsCard {
             val rt by vm.texts.collectAsStateWithLifecycle()
             ToggleRow("Recommended for you", "Show a row on Home built from what you liked.", isOn(rt["showRecs"] ?: Defaults["showRecs"] ?: "yes")) { vm.setText("showRecs", if (it) "yes" else "no") }
+            RowDivider(20.dp)
+            ToggleRow("AIDEN says hello", "A short greeting when the app opens, then AIDEN waits for you.", isOn(rt["aiWake"] ?: "yes")) { vm.setText("aiWake", if (it) "yes" else "no") }
+            RowDivider(20.dp)
+            ToggleRow("Hello out loud", "AIDEN speaks the greeting (never when your phone is on silent).", isOn(rt["aiWakeVoice"] ?: "yes")) { vm.setText("aiWakeVoice", if (it) "yes" else "no") }
             RowDivider(20.dp)
             ToggleRow("Ask \"How was it?\"", "After watching, ask Go for it / Skip / Just surfing.", isOn(rt["askVote"] ?: Defaults["askVote"] ?: "yes")) { vm.setText("askVote", if (it) "yes" else "no") }
         }

@@ -37,6 +37,9 @@ import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -153,7 +156,7 @@ private val OrbRim = Brush.sweepGradient(listOf(Color(0xFFE50914), Color(0xFFFF6
 
 // ───────────── Live voice conversation with X ─────────────
 
-private enum class XState { Idle, Listening, Thinking, Speaking }
+internal enum class XState { Idle, Listening, Thinking, Speaking }
 
 private class ChatLine(val id: Long, val user: Boolean, val text: String, val items: List<Meta> = emptyList(), val rowTitle: String = "")
 
@@ -177,6 +180,11 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
     /** The assistant line being spoken right now and how far the voice has got (for the typewriter). */
     var speakingId by mutableLongStateOf(-1L)
     var spokenChars by mutableIntStateOf(0)
+    /** When the voice really started (0 = not yet): the text waits for the voice, never runs ahead of it. */
+    var speechStartedAt by mutableLongStateOf(0L)
+    /** The voice engine reports each word as it says it (most do); else the text follows an estimate from the start. */
+    var rangeSeen by mutableStateOf(false)
+    val speechRate: Float get() = (vm.store("aiVoiceRate")?.toFloatOrNull() ?: 0.96f).coerceIn(0.7f, 1.3f)
     val revealed = HashSet<Long>()
 
     var onOpen: (Meta) -> Unit = {}
@@ -217,7 +225,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
         if (ok) { busyRetries = 0; silentRetries = 0; if (begun) listen() else scheduleBegin() }
         else {
             state = XState.Idle; hint = "Tap to talk"
-            Snack.show("Allow microphone access to talk to X. You can still type.")
+            Snack.show("Allow microphone access to talk to ${aiName()}. You can still type.")
         }
     }
 
@@ -244,13 +252,13 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
             runCatching { t.setSpeechRate((vm.store("aiVoiceRate")?.toFloatOrNull() ?: 0.96f).coerceIn(0.7f, 1.3f)); t.setPitch(1.0f) }
             runCatching {
                 t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {}
+                    override fun onStart(utteranceId: String?) { main.post { if (utteranceId != null && utteranceId == utt) speechStartedAt = android.os.SystemClock.elapsedRealtime() } }
                     override fun onDone(utteranceId: String?) { main.post { if (utteranceId != null && utteranceId == utt) afterSpeech() } }
                     @Deprecated("Deprecated in Java")
                     override fun onError(utteranceId: String?) { main.post { if (utteranceId != null && utteranceId == utt) afterSpeech() } }
                     override fun onError(utteranceId: String?, errorCode: Int) { main.post { if (utteranceId != null && utteranceId == utt) afterSpeech() } }
                     override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
-                        main.post { if (utteranceId != null && utteranceId == utt) spokenChars = end }
+                        main.post { if (utteranceId != null && utteranceId == utt) { rangeSeen = true; spokenChars = end } }
                     }
                 })
             }
@@ -386,7 +394,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
                 }
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
                     dropRecognizer(); handsFree = false; state = XState.Idle; hint = "Tap to talk"
-                    Snack.show("Allow microphone access to talk to X.")
+                    Snack.show("Allow microphone access to talk to ${aiName()}.")
                 }
                 else -> { dropRecognizer(); handsFree = false; state = XState.Idle; hint = "Tap to talk" }
             }
@@ -435,8 +443,10 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
                 XResult("Sorry, something went wrong. Try again?", emptyList(), "", null, true)
             }
             if (!alive || my != seq) return@launch
-            val id = addLine(false, r.say, r.items, r.rowTitle)
-            speak(id, r.say, r.open)
+            // The bubble shows exactly the words the voice says (same text), so they can light up together.
+            val say = humanize(r.say)
+            val id = addLine(false, say, r.items, r.rowTitle)
+            speak(id, say, r.open)
         }
     }
 
@@ -462,9 +472,9 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
             last?.let { "Welcome back$n! Want to carry on with $it, or try something new?" },
             last?.let { "$part$n! Shall I pick up $it where you left off, or find you something fresh?" },
         ).random()
-        val id = addLine(false, hello)
+        val id = addLine(false, humanize(hello))
         lastViaVoice = true
-        speak(id, hello, null)
+        speak(id, humanize(hello), null)
     }
 
     private fun speak(lineId: Long, text: String, thenOpen: Meta?) {
@@ -482,6 +492,8 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
         val id = "x_${System.nanoTime()}"
         utt = id
         spokenChars = 0
+        speechStartedAt = 0L
+        rangeSeen = false
         speakingId = lineId
         state = XState.Speaking
         val res = try { t.speak(spoken, TextToSpeech.QUEUE_FLUSH, Bundle(), id) } catch (e: Exception) { TextToSpeech.ERROR }
@@ -584,6 +596,18 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
         }
     }
 
+    /** Stop button: quiet now (no voice, no mic) until you tap to talk again. */
+    fun stopAll() {
+        handsFree = false
+        cancelAfter()
+        pendingOpen = null
+        job?.cancel(); seq++
+        dropRecognizer()
+        stopSpeaking()
+        level = 0f
+        state = XState.Idle; hint = "Tap to talk"
+    }
+
     /** The keyboard opened: stop the mic so it doesn't fight with typing. */
     fun startTyping() {
         handsFree = false
@@ -609,8 +633,9 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
 }
 
 /**
- * Full-screen live conversation with X, the Xstream movie buddy.
- * Hands-free: it listens, answers out loud and listens again. Tap the orb to talk, stop or interrupt.
+ * AIDEN, the Xstream movie buddy, in a bubble that springs out of the AI button (Home stays behind it, blurred).
+ * Hands-free: it listens, answers out loud and listens again. Tap the core to talk, stop or interrupt.
+ * The words of each answer light up exactly as the voice says them.
  */
 @Composable
 fun VoiceAssistant(vm: AppViewModel, onClose: () -> Unit, onOpen: (Meta) -> Unit, firstAsk: String? = null) {
@@ -624,7 +649,6 @@ fun VoiceAssistant(vm: AppViewModel, onClose: () -> Unit, onOpen: (Meta) -> Unit
 
     DisposableEffect(Unit) {
         s.start()
-        // Xstream: opened from voice search with what was said.
         firstAsk?.takeIf { it.isNotBlank() }?.let { s.handleUser(it, voice = false) }
         onDispose { s.release() }
     }
@@ -638,10 +662,8 @@ fun VoiceAssistant(vm: AppViewModel, onClose: () -> Unit, onOpen: (Meta) -> Unit
 
     val focus = LocalFocusManager.current
     var typed by remember { mutableStateOf("") }
+    var typing by remember { mutableStateOf(false) }
     var typingFocus by remember { mutableStateOf(false) }
-    val texts by vm.texts.collectAsState()
-    val ready = remember(texts) { vm.aiReady() }
-    val provider = remember(texts) { vm.aiProvider() }
     val profile by vm.current.collectAsState()
 
     fun send() {
@@ -652,111 +674,156 @@ fun VoiceAssistant(vm: AppViewModel, onClose: () -> Unit, onOpen: (Meta) -> Unit
         s.handleUser(q, voice = false)
     }
 
-    val bg = Bg
-    Box(
-        Modifier.fillMaxSize()
-            .background(Brush.verticalGradient(listOf(bg.copy(alpha = 0.94f), Color(0xF20B0814), bg.copy(alpha = 0.98f))))
-            .background(Brush.radialGradient(listOf(Accent.copy(alpha = 0.14f), Color.Transparent), radius = 1400f))
-            .quietClick { focus.clearFocus() },
-    ) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
-            // ── Header ──
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(40.dp).clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(Color(0xFF2A3F8F), Color(0xFF2B1240))))
-                        .border(1.dp, Brush.sweepGradient(listOf(Accent, Palette.accent2, Color(0xFF6FB6FF), Accent)), CircleShape),
-                    Alignment.Center,
-                ) { AiLogo(vm, Modifier.size(20.dp)) }
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("X · your movie buddy", fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White, maxLines = 1)
-                    val label = when (s.state) {
-                        XState.Listening -> "Listening…"
-                        XState.Thinking -> "Thinking…"
-                        XState.Speaking -> "Speaking…"
-                        XState.Idle -> if (ready) "${provider.label} · ${if (s.voiceOut) "voice on" else "text only"}" else "Offline mode · add a key in Integrations"
+    // Springs out of the AI button (bottom right) and back.
+    val pop = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { pop.animateTo(1f, spring(dampingRatio = 0.74f, stiffness = 380f)) }
+    val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+    val w = minOf(360, cfg.screenWidthDp - 24).dp
+    val h = minOf(600, (cfg.screenHeightDp * (if (typingFocus) 0.52f else 0.68f)).toInt()).dp
+
+    Box(Modifier.fillMaxSize()) {
+        // Tap outside: close.
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = pop.value }.background(Color(0x8C050305)).quietClick { focus.clearFocus(); onClose() })
+        Column(
+            Modifier.align(Alignment.BottomEnd).navigationBarsPadding().imePadding()
+                .padding(end = 12.dp, bottom = if (typingFocus) 12.dp else 136.dp),
+            horizontalAlignment = Alignment.End,
+        ) {
+            val shape = RoundedCornerShape(30.dp)
+            Column(
+                Modifier.width(w).height(h)
+                    .graphicsLayer {
+                        val v = pop.value
+                        alpha = v.coerceIn(0f, 1f); scaleX = 0.6f + 0.4f * v; scaleY = scaleX
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.92f, 1f)
                     }
-                    Text(
-                        label, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        color = if (s.state == XState.Idle) Color(0xFF8A94A8) else Accent.copy(alpha = 0.95f).let { if (it.luminanceLow()) Color(0xFFB9C2FF) else it },
-                    )
-                }
-                HeaderIcon(if (s.voiceOut) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff, if (s.voiceOut) "Mute voice" else "Turn voice on", s.voiceOut) { s.toggleVoice() }
-                HeaderIcon(Icons.Default.Close, "Close", false) { onClose() }
-            }
-
-            // ── Transcript ──
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                val showPartial = s.state == XState.Listening && s.partial.isNotBlank()
-                if (s.lines.isEmpty() && !showPartial) {
-                    EmptyChat(profile?.name?.takeIf { it.isNotBlank() && it != "Me" }) { s.handleUser(it, voice = true) }
-                } else {
-                    val listState = rememberLazyListState()
-                    val total = s.lines.size + if (showPartial) 1 else 0
-                    LaunchedEffect(total) { if (total > 0) listState.animateScrollToItem(0) }
-                    LazyColumn(
-                        Modifier.fillMaxSize(), state = listState, reverseLayout = true,
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
-                    ) {
-                        if (showPartial) item(key = "partial") { UserBubble(s.partial, live = true) }
-                        else if (s.lines.none { it.user }) item(key = "chips") {
-                            Box(Modifier.fillMaxWidth().padding(top = 6.dp)) { SuggestionChips { s.handleUser(it, voice = true) } }
-                        }
-                        items(s.lines.asReversed(), key = { it.id }) { line ->
-                            if (line.user) UserBubble(line.text, live = false)
-                            else AssistantBubble(line, s) { m -> s.openTitle(m) }
-                        }
-                    }
-                }
-            }
-
-            // ── Orb ──
-            val orbSize by animateDpAsState(if (typingFocus) 58.dp else 104.dp, tween(300), label = "orbSize")
-            Column(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                XOrb(s.state, s.level, orbSize) { focus.clearFocus(); s.tapOrb() }
-                val sub = when (s.state) {
-                    XState.Listening -> if (s.partial.isBlank()) "I'm all ears…" else "Tap when you're done"
-                    XState.Speaking -> "Tap to interrupt"
-                    XState.Thinking -> "Tap to ask something else"
-                    XState.Idle -> s.hint.ifBlank { "Tap to talk" }
-                }
-                if (!typingFocus) Text(sub, Modifier.padding(top = 2.dp), fontSize = 12.sp, color = Color(0xFF8A94A8), textAlign = TextAlign.Center)
-            }
-
-            // ── Type instead ──
-            Row(
-                Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 12.dp)
-                    .clip(RoundedCornerShape(26.dp)).background(Color.White.copy(alpha = 0.07f))
-                    .border(1.dp, Color.White.copy(alpha = if (typingFocus) 0.22f else 0.10f), RoundedCornerShape(26.dp))
-                    .padding(start = 18.dp, end = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .clip(shape)
+                    .background(Brush.verticalGradient(listOf(Color(0xF7260C12), Color(0xF7120910), Color(0xFA0B080B))))
+                    .border(1.dp, Brush.verticalGradient(listOf(Color(0x80FF5A64), Color(0x33FF5A64))), shape)
+                    .quietClick { focus.clearFocus() },
             ) {
-                Box(Modifier.weight(1f).padding(vertical = 14.dp)) {
-                    if (typed.isEmpty()) Text("Type to X…", fontSize = 15.sp, color = Color(0xFF8A94A8), maxLines = 1)
-                    BasicTextField(
-                        typed, { typed = it },
-                        Modifier.fillMaxWidth().onFocusChanged { f ->
-                            if (f.isFocused && !typingFocus) s.startTyping()
-                            typingFocus = f.isFocused
-                        }.tvOkKeyboard(),
-                        singleLine = true,
-                        textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
-                        cursorBrush = SolidColor(Accent),
-                        keyboardOptions = tvKeyboard(KeyboardOptions(imeAction = ImeAction.Send)),
-                        keyboardActions = KeyboardActions(onSend = { send() }),
-                    )
+                // ── Header: AIDEN + live status, sound, close ──
+                Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        AiNameMark(18.sp)
+                        val (label, col) = when (s.state) {
+                            XState.Listening -> "LISTENING" to Color(0xFF9FE3B8)
+                            XState.Thinking -> "THINKING" to Color(0xFFFFC2C6)
+                            XState.Speaking -> "SPEAKING" to Color(0xFFFF8A91)
+                            XState.Idle -> (if (vm.aiReady()) "ONLINE" else "OFFLINE MODE") to Color(0xFFB39CA2)
+                        }
+                        Text(label, fontSize = 10.sp, letterSpacing = 1.6.sp, color = col, modifier = Modifier.padding(top = 2.dp))
+                    }
+                    HeaderIcon(if (s.voiceOut) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff, if (s.voiceOut) "Mute voice" else "Turn voice on", s.voiceOut) { s.toggleVoice() }
+                    HeaderIcon(Icons.Default.Close, "Close", false) { onClose() }
                 }
-                Box(
-                    Modifier.size(40.dp).clip(CircleShape)
-                        .background(if (typed.isNotBlank()) Brush.linearGradient(listOf(Accent, Palette.accent2)) else SolidColor(Color.White.copy(alpha = 0.08f)))
-                        .quietClick { send() },
-                    Alignment.Center,
-                ) { Icon(Icons.AutoMirrored.Filled.Send, "Send", Modifier.size(18.dp), tint = if (typed.isNotBlank()) OnAccent else Color(0xFF8A94A8)) }
+
+                // ── The core ──
+                if (!typingFocus) Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    AidenCore(s.state, s.level, 128.dp) { focus.clearFocus(); s.tapOrb() }
+                    val sub = when (s.state) {
+                        XState.Listening -> if (s.partial.isBlank()) "I'm all ears…" else "Tap when you're done"
+                        XState.Speaking -> "Tap the core to interrupt"
+                        XState.Thinking -> "Tap to ask something else"
+                        XState.Idle -> s.hint.ifBlank { "Tap the core or a suggestion" }
+                    }
+                    Text(sub, fontSize = 11.sp, color = Color(0xFFB39CA2), textAlign = TextAlign.Center)
+                }
+
+                // ── Conversation ──
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    val showPartial = s.state == XState.Listening && s.partial.isNotBlank()
+                    if (s.lines.isEmpty() && !showPartial) {
+                        EmptyChat(profile?.name?.takeIf { it.isNotBlank() && it != "Me" }) { s.handleUser(it, voice = true) }
+                    } else {
+                        val listState = rememberLazyListState()
+                        val total = s.lines.size + if (showPartial) 1 else 0
+                        LaunchedEffect(total) { if (total > 0) listState.animateScrollToItem(0) }
+                        LazyColumn(
+                            Modifier.fillMaxSize(), state = listState, reverseLayout = true,
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
+                        ) {
+                            if (showPartial) item(key = "partial") { UserBubble(s.partial, live = true) }
+                            items(s.lines.asReversed(), key = { it.id }) { line ->
+                                if (line.user) UserBubble(line.text, live = false)
+                                else AssistantBubble(line, s) { m -> s.openTitle(m) }
+                            }
+                        }
+                    }
+                }
+                if (s.lines.any { !it.user } && s.lines.none { it.user } && !typingFocus) SuggestionChips { s.handleUser(it, voice = true) }
+
+                // ── Talk / type ──
+                Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (typing) {
+                        Row(
+                            Modifier.weight(1f).height(50.dp).clip(RoundedCornerShape(25.dp)).background(Color.White.copy(alpha = 0.07f))
+                                .border(1.dp, Color.White.copy(alpha = if (typingFocus) 0.24f else 0.12f), RoundedCornerShape(25.dp)).padding(start = 16.dp, end = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(Modifier.weight(1f)) {
+                                if (typed.isEmpty()) Text("Type to ${aiName()}…", fontSize = 14.sp, color = Color(0xFFB39CA2), maxLines = 1)
+                                val fr = remember { androidx.compose.ui.focus.FocusRequester() }
+                                LaunchedEffect(Unit) { runCatching { fr.requestFocus() } }
+                                BasicTextField(
+                                    typed, { typed = it },
+                                    Modifier.fillMaxWidth().focusRequester(fr).onFocusChanged { f ->
+                                        if (f.isFocused && !typingFocus) s.startTyping()
+                                        typingFocus = f.isFocused
+                                    }.tvOkKeyboard(),
+                                    singleLine = true,
+                                    textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+                                    cursorBrush = SolidColor(Color(0xFFFF5A64)),
+                                    keyboardOptions = tvKeyboard(KeyboardOptions(imeAction = ImeAction.Send)),
+                                    keyboardActions = KeyboardActions(onSend = { send() }),
+                                )
+                            }
+                            Box(
+                                Modifier.size(40.dp).clip(CircleShape)
+                                    .background(if (typed.isNotBlank()) SolidColor(Color(0xFFE50914)) else SolidColor(Color.White.copy(alpha = 0.08f)))
+                                    .quietClick { send() },
+                                Alignment.Center,
+                            ) { Icon(Icons.AutoMirrored.Filled.Send, "Send", Modifier.size(18.dp), tint = Color.White) }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        RoundBtn(Icons.Default.Mic, "Talk instead") { typing = false; typed = ""; focus.clearFocus(); s.tapOrb() }
+                    } else {
+                        RoundBtn(Icons.Default.Keyboard, "Type instead") { typing = true }
+                        Spacer(Modifier.width(8.dp))
+                        val cta = when (s.state) { XState.Speaking -> "INTERRUPT"; XState.Thinking -> "THINKING…"; XState.Listening -> "LISTENING…"; XState.Idle -> "TAP TO TALK" }
+                        Row(
+                            Modifier.weight(1f).height(50.dp).clip(RoundedCornerShape(25.dp))
+                                .background(Brush.horizontalGradient(listOf(Color(0xFFB0060F), Color(0xFFE50914), Color(0xFFFF4B55))))
+                                .quietClick { focus.clearFocus(); s.tapOrb() },
+                            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Default.Mic, null, Modifier.size(18.dp), tint = Color.White)
+                            Spacer(Modifier.width(8.dp))
+                            Text(cta, fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, color = Color.White)
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        RoundBtn(Icons.Default.Stop, "Stop") { s.stopAll() }
+                    }
+                }
             }
+            // The little pointer down to the AI button.
+            if (!typingFocus) Box(
+                Modifier.padding(end = 18.dp).offset(y = (-9).dp).size(18.dp)
+                    .graphicsLayer { rotationZ = 45f; alpha = pop.value }
+                    .background(Color(0xFF0B080B))
+            )
         }
     }
+}
+
+@Composable
+private fun RoundBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    Box(
+        Modifier.size(50.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.06f))
+            .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape).quietClick(onClick),
+        Alignment.Center,
+    ) { Icon(icon, label, Modifier.size(20.dp), tint = Color.White) }
 }
 
 /** True for very dark accent colours that would vanish on the dark sheet. */
@@ -765,28 +832,29 @@ private fun Color.luminanceLow(): Boolean = red * 0.299f + green * 0.587f + blue
 @Composable
 private fun HeaderIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, on: Boolean, onClick: () -> Unit) {
     Box(
-        Modifier.padding(horizontal = 2.dp).size(42.dp).clip(CircleShape)
-            .background(if (on) Color.White.copy(alpha = 0.10f) else Color.Transparent)
+        Modifier.padding(horizontal = 3.dp).size(40.dp).clip(CircleShape)
+            .background(Color.White.copy(alpha = if (on) 0.10f else 0.05f))
+            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
             .quietClick(onClick),
         Alignment.Center,
-    ) { Icon(icon, label, Modifier.size(22.dp), tint = Color.White) }
+    ) { Icon(icon, label, Modifier.size(18.dp), tint = Color.White) }
 }
 
 @Composable
 private fun EmptyChat(name: String?, onPick: (String) -> Unit) {
     Column(
-        Modifier.fillMaxSize().padding(horizontal = 24.dp),
+        Modifier.fillMaxSize().padding(horizontal = 18.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            if (name != null) "Hey $name, I'm X" else "Hey, I'm X", fontFamily = BrandFont, fontWeight = FontWeight.Bold,
-            fontSize = 26.sp, color = Color.White, textAlign = TextAlign.Center,
+            if (name != null) "Hey $name, I'm ${aiName()}" else "Hey, I'm ${aiName()}", fontWeight = FontWeight.Bold,
+            fontSize = 20.sp, color = Color.White, textAlign = TextAlign.Center,
         )
         Text(
-            "Talk to me like a friend. Tell me your mood, a vibe, or a title.", Modifier.padding(top = 8.dp),
-            fontSize = 14.sp, color = Color(0xFF9AA3B5), textAlign = TextAlign.Center,
+            "Talk to me like a friend: a mood, a vibe, or a title.", Modifier.padding(top = 6.dp),
+            fontSize = 13.sp, color = Color(0xFFB39CA2), textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(14.dp))
         SuggestionChips(onPick)
     }
 }
@@ -794,14 +862,14 @@ private fun EmptyChat(name: String?, onPick: (String) -> Unit) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SuggestionChips(onPick: (String) -> Unit) {
-    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("Something like Interstellar", "A light comedy tonight", "What's trending?", "Hindi thriller").forEach { c ->
+    FlowRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf("Like Interstellar, lighter", "Surprise me", "Continue my show", "Hindi thriller").forEach { c ->
             Text(
                 c,
-                Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White.copy(alpha = 0.07f))
-                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(20.dp))
-                    .quietClick { onPick(c) }.padding(horizontal = 14.dp, vertical = 9.dp),
-                fontSize = 13.sp, color = Color.White,
+                Modifier.clip(RoundedCornerShape(18.dp)).background(Color(0x14E50914))
+                    .border(1.dp, Color(0x52FF5A64), RoundedCornerShape(18.dp))
+                    .quietClick { onPick(c) }.padding(horizontal = 12.dp, vertical = 8.dp),
+                fontSize = 12.sp, color = Color(0xFFFBE7E9),
             )
         }
     }
@@ -812,64 +880,86 @@ private fun UserBubble(text: String, live: Boolean) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Text(
             text,
-            Modifier.widthIn(max = 290.dp)
-                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 6.dp))
-                .background(
-                    if (live) SolidColor(Color.White.copy(alpha = 0.08f))
-                    else Brush.linearGradient(listOf(Accent.copy(alpha = 0.92f), Palette.accent2.copy(alpha = 0.85f)))
-                )
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            fontSize = 15.sp, lineHeight = 20.sp,
-            color = if (live) Color.White.copy(alpha = 0.7f) else OnAccent,
+            Modifier.widthIn(max = 260.dp)
+                .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 4.dp))
+                .background(Color.White.copy(alpha = if (live) 0.05f else 0.08f))
+                .border(1.dp, Color.White.copy(alpha = 0.09f), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 4.dp))
+                .padding(horizontal = 13.dp, vertical = 9.dp),
+            fontSize = 13.5.sp, lineHeight = 19.sp,
+            color = if (live) Color.White.copy(alpha = 0.7f) else Color.White,
             fontStyle = if (live) FontStyle.Italic else FontStyle.Normal,
         )
     }
 }
 
+/**
+ * AIDEN's answer. While the voice says it, the words light up one by one exactly with the voice (the current word
+ * glows red, the rest wait faintly); nothing runs ahead of the voice. Text-only: the words appear one by one.
+ */
 @Composable
 private fun AssistantBubble(line: ChatLine, s: XSession, onOpen: (Meta) -> Unit) {
     val full = line.text
     var shown by remember(line.id) { mutableIntStateOf(if (s.revealed.contains(line.id)) full.length else 0) }
     LaunchedEffect(line.id) {
+        val t0 = android.os.SystemClock.elapsedRealtime()
         while (shown < full.length) {
-            val speaking = s.speakingId == line.id
-            delay(if (speaking) 58L else 14L)
-            val next = if (speaking) maxOf(shown + 1, minOf(s.spokenChars, full.length)) else shown + 2
-            shown = next.coerceAtMost(full.length)
+            androidx.compose.runtime.withFrameMillis { }
+            val now = android.os.SystemClock.elapsedRealtime()
+            val raw = when {
+                s.speakingId == line.id -> when {
+                    s.speechStartedAt == 0L -> 0
+                    s.rangeSeen -> s.spokenChars
+                    // No word reports from this voice: follow the voice's pace from the moment it started.
+                    else -> ((now - s.speechStartedAt) * 0.0145f * s.speechRate).toInt()
+                }
+                // Finished speaking (or the voice is off): the rest shows.
+                s.speakingId != line.id && (s.revealed.contains(line.id) || !s.voiceOut || s.state != XState.Speaking) ->
+                    if (s.voiceOut && now - t0 < 250) shown else maxOf(shown, ((now - t0) * 0.05f).toInt())
+                else -> shown
+            }
+            // Whole words only.
+            val end = if (raw <= 0) 0 else full.indexOf(' ', raw.coerceAtMost(full.length - 1)).let { if (it < 0) full.length else it }
+            if (end > shown) shown = end
+            if (s.speakingId != line.id && s.speakingId != -1L) shown = full.length   // a newer answer is speaking
         }
         s.revealed.add(line.id)
     }
+    val curStart = full.lastIndexOf(' ', (shown - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }.coerceAtMost(shown)
+    val speakingNow = s.speakingId == line.id && shown < full.length
     Column(Modifier.fillMaxWidth()) {
         Text(
             buildAnnotatedString {
-                append(full.take(shown))
-                // The rest is laid out invisibly so the bubble doesn't jump while it types.
-                withStyle(SpanStyle(color = Color.Transparent)) { append(full.drop(shown)) }
+                if (speakingNow && shown > 0) {
+                    append(full.take(curStart))
+                    withStyle(SpanStyle(background = Color(0x8CE50914), color = Color.White)) { append(full.substring(curStart, shown)) }
+                } else append(full.take(shown))
+                withStyle(SpanStyle(color = Color.White.copy(alpha = 0.2f))) { append(full.drop(shown)) }
             },
             Modifier.widthIn(max = 300.dp)
-                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 6.dp, bottomEnd = 20.dp))
-                .background(Color.White.copy(alpha = 0.09f))
-                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 6.dp, bottomEnd = 20.dp))
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            fontSize = 15.sp, lineHeight = 21.sp, color = Color.White,
+                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp))
+                .background(Brush.linearGradient(listOf(Color(0x29E50914), Color(0x59280A10))))
+                .border(1.dp, Color(0x47FF5A64), RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp))
+                .padding(horizontal = 13.dp, vertical = 10.dp),
+            fontSize = 15.sp, lineHeight = 22.sp, color = Color.White,
         )
-        if (line.items.isNotEmpty()) {
+        if (line.items.isNotEmpty() && (shown >= full.length || shown > full.length / 2)) {
             if (line.rowTitle.isNotBlank()) Text(
                 line.rowTitle, Modifier.padding(start = 4.dp, top = 10.dp, bottom = 6.dp),
-                fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF9AA3B5), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFB39CA2), maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             LazyRow(
                 Modifier.fillMaxWidth().padding(top = if (line.rowTitle.isBlank()) 8.dp else 0.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(line.items.distinctBy { it.type + it.id }, key = { it.type + it.id }) { m ->
-                    Column(Modifier.width(92.dp).quietClick { onOpen(m) }) {
+                    Column(Modifier.width(88.dp).quietClick { onOpen(m) }) {
                         AsyncImage(
                             m.poster, m.name,
-                            Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp)).background(Surface1),
+                            Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp)).background(Surface1)
+                                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(12.dp)),
                             contentScale = ContentScale.Crop,
                         )
-                        Text(m.name, Modifier.padding(top = 4.dp, start = 2.dp), fontSize = 11.sp, color = Color(0xFFC9CFDA), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(m.name, Modifier.padding(top = 4.dp, start = 2.dp), fontSize = 10.5.sp, color = Color(0xFFD9C2C6), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -877,71 +967,59 @@ private fun AssistantBubble(line: ChatLine, s: XSession, onOpen: (Meta) -> Unit)
     }
 }
 
-/** The living orb: breathes when idle, follows your voice while listening, shimmers while thinking, pulses while speaking. */
+/**
+ * AIDEN's core: turning red and white rings (faster while thinking / speaking), a glowing red heart that follows your
+ * voice while listening and shows a voice meter while speaking, and a ripple when touched.
+ */
 @Composable
-private fun XOrb(state: XState, level: Float, orbSize: Dp, onTap: () -> Unit) {
-    val inf = rememberInfiniteTransition(label = "xorb")
-    val breathe by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
-    val spin by inf.animateFloat(0f, 360f, infiniteRepeatable(tween(9000, easing = LinearEasing)), label = "spin")
-    val fast by inf.animateFloat(0f, 360f, infiniteRepeatable(tween(1300, easing = LinearEasing)), label = "fast")
-    val phase by inf.animateFloat(0f, (2 * PI).toFloat(), infiniteRepeatable(tween(1150, easing = LinearEasing)), label = "phase")
+internal fun AidenCore(state: XState, level: Float, size: Dp, onTap: () -> Unit) {
+    val inf = rememberInfiniteTransition(label = "aiden")
+    val busy = state == XState.Thinking || state == XState.Speaking
+    val spin by inf.animateFloat(0f, 360f, infiniteRepeatable(tween(16000, easing = LinearEasing)), label = "s1")
+    val spinFast by inf.animateFloat(0f, 360f, infiniteRepeatable(tween(4000, easing = LinearEasing)), label = "s2")
+    val breathe by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(2000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "b")
+    val phase by inf.animateFloat(0f, (2 * PI).toFloat(), infiniteRepeatable(tween(900, easing = LinearEasing)), label = "p")
+    val busyA by animateFloatAsState(if (busy) 1f else 0f, tween(400), label = "busy")
+    val speakA by animateFloatAsState(if (state == XState.Speaking) 1f else 0f, tween(300), label = "sp")
+    val listenA by animateFloatAsState(if (state == XState.Listening) 1f else 0f, tween(300), label = "li")
     val lvl by animateFloatAsState(if (state == XState.Listening) level else 0f, tween(110), label = "lvl")
-    val listenA by animateFloatAsState(if (state == XState.Listening) 1f else 0f, tween(350), label = "la")
-    val thinkA by animateFloatAsState(if (state == XState.Thinking) 1f else 0f, tween(350), label = "ta")
-    val speakA by animateFloatAsState(if (state == XState.Speaking) 1f else 0f, tween(350), label = "sa")
-    val accent = Accent
-    val accent2 = Palette.accent2
-
-    Box(Modifier.size(orbSize * 1.7f), Alignment.Center) {
+    val ripple = remember { Animatable(1f) }
+    val scope = rememberCoroutineScope()
+    Box(Modifier.size(size), Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
             val c = center
-            val baseR = orbSize.toPx() / 2f
-            val idleA = (1f - listenA - thinkA - speakA).coerceIn(0f, 1f)
-            val wave = sin(phase) * 0.6f + sin(phase * 2f + 1.3f) * 0.4f
-            val scale = 1f + idleA * 0.045f * breathe + listenA * 0.22f * lvl + speakA * 0.06f * wave + thinkA * 0.02f * breathe
-            val r = baseR * scale
-            val energy = (idleA * (0.25f + 0.25f * breathe) + listenA * (0.35f + 0.65f * lvl) + speakA * (0.55f + 0.3f * wave) + thinkA * 0.5f).coerceIn(0f, 1f)
-
-            // Soft glow
-            val glowR = baseR * 1.7f
-            drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = 0.18f + 0.32f * energy), accent2.copy(alpha = 0.08f), Color.Transparent), c, glowR), glowR, c)
-
-            // Listening: accent rings that open up with your voice
-            if (listenA > 0.01f) for (i in 0..2) {
-                val rr = baseR * (1.07f + 0.11f * i + lvl * 0.28f * (i + 1) / 3f)
-                drawCircle(accent.copy(alpha = (0.65f - 0.2f * i) * listenA), rr.coerceAtMost(glowR), c, style = Stroke(2.dp.toPx()))
+            val R = this.size.minDimension / 2f
+            val a = spin + spinFast * busyA
+            // Glow
+            drawCircle(Brush.radialGradient(listOf(Color(0xFFE50914).copy(alpha = 0.35f + 0.25f * breathe + 0.2f * busyA), Color.Transparent), c, R), R, c)
+            // Outer dotted ring + red segmented ring
+            rotate(a, c) {
+                drawCircle(Color(0x47FFB3B8), R * 0.94f, c, style = Stroke(1.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(2.dp.toPx(), 5.dp.toPx()))))
+                drawCircle(Color(0xE6E50914), R * 0.85f, c, style = Stroke(2.2.dp.toPx(), pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(R * 0.7f, R * 0.33f, R * 0.12f, R * 0.33f))))
             }
-            // Speaking: rhythmic ripples
-            if (speakA > 0.01f) for (i in 0..2) {
-                val p = ((phase / (2f * PI.toFloat())) + i / 3f) % 1f
-                drawCircle(accent2.copy(alpha = (1f - p) * 0.5f * speakA), baseR * (1.0f + 0.62f * p), c, style = Stroke(2.5.dp.toPx()))
+            // White arc, the other way
+            rotate(-a * 1.6f, c) {
+                drawArc(Color(0x8CFFFFFF), 0f, 70f, false, Offset(c.x - R * 0.71f, c.y - R * 0.71f), Size(R * 1.42f, R * 1.42f), style = Stroke(1.6.dp.toPx()))
             }
-
-            // Core: turning colour sphere
-            rotate(spin + fast * thinkA, c) {
-                drawCircle(Brush.sweepGradient(listOf(accent, accent2, Color(0xFF6FB6FF), Color(0xFF9B5CFF), accent), c), r, c)
+            // Listening: rings that open with your voice
+            if (listenA > 0.01f) for (i in 0..2) drawCircle(Color(0xFFFF5A64).copy(alpha = (0.6f - 0.18f * i) * listenA), R * (0.62f + 0.08f * i + 0.18f * lvl * (i + 1) / 3f), c, style = Stroke(1.6.dp.toPx()))
+            // The heart
+            val core = R * (0.36f + 0.03f * breathe + 0.06f * lvl)
+            drawCircle(Brush.radialGradient(listOf(Color(0xFFFFE3E5), Color(0xFFFF5A64), Color(0xFF9E0710)), Offset(c.x - core * 0.25f, c.y - core * 0.3f), core * 1.5f), core, c)
+            // Voice meter while speaking
+            if (speakA > 0.01f) for (i in -2..2) {
+                val hgt = core * (0.25f + 0.45f * kotlin.math.abs(sin(phase + i * 0.9f))) * speakA
+                drawLine(Color.White, Offset(c.x + i * core * 0.22f, c.y - hgt), Offset(c.x + i * core * 0.22f, c.y + hgt), strokeWidth = 2.6.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
             }
-            // Depth + glass highlight
-            drawCircle(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.35f)), c, r), r, c)
-            val hl = Offset(c.x - r * 0.28f, c.y - r * 0.34f)
-            drawCircle(Brush.radialGradient(listOf(Color.White.copy(alpha = 0.55f), Color.White.copy(alpha = 0f)), hl, r * 0.62f), r * 0.62f, hl)
-
-            // Thinking: shimmer arc running around the orb
-            if (thinkA > 0.01f) rotate(fast * 1.4f, c) {
-                val ar = r * 1.12f
-                drawArc(
-                    Brush.sweepGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.9f * thinkA), Color.Transparent), c),
-                    0f, 140f, false, Offset(c.x - ar, c.y - ar), Size(ar * 2, ar * 2), style = Stroke(3.dp.toPx()),
-                )
-            }
+            // Touch ripple
+            if (ripple.value < 1f) drawCircle(Color(0xFFFF6B74).copy(alpha = 1f - ripple.value), core * (1f + 1.4f * ripple.value), c, style = Stroke(2.dp.toPx()))
         }
-        Box(Modifier.size(orbSize).clip(CircleShape).quietClick(onTap), Alignment.Center) {
-            val micA = (1f - listenA - thinkA - speakA).coerceIn(0f, 1f)
-            Icon(Icons.Default.Mic, "Talk", Modifier.size(orbSize * 0.34f).graphicsLayer { alpha = micA }, tint = Color.White)
+        Box(Modifier.size(size * 0.62f).clip(CircleShape).quietClick { scope.launch { ripple.snapTo(0f); ripple.animateTo(1f, tween(700)) }; onTap() }, Alignment.Center) {
+            val micA = (1f - speakA).coerceIn(0f, 1f)
+            if (state == XState.Idle) Icon(Icons.Default.Mic, "Talk", Modifier.size(size * 0.17f).graphicsLayer { alpha = micA }, tint = Color.White)
         }
     }
 }
-
 
 /**
  * Text as a person would say it: no emoji, markdown or list symbols read out loud, and short pauses at line breaks
@@ -1021,5 +1099,131 @@ fun AiVoicePicker(vm: AppViewModel) {
         Text("Talk speed: ${"%.2f".format(rate)}×", Modifier.padding(top = 14.dp), fontSize = 14.sp)
         androidx.compose.material3.Slider(rate, { rate = (it * 100).toInt() / 100f }, valueRange = 0.8f..1.2f,
             onValueChangeFinished = { vm.storePut("aiVoiceRate", rate.toString()); if (Public.dev) AppLook.publishAi(rate = rate.toString()) })
+    }
+}
+
+// ───────────── AIDEN wakes up when the app opens ─────────────
+
+/** Once per app start. */
+object AidenWakeOnce { @Volatile var done = false }
+
+/** A short, personal hello for the moment the app opens. */
+fun aidenGreeting(vm: AppViewModel): String {
+    val name = vm.current.value?.name?.trim()?.takeIf { it.isNotBlank() && it != "Me" }
+    val n = name?.let { ", $it" } ?: ""
+    val cal = java.util.Calendar.getInstance()
+    val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+    val day = cal.get(java.util.Calendar.DAY_OF_WEEK)
+    val last = vm.progress.value.firstOrNull()?.title?.substringBefore("  S")?.takeIf { it.isNotBlank() }
+    val lines = ArrayList<String>()
+    when (hour) {
+        in 5..11 -> lines += listOf("Good morning$n. Fresh coffee, fresh picks. I've lined up something good for you.", "Morning$n! A great day starts with a great story. Tap me when you're ready.")
+        in 12..16 -> lines += listOf("Good afternoon$n. Perfect time for a quick episode, don't you think?", "Hey$n, afternoon break? I know just the thing.")
+        in 17..21 -> lines += listOf("Good evening$n. The couch is calling. Want me to find tonight's movie?", "Evening$n! Lights down, sound up. I've got picks ready when you are.")
+        else -> lines += listOf("Still up$n? Night owls get the best thrillers. Tap me when you're ready.", "Late night again$n? I saved you something worth staying up for.")
+    }
+    if (day == java.util.Calendar.FRIDAY || day == java.util.Calendar.SATURDAY) lines += "It's the weekend$n. Movie night rules apply, and I've picked a few you'll love."
+    if (last != null) lines += listOf("Welcome back$n. $last is waiting right where you left it.", "Hey$n! Ready for more $last, or shall I surprise you?")
+    return lines.random()
+}
+
+/**
+ * When the app opens, AIDEN wakes up: a capsule slides out of the AI button, says a short personal hello (the words
+ * light up with the voice), then slides back and sleeps until you tap the button. Tap the capsule to talk.
+ */
+@Composable
+fun AidenWake(vm: AppViewModel, onOpen: () -> Unit) {
+    if (BuildConfig.IS_TV) return
+    val texts by vm.texts.collectAsState()
+    if (!isOn(texts["aiWake"] ?: "yes")) return
+    val ctx = LocalContext.current
+    var open by remember { mutableStateOf(false) }
+    val text = remember { aidenGreeting(vm) }
+    var shown by remember { mutableIntStateOf(0) }
+    val ttsRef = remember { arrayOfNulls<TextToSpeech>(1) }
+    DisposableEffect(Unit) { onDispose { runCatching { ttsRef[0]?.stop(); ttsRef[0]?.shutdown() }; ttsRef[0] = null } }
+    LaunchedEffect(Unit) {
+        if (AidenWakeOnce.done) return@LaunchedEffect
+        AidenWakeOnce.done = true
+        delay(1400)
+        val voice = isOn(texts["aiWakeVoice"] ?: "yes") && vm.store("aiVoiceOut") != "no" &&
+            runCatching { (ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager).ringerMode == android.media.AudioManager.RINGER_MODE_NORMAL }.getOrDefault(true)
+        // The voice is made ready first, so the words and the voice start together.
+        var startedAt = 0L; var spoken = -1; var done = false
+        if (voice) {
+            val ready = kotlinx.coroutines.CompletableDeferred<TextToSpeech?>()
+            val main = Handler(Looper.getMainLooper())
+            var t: TextToSpeech? = null
+            t = runCatching { TextToSpeech(ctx) { st -> ready.complete(if (st == TextToSpeech.SUCCESS) t else null) } }.getOrNull()
+            ttsRef[0] = t
+            val engine = kotlinx.coroutines.withTimeoutOrNull(2500) { ready.await() }
+            if (engine != null) {
+                runCatching { engine.setSpeechRate((vm.store("aiVoiceRate")?.toFloatOrNull() ?: 0.96f).coerceIn(0.7f, 1.3f)) }
+                vm.store("aiVoice")?.let { n -> runCatching { engine.voices?.firstOrNull { it.name == n }?.let { v -> engine.setVoice(v) } } }
+                engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(id: String?) { main.post { startedAt = android.os.SystemClock.elapsedRealtime() } }
+                    override fun onDone(id: String?) { main.post { done = true } }
+                    @Deprecated("Deprecated in Java") override fun onError(id: String?) { main.post { done = true } }
+                    override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) { main.post { spoken = end } }
+                })
+                open = true
+                engine.speak(humanize(text), TextToSpeech.QUEUE_FLUSH, Bundle(), "aiden_wake")
+            }
+        }
+        open = true
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val full = humanize(text)
+        while (shown < full.length) {
+            androidx.compose.runtime.withFrameMillis { }
+            val now = android.os.SystemClock.elapsedRealtime()
+            val raw = when {
+                !voice || ttsRef[0] == null -> ((now - t0) * 0.03f).toInt()
+                done -> full.length
+                startedAt == 0L -> if (now - t0 > 3000) ((now - t0 - 3000) * 0.03f).toInt() else 0
+                spoken >= 0 -> spoken
+                else -> ((now - startedAt) * 0.0145f).toInt()
+            }
+            val end = if (raw <= 0) 0 else full.indexOf(' ', raw.coerceAtMost(full.length - 1)).let { if (it < 0) full.length else it }
+            if (end > shown) shown = end
+        }
+        val until = android.os.SystemClock.elapsedRealtime() + 6000
+        while (!done && voice && ttsRef[0] != null && android.os.SystemClock.elapsedRealtime() < until) delay(100)
+        delay(1800)
+        open = false
+        delay(600)
+        runCatching { ttsRef[0]?.shutdown() }; ttsRef[0] = null
+    }
+    val full = remember { humanize(text) }
+    androidx.compose.animation.AnimatedVisibility(
+        open,
+        enter = androidx.compose.animation.expandHorizontally(tween(520, easing = FastOutSlowInEasing), expandFrom = Alignment.End) + androidx.compose.animation.fadeIn(tween(300)),
+        exit = androidx.compose.animation.shrinkHorizontally(tween(420), shrinkTowards = Alignment.End) + androidx.compose.animation.fadeOut(tween(300)),
+    ) {
+        val shape = RoundedCornerShape(topStart = 22.dp, bottomStart = 22.dp, topEnd = 8.dp, bottomEnd = 8.dp)
+        Row(
+            Modifier.widthIn(max = 270.dp).clip(shape)
+                .background(Brush.horizontalGradient(listOf(Color(0xF2260C12), Color(0xF2150A0E))))
+                .border(1.dp, Brush.horizontalGradient(listOf(Color(0x80FF5A64), Color(0x26FF5A64))), shape)
+                .quietClick { open = false; runCatching { ttsRef[0]?.stop() }; onOpen() }
+                .padding(start = 10.dp, end = 12.dp, top = 9.dp, bottom = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AidenCore(if (shown < full.length) XState.Speaking else XState.Idle, 0f, 34.dp) { open = false; onOpen() }
+            Spacer(Modifier.width(8.dp))
+            Column {
+                Text(aiName().uppercase(), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 3.sp, color = Color(0xFFFF8A91))
+                val cur = full.lastIndexOf(' ', (shown - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }.coerceAtMost(shown)
+                Text(
+                    buildAnnotatedString {
+                        if (shown in 1 until full.length) {
+                            append(full.take(cur))
+                            withStyle(SpanStyle(background = Color(0x8CE50914))) { append(full.substring(cur, shown)) }
+                        } else append(full.take(shown))
+                        withStyle(SpanStyle(color = Color.White.copy(alpha = 0.2f))) { append(full.drop(shown)) }
+                    },
+                    fontSize = 12.5.sp, lineHeight = 17.sp, color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }

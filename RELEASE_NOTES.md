@@ -1,3 +1,13 @@
+Xstream 0.5.7
+
+• Meet AIDEN, your movie friend: he opens in a bubble from the AI button.
+• AIDEN's words light up exactly as he says them.
+• AIDEN says hello when the app opens, then waits for you.
+• Most of the top cards on Home are AIDEN's picks for you.
+• A new AI logo reaches every phone without restarting.
+
+---
+
 Xstream 0.5.6
 
 • No more freezes when a stream fails: the next stream is tried at once.

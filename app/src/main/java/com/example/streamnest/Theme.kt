@@ -136,6 +136,8 @@ val BrandRed = Color(0xFFE50914)
 @Composable
 fun Wordmark(name: String, fontSize: TextUnit = 18.sp, animated: Boolean = false) {
     val n0 = name.trim()
+    // The developer's designed look for the app name (Developer's Corner › AI assistant), when there is one.
+    parseNameStyle(Public.vm?.texts?.value?.get("appNameStyle"))?.let { StyledName(n0.ifBlank { "Xstream" }, it, fontSize); return }
     // The old name (synced from a StreamX profile) shows as Xstream too.
     val brand = n0.lowercase() == "xstream" || n0.lowercase() == "streamx"
     if (brand && animated) { HangingWordmark("Xstream", fontSize); return }

@@ -13,6 +13,13 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.5.7", "23 Oct 2026", "Meet AIDEN", listOf(
+        "AIDEN, your movie friend: opens in a bubble from the AI button, in the app's red look",
+        "AIDEN's words light up exactly as he says them — text and voice together",
+        "AIDEN says hello when the app opens, then waits until you tap him (Settings › Sources & Extensions)",
+        "Most of the top cards on Home are now AIDEN's picks for you",
+        "A new AI logo reaches every phone without restarting",
+    )),
     Release("0.5.6", "22 Oct 2026", "Stable", listOf(
         "No more freezes when a stream fails: the next stream is tried at once",
         "A stream you pick yourself stays — it's never swapped for another",
@@ -332,6 +339,15 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.5.7", "23 Oct 2026", "AIDEN, dev AI assistant, row names", listOf(
+        "VoiceAssistant: popup bubble (BottomEnd above the orb), AidenCore, karaoke reveal driven by onStart / onRangeStart (estimate after onStart), text = humanize(say)",
+        "AidenWake: once per process, expandHorizontally capsule left of the orb, own TTS, word-synced; aiWake / aiWakeVoice toggles; silent ringer = no voice",
+        "Deck: 3 AIDEN picks per other card; badge with core dot",
+        "AI logo: url: payloads + none; AppLook.refresh + DevDefaults.sync on every start (2 min throttle)",
+        "rowNames (dev rename in Home Layout) via dev defaults; TvHome too",
+        "DevAssistantPage: logs / auto-play / design / ask with the app's AI or copy prompt + paste answer; whitelisted keys; NameStyle + StyledName for aiName / appName",
+        "aiChat: 429 on the main provider falls back to another provider with a key",
+    )),
     Release("0.5.6", "22 Oct 2026", "Stable: VLC off-main, manual picks, downloads hidden, publish everything", listOf(
         "VlcEngine: setMedia / play / pause / stop / release on a vlc-control thread (ANR in input_Close)",
         "waysFor(plugin manifest) = ExoPlayer only → tryNextSource; Turbo extendedAll forgets cached streams",

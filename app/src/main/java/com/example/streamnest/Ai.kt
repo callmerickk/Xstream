@@ -149,7 +149,12 @@ suspend fun AppViewModel.aiChat(
                 val m = e.msg.lowercase()
                 when {
                     e.code == 401 || e.code == 403 -> throw IllegalStateException("The API key was rejected. Check it in Integrations.")
-                    e.code == 429 -> throw IllegalStateException("Too many requests right now. Try again in a minute.")
+                    e.code == 429 -> {
+                        // Free limit reached: another AI with a key (Gemini, OpenRouter…) answers instead.
+                        val other = if (p.id != aiProvider().id) null else AiProviders.firstOrNull { it.id != p.id && aiKey(it).isNotEmpty() }
+                        if (other != null) return@withContext aiChat(system, history, user, other, aiKey(other), maxTokens)
+                        throw IllegalStateException("The AI's free limit is used up for now. Try again later.")
+                    }
                     lowEffort && m.contains("reasoning") -> lowEffort = false
                     limit != null && (m.contains("max_tokens") || m.contains("max_completion_tokens")) -> limit = null
                     json && (m.contains("response_format") || m.contains("json")) -> json = false
@@ -207,7 +212,7 @@ private fun AppViewModel.systemPrompt(): String {
     val p = current.value
     val today = SimpleDateFormat("d MMMM yyyy", Locale.ENGLISH).format(Date())
     return """
-You are the friendly voice assistant inside Xstream, a movie and TV streaming app. Today is $today.
+You are ${aiName()}, the friendly movie buddy inside Xstream, a movie and TV streaming app. Today is $today.
 You are talking to ${p?.name ?: "the viewer"}.${if (p?.kids == true) " This is a KIDS profile: only suggest titles suitable for children (G / PG / U)." else ""}
 What you know about their taste:
 ${tasteSummary()}

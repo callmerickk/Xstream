@@ -70,7 +70,12 @@ object AppLook {
     /** The AI logo everyone gets (from the cloud); when set it wins over a per-account logo. */
     val aiLogo = MutableStateFlow("")
 
+    @Volatile private var lastFetch = 0L
+    /** The app came to the front: the shared look again (at most every 2 minutes), so a new AI logo shows without a restart. */
+    suspend fun refresh(ctx: Context) { if (System.currentTimeMillis() - lastFetch > 2 * 60_000L) fetch(ctx) }
+
     suspend fun fetch(ctx: Context) = withContext(Dispatchers.IO) {
+        lastFetch = System.currentTimeMillis()
         val txt = runCatching { Api.get("${CloudConfig.DB_URL}/shared/appLook.json") }.getOrNull() ?: return@withContext
         val o = runCatching { Api.json.parseToJsonElement(txt).jsonObject }.getOrNull() ?: return@withContext
         fun str(k: String) = runCatching { o[k]?.jsonPrimitive?.contentOrNull }.getOrNull()?.takeIf { it.isNotBlank() }

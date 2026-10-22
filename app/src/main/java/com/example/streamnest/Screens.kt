@@ -26,6 +26,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -275,6 +277,7 @@ fun App(vm: AppViewModel = viewModel()) {
                 // Watches every touch (never consumes it) to wake the dock.
                 awaitPointerEventScope { while (true) { awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial); lastTouch[0] = System.currentTimeMillis(); if (idleHidden) idleHidden = false } }
             }) {
+                Box(Modifier.fillMaxSize().then(if (voiceOpen) Modifier.blur(10.dp) else Modifier)) {
                 when (tab) {
                     0 -> HomeScreen(
                         vm, homeList, capsuleAnim, open, { stack.add(it) },
@@ -298,6 +301,7 @@ fun App(vm: AppViewModel = viewModel()) {
                         onWatchlist = { stack.add(Screen.Watchlist()) },
                         onNotifications = { stack.add(Screen.Notes) },
                     )
+                }
                 }
                 BottomNav(
                     tab, vm, compact = barAnim,
@@ -401,6 +405,15 @@ fun App(vm: AppViewModel = viewModel()) {
         // Built-in servers (CNCVerse / HdHub links published from Developer's Corner) and the Connect PenguPlay card.
         // The look everyone shares (app logo, AI logo, X's voice) first — it's quick, and it used to wait behind the rest.
         LaunchedEffect(profile?.id) { if (profile != null) { Public.vm = vm; runCatching { AppLook.fetch(vm.appContext) }; runCatching { BuiltIns.sync(vm) }; runCatching { DevDefaults.sync(vm) }; runCatching { Official.apply(vm, vm.appContext) } } }
+        // Back in front: the shared look (AI logo) and the developer's defaults (row names…) again, so changes show without a restart.
+        val lo = androidx.lifecycle.compose.LocalLifecycleOwner.current
+        LaunchedEffect(lo, profile?.id) {
+            if (profile == null) return@LaunchedEffect
+            lo.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+                runCatching { AppLook.refresh(vm.appContext) }
+                runCatching { DevDefaults.sync(vm) }
+            }
+        }
         // CloudStream plugins "kept warm" (Source Test › CloudStream): loaded and woken in the background.
         // Plugin mode: every switched-on plugin is loaded and woken at start, so a title page gets its links at once.
         LaunchedEffect(profile?.id) {

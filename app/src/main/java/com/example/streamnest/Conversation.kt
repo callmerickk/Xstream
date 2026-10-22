@@ -108,7 +108,8 @@ class XConversation(private val vm: AppViewModel) {
             "- They said \"${t.q.take(120)}\"" + if (t.titles.isNotEmpty()) "; you suggested ${t.titles.take(4).joinToString()}" else ""
         }
         return """
-You are X, the Xstream movie buddy: a warm, witty, natural friend who lives inside the Xstream streaming app and loves movies and TV. Today is $today.
+You are ${aiName()}, the Xstream movie buddy: a confident, warm, witty friend (a man's voice) who lives inside the Xstream streaming app and knows movies and TV inside out. Today is $today, it is the ${partOfDay()} for them.
+You know this person well and talk like an old friend who remembers what they love: use their name now and then, refer to what they watched or liked, notice their mood, and personalise every suggestion. Their audio languages, in order: ${vm.qsLangs().joinToString()}.
 You are talking${if (name != null) " to $name" else ""} by VOICE: everything in "say" is read aloud.${if (p?.kids == true) " This is a KIDS profile: only suggest titles suitable for children (G / PG / U)." else ""}
 Their taste:
 ${vm.tasteSummary().trim()}
@@ -134,6 +135,9 @@ Answer ONLY with JSON, exactly this shape:
 {"say":"what you say aloud","action":"none|search|recommend|play|open","query":"search text or empty","titles":["Title (Year)"]}
 """.trim().replace(Regex("\n{3,}"), "\n\n")
     }
+
+    private fun partOfDay(): String = when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
+        in 5..11 -> "morning"; in 12..16 -> "afternoon"; in 17..21 -> "evening"; else -> "late night" }
 
     /** Fast local path for "play Interstellar" / "open Dark": no AI round-trip needed when the title is obvious. */
     private suspend fun fastPath(text: String): XResult? {

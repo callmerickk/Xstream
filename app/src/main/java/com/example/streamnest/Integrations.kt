@@ -51,7 +51,7 @@ fun AiLogo(vm: AppViewModel, modifier: Modifier) {
     val ver by vm.imgVersion.collectAsStateWithLifecycle()
     // A logo set on another phone arrives with your settings: saved here once.
     val shared by AppLook.aiLogo.collectAsState()
-    val synced = shared.ifBlank { texts["aiLogoData"].orEmpty() }
+    val synced = shared.ifBlank { texts["aiLogoData"].orEmpty() }.takeIf { it != "none" }.orEmpty()
     LaunchedEffect(synced) { if (synced.isNotBlank()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vm.syncAiLogo(synced) } }
     val file = remember(ver) { vm.aiLogoFile().takeIf { it.exists() } }
     val url = texts["aiLogoUrl"].orEmpty().trim()
@@ -164,12 +164,16 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean
                     }
                     Spacer(Modifier.width(12.dp))
                     TextButton({ pickLogo.launch(arrayOf("image/*")) }) { Text("Choose image") }
-                    TextButton({ vm.clearAiLogo(); logoUrl = ""; vm.setText("aiLogoUrl", "") }) { Text("Remove", color = Color(0xFFFF6B6B)) }
+                    TextButton({ vm.clearAiLogo(); logoUrl = ""; vm.setText("aiLogoUrl", ""); if (Public.dev) AppLook.publishAi(logo = "none") }) { Text("Remove", color = Color(0xFFFF6B6B)) }
                 }
                 OutlinedTextField(
                     logoUrl, { logoUrl = it.trim() }, Modifier.fillMaxWidth().padding(top = 6.dp).tvOkKeyboard(), singleLine = true, shape = RoundedCornerShape(12.dp),
                     placeholder = { Text("https://…/logo.png") },
-                    trailingIcon = { if (logoUrl != v("aiLogoUrl")) TextButton({ vm.clearAiLogo(); vm.setText("aiLogoUrl", logoUrl) }) { Text("Save") } }, keyboardOptions = tvKeyboard())
+                    trailingIcon = { if (logoUrl != v("aiLogoUrl")) TextButton({
+                        vm.clearAiLogo(); vm.setText("aiLogoUrl", logoUrl)
+                        // A logo by link goes to every account too (each phone downloads it once).
+                        if (Public.dev && logoUrl.startsWith("http")) AppLook.publishAi(logo = "url:$logoUrl")
+                    }) { Text("Save") } }, keyboardOptions = tvKeyboard())
             }
             if (!BuildConfig.IS_TV) { RowDivider(20.dp); AiVoicePicker(vm) }
             RowDivider(20.dp)

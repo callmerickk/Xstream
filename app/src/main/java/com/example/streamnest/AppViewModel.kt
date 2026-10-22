@@ -196,7 +196,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     fun syncAiLogo(payload: String) {
         val prefs = ctx.getSharedPreferences("ai_logo", Context.MODE_PRIVATE)
         if (payload.isBlank() || prefs.getInt("hash", 0) == payload.hashCode()) return
-        val data = runCatching { android.util.Base64.decode(payload.substringAfter(':'), android.util.Base64.DEFAULT) }.getOrNull() ?: return
+        // The developer removed the logo: the built-in one again.
+        if (payload == "none") { aiLogoFile().delete(); prefs.edit().putInt("hash", payload.hashCode()).apply(); imgVersion.value = imgVersion.value + 1; return }
+        val data = if (payload.startsWith("url:"))
+            runCatching { Api.http.newCall(okhttp3.Request.Builder().url(payload.removePrefix("url:")).build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null } }.getOrNull() ?: return
+        else runCatching { android.util.Base64.decode(payload.substringAfter(':'), android.util.Base64.DEFAULT) }.getOrNull() ?: return
         runCatching { aiLogoFile().writeBytes(data) }.onSuccess {
             prefs.edit().putInt("hash", payload.hashCode()).apply()
             imgVersion.value = imgVersion.value + 1

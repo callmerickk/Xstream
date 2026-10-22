@@ -160,7 +160,7 @@ fun TvHomeScreen(
             if (showRecs && recsFirst && recs.isNotEmpty()) add(TvHomeSec.Metas("recs", recTitle, recs))
             collections.filter { it.folders.isNotEmpty() }.distinctBy { it.id }.forEach { add(TvHomeSec.Col(it)) }
             shelves.forEachIndexed { i, s ->
-                val title = if (s.title.startsWith("New")) "$newOn · ${s.title.removePrefix("New ").trim()}" else s.title
+                val title = rowName(s.title) ?: if (s.title.startsWith("New")) "$newOn · ${s.title.removePrefix("New ").trim()}" else s.title
                 add(TvHomeSec.Metas("shelf:$i:${s.title}", title, s.items))
             }
             if (showRecs && !recsFirst && recs.isNotEmpty()) add(TvHomeSec.Metas("recs", recTitle, recs))
