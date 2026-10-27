@@ -598,7 +598,7 @@ fun PlayerScreen(
     }
     DisposableEffect(thumbs) { onDispose { thumbs?.close() } }
     // Open the file for previews a little after playback starts, so the first seek-bar frame shows quickly.
-    LaunchedEffect(thumbs, firstFrame) { if (firstFrame && thumbs != null) { delay(8000); thumbs.warmUp() } }
+    LaunchedEffect(thumbs, firstFrame) { if (firstFrame && thumbs != null) { delay(1500); thumbs.warmUp() } }
     val audio = remember { ctx.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager }
     val maxVol = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
     var autoNextDone by remember { mutableStateOf(false) }
@@ -701,10 +701,11 @@ fun PlayerScreen(
     LaunchedEffect(thumbs, firstFrame) {
         val th = thumbs ?: return@LaunchedEffect
         if (!firstFrame || BuildConfig.IS_TV) return@LaunchedEffect
-        delay(6_000)
+        // Soon after the start (coarse frames first), so seeking shows pictures almost at once.
+        delay(2_500)
         val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
         val metered = cm.isActiveNetworkMetered
-        if (metered) delay(15_000)
+        if (metered) delay(6_000)
         val d = curDur(); if (d > 0) th.prefetch(d, wifi = !metered)
     }
     fun curBuffered(): Long = if (usingVlc) curPos() else player.bufferedPosition
@@ -4537,7 +4538,8 @@ private fun SeekPreview(thumbs: SeekThumbs?, ms: Long, frac: Float, modifier: Mo
     // The exact frame, else the closest one already made (so the box is rarely empty while you drag).
     val shown = if (imgBucket == bucket) img else (thumbs?.nearest(ms) ?: img)
     // No empty box: the frame shows when there is one (or while one is on its way); otherwise just the time.
-    val withFrame = shown != null || (loading && thumbs?.available == true)
+    // Never a loading spinner: the exact frame, else the nearest one made so far, else just the time.
+    val withFrame = shown != null
     val shape = RoundedCornerShape(10.dp)
     Column(
         modifier.layout { m, c ->
@@ -4554,9 +4556,6 @@ private fun SeekPreview(thumbs: SeekThumbs?, ms: Long, frac: Float, modifier: Mo
             Modifier.size(if (tv) 240.dp else 160.dp, if (tv) 135.dp else 90.dp).clip(shape).background(Color(0xFF15161B)).border(2.dp, Color.White, shape),
         ) {
             shown?.let { androidx.compose.foundation.Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-            if (loading && imgBucket != bucket && thumbs?.available == true) CircularProgressIndicator(
-                Modifier.align(Alignment.Center).size(if (tv) 26.dp else 20.dp), color = Color.White, strokeWidth = 2.dp,
-            )
         }
         Text(
             fmtTime(ms),

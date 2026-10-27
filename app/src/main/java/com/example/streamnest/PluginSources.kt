@@ -45,6 +45,10 @@ object PluginSources {
 
     /** The search result that is this title (same matching as Source Test), or null. */
     fun bestMatch(found: List<SearchResponse>, q: String, wantYear: Int?, series: Boolean, season: Int?): SearchResponse? =
+        ranked(found, q, wantYear, series, season).firstOrNull()
+
+    /** Every result that could be this title, best first (same name + the right year first: The Office 2005 ≠ 2024). */
+    fun ranked(found: List<SearchResponse>, q: String, wantYear: Int?, series: Boolean, season: Int?): List<SearchResponse> =
         found.map { r ->
             val clean = CsTester.cleanTitle(r.name)
             var sc = if (norm(clean) == norm(q.replace("&", " and "))) 1.0 else {
@@ -52,7 +56,8 @@ object PluginSources {
                 if (a.isEmpty() || b.isEmpty()) 0.0 else a.intersect(b).size.toDouble() / a.union(b).size * 0.9
             }
             val y = yearOf(r)
-            if (wantYear != null && y != null) sc += when { kotlin.math.abs(y - wantYear) <= 1 -> 0.2; series -> 0.0; else -> -0.4 }
+            // A series' year is when it first aired: a different one is another show with the same name.
+            if (wantYear != null && y != null) sc += when { kotlin.math.abs(y - wantYear) <= 1 -> 0.2; series -> -0.35; else -> -0.4 }
             if (series) Regex("(?i)season\\s*(\\d+)|\\bS(\\d{1,2})\\b").find(r.name)?.let { m ->
                 val n = m.groupValues[1].ifEmpty { m.groupValues[2] }.toIntOrNull()
                 if (n != null) sc += if (n == (season ?: 1)) 0.25 else -0.6
@@ -63,7 +68,7 @@ object PluginSources {
             if (series && r.type == TvType.Movie && !Regex("(?i)season|web series|episode|\\bS\\d{1,2}\\b").containsMatchIn(r.name)) sc -= if (sc >= 1.0) 0.0 else 1.0
             if (r.type != null && !(r.type == TvType.Movie && Regex("(?i)season|web series").containsMatchIn(r.name))) sc += if (isSeries == series) 0.05 else -0.2
             r to sc
-        }.maxByOrNull { it.second }?.takeIf { it.second >= 0.7 }?.first
+        }.filter { it.second >= 0.7 }.sortedByDescending { it.second }.map { it.first }
 
     private fun ExtractorLink.toItem(provider: String, subs: List<Subtitle>): StreamItem {
         val q = Qualities.getStringByInt(quality)
@@ -103,7 +108,7 @@ object PluginSources {
         if (apiKey(api) in noSearch) return emptyList()          // a browse-only provider (Disney / Marvel shelves…)
         // The show's page (search + load) is kept 15 minutes: any other episode then needs only its links (~0.5 s),
         // so episode 4 or 10 starts as fast as episode 1.
-        val pageKey = "${apiKey(api)}|$name|$series|${if (series) season else year}"
+        val pageKey = "${apiKey(api)}|$name|$series|$year|${if (series) season else ""}"
         pages[pageKey]?.takeIf { System.currentTimeMillis() - it.first < 15 * 60_000L }?.second?.let { cached ->
             return linksFromPage(api, cached, name, series, season, episode, onLink, ::log)
         }
@@ -115,9 +120,17 @@ object PluginSources {
         } catch (e: NotImplementedError) { noSearch += apiKey(api); log("has no search — skipped from now on"); null
         } catch (e: Throwable) { log("search failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
         if (found == null) { log("search gave nothing (timeout or no answer)"); return emptyList() }
-        val hit = bestMatch(found, name, year, series, season)
-        if (hit == null) { log("${found.size} results, none matched \"$name\"" + found.take(4).joinToString("; ", " — top: ") { it.name.take(60) }); return emptyList() }
-        val lr = try { withDeadline(20_000) { api.load(hit.url) } } catch (e: Throwable) { log("load failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
+        val cands = ranked(found, name, year, series, season)
+        if (cands.isEmpty()) { log("${found.size} results, none matched \"$name\"" + found.take(4).joinToString("; ", " — top: ") { it.name.take(60) }); return emptyList() }
+        // The page tells the real year: a same-name show from another year is skipped for the next result.
+        var hit = cands.first()
+        var lr: LoadResponse? = null
+        for (c in cands.take(3)) {
+            val l = try { withDeadline(20_000) { api.load(c.url) } } catch (e: Throwable) { log("load failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null } ?: continue
+            val ly = runCatching { l.year }.getOrNull()
+            if (year != null && ly != null && kotlin.math.abs(ly - year) > 1 && (series || c !== cands.take(3).last())) { log("\"${c.name.take(60)}\" is from $ly, not $year — trying the next result"); continue }
+            hit = c; lr = l; break
+        }
         if (lr == null) { log("matched \"${hit.name.take(60)}\" but its page didn't load"); return emptyList() }
         pages[pageKey] = System.currentTimeMillis() to (hit.name to lr)
         return linksFromPage(api, hit.name to lr, name, series, season, episode, onLink, ::log)

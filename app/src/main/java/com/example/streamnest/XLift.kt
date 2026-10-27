@@ -56,7 +56,7 @@ fun Modifier.titleTap(m: Meta, onOpen: () -> Unit): Modifier = composed {
     val haptics = LocalHapticFeedback.current
     val rect = remember { arrayOf(Rect.Zero) }
     this.onGloballyPositioned { rect[0] = it.boundsInRoot() }
-        .combinedClickable(onClick = onOpen, onLongClick = if (hold == null) null else ({ haptics.performHapticFeedback(HapticFeedbackType.LongPress); hold(m, rect[0]) }))
+        .combinedClickable(onClick = { PosterOrigin.rect = rect[0]; PosterOrigin.at = System.currentTimeMillis(); onOpen() }, onLongClick = if (hold == null) null else ({ haptics.performHapticFeedback(HapticFeedbackType.LongPress); hold(m, rect[0]) }))
 }
 
 /**
@@ -188,4 +188,37 @@ fun TitleLiftMenu(vm: AppViewModel, m: Meta, from: Rect, onDetails: () -> Unit, 
             }
         }
     }
+}
+
+
+/** Where the poster you just tapped was (the title page grows out of it). */
+object PosterOrigin { @Volatile var rect: Rect = Rect.Zero; @Volatile var at = 0L }
+
+/**
+ * The title page opening: it grows out of the poster you tapped (from its place and size to the full screen, corners
+ * rounding off), or rises in softly when it was opened another way.
+ */
+@Composable
+fun PosterZoomIn(content: @Composable () -> Unit) {
+    if (BuildConfig.IS_TV) { content(); return }
+    val from = remember { if (System.currentTimeMillis() - PosterOrigin.at < 800 && PosterOrigin.rect.width > 0f) PosterOrigin.rect else null }
+    val k = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { PosterOrigin.at = 0L; k.animateTo(1f, spring(dampingRatio = 0.86f, stiffness = 340f)) }
+    var size by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    Box(Modifier.fillMaxSize().onGloballyPositioned { size = it.size }.graphicsLayer {
+        val v = k.value.coerceIn(0f, 1.05f)
+        if (from != null && size.width > 0) {
+            val sx = from.width / size.width; val sy = from.height / size.height
+            val s0 = maxOf(sx, sy).coerceIn(0.15f, 1f)
+            val sc = s0 + (1f - s0) * v
+            scaleX = sc; scaleY = sc
+            translationX = (from.center.x - size.width / 2f) * (1f - v)
+            translationY = (from.center.y - size.height / 2f) * (1f - v)
+            alpha = (0.35f + 0.65f * v * 1.6f).coerceIn(0f, 1f)
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(((1f - v) * 28f).coerceAtLeast(0f).dp)
+            clip = v < 0.99f
+        } else {
+            alpha = v.coerceIn(0f, 1f); translationY = (1f - v) * 40f
+        }
+    }) { content() }
 }

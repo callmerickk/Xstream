@@ -295,9 +295,11 @@ fun App(vm: AppViewModel = viewModel()) {
                 })
             }
             is Screen.Detail -> key(top) {
-                DetailScreen(vm, top.meta, onBack = pop, onOpen = open, sourcesFor = top.sourcesFor, onPlay = { stack.add(it) },
-                    onPerson = { c -> stack.add(Screen.Person(c.id, c.name, c.photo)) },
-                    onTrailer = { stack.add(it) })
+                PosterZoomIn {
+                    DetailScreen(vm, top.meta, onBack = pop, onOpen = open, sourcesFor = top.sourcesFor, onPlay = { stack.add(it) },
+                        onPerson = { c -> stack.add(Screen.Person(c.id, c.name, c.photo)) },
+                        onTrailer = { stack.add(it) })
+                }
             }
             is Screen.Person -> key(top) { PersonScreen(vm, top, onBack = pop, onOpen = open) }
             is Screen.Trailer -> key(top) {

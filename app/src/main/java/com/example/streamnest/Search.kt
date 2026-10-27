@@ -103,8 +103,15 @@ data class SearchHit(
     val isNew: Boolean,
 )
 
+/** A film series or a studio found for the search (Harry Potter, Marvel…): its titles in release order. */
+data class SearchGroup(val name: String, val sub: String, val posters: List<String>, val backdrop: String?, val items: List<Meta>)
+
 object SearchState {
     val hits = MutableStateFlow<List<SearchHit>>(emptyList())
+    /** Collections / studios matching the search, shown as stacked cards above the results. */
+    val groups = MutableStateFlow<List<SearchGroup>>(emptyList())
+    /** "Did you mean …?" when the search looks misspelled. */
+    val didYouMean = MutableStateFlow<String?>(null)
     val loading = MutableStateFlow(false)
     val suggestions = MutableStateFlow<List<String>>(emptyList())
     /** The query whose results are currently shown ("" = none). */
@@ -239,6 +246,8 @@ fun AppViewModel.searchPremium(q: String) {
     SearchState.job?.cancel()
     if (query.length < 3) {
         SearchState.hits.value = emptyList()
+        SearchState.groups.value = emptyList()
+        SearchState.didYouMean.value = null
         SearchState.suggestions.value = emptyList()
         SearchState.query.value = ""
         SearchState.loading.value = false
@@ -254,8 +263,9 @@ fun AppViewModel.searchPremium(q: String) {
         SearchState.query.value = query
         if (final) SearchState.loading.value = false
     }
-    synchronized(SearchCache) { SearchCache[ck] }?.let { publish(it, true); return }
+    synchronized(SearchCache) { SearchCache[ck] }?.let { publish(it, true); synchronized(GroupCache) { GroupCache[ck] }?.let { g -> SearchState.groups.value = g.first; SearchState.didYouMean.value = g.second }; return }
     SearchState.loading.value = true
+    SearchState.groups.value = emptyList(); SearchState.didYouMean.value = null
     SearchState.job = viewModelScope.launch {
         delay(250)
         val key = tmdbKey()
@@ -264,7 +274,9 @@ fun AppViewModel.searchPremium(q: String) {
             val seen = HashSet<String>()
             val yearQ = Regex("\\b(19|20)\\d{2}\\b").find(query)?.value
             return parts.flatten().filter { seen.add(it.meta.id) }.distinctBy { it.meta.type + it.meta.id }
-                .sortedWith(compareBy({ matchRank(query, it.meta.name) }, { if (yearQ != null && it.year != yearQ) 1 else 0 }))
+                .sortedWith(compareBy<SearchHit>({ matchRank(query, it.meta.name) }, { if (yearQ != null && it.year != yearQ) 1 else 0 })
+                    // same kind of match (a whole film series): oldest first, so the parts come in order
+                    .thenBy { h -> if (matchRank(query, h.meta.name) <= 2) (h.year?.toIntOrNull() ?: 9999) else 0 })
         }
         coroutineScope {
             launch {
@@ -272,6 +284,10 @@ fun AppViewModel.searchPremium(q: String) {
                     .filter { it.type == "movie" || it.type == "series" }.map { hitFromAddon(it) }
                 parts += r
                 if (r.isNotEmpty()) publish(merged(), false)
+            }
+            if (key.isNotEmpty()) launch {
+                val g = runCatching { searchGroups(key, query) }.getOrDefault(emptyList())
+                if (SearchState.query.value == query || SearchState.hits.value.isEmpty()) SearchState.groups.value = g
             }
             if (key.isNotEmpty()) launch {
                 // TMDB's richer cards first when they arrive before anything is on screen; the top 6 show at once.
@@ -288,8 +304,85 @@ fun AppViewModel.searchPremium(q: String) {
         }
         val all = merged()
         publish(all, true)
+        // Looks misspelled (nothing close to what was typed): suggest the nearest real title.
+        val best = all.minOfOrNull { matchRank(query, it.meta.name) } ?: 9
+        val dym = if (best >= 3 && key.isNotEmpty()) runCatching { didYouMean(key, query, all) }.getOrNull() else null
+        SearchState.didYouMean.value = dym
         if (all.isNotEmpty()) synchronized(SearchCache) { SearchCache[ck] = all }
+        synchronized(GroupCache) { GroupCache[ck] = SearchState.groups.value to dym }
     }
+}
+
+private val GroupCache = object : LinkedHashMap<String, Pair<List<SearchGroup>, String?>>(16, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<List<SearchGroup>, String?>>?) = size > 20
+}
+
+private fun tmdbMetaOf(o: JsonObject, kindHint: String): Meta? {
+    val kind = o.sStr("media_type") ?: kindHint
+    if (kind != "movie" && kind != "tv") return null
+    val id = o.sStr("id") ?: return null
+    val poster = o.sStr("poster_path") ?: return null
+    return Meta(id = "tmdb:$kind:$id", type = if (kind == "tv") "series" else "movie", name = o.sStr("title") ?: o.sStr("name") ?: return null,
+        poster = "${SIMG}w342$poster", background = o.sStr("backdrop_path")?.let { "${SIMG}w780$it" }, description = o.sStr("overview"),
+        releaseInfo = (o.sStr("release_date") ?: o.sStr("first_air_date"))?.take(4))
+}
+
+/** Film series (TMDB collections) and studios / franchises matching the search, each with its titles oldest first. */
+private suspend fun searchGroups(key: String, q: String): List<SearchGroup> = coroutineScope {
+    val words = q.lowercase().split(Regex("\\s+")).filter { it.length > 1 && it !in setOf("the", "movies", "movie", "films", "series", "all") }
+    if (words.isEmpty()) return@coroutineScope emptyList()
+    val clean = words.joinToString(" ")
+    val col = async {
+        runCatching {
+            val res = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/search/collection?api_key=$key&query=${Uri.encode(clean)}&page=1")).jsonObject.sArr("results")
+            res.filter { r -> val n = r.sStr("name").orEmpty().lowercase(); words.all { n.contains(it) } }.take(2).mapNotNull { r ->
+                val id = r.sStr("id") ?: return@mapNotNull null
+                val d = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/collection/$id?api_key=$key")).jsonObject
+                val parts = d.sArr("parts").sortedBy { it.sStr("release_date") ?: "9999" }.mapNotNull { tmdbMetaOf(it, "movie") }
+                if (parts.size < 2) null
+                else SearchGroup(d.sStr("name") ?: r.sStr("name") ?: q, "${parts.size} films · in order", parts.take(3).mapNotNull { it.poster }, d.sStr("backdrop_path")?.let { "${SIMG}w780$it" }, parts)
+            }
+        }.getOrDefault(emptyList())
+    }
+    val studio = async {
+        runCatching {
+            val res = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/search/company?api_key=$key&query=${Uri.encode(clean)}&page=1")).jsonObject.sArr("results")
+            val c = res.firstOrNull { r -> r.sStr("name").orEmpty().lowercase().let { n -> n == clean || n.startsWith(clean) || (n.contains(clean) && n.contains("studio")) } } ?: return@runCatching emptyList<SearchGroup>()
+            val cid = c.sStr("id") ?: return@runCatching emptyList<SearchGroup>()
+            val parts = (1..2).flatMap { pg ->
+                Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/discover/movie?api_key=$key&with_companies=$cid&sort_by=popularity.desc&vote_count.gte=200&page=$pg")).jsonObject.sArr("results")
+            }.mapNotNull { tmdbMetaOf(it, "movie") }.distinctBy { it.id }.sortedBy { it.releaseInfo ?: "9999" }
+            if (parts.size < 3) emptyList() else listOf(SearchGroup(c.sStr("name") ?: q, "${parts.size} films · oldest first", parts.takeLast(3).mapNotNull { it.poster }, parts.lastOrNull()?.background, parts))
+        }.getOrDefault(emptyList())
+    }
+    col.await() + studio.await()
+}
+
+private fun lev(a: String, b: String): Int {
+    val d = IntArray(b.length + 1) { it }
+    for (i in 1..a.length) {
+        var prev = d[0]; d[0] = i
+        for (j in 1..b.length) { val t = d[j]; d[j] = minOf(d[j] + 1, d[j - 1] + 1, prev + if (a[i - 1] == b[j - 1]) 0 else 1); prev = t }
+    }
+    return d[b.length]
+}
+
+/** The real title closest to what was typed (TMDB's own search tolerates small typos; shorter tries catch the rest). */
+private suspend fun didYouMean(key: String, q: String, have: List<SearchHit>): String? {
+    val qq = q.lowercase().trim()
+    val names = have.map { it.meta.name }.toMutableList()
+    if (names.size < 3) {
+        // try the first word(s) and the query without its last letters
+        listOf(qq.dropLast(1), qq.dropLast(2), qq.split(' ').first()).filter { it.length >= 3 && it != qq }.distinct().forEach { v ->
+            runCatching {
+                Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/search/multi?api_key=$key&query=${Uri.encode(v)}&page=1")).jsonObject.sArr("results")
+                    .take(8).mapNotNull { it.sStr("title") ?: it.sStr("name") }.let { names += it }
+            }
+        }
+    }
+    val best = names.distinct().minByOrNull { lev(qq, it.lowercase().take(qq.length + 3)) } ?: return null
+    val dist = lev(qq, best.lowercase().take(qq.length + 3))
+    return best.takeIf { dist in 1..maxOf(2, qq.length / 3) && !best.equals(q, true) }
 }
 
 /* ───────────── UI ───────────── */
@@ -305,6 +398,10 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
     val loading by SearchState.loading.collectAsStateWithLifecycle()
     val suggestions by SearchState.suggestions.collectAsStateWithLifecycle()
     val shownQuery by SearchState.query.collectAsStateWithLifecycle()
+    val groups by SearchState.groups.collectAsStateWithLifecycle()
+    val dym by SearchState.didYouMean.collectAsStateWithLifecycle()
+    var openGroup by remember { mutableStateOf<SearchGroup?>(null) }
+    openGroup?.let { g -> GroupPage(g, onClose = { openGroup = null }) { m -> openGroup = null; onOpen(m) } }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     var recent by remember { mutableStateOf(vm.store("searchRecent").orEmpty().split("\n").filter { it.isNotBlank() }) }
@@ -442,6 +539,11 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
             }
             tq.length < 3 -> CenterNote("Type at least 3 letters to search")
             loading && hits.isEmpty() -> ShimmerGrid(cells)
+            !loading && hits.isEmpty() && shownQuery.isNotEmpty() && dym != null -> Column(Modifier.fillMaxWidth().padding(top = 80.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("No results for “$tq”", color = SubText, fontSize = 16.sp)
+                Text("Did you mean $dym?", Modifier.padding(top = 12.dp).clip(RoundedCornerShape(14.dp)).clickable { setQuery(dym!!); addRecent(dym!!) }.padding(10.dp),
+                    fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFF8A80))
+            }
             !loading && hits.isEmpty() && shownQuery.isNotEmpty() -> CenterNote("No results for “$tq”")
             else -> Box(Modifier.fillMaxSize()) {
                 LazyVerticalGrid(
@@ -451,6 +553,13 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
+                    if (dym != null) item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, key = "dym") {
+                        Text(buildString { append("Did you mean "); append(dym); append("?") }, Modifier.clip(RoundedCornerShape(14.dp)).clickable { setQuery(dym!!); addRecent(dym!!) }
+                            .padding(vertical = 6.dp), fontSize = 16.sp, color = Color(0xFFFF8A80), fontWeight = FontWeight.SemiBold)
+                    }
+                    if (groups.isNotEmpty()) item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, key = "groups") {
+                        GroupWidgets(groups) { openGroup = it }
+                    }
                     items(hits, key = { it.meta.type + it.meta.id }) { h -> SearchCard(h) { addRecent(q); onOpen(h.meta) } }
                 }
                 if (loading) LinearProgressIndicator(
@@ -539,6 +648,74 @@ private fun ShimmerGrid(cells: GridCells) {
                 Box(Modifier.fillMaxWidth(0.7f).height(14.dp).clip(RoundedCornerShape(4.dp)).background(Surface1))
                 Spacer(Modifier.height(6.dp))
                 Box(Modifier.fillMaxWidth(0.45f).height(12.dp).clip(RoundedCornerShape(4.dp)).background(Surface1))
+            }
+        }
+    }
+}
+
+
+/**
+ * Collections like phone widgets: the first one big (wide, glass name plate, its posters fanned like a deck of cards
+ * with white borders), the next ones small side by side.
+ */
+@Composable
+private fun GroupWidgets(groups: List<SearchGroup>, onOpen: (SearchGroup) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        groups.firstOrNull()?.let { GroupCard(it, Modifier.fillMaxWidth().height(190.dp), big = true) { onOpen(it) } }
+        groups.drop(1).chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                row.forEach { g -> GroupCard(g, Modifier.weight(1f).height(150.dp), big = false) { onOpen(g) } }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupCard(g: SearchGroup, modifier: Modifier, big: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(26.dp)
+    Box(modifier.clip(shape).background(Color(0xFF15161C)).border(1.dp, Color(0x26FFFFFF), shape).clickable(onClick = onClick)) {
+        g.backdrop?.let { AsyncImage(it, null, Modifier.fillMaxSize().graphicsLayer { alpha = 0.55f }, contentScale = ContentScale.Crop) }
+        Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color(0xE6000000), Color(0x33000000)))))
+        // the posters, fanned like a deck of cards
+        Box(Modifier.align(Alignment.CenterEnd).padding(end = if (big) 18.dp else 10.dp).fillMaxHeight().width(if (big) 170.dp else 92.dp)) {
+            g.posters.take(3).forEachIndexed { i, p ->
+                val w = if (big) 82.dp else 50.dp
+                AsyncImage(p, null, Modifier.align(Alignment.Center).offset(x = ((i - 1) * (if (big) 34 else 18)).dp, y = (if (i == 1) -4 else 6).dp)
+                    .graphicsLayer { rotationZ = (i - 1) * 8f }
+                    .width(w).aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp)).border(2.dp, Color.White, RoundedCornerShape(12.dp)), contentScale = ContentScale.Crop)
+            }
+        }
+        Column(Modifier.align(Alignment.BottomStart).padding(12.dp).clip(RoundedCornerShape(16.dp)).background(Color(0x59FFFFFF)).border(1.dp, Color(0x40FFFFFF), RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp).widthIn(max = if (big) 200.dp else 120.dp)) {
+            Text(g.name, fontSize = if (big) 17.sp else 13.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, color = Color.White)
+            Text(g.sub, fontSize = 11.sp, color = Color(0xFFE6E8EE), maxLines = 1)
+        }
+    }
+}
+
+/** A collection opened: every title in release order. */
+@Composable
+private fun GroupPage(g: SearchGroup, onClose: () -> Unit, onOpen: (Meta) -> Unit) {
+    androidx.compose.ui.window.Dialog(onClose, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(Modifier.fillMaxSize().background(Color(0xFF0B0C10)).statusBarsPadding()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.IconButton(onClose) { Icon(Icons.Default.Close, "Close") }
+                Column {
+                    Text(g.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(g.sub, fontSize = 12.sp, color = SubText)
+                }
+            }
+            LazyVerticalGrid(GridCells.Adaptive(110.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 60.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                items(g.items.size) { i ->
+                    val m = g.items[i]
+                    Column(Modifier.clickable { onOpen(m) }) {
+                        AsyncImage(m.poster, m.name, Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp)), contentScale = ContentScale.Crop)
+                        Text("${i + 1}. ${m.name}", Modifier.padding(top = 6.dp), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        m.releaseInfo?.let { Text(it, fontSize = 11.sp, color = SubText) }
+                    }
+                }
             }
         }
     }

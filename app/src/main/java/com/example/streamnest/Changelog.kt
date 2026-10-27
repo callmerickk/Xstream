@@ -13,6 +13,23 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.5.9", "27 Oct 2026", "New June & Aiden, and lots more", listOf(
+        "June and Aiden got a new look from your new video: upper body, red light on their edges, chest melting into blur; each stands straight on their own",
+        "They move like people now: smooth blending, breathing, small head moves, real mouth shapes while they talk",
+        "Ask one to call the other: they both pop up side by side, each with their own voice, and react to each other",
+        "They ignore room and movie sound, only answer your real voice, and the movie pauses while they're on screen",
+        "Wake them with \"Hey June\" / \"Hey Aiden\" (stricter during a movie); subtitles are off by default and follow the voice when on",
+        "Typing to them works again; the chat reconnects by itself; a series asked by name plays the series, never twice",
+        "Home: Top 10 style numbered rows for the first two rows, rows shuffled each launch, sharper posters, top cards show faces",
+        "Downloads button next to the bell with a blinking count; a banner when a new notification arrives",
+        "Title page: Play · Watchlist · Download · Trailers; long-press Play has only Play manually, Share, Friends & plan",
+        "Player: choose what swiping does on the left, middle and right; Free zoom (pinch anywhere, drag); pinch hint once per title; smoother hold-for-speed",
+        "Seek previews come in early and never show a spinner; subtitle auto sync listens to voices only",
+        "Search: film series and studios as collection cards in release order, Did you mean…?",
+        "Your taste & languages: New for you in all your languages, a page per language, Anime / K-Drama rows",
+        "Support Xstream bubble after an hour (UPI / PayPal / Ko-fi), set in Developer's Corner",
+        "Fixes: badge links, OpenRouter errors, drag to reorder, duplicate shared titles, remove a friend's pick, remove a plan, chat keyboard, each profile's Turbo / Classic kept apart, Elite on mobile data, next episode at 98%",
+    )),
     Release("0.5.8", "27 Oct 2026", "June & Aiden", listOf(
         "Meet June and Aiden, two best friends who live in Xstream: real faces that blink, smile, laugh, wave and talk",
         "They talk like real people, live, in Hinglish or English (needs your free Gemini key in Integrations)",
@@ -348,6 +365,15 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.5.9", "27 Oct 2026", "Avatars v2, pair mode, Xstream cloud namespace, 2 lists of features", listOf(
+        "Avatars: new Gemini video cut with isnet + background-plate difference matte, per-person split, ECC-stabilised and straightened, 480 px tall, red rim + chest blur baked; calm / speak loops with similarity jumps, frame blending, ghost glide between clips, mouth atlas (20 shapes) by voice level",
+        "GeminiLive: realtimeInput.text (fixes 1007), VAD low sensitivity, sessionResumption + goAway reconnect, shared LiveMic for two sessions, spokenNow() subtitles by play head; pair mode with pass_to_friend / call_friend and reactions",
+        "WakeWord: phrase grammar + per-word confidence, strict during playback, 4 s cooldown, quiet after close; player duck/unduck",
+        "xshared/ namespace for appLook, devAddons, devDefaults, sourceRanks, reports, donate, logs (falls back to shared/) — needs Firebase rules",
+        "Cloud logs: important lines of every device uploaded to xshared/logs/<uid>/<dev> (15 days), viewable in Activity log",
+        "Home: RowStyles (numbered/portrait/landscape/auto, publishable), HomeShuffle, hdPoster from metahub, TasteRows; Search groups (TMDB collection/company) + Did you mean (Levenshtein)",
+        "Plugin search ranked by year and verified against the loaded page; profile switch clears stream caches",
+    )),
     Release("0.5.8", "27 Oct 2026", "June & Aiden (Gemini Live, avatars, wake words)", listOf(
         "GeminiLive.kt: Live API over WebSocket (BidiGenerateContent, generationConfig AUDIO + prebuilt voice, input/output transcription, function calling); model picked from the key's models list (bidiGenerateContent, native-audio first; texts liveModel overrides); 16 kHz mic (VOICE_COMMUNICATION + AEC/NS, headset/BT mic via setCommunicationDevice), 24 kHz AudioTrack at media volume; barge-in gate on speaker; per-20 ms loudness matched to the play head for lip sync",
         "AiAvatar.kt: June/Aiden frames from the Gemini video (cut out, red rim light, 512x288 @24 fps in phone assets/avatars), decoded ahead on a background thread (LRU 36), clips idle/talk loop back and forth, wave/smile/laugh once, 0.28 s cross-fades, jaw drawn with drawBitmapMesh from the voice level",

@@ -24,7 +24,17 @@ object Speech {
     private var winFrames = 0
     private var sum = 0.0
 
-    fun configure(sampleRate: Int, ch: Int) { rate = sampleRate; channels = ch; flush() }
+    // Speech band (about 300 Hz – 3.4 kHz): music beats, bass and explosions mostly fall outside it, so "someone talks"
+    // is judged on the voice band's loudness instead of the whole sound (what alass / ffsubsync-style tools rely on).
+    private var b0 = 0.0; private var b1 = 0.0; private var b2 = 0.0; private var a1 = 0.0; private var a2 = 0.0
+    private var x1 = 0.0; private var x2 = 0.0; private var y1 = 0.0; private var y2 = 0.0
+    private fun bandpass(sampleRate: Int) {
+        val f0 = 1000.0; val q = 0.6
+        val w = 2 * Math.PI * f0 / sampleRate; val alpha = kotlin.math.sin(w) / (2 * q); val a0 = 1 + alpha
+        b0 = alpha / a0; b1 = 0.0; b2 = -alpha / a0; a1 = -2 * kotlin.math.cos(w) / a0; a2 = (1 - alpha) / a0
+        x1 = 0.0; x2 = 0.0; y1 = 0.0; y2 = 0.0
+    }
+    fun configure(sampleRate: Int, ch: Int) { rate = sampleRate; channels = ch; if (sampleRate > 0) bandpass(sampleRate); flush() }
     fun flush() { anchorMs = anchorHintMs; frames = 0; winFrames = 0; sum = 0.0 }
     fun clear() { levels.clear() }
 
@@ -39,7 +49,9 @@ object Speech {
             var s = 0.0
             for (c in 0 until ch) s += if (float) b.float.toDouble() * 32768.0 else b.short.toDouble()
             val m = s / ch / 32768.0
-            sum += m * m; winFrames++
+            val y = b0 * m + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = m; y2 = y1; y1 = y
+            sum += y * y; winFrames++
             if (winFrames >= win) {
                 val db = (10 * kotlin.math.log10(sum / winFrames + 1e-10)).toFloat()
                 val t = anchorMs + frames * 1000 / r
