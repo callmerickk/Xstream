@@ -30,9 +30,9 @@ import kotlin.math.exp
  * while the assistant talks, the jaw opens with the loudness of the audio that is playing at that moment.
  */
 
-enum class Buddy(val label: String) { June("June"), Aiden("Aiden");
-    val other: Buddy get() = if (this == June) Aiden else June
-    companion object { fun of(s: String?): Buddy = if (s.equals("aiden", true)) Aiden else June }
+enum class AiBuddy(val label: String) { June("June"), Aiden("Aiden");
+    val other: AiBuddy get() = if (this == June) Aiden else June
+    companion object { fun of(s: String?): AiBuddy = if (s.equals("aiden", true)) Aiden else June }
 }
 
 /** A part of the video: frames [from]..[to]. [loop] clips play back and forth until something else starts. */
@@ -42,25 +42,25 @@ object AvatarSpec {
     const val FPS = 24
     const val W = 512
     const val H = 288
-    val clips: Map<Buddy, Map<String, AvClip>> = mapOf(
-        Buddy.June to mapOf(
+    val clips: Map<AiBuddy, Map<String, AvClip>> = mapOf(
+        AiBuddy.June to mapOf(
             "idle" to AvClip(0, 24, true), "wave" to AvClip(34, 70, false), "talk" to AvClip(80, 140, true),
             "smile" to AvClip(144, 196, false), "laugh" to AvClip(84, 122, false),
         ),
-        Buddy.Aiden to mapOf(
+        AiBuddy.Aiden to mapOf(
             "idle" to AvClip(0, 40, true), "laugh" to AvClip(56, 108, false), "talk" to AvClip(114, 170, true),
             "smile" to AvClip(114, 170, false), "wave" to AvClip(174, 199, false),
         ),
     )
     /** Mouth on the talking frames (frame pixels): centre x, lip line y, half width, chin y; face centre x. */
-    val mouth: Map<Buddy, FloatArray> = mapOf(
-        Buddy.June to floatArrayOf(266f, 207f, 32f, 247f, 266f),
-        Buddy.Aiden to floatArrayOf(256f, 205f, 34f, 242f, 256f),
+    val mouth: Map<AiBuddy, FloatArray> = mapOf(
+        AiBuddy.June to floatArrayOf(266f, 207f, 32f, 247f, 266f),
+        AiBuddy.Aiden to floatArrayOf(256f, 205f, 34f, 242f, 256f),
     )
 }
 
 /** Decodes and caches one buddy's frames. Shared, so opening the card again is instant. */
-class AvatarFrames private constructor(private val ctx: Context, val buddy: Buddy) {
+class AvatarFrames private constructor(private val ctx: Context, val buddy: AiBuddy) {
     val count: Int = runCatching { ctx.assets.list("avatars/${buddy.name.lowercase()}")?.count { it.endsWith(".webp") } ?: 0 }.getOrDefault(0)
     private val cache = object : LruCache<Int, Bitmap>(36) {}
     private val pending = HashSet<Int>()
@@ -86,10 +86,10 @@ class AvatarFrames private constructor(private val ctx: Context, val buddy: Budd
     }
 
     companion object {
-        private val all = HashMap<Buddy, AvatarFrames>()
-        fun of(ctx: Context, b: Buddy): AvatarFrames = synchronized(all) { all.getOrPut(b) { AvatarFrames(ctx.applicationContext, b) } }
+        private val all = HashMap<AiBuddy, AvatarFrames>()
+        fun of(ctx: Context, b: AiBuddy): AvatarFrames = synchronized(all) { all.getOrPut(b) { AvatarFrames(ctx.applicationContext, b) } }
         /** Warm the first frames up early (app start), so the welcome appears without a blank moment. */
-        fun warm(ctx: Context) { Buddy.entries.forEach { b -> of(ctx, b).want(0, (1..12).toList()) } }
+        fun warm(ctx: Context) { AiBuddy.entries.forEach { b -> of(ctx, b).want(0, (1..12).toList()) } }
     }
 }
 
@@ -224,7 +224,7 @@ private fun smooth01(t: Float): Float { val c = t.coerceIn(0f, 1f); return c * c
 
 /** Keeps a stable reference for the mouth level reading inside the frame loop. */
 @Composable
-fun rememberAvatarPlayer(buddy: Buddy): AvatarPlayer {
+fun rememberAvatarPlayer(buddy: AiBuddy): AvatarPlayer {
     val ctx = LocalContext.current
     return remember(buddy) { AvatarPlayer(AvatarFrames.of(ctx, buddy)) }
 }

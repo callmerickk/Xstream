@@ -675,7 +675,7 @@ private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> 
             RowDivider(20.dp)
             ToggleRow("Call them by name", "Say \"June\" or \"Aiden\" whenever Xstream is open, even during a movie. Downloads a small offline voice model (36 MB) once.", isOn(rt["wakeOn"] ?: "yes")) { vm.setText("wakeOn", if (it) "yes" else "no") }
             RowDivider(20.dp)
-            val greeterNow = Buddy.of(rt["greeter"] ?: "June")
+            val greeterNow = AiBuddy.of(rt["greeter"] ?: "June")
             SettingRow(null, "Who says hello: ${greeterNow.label}", "Tap to switch between June and Aiden.") { vm.setText("greeter", greeterNow.other.name) }
             RowDivider(20.dp)
             ToggleRow("Ask \"How was it?\"", "After watching, ask Go for it / Skip / Just surfing.", isOn(rt["askVote"] ?: Defaults["askVote"] ?: "yes")) { vm.setText("askVote", if (it) "yes" else "no") }

@@ -29,7 +29,7 @@ object WakeWord {
     @Volatile private var thread: Thread? = null
     @Volatile private var lastHit = 0L
     @Volatile private var gen = 0
-    var onName: (Buddy) -> Unit = {}
+    var onName: (AiBuddy) -> Unit = {}
 
     private fun modelDir(ctx: Context) = File(ctx.filesDir, "vosk/$MODEL_DIR")
     fun hasModel(ctx: Context) = File(modelDir(ctx), "am").exists() || File(modelDir(ctx), "conf").exists()
@@ -108,8 +108,8 @@ object WakeWord {
                 val txt = if (final) rec.result else rec.partialResult
                 val heard = Regex("\"(?:text|partial)\"\\s*:\\s*\"([^\"]*)\"").find(txt)?.groupValues?.get(1).orEmpty()
                 val b = when {
-                    Regex("\\bjune\\b").containsMatchIn(heard) -> Buddy.June
-                    Regex("\\b(aiden|aidan|eden|hayden)\\b").containsMatchIn(heard) -> Buddy.Aiden
+                    Regex("\\bjune\\b").containsMatchIn(heard) -> AiBuddy.June
+                    Regex("\\b(aiden|aidan|eden|hayden)\\b").containsMatchIn(heard) -> AiBuddy.Aiden
                     else -> null
                 }
                 if (b != null && System.currentTimeMillis() - lastHit > 2500) {

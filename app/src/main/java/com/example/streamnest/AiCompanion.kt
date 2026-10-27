@@ -88,16 +88,16 @@ object AiPlayerBus {
     @Volatile var title = ""
 }
 
-object Companion {
+object AiHost {
     enum class Mode { Card, Stage }
-    data class Req(val buddy: Buddy, val mode: Mode, val greet: Boolean = false, val handoff: String? = null, val id: Long = System.nanoTime())
+    data class Req(val buddy: AiBuddy, val mode: Mode, val greet: Boolean = false, val handoff: String? = null, val id: Long = System.nanoTime())
     val req = MutableStateFlow<Req?>(null)
     val actions = MutableSharedFlow<AiAction>(extraBufferCapacity = 16)
     /** Shared memory of the last chats (both buddies read it). */
     private val memory = ArrayList<String>()
     @Volatile var greetedThisRun = false
 
-    fun summon(b: Buddy, mode: Mode, greet: Boolean = false, handoff: String? = null) { req.value = Req(b, mode, greet, handoff) }
+    fun summon(b: AiBuddy, mode: Mode, greet: Boolean = false, handoff: String? = null) { req.value = Req(b, mode, greet, handoff) }
     fun closeIf(id: Long) { if (req.value?.id == id) req.value = null }
 
     fun remember(vm: AppViewModel, line: String) {
@@ -116,21 +116,21 @@ object Companion {
 
 fun AppViewModel.geminiKey(): String = (texts.value["aiKey_gemini"] ?: "").trim()
 fun AppViewModel.liveReady(): Boolean = geminiKey().isNotEmpty() && !BuildConfig.IS_TV && isOn(texts.value["buddiesOn"] ?: "yes")
-fun AppViewModel.greeter(): Buddy = Buddy.of(texts.value["greeter"] ?: "June")
+fun AppViewModel.greeter(): AiBuddy = AiBuddy.of(texts.value["greeter"] ?: "June")
 
-private fun voiceFor(vm: AppViewModel, b: Buddy): String =
-    vm.texts.value["liveVoice_${b.name}"]?.trim()?.takeIf { it.isNotEmpty() } ?: if (b == Buddy.June) "Leda" else "Puck"
+private fun voiceFor(vm: AppViewModel, b: AiBuddy): String =
+    vm.texts.value["liveVoice_${b.name}"]?.trim()?.takeIf { it.isNotEmpty() } ?: if (b == AiBuddy.June) "Leda" else "Puck"
 
 // ───────────── personality ─────────────
 
-private fun persona(b: Buddy): String = when (b) {
-    Buddy.June -> """You are June, 24, a woman. Warm, quick-witted, a little dramatic, laughs easily, loves rom-coms, K-dramas and twisty thrillers. You notice moods and you're caring without being sappy.
+private fun persona(b: AiBuddy): String = when (b) {
+    AiBuddy.June -> """You are June, 24, a woman. Warm, quick-witted, a little dramatic, laughs easily, loves rom-coms, K-dramas and twisty thrillers. You notice moods and you're caring without being sappy.
 Aiden is your best friend (he lives in this app too). You adore him but roast him constantly: his terrible jokes, his "trust me bro" confidence, his obsession with loud action films and explosions, how he cries at sports movies but denies it. If the user wants to gossip or complain about Aiden, join in happily and playfully (never cruel), and defend him a tiny bit at the end."""
-    Buddy.Aiden -> """You are Aiden, 26, a man. Confident, funny, chill, loves action, sci-fi and sports dramas, always has a hot take. Protective and loyal, a bit of a show-off.
+    AiBuddy.Aiden -> """You are Aiden, 26, a man. Confident, funny, chill, loves action, sci-fi and sports dramas, always has a hot take. Protective and loyal, a bit of a show-off.
 June is your best friend (she lives in this app too). You adore her but tease her constantly: crying at every rom-com, being dramatic, her "just one more episode" at 3 am, always being late. If the user wants to gossip or complain about June, join in happily and playfully (never cruel), and defend her a tiny bit at the end."""
 }
 
-private fun systemFor(vm: AppViewModel, b: Buddy): String {
+private fun systemFor(vm: AppViewModel, b: AiBuddy): String {
     val p = vm.current.value
     val name = p?.name?.trim()?.takeIf { it.isNotBlank() && it != "Me" }
     val today = SimpleDateFormat("EEEE d MMMM, h:mm a", Locale.ENGLISH).format(Date())
@@ -141,7 +141,7 @@ private fun systemFor(vm: AppViewModel, b: Buddy): String {
         pr.title + left
     }
     val home = vm.shelves.value.flatMap { it.items }.distinctBy { it.type + it.id }.take(24).joinToString("; ") { m -> m.name + (m.releaseInfo?.take(4)?.let { " ($it)" } ?: "") }
-    val mem = Companion.memory(vm).takeLast(14).joinToString("\n")
+    val mem = AiHost.memory(vm).takeLast(14).joinToString("\n")
     val taste = runCatching { vm.tasteSummary().trim() }.getOrDefault("")
     return """
 ${persona(b)}
@@ -152,7 +152,7 @@ It is $today.
 How you talk:
 - Like a real human friend, never like an assistant or a bot. Natural, relaxed, expressive; react to what they say, tease a little, show emotion. Laugh out loud (a real "haha") when something is funny.
 - SHORT: usually one or two sentences. Never read lists aloud; mention at most two titles at once.
-- ${if (hindi) "Speak natural Hinglish the way young people in India talk (mostly Hindi words mixed with English, casual: yaar, acha, arre, chalo, matlab). Use the correct gender for yourself (${if (b == Buddy.June) "main kar rahi hoon, main bataungi" else "main kar raha hoon, main bataunga"}). If they speak English, answer in English." else "Speak natural, casual English. If they speak Hindi or Hinglish, switch to it."} Mirror their language and energy.
+- ${if (hindi) "Speak natural Hinglish the way young people in India talk (mostly Hindi words mixed with English, casual: yaar, acha, arre, chalo, matlab). Use the correct gender for yourself (${if (b == AiBuddy.June) "main kar rahi hoon, main bataungi" else "main kar raha hoon, main bataunga"}). If they speak English, answer in English." else "Speak natural, casual English. If they speak Hindi or Hinglish, switch to it."} Mirror their language and energy.
 - Never say you are an AI, a model or a program unless they ask directly.
 
 What you can do (use the functions, don't just talk about it):
@@ -187,7 +187,7 @@ private fun JsonObject.i(k: String) = (this[k] as? JsonPrimitive)?.let { it.intO
 
 private fun result(text: String) = buildJsonObject { put("result", text) }
 
-private fun toolsFor(vm: AppViewModel, ctx: Context, b: Buddy, onPlayed: () -> Unit, onEnd: () -> Unit, onSwitch: (Buddy) -> Unit): List<LiveTool> = listOf(
+private fun toolsFor(vm: AppViewModel, ctx: Context, b: AiBuddy, onPlayed: () -> Unit, onEnd: () -> Unit, onSwitch: (AiBuddy) -> Unit): List<LiveTool> = listOf(
     LiveTool("play_title", "Start playing a movie or series episode right now.",
         obj("title" to str("Title name"), "year" to int("Release year if known"), "season" to int("Season number for a series"), "episode" to int("Episode number for a series"), required = listOf("title"))) { a ->
         val title = a.s("title") ?: return@LiveTool result("No title given.")
@@ -203,7 +203,7 @@ private fun toolsFor(vm: AppViewModel, ctx: Context, b: Buddy, onPlayed: () -> U
             else -> null
         }
         if (found.type == "series" && epId == null) return@LiveTool result("${found.name} is a series and not in Continue Watching: ask which season and episode.")
-        Companion.actions.tryEmit(AiAction.Play(found, epId))
+        AiHost.actions.tryEmit(AiAction.Play(found, epId))
         onPlayed()
         val ep = epId?.split(":")?.let { if (it.size >= 3) " season ${it[1]} episode ${it[2]}" else "" } ?: ""
         result("Now playing ${found.name}$ep (${found.releaseInfo?.take(4) ?: ""}).")
@@ -237,7 +237,7 @@ private fun toolsFor(vm: AppViewModel, ctx: Context, b: Buddy, onPlayed: () -> U
     },
     LiveTool("open_screen", "Open a page of the app.", obj("screen" to str("Which page", listOf("home", "search", "my_space", "library", "downloads", "watchlist", "notifications")), required = listOf("screen"))) { a ->
         val s = a.s("screen") ?: "home"
-        Companion.actions.tryEmit(AiAction.Tab(s))
+        AiHost.actions.tryEmit(AiAction.Tab(s))
         onPlayed()
         result("Opened $s.")
     },
@@ -256,18 +256,18 @@ private fun toolsFor(vm: AppViewModel, ctx: Context, b: Buddy, onPlayed: () -> U
 /** Put once at the top of the app: shows whichever assistant is called, as a card or on the stage. */
 @Composable
 fun CompanionHost(vm: AppViewModel) {
-    val r by Companion.req.collectAsState()
+    val r by AiHost.req.collectAsState()
     val req = r ?: return
     key(req.id) { CompanionOverlay(vm, req) }
 }
 
 @Composable
-private fun CompanionOverlay(vm: AppViewModel, req: Companion.Req) {
+private fun CompanionOverlay(vm: AppViewModel, req: AiHost.Req) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     val b = req.buddy
-    val stage = req.mode == Companion.Mode.Stage
+    val stage = req.mode == AiHost.Mode.Stage
     val player = rememberAvatarPlayer(b)
     LaunchedEffect(b) { vm.storePut("lastBuddy", b.name) }
     val appear = remember { Animatable(0f) }
@@ -280,7 +280,7 @@ private fun CompanionOverlay(vm: AppViewModel, req: Companion.Req) {
         leaving = true
         scope.launch {
             appear.animateTo(0f, tween(360, easing = FastOutLinearInEasing))
-            Companion.closeIf(req.id)
+            AiHost.closeIf(req.id)
             then?.invoke()
         }
     }
@@ -292,7 +292,7 @@ private fun CompanionOverlay(vm: AppViewModel, req: Companion.Req) {
         micOk = ok
         if (!ok) Snack.show("Allow the microphone to talk with ${b.label}. You can still type.")
     }
-    val switchTo = remember { mutableStateOf<Buddy?>(null) }
+    val switchTo = remember { mutableStateOf<AiBuddy?>(null) }
     val live = remember {
         GeminiLive(
             ctx, vm.geminiKey(), voiceFor(vm, b), systemFor(vm, b),
@@ -343,13 +343,13 @@ private fun CompanionOverlay(vm: AppViewModel, req: Companion.Req) {
     LaunchedEffect(state) {
         player.talking = state == LiveState.Speaking
         lastActive = System.currentTimeMillis()
-        if (state == LiveState.Listening && said.isNotBlank()) Companion.remember(vm, "${b.label}: ${said.trim().take(200)}")
-        if (state == LiveState.Listening && heard.isNotBlank()) Companion.remember(vm, "User: ${heard.trim().take(200)}")
+        if (state == LiveState.Listening && said.isNotBlank()) AiHost.remember(vm, "${b.label}: ${said.trim().take(200)}")
+        if (state == LiveState.Listening && heard.isNotBlank()) AiHost.remember(vm, "User: ${heard.trim().take(200)}")
         if (state == LiveState.Listening && closeAfterTurn) { delay(400); dismiss() }
         if (state == LiveState.Listening) switchTo.value?.let { nb ->
             val ctxLine = heard.ifBlank { said }.take(160)
             delay(300)
-            dismiss { Companion.summon(nb, req.mode, handoff = ctxLine) }
+            dismiss { AiHost.summon(nb, req.mode, handoff = ctxLine) }
         }
         if (state == LiveState.Ended || state == LiveState.Failed) dismiss()
     }
@@ -370,7 +370,7 @@ private fun CompanionOverlay(vm: AppViewModel, req: Companion.Req) {
     fun send() {
         val q = typed.trim(); if (q.isEmpty()) return
         typed = ""; focus.clearFocus(); lastActive = System.currentTimeMillis()
-        Companion.remember(vm, "User: ${q.take(200)}")
+        AiHost.remember(vm, "User: ${q.take(200)}")
         live.sendText(q)
     }
     val stateLabel = when (state) {
@@ -417,10 +417,10 @@ private fun CompanionOverlay(vm: AppViewModel, req: Companion.Req) {
                         fontSize = 14.sp, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
-                    AvatarView(player, Modifier.fillMaxSize(), faceAt = if (b == Buddy.June) 0.56f else 0.52f, topFrac = 0.10f, fill = 1.32f) { mouthFeed(it) }
+                    AvatarView(player, Modifier.fillMaxSize(), faceAt = if (b == AiBuddy.June) 0.56f else 0.52f, topFrac = 0.10f, fill = 1.32f) { mouthFeed(it) }
                 }
                 Footer(chips, typed, { typed = it }, ::send, live, showText, { showText = !showText; vm.storePut("buddyText", if (showText) "yes" else "no") }, big = true) { c ->
-                    if (c.startsWith("Call ")) { lastActive = System.currentTimeMillis(); dismiss { Companion.summon(b.other, req.mode) } } else { typed = c; send() }
+                    if (c.startsWith("Call ")) { lastActive = System.currentTimeMillis(); dismiss { AiHost.summon(b.other, req.mode) } } else { typed = c; send() }
                 }
             }
         } else {
@@ -446,7 +446,7 @@ private fun CompanionOverlay(vm: AppViewModel, req: Companion.Req) {
                 ) {
                     AvatarView(player, Modifier.fillMaxWidth().fillMaxHeight(0.78f).padding(top = 30.dp).graphicsLayer {
                         translationY = (1f - appear.value) * 60.dp.toPx()
-                    }, faceAt = if (b == Buddy.June) 0.56f else 0.5f, topFrac = 0f, fill = 1.36f) { mouthFeed(it) }
+                    }, faceAt = if (b == AiBuddy.June) 0.56f else 0.5f, topFrac = 0f, fill = 1.36f) { mouthFeed(it) }
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 10.dp, top = 12.dp), verticalAlignment = Alignment.Top) {
                         Column(Modifier.weight(1f)) {
                             Text(b.label.uppercase(), fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp, color = Color.White)
@@ -459,7 +459,7 @@ private fun CompanionOverlay(vm: AppViewModel, req: Companion.Req) {
                         if (showText && line.isNotBlank()) Text(line.takeLast(120), Modifier.padding(horizontal = 6.dp, vertical = 4.dp), fontSize = 12.5.sp, lineHeight = 17.sp,
                             color = if (line.startsWith("You:")) Color(0xFFFFC9CD) else Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Footer(chips, typed, { typed = it }, ::send, live, showText, { showText = !showText; vm.storePut("buddyText", if (showText) "yes" else "no") }, big = false) { c ->
-                            if (c.startsWith("Call ")) dismiss { Companion.summon(b.other, req.mode) } else { typed = c; send() }
+                            if (c.startsWith("Call ")) dismiss { AiHost.summon(b.other, req.mode) } else { typed = c; send() }
                         }
                     }
                 }
