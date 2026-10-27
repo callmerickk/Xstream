@@ -978,7 +978,7 @@ private fun FloatingFilters(
         // Xstream: no TV / Movies / Live capsule — only the AI voice button.
         Box(Modifier.align(Alignment.CenterEnd).tourTarget("ai")) { AiOrbButton(vm, 52.dp, hide, onAi) }
         // AIDEN wakes up when the app opens: slides out of the button, says hello, and goes back to sleep.
-        Box(Modifier.align(Alignment.CenterEnd).padding(end = 56.dp)) { AidenWake(vm, onAi) }
+        if (!vm.liveReady()) Box(Modifier.align(Alignment.CenterEnd).padding(end = 56.dp)) { AidenWake(vm, onAi) }
     }
 }
 

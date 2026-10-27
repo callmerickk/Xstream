@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.xstream"
         minSdk = 24
         targetSdk = 34
-        versionCode = 22
-        versionName = "0.5.7"
+        versionCode = 23
+        versionName = "0.5.8"
     }
     // Two apps from one project: the phone app and StreamX TV (Fire TV / Android TV).
     // "gradle assembleDebug" builds both APKs.
@@ -112,6 +112,9 @@ dependencies {
     // VLC engine: backup for the rare files ExoPlayer can't open (ExoPlayer plays first, like Nuvio).
     implementation("org.videolan.android:libvlc-all:3.6.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.2")
+    // June & Aiden: offline wake word ("June!" / "Aiden!"), Vosk (Apache 2.0) + JNA.
+    implementation("com.alphacephei:vosk-android:0.3.47@aar")
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
     // Watch together voice + video (WebRTC, org.webrtc). Only the ARM library of each app is packaged (abiFilters).
     implementation("io.getstream:stream-webrtc-android:1.3.9")
     // StreamX VPN: WireGuard's official Android library (open source), and a QR scanner for WireGuard QR codes.

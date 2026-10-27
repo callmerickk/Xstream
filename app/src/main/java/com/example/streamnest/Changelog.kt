@@ -13,6 +13,15 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.5.8", "27 Oct 2026", "June & Aiden", listOf(
+        "Meet June and Aiden, two best friends who live in Xstream: real faces that blink, smile, laugh, wave and talk",
+        "They talk like real people, live, in Hinglish or English (needs your free Gemini key in Integrations)",
+        "Say \"June\" or \"Aiden\" any time the app is open, even during a movie, and they appear",
+        "Hands-free: ask them to play a movie or an episode, resume your show, pause, skip, next episode or change the volume",
+        "After you pick a profile, one of them pops out of the AI button to say hello",
+        "Gossip about one with the other: they know each other, and they remember your last chats",
+        "Uses your earbuds' mic when they're connected",
+    )),
     Release("0.5.7", "23 Oct 2026", "Meet AIDEN", listOf(
         "AIDEN, your movie friend: opens in a bubble from the AI button, in the app's red look",
         "AIDEN's words light up exactly as he says them — text and voice together",
@@ -339,6 +348,13 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.5.8", "27 Oct 2026", "June & Aiden (Gemini Live, avatars, wake words)", listOf(
+        "GeminiLive.kt: Live API over WebSocket (BidiGenerateContent, generationConfig AUDIO + prebuilt voice, input/output transcription, function calling); model picked from the key's models list (bidiGenerateContent, native-audio first; texts liveModel overrides); 16 kHz mic (VOICE_COMMUNICATION + AEC/NS, headset/BT mic via setCommunicationDevice), 24 kHz AudioTrack at media volume; barge-in gate on speaker; per-20 ms loudness matched to the play head for lip sync",
+        "AiAvatar.kt: June/Aiden frames from the Gemini video (cut out, red rim light, 512x288 @24 fps in phone assets/avatars), decoded ahead on a background thread (LRU 36), clips idle/talk loop back and forth, wave/smile/laugh once, 0.28 s cross-fades, jaw drawn with drawBitmapMesh from the voice level",
+        "AiCompanion.kt: speech card (welcome after profile, AI button) and stage (wake word); personas as best friends, shared chat memory (buddyMem), tools play_title / continue_watching / search_titles / player_control / set_volume / open_screen / switch_assistant / end_conversation",
+        "WakeWord.kt: Vosk small en-IN model (downloaded once to files/vosk), grammar of the two names; runs only in foreground with a profile, off during Watch together calls and while a buddy talks",
+        "Detail: pendingDetailPlay accepts an episode id (tt:s:e); Player: AiPlayerBus commands; Settings: live voice, call by name, who says hello",
+    )),
     Release("0.5.7", "23 Oct 2026", "AIDEN, dev AI assistant, row names", listOf(
         "VoiceAssistant: popup bubble (BottomEnd above the orb), AidenCore, karaoke reveal driven by onStart / onRangeStart (estimate after onStart), text = humanize(say)",
         "AidenWake: once per process, expandHorizontally capsule left of the orb, own TTS, word-synced; aiWake / aiWakeVoice toggles; silent ringer = no voice",

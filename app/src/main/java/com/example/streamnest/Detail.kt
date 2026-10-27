@@ -359,7 +359,9 @@ fun DetailScreen(
         if (want.substringBefore(":") != imdb) return@LaunchedEffect
         if (meta.type == "series" && episodes.isEmpty() && !metaLoaded) return@LaunchedEffect
         pendingDetailPlay.value = null
-        start(playTarget.target)
+        // A voice request for one episode ("season 1 episode 4"): that episode; otherwise Continue / the first.
+        val ep = if (want.count { it == ':' } >= 2) episodes.firstOrNull { it.id == want } else null
+        start(ep?.let { target(it) } ?: playTarget.target)
     }
 
     // ── Trailers & videos (TMDB): official uploads only when there are any, newest first ──

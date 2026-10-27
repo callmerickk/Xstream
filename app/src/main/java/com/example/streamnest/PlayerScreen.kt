@@ -2289,6 +2289,20 @@ fun PlayerScreen(
         )
     }
     fun playNext() { nextEp?.let { playEpisode(it) } }
+    // June & Aiden: voice commands for this video ("pause", "next episode", "forward 30").
+    DisposableEffect(Unit) { AiPlayerBus.open = true; AiPlayerBus.title = p.title; onDispose { AiPlayerBus.open = false } }
+    LaunchedEffect(Unit) {
+        AiPlayerBus.cmd.collect { (act, secs) ->
+            when (act) {
+                "pause" -> pauseNow()
+                "resume" -> playNow()
+                "next_episode" -> playNext()
+                "forward" -> seekBy(secs * 1000L)
+                "rewind" -> seekBy(-secs * 1000L)
+                "stop" -> onBack()
+            }
+        }
+    }
     /** Play another Quick Start file (quality or language change) from the same second. */
     fun switchTo(st: StreamItem, label: String? = null) {
         val keep = keepPos()

@@ -52,3 +52,10 @@
 -keep class androidx.fragment.** { *; }
 -keep class androidx.core.** { *; }
 -keep class com.google.android.material.** { *; }
+
+# Vosk wake word (JNA)
+-keep class com.sun.jna.** { *; }
+-keep class * implements com.sun.jna.** { *; }
+-keep class org.vosk.** { *; }
+-dontwarn java.awt.**
+-dontwarn com.sun.jna.**

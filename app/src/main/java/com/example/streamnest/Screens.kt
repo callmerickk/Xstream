@@ -230,6 +230,48 @@ fun App(vm: AppViewModel = viewModel()) {
     CompositionLocalProvider(LocalTexts provides texts) {
         LaunchedEffect(profile == null) { if (profile == null) stack.clear() }
         val open: (Meta) -> Unit = { stack.add(Screen.Detail(it)) }
+        // June & Aiden: what they do for you, the hello after picking a profile, and their names as wake words.
+        val compReq by Companion.req.collectAsState()
+        LaunchedEffect(Unit) {
+            Companion.actions.collect { a ->
+                when (a) {
+                    is AiAction.Play -> {
+                        while (stack.lastOrNull() is Screen.Player) stack.removeAt(stack.lastIndex)
+                        pendingDetailPlay.value = a.episode ?: a.meta.id
+                        stack.add(Screen.Detail(a.meta))
+                    }
+                    is AiAction.Tab -> when (a.name) {
+                        "watchlist" -> stack.add(Screen.Watchlist())
+                        "notifications" -> stack.add(Screen.Notes)
+                        else -> { stack.clear(); tab = when (a.name) { "search" -> 1; "library", "downloads" -> 3; "my_space" -> 2; else -> 0 } }
+                    }
+                }
+            }
+        }
+        val buddyCtx = androidx.compose.ui.platform.LocalContext.current
+        LaunchedEffect(profile?.id) {
+            if (profile == null || Companion.greetedThisRun || !vm.liveReady() || !isOn(texts["aiWake"] ?: "yes")) return@LaunchedEffect
+            Companion.greetedThisRun = true
+            AvatarFrames.warm(buddyCtx)
+            delay(1600)
+            if (stack.isEmpty() && Companion.req.value == null) Companion.summon(vm.greeter(), Companion.Mode.Card, greet = true)
+        }
+        val callMic by Call.micOn.collectAsState()
+        val life = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+        var appResumed by remember { mutableStateOf(true) }
+        DisposableEffect(life) {
+            val o = androidx.lifecycle.LifecycleEventObserver { _, e ->
+                if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) appResumed = true
+                else if (e == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) appResumed = false
+            }
+            life.addObserver(o); onDispose { life.removeObserver(o); WakeWord.stop() }
+        }
+        val liveOk = vm.liveReady()
+        LaunchedEffect(profile?.id, compReq == null, callMic, appResumed, texts["wakeOn"], liveOk) {
+            WakeWord.onName = { b -> if (Companion.req.value == null) Companion.summon(b, Companion.Mode.Stage) }
+            val on = profile != null && compReq == null && !callMic && appResumed && liveOk && isOn(texts["wakeOn"] ?: "yes")
+            if (on) { delay(700); WakeWord.start(buddyCtx) } else WakeWord.stop()
+        }
         if (profile == null && gateOpen) CloudGate(onDone = { gateOpen = false })
         else if (profile == null && (restoringCloud || emptyAccount)) RestoreScreen(restoringCloud, onDifferent = { Cloud.signOut(); Cloud.restoring.value = false; emptyAccount = false; gateOpen = true }) { Cloud.restoring.value = false; emptyAccount = false }
         else if (profile == null && texts["streamMode"] == null) ModeChooser(vm) {}
@@ -277,12 +319,12 @@ fun App(vm: AppViewModel = viewModel()) {
                 // Watches every touch (never consumes it) to wake the dock.
                 awaitPointerEventScope { while (true) { awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial); lastTouch[0] = System.currentTimeMillis(); if (idleHidden) idleHidden = false } }
             }) {
-                Box(Modifier.fillMaxSize().then(if (voiceOpen) Modifier.blur(10.dp) else Modifier)) {
+                Box(Modifier.fillMaxSize().then(if (voiceOpen || compReq?.mode == Companion.Mode.Card) Modifier.blur(10.dp) else Modifier)) {
                 when (tab) {
                     0 -> HomeScreen(
                         vm, homeList, capsuleAnim, open, { stack.add(it) },
                         onLive = { stack.add(Screen.Live) },
-                        onAi = { voiceOpen = true },
+                        onAi = { if (vm.liveReady()) Companion.summon(Buddy.of(vm.store("lastBuddy") ?: vm.greeter().name), Companion.Mode.Card) else voiceOpen = true },
                         onManual = { m, k -> stack.add(Screen.Detail(m, k)) },
                         onOpenCollection = { c, f -> stack.add(Screen.Collection(c.id, f.id)) },
                     )
@@ -322,6 +364,7 @@ fun App(vm: AppViewModel = viewModel()) {
         if (profile != null && stack.lastOrNull() !is Screen.Player && stack.lastOrNull() !is Screen.Trailer) voteFor?.let { m ->
             key(m.id) { VoteCapsule(m, onVote = { v -> vm.vote(m, v) }, onDismiss = { voteFor = null }) }
         }
+        if (profile != null) CompanionHost(vm)
         // Watch together invite (🔔 notification or a link): "Who's watching?" first, then join the room and open its video.
         val joinAsk by JoinIntent.code.collectAsState()
         LaunchedEffect(joinAsk, profile) {

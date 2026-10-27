@@ -667,9 +667,16 @@ private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> 
             val rt by vm.texts.collectAsStateWithLifecycle()
             ToggleRow("Recommended for you", "Show a row on Home built from what you liked.", isOn(rt["showRecs"] ?: Defaults["showRecs"] ?: "yes")) { vm.setText("showRecs", if (it) "yes" else "no") }
             RowDivider(20.dp)
-            ToggleRow("AIDEN says hello", "A short greeting when the app opens, then AIDEN waits for you.", isOn(rt["aiWake"] ?: "yes")) { vm.setText("aiWake", if (it) "yes" else "no") }
+            ToggleRow("Hello when the app opens", "June or Aiden pops out of the AI button and says hello after you pick a profile.", isOn(rt["aiWake"] ?: "yes")) { vm.setText("aiWake", if (it) "yes" else "no") }
             RowDivider(20.dp)
             ToggleRow("Hello out loud", "AIDEN speaks the greeting (never when your phone is on silent).", isOn(rt["aiWakeVoice"] ?: "yes")) { vm.setText("aiWakeVoice", if (it) "yes" else "no") }
+            RowDivider(20.dp)
+            ToggleRow("June & Aiden, live voice", "Real-time voice chat with the two of them, using your Gemini key (Integrations).", isOn(rt["buddiesOn"] ?: "yes")) { vm.setText("buddiesOn", if (it) "yes" else "no") }
+            RowDivider(20.dp)
+            ToggleRow("Call them by name", "Say \"June\" or \"Aiden\" whenever Xstream is open, even during a movie. Downloads a small offline voice model (36 MB) once.", isOn(rt["wakeOn"] ?: "yes")) { vm.setText("wakeOn", if (it) "yes" else "no") }
+            RowDivider(20.dp)
+            val greeterNow = Buddy.of(rt["greeter"] ?: "June")
+            SettingRow(null, "Who says hello: ${greeterNow.label}", "Tap to switch between June and Aiden.") { vm.setText("greeter", greeterNow.other.name) }
             RowDivider(20.dp)
             ToggleRow("Ask \"How was it?\"", "After watching, ask Go for it / Skip / Just surfing.", isOn(rt["askVote"] ?: Defaults["askVote"] ?: "yes")) { vm.setText("askVote", if (it) "yes" else "no") }
         }
