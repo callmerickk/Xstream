@@ -33,7 +33,7 @@ object DevDefaults {
         runCatching {
             Api.http.newCall(Request.Builder().url(XNs.url("devDefaults", t))
                 .put(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r ->
-                if (r.isSuccessful) null else if (r.code == 401 || r.code == 403) "Not allowed: add the Firebase rule for xshared/devDefaults (write: owner only, read: signed-in)." else "HTTP ${r.code}"
+                if (r.isSuccessful) null else if (r.code == 401 || r.code == 403) "Not allowed: add the Firebase rule for shared/devDefaults (write: owner only, read: signed-in)." else "HTTP ${r.code}"
             }
         }.getOrElse { "Couldn't reach the cloud." }
     }
@@ -51,7 +51,9 @@ object DevDefaults {
                 when {
                     // The developer's filters are the base; the user's own filter changes stay on top (never replaced).
                     k == "t_tagRules" -> if (vm.texts.value["devTagRules"] != value) { vm.setText("devTagRules", value); changed += "devTagRules" }
-                    k.startsWith("t_") -> { val key = k.removePrefix("t_"); if (vm.texts.value[key] != value) { vm.setText(key, value); changed += key } }
+                    k.startsWith("t_") -> { val key = k.removePrefix("t_")
+                        val own = vm.store("ownKey_$key") == "1" && !vm.texts.value[key].isNullOrBlank()
+                        if (!own && vm.texts.value[key] != value) { vm.setText(key, value); changed += key } }
                     k.startsWith("s_") -> { val key = k.removePrefix("s_"); if (vm.store(key) != value) { vm.storePut(key, value); changed += key } }
                 }
             }

@@ -265,7 +265,9 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
         .setMediaCodecSelector(dvFallback)
         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
         .setEnableDecoderFallback(true)
-        .forceEnableMediaCodecAsynchronousQueueing()
+        // Asynchronous decoder feeding is left off on phones where it made the video decoder refuse files (vivo / iQOO,
+        // and any phone after its decoder once failed): the normal feeding plays everything there.
+        .apply { if (!DecoderSafe.on(vm)) forceEnableMediaCodecAsynchronousQueueing() }
     return ExoPlayer.Builder(ctx, renderers).setLoadControl(load).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
         // Seeking may land up to 0.3 s off the exact spot: much faster jumps on big files (as CloudStream does).
         .setSeekParameters(androidx.media3.exoplayer.SeekParameters(300_000L, 300_000L))
@@ -1211,6 +1213,7 @@ fun PlayerScreen(
         val l = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 if (usingVlc) return
+                DecoderSafe.noteError(vm, ctx, error, tracks)
                 onEngineError(error.errorCodeName.removePrefix("ERROR_CODE_"))
             }
             override fun onTracksChanged(t: Tracks) {
@@ -3871,8 +3874,12 @@ fun PlayerScreen(
             val slowNow by SlowAddons.links.collectAsStateWithLifecycle()
             val qCols by produceState<List<Pair<String, List<Pair<String, List<StreamItem>>>>>>(emptyList(), quickList, known, hdReady, slowNow[p.key], picOrder, qualityMenu) {
                 value = withContext(Dispatchers.Default) { runCatching {
-                    val all = vm.filtered((quickList + known + hdReady.values.flatten() + slowNow[p.key].orEmpty()).distinctBy { it.stream.url }).list
-                        .filter { !Ranker.isDead(it) && !Ranker.keepsFailing(it) && !it.unplayableHere() && !it.slowMp4() && HostStats.penalty(it.stream.url.orEmpty()) == 0 }
+                    // Every link that can still play is listed (links whose server had a bad moment come last instead of
+                    // vanishing: Netflix / Hotstar showed in Sources but not here), and the one playing is always in it.
+                    val playingNow = now?.url?.let { u -> (quickList + known).firstOrNull { it.stream.url == u } }
+                    val all = (vm.filtered((quickList + known + hdReady.values.flatten() + slowNow[p.key].orEmpty()).distinctBy { it.stream.url }).list
+                        .filter { !Ranker.isDead(it) && !it.unplayableHere() && !it.slowMp4() } + listOfNotNull(playingNow)).distinctBy { it.stream.url }
+                        .sortedBy { if (HostStats.penalty(it.stream.url.orEmpty()) > 0 || Ranker.keepsFailing(it)) 1 else 0 }
                     fun col(lo: Int, hi: Int) = all.filter { it.effectiveRes() in lo until hi }
                         .groupBy { if (it.isPlaylist()) "Instant" else VisualTags.primary(it) }.toList()
                         .sortedBy { (g, _) -> if (g == "Instant") -1 else picOrder.indexOf(g).let { i -> if (i < 0) 99 else i } }
@@ -3880,6 +3887,12 @@ fun PlayerScreen(
                     (if (vm.pluginMode()) listOf("Auto" to col(0, 1)) else emptyList()) +
                         listOf("4K" to col(1440, 100_000), "1080p" to col(1080, 1440), "720p" to col(700, 1080))
                 }.getOrDefault(emptyList()) }
+            }
+            // Opening the menu with few links known: every source is asked now (in plugin mode a title started from the
+            // ready player only knew its own link, so the menu stayed empty).
+            LaunchedEffect(qualityMenu) {
+                if (!qualityMenu || BuildConfig.IS_TV || known.size > 3) return@LaunchedEffect
+                runCatching { kotlinx.coroutines.withTimeoutOrNull(25_000) { vm.streamsFlow(type, p.key).collect { (l, _) -> known = (known + vm.filtered(l).list).distinctBy { it.stream.url } } } }
             }
             // The first file of each quality gets its start + index saved (opens in about a second from the menu). On mobile
             // data only the quality playing and the next one up; on Wi-Fi all three. Elite on → only on Wi-Fi.
@@ -6107,5 +6120,33 @@ private fun PinchHint(modifier: Modifier) {
             Box(Modifier.align(Alignment.Center).offset(x = gap, y = -gap * 0.5f).size(18.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f - 0.4f * k)))
         }
         Text("Pinch out to fill the screen", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/**
+ * Phones whose video decoder refuses files (reported on vivo): the safe decoder set-up, and a device report in the
+ * activity log (uploaded to the account's logs like every error) so the cause can be seen without the phone.
+ */
+object DecoderSafe {
+    fun on(vm: AppViewModel): Boolean = android.os.Build.MANUFACTURER.lowercase().let { it == "vivo" || it == "iqoo" } || vm.store("safeDecoders") == "yes"
+
+    fun noteError(vm: AppViewModel, ctx: android.content.Context, e: PlaybackException, tracks: Tracks) {
+        val code = e.errorCodeName.removePrefix("ERROR_CODE_")
+        val decoder = e.errorCode in listOf(PlaybackException.ERROR_CODE_DECODER_INIT_FAILED, PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FAILED, PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED, PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES)
+        val formats = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO || it.type == C.TRACK_TYPE_AUDIO }.joinToString(" | ") { g ->
+            (0 until g.length).joinToString(", ") { i -> val f = g.getTrackFormat(i); "${f.sampleMimeType} ${f.codecs ?: ""} ${f.width}x${f.height}${if (g.isTrackSupported(i)) "" else " NOT-SUPPORTED"}" } }
+        val chain = generateSequence(e as Throwable) { it.cause }.take(4).joinToString(" ← ") { "${it.javaClass.simpleName}: ${it.message?.take(120)}" }
+        val b = android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL + " · Android " + android.os.Build.VERSION.RELEASE + " · " + (if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MODEL else android.os.Build.HARDWARE)
+        ActLog.add("ERROR", "player $code on $b · async feeding ${if (on(vm)) "off" else "on"} · tracks: ${formats.ifEmpty { "none yet" }} · $chain".take(900))
+        if (decoder && vm.store("safeDecoders") != "yes") {
+            vm.storePut("safeDecoders", "yes")
+            ActLog.add("ERROR", "video decoder refused a file: safe decoder set-up from the next video on")
+            runCatching {
+                val names = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.filter { !it.isEncoder && it.supportedTypes.any { t -> t.startsWith("video/") } }
+                    .joinToString(", ") { it.name }
+                ActLog.add("ERROR", "video decoders on this phone: $names".take(900))
+            }
+        }
     }
 }

@@ -707,14 +707,23 @@ fun VoiceAssistant(vm: AppViewModel, onClose: () -> Unit, onOpen: (Meta) -> Unit
     LaunchedEffect(Unit) { pop.animateTo(1f, spring(dampingRatio = 0.74f, stiffness = 380f)) }
     val cfg = androidx.compose.ui.platform.LocalConfiguration.current
     val w = minOf(360, cfg.screenWidthDp - 24).dp
-    val h = minOf(600, (cfg.screenHeightDp * (if (typingFocus) 0.52f else 0.68f)).toInt()).dp
+    // The card never moves up when the keyboard opens: its top stays where it is and its bottom simply stops just above
+    // the keyboard (the chat area gets shorter), so nothing jumps or slides off the top of the screen.
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val imeDp = with(density) { androidx.compose.foundation.layout.WindowInsets.ime.getBottom(this).toDp() }
+    val navDp = with(density) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() }
+    val h0 = minOf(600, (cfg.screenHeightDp * 0.68f).toInt()).dp
+    val restBottom = navDp + 136.dp
+    val kbBottom = imeDp + 12.dp
+    val lift = (kbBottom - restBottom).coerceAtLeast(0.dp)
+    val h = (h0 - lift).coerceAtLeast(240.dp)
+    val bottomPad = maxOf(restBottom, kbBottom)
 
     Box(Modifier.fillMaxSize()) {
         // Tap outside: close.
         Box(Modifier.fillMaxSize().graphicsLayer { alpha = pop.value }.background(Color(0x8C050305)).quietClick { focus.clearFocus(); onClose() })
         Column(
-            Modifier.align(Alignment.BottomEnd).navigationBarsPadding().imePadding()
-                .padding(end = 12.dp, bottom = if (typingFocus) 12.dp else 136.dp),
+            Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = bottomPad),
             horizontalAlignment = Alignment.End,
         ) {
             val shape = RoundedCornerShape(30.dp)

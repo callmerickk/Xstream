@@ -184,12 +184,24 @@ class VlcEngine(ctx: Context, private val listener: VlcListener) {
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "vlc-control").apply { isDaemon = true } }
     private fun work(f: () -> Unit) { runCatching { worker.execute { runCatching { f() } } } }
 
-    val time: Long get() = runCatching { mp.time }.getOrDefault(0L).coerceAtLeast(0L)
-    val length: Long get() = runCatching { mp.length }.getOrDefault(0L).coerceAtLeast(0L)
-    val isPlaying: Boolean get() = runCatching { mp.isPlaying }.getOrDefault(false)
+    // Position, length and playing are read by a small background thread and kept here: asking VLC from the screen's
+    // thread waited on VLC's lock while it opened a slow link, and the app froze ("not responding").
+    @Volatile private var cTime = 0L
+    @Volatile private var cLength = 0L
+    @Volatile private var cPlaying = false
+    @Volatile private var alive = true
+    private val poller = Thread({
+        while (alive) {
+            runCatching { cTime = mp.time.coerceAtLeast(0L); cLength = mp.length.coerceAtLeast(0L); cPlaying = mp.isPlaying }
+            runCatching { Thread.sleep(200) }
+        }
+    }, "vlc-state").apply { isDaemon = true; start() }
+    val time: Long get() = cTime
+    val length: Long get() = cLength
+    val isPlaying: Boolean get() = cPlaying
     fun play() = work { mp.play() }
     fun pause() = work { mp.pause() }
-    fun seek(ms: Long) { mp.setTime(ms.coerceAtLeast(0L)) }
+    fun seek(ms: Long) { cTime = ms.coerceAtLeast(0L); work { mp.setTime(ms.coerceAtLeast(0L)) } }
     var rate: Float
         get() = runCatching { mp.rate }.getOrDefault(1f)
         set(v) { mp.setRate(v) }
@@ -217,7 +229,8 @@ class VlcEngine(ctx: Context, private val listener: VlcListener) {
         runCatching { mp.setEventListener(null as MediaPlayer.EventListener?) }
         runCatching { mp.detachViews() }
         // Stopping / freeing VLC can wait on the network: off the screen's thread.
-        work { runCatching { mp.stop() }; runCatching { mp.release() }; runCatching { lib.release() } }
+        alive = false
+        work { runCatching { poller.join(1_000) }; runCatching { mp.stop() }; runCatching { mp.release() }; runCatching { lib.release() } }
         runCatching { worker.shutdown() }
     }
 }

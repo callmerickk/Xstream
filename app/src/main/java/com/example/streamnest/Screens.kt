@@ -326,7 +326,8 @@ fun App(vm: AppViewModel = viewModel()) {
                     )
                 }
                 }
-                BottomNav(
+                val navHidden by NavHide.on.collectAsState()
+                if (!(navHidden && tab == 3)) BottomNav(
                     tab, vm, compact = barAnim,
                     onTab = {
                         scrolledDown = false
@@ -448,6 +449,9 @@ fun App(vm: AppViewModel = viewModel()) {
         // Plugin mode: every switched-on plugin is loaded and woken at start, so a title page gets its links at once.
         LaunchedEffect(profile?.id) {
             if (profile == null || !(vm.store("csWarm") == "yes" || vm.pluginMode())) return@LaunchedEffect
+            // Warm-up starts a few seconds after Home is up (the app opens smoothly first). A title played before then
+            // starts its own plugins at once, so playing is never slower.
+            delay(4_000)
             runCatching { CsPlugins.init(vm.appContext); if (CsPlugins.catalog.value.isEmpty()) CsPlugins.refresh(); CsPlugins.warmAll() }
             // Plugin mode: the first two Continue Watching titles get their Quick Play links fetched now (kept 10 minutes),
             // so tapping them starts at once.

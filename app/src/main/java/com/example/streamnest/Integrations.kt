@@ -222,13 +222,17 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean
 private fun KeyField(vm: AppViewModel, key: String, label: String, desc: String, link: String) {
     val texts by vm.texts.collectAsStateWithLifecycle()
     val uri = LocalUriHandler.current
-    var text by remember { mutableStateOf(texts[key] ?: "") }
+    var text by remember(texts[key]) { mutableStateOf(texts[key] ?: "") }
+    // A key typed on this phone is yours: the developer's published default never replaces it (it did at every start).
+    fun save() { vm.setText(key, text); vm.storePut("ownKey_$key", if (text.isBlank()) null else "1"); Snack.show("Saved") }
     Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
         Text(desc, fontSize = 13.sp, color = Muted)
         OutlinedTextField(
             text, { text = it.trim() }, Modifier.fillMaxWidth().padding(top = 10.dp).tvOkKeyboard(top = 8.dp), singleLine = true, shape = RoundedCornerShape(12.dp),
             label = { Text(label) }, visualTransformation = PasswordVisualTransformation(),
-            trailingIcon = { if (text != (texts[key] ?: "")) TextButton({ vm.setText(key, text) }) { Text("Save") } }, keyboardOptions = tvKeyboard())
+            trailingIcon = { if (text != (texts[key] ?: "")) TextButton({ save() }) { Text("Save") } },
+            keyboardOptions = tvKeyboard(androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done)),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { if (text != (texts[key] ?: "")) save() }))
         TextButton({ runCatching { uri.openUri(link) } }) { Text("Get a free key", color = Color.White) }
     }
 }

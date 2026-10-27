@@ -486,6 +486,9 @@ object HostStats {
         val o = ok[k] ?: 0
         val slow = slowest[k] ?: 0L
         return when {
+            // MovieBox's servers (hakunaymatata) have sister servers with the same file: a silent one is left after 6 s
+            // (one stuck server held a start for 12 s while the next one played at once).
+            "hakunaymatata" in k -> 6_000L
             o >= 2 && slow > 0 -> (slow * 3 / 2).coerceIn(6_000L, 12_000L)
             k == "pixeldrain.dev" || k == "pixeldrain.com" -> 10_000L
             else -> 6_000L

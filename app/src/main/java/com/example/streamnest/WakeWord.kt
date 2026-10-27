@@ -84,6 +84,12 @@ object WakeWord {
     }
 
     private fun download(ctx: Context) {
+        // The voice model (36 MB) downloads on Wi-Fi only, never on mobile data.
+        val unmetered = runCatching {
+            val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            cm.getNetworkCapabilities(cm.activeNetwork)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED) == true
+        }.getOrDefault(false)
+        if (!unmetered) { status.value = "off"; return }
         if (downloading.getAndSet(true)) return
         status.value = "downloading"
         Thread({

@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.shadow
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
@@ -140,7 +141,7 @@ object Downloads {
             val file = File(ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES), name).absolutePath
             save(list.value + Dl(id, target.videoId, target.title, target.epLabel, target.image ?: meta.poster, meta.type, meta.id, file,
                 Prepare.qualityName(s.resolution()), System.currentTimeMillis()))
-            return "Downloading ${Prepare.qualityName(s.resolution())} · ${"%.1f".format(pr.size / 1_073_741_824.0)} GB — see My Space › Downloads"
+            return "Downloading ${Prepare.qualityName(s.resolution())} · ${"%.1f".format(pr.size / 1_073_741_824.0)} GB — see Downloads (the ↓ button on Home)"
         }
         return "No downloadable file found (only streaming playlists or the servers refused)"
     }
@@ -226,16 +227,33 @@ fun DownloadsButton(onPlay: (Screen.Player) -> Unit) {
             Text("$active", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
         }
     }
-    if (open) androidx.compose.ui.window.Dialog({ open = false }, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(Modifier.fillMaxSize().background(Color(0xFF0B0C10)).statusBarsPadding().navigationBarsPadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.IconButton({ open = false }) { Icon(Icons.Default.Close, "Close") }
-                Text("Downloads", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+    // A bubble under the button, like the notifications one: small when there's little in it, up to the full size.
+    if (open) {
+        val below = remember {
+            object : androidx.compose.ui.window.PopupPositionProvider {
+                override fun calculatePosition(anchorBounds: androidx.compose.ui.unit.IntRect, windowSize: androidx.compose.ui.unit.IntSize,
+                    layoutDirection: androidx.compose.ui.unit.LayoutDirection, popupContentSize: androidx.compose.ui.unit.IntSize) =
+                    androidx.compose.ui.unit.IntOffset((windowSize.width - popupContentSize.width - 24).coerceAtLeast(16), anchorBounds.bottom + 12)
             }
-            if (items.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) {
-                Text("Nothing downloaded yet. Tap Download on a title.", color = Color(0xFF9AA3B5))
-            } else Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
-                DownloadsSection { p -> open = false; onPlay(p) }
+        }
+        androidx.compose.ui.window.Popup(popupPositionProvider = below, onDismissRequest = { open = false }, properties = androidx.compose.ui.window.PopupProperties(focusable = true)) {
+            val pop = remember { androidx.compose.animation.core.Animatable(0f) }
+            LaunchedEffect(Unit) { pop.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.7f, stiffness = 420f)) }
+            val shape = RoundedCornerShape(24.dp)
+            Column(
+                Modifier.graphicsLayer {
+                    alpha = pop.value.coerceIn(0f, 1f); scaleX = 0.3f + 0.7f * pop.value; scaleY = scaleX
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.85f, 0f)
+                }.widthIn(max = 340.dp).fillMaxWidth(0.88f).heightIn(max = if (items.size > 3) 480.dp else 340.dp)
+                    .shadow(24.dp, shape).clip(shape).background(Color(0xF7181620))
+                    .border(1.dp, androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xB3E50914), Color(0x26E50914))), shape)
+                    .padding(vertical = 10.dp),
+            ) {
+                if (items.isEmpty()) Text("Downloads", Modifier.padding(start = 18.dp, top = 4.dp, bottom = 4.dp), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                if (items.isEmpty()) Text("Nothing downloaded yet. Tap Download on a title.", Modifier.padding(horizontal = 18.dp, vertical = 10.dp), fontSize = 12.5.sp, color = Color(0xFF9AA3B5))
+                else Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                    DownloadsSection { p -> open = false; onPlay(p) }
+                }
             }
         }
     }

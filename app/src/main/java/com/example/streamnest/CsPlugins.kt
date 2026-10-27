@@ -256,7 +256,7 @@ object CsPlugins {
     fun enabledEntries(): List<CsPluginEntry> = catalog.value.filter { it.key in enabled.value }
 
     /** "Keep warm": loads the switched-on plugins and asks each provider one small search, so the first real use is fast. */
-    suspend fun warmAll(log: (String) -> Unit = { ActLog.add("CSWARM", it) }) {
+    suspend fun warmAll(log: (String) -> Unit = { ActLog.add("CSWARM", it) }) = withContext(Dispatchers.IO) {
         for (e in enabledEntries()) {
             val t0 = System.currentTimeMillis()
             val got = runCatching { ensureLoaded(e) }

@@ -256,7 +256,9 @@ fun XLibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit
         }
         // Watch together, up front: a red glowing card (who's online, what they're watching).
         if (tab != "together") WatchTogetherCard(friends) { tab = "together" }
-        if (tab == "together") BackHandler { tab = "watchlist" }
+        if (tab == "together" || tab == "calendar") BackHandler { tab = "watchlist" }
+        // Calendar and Watch together (its chats type at the bottom): the bottom bar steps aside, back returns here.
+        DisposableEffect(tab) { NavHide.on.value = tab != "watchlist"; onDispose { NavHide.on.value = false } }
         Box(Modifier.weight(1f)) {
             when (tab) {
                 "watchlist" -> Column {
@@ -381,3 +383,6 @@ private fun WatchTogetherCard(friends: List<Person>, onOpen: () -> Unit) {
         Icon(Icons.Default.Groups, null, Modifier.size(34.dp), tint = Color.White)
     }
 }
+
+/** Pages that need the whole screen (chat, calendar) hide the bottom bar while they show. */
+object NavHide { val on = kotlinx.coroutines.flow.MutableStateFlow(false) }

@@ -481,22 +481,27 @@ object RowStyles {
 fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     val corner = Palette.corner.dp.coerceAtMost(18.dp)
     val shape = remember(corner) { RoundedCornerShape(corner) }
-    val top = remember(items) { items.take(10) }
+    // Bollywood mixed in: the newest popular Hindi titles of the same kind take every third place.
+    val kind = remember(items) { if (items.count { it.type == "series" } > items.size / 2) "series" else "movie" }
+    val hindi by produceState(emptyList<Meta>(), kind) { value = runCatching { HindiTrending.list(kind) }.getOrDefault(emptyList()) }
+    val top = remember(items, hindi) { HindiTrending.mix(items, hindi).take(10) }
     // All ten posters are asked for at once (one quick TMDB call each, remembered), so the row fills in together.
     LaunchedEffect(top) { top.forEach { m -> launch { runCatching { TmdbPosters.portrait(m) } } } }
-    val fill = remember { Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFFC9CED8), Color(0xFF8C93A3))) }
-    LazyRow(contentPadding = PaddingValues(start = 8.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    val fill = remember { Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFFD5D9E2), Color(0xFF9AA1B0))) }
+    // Like Netflix: each number has its own space to the left of its poster; the poster only just touches its edge.
+    LazyRow(contentPadding = PaddingValues(start = 6.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         itemsIndexed(top, key = { _, m -> "n" + m.type + m.id }, contentType = { _, _ -> "num" }) { i, m ->
-            Box(Modifier.width(if (i + 1 >= 10) 204.dp else 172.dp).height(196.dp)) {
-                // A solid, bright number with a dark edge, behind the poster's lower-left corner: easy to read on any background.
-                val num = "${i + 1}"
-                Text(num, Modifier.align(Alignment.BottomStart).offset(y = 24.dp), style = androidx.compose.ui.text.TextStyle(
-                    color = Color(0xFF05060A), fontSize = 148.sp, fontWeight = FontWeight.Black, letterSpacing = (-8).sp, lineHeight = 148.sp,
-                    drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(width = 14f, join = androidx.compose.ui.graphics.StrokeJoin.Round)))
-                Text(num, Modifier.align(Alignment.BottomStart).offset(y = 24.dp), style = androidx.compose.ui.text.TextStyle(
-                    brush = fill, fontSize = 148.sp, fontWeight = FontWeight.Black, letterSpacing = (-8).sp, lineHeight = 148.sp,
-                    shadow = androidx.compose.ui.graphics.Shadow(Color(0xCC000000), androidx.compose.ui.geometry.Offset(0f, 6f), 18f)))
-                TallPoster(m, Modifier.align(Alignment.BottomEnd).width(126.dp).aspectRatio(2f / 3f)
+            val num = "${i + 1}"
+            val numW = if (num.length > 1) 138.dp else 78.dp
+            Box(Modifier.width(numW + 116.dp).height(186.dp)) {
+                val style = androidx.compose.ui.text.TextStyle(fontSize = 136.sp, fontWeight = FontWeight.Black, letterSpacing = (-6).sp, lineHeight = 136.sp)
+                Box(Modifier.align(Alignment.BottomStart).width(numW + 8.dp).offset(y = 20.dp), contentAlignment = Alignment.BottomEnd) {
+                    Text(num, style = style.merge(androidx.compose.ui.text.TextStyle(color = Color(0xFF05060A),
+                        drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(width = 12f, join = androidx.compose.ui.graphics.StrokeJoin.Round))), softWrap = false)
+                    Text(num, style = style.merge(androidx.compose.ui.text.TextStyle(brush = fill,
+                        shadow = androidx.compose.ui.graphics.Shadow(Color(0xCC000000), androidx.compose.ui.geometry.Offset(0f, 6f), 18f))), softWrap = false)
+                }
+                TallPoster(m, Modifier.align(Alignment.BottomEnd).width(120.dp).aspectRatio(2f / 3f)
                     .softHalo(corner, spread = 8.dp, strength = 0.5f, dy = 4.dp).clip(shape).titleTap(m) { onOpen(m) })
             }
         }

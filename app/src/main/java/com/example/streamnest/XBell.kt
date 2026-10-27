@@ -113,7 +113,9 @@ fun NotificationBell(onTogether: () -> Unit, onOpen: (Meta) -> Unit) {
                     Modifier.graphicsLayer {
                         alpha = pop.value.coerceIn(0f, 1f); scaleX = 0.3f + 0.7f * pop.value; scaleY = scaleX
                         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.95f, 0f)
-                    }.widthIn(max = 340.dp).fillMaxWidth(0.88f).heightIn(max = 460.dp).shadow(24.dp, shape).clip(shape)
+                    }.widthIn(max = 300.dp).fillMaxWidth(0.8f)
+                        // Small by default (it fits what's there); with lots of messages it grows up to the full size.
+                        .heightIn(max = if (items.size + (if (pending.isNotEmpty()) 1 else 0) > 4) 460.dp else 330.dp).shadow(24.dp, shape).clip(shape)
                         .background(Color(0xF7181620)).border(1.dp, Brush.verticalGradient(listOf(Accent.copy(alpha = 0.7f), Accent.copy(alpha = 0.15f))), shape)
                         .padding(10.dp),
                 ) {
@@ -134,7 +136,7 @@ fun NotificationBell(onTogether: () -> Unit, onOpen: (Meta) -> Unit) {
                                     .padding(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                AsyncImage(b.image, null, Modifier.size(36.dp, 52.dp).clip(RoundedCornerShape(7.dp)).background(Color(0xFF22252E)), contentScale = ContentScale.Crop)
+                                AsyncImage(b.image, null, Modifier.size(32.dp, 46.dp).clip(RoundedCornerShape(7.dp)).background(Color(0xFF22252E)), contentScale = ContentScale.Crop)
                                 Column(Modifier.weight(1f).padding(start = 10.dp)) {
                                     Text(b.title, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 2)
                                     Text(b.text, fontSize = 11.5.sp, color = Color(0xFF9AA3B5), maxLines = 2)

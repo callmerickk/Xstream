@@ -67,8 +67,11 @@ private fun BigTile(m: Meta, modifier: Modifier, onOpen: (Meta) -> Unit) {
     Box(modifier.fillMaxSize().clip(BigShape).border(1.dp, Color(0x1FFFFFFF), BigShape).titleTap(m) { onOpen(m) }) {
         TallPoster(m, Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.62f to Color.Transparent, 1f to Color(0xCC000000))))
-        Text(m.name, Modifier.align(Alignment.BottomStart).padding(12.dp), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White,
-            maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
+            Text(m.name, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val sub = listOfNotNull(m.releaseInfo?.take(4), if (m.type == "series") "Series" else "Movie").joinToString(" · ")
+            Text(sub, fontSize = 11.sp, color = Color(0xFFC4C9D4), maxLines = 1)
+        }
     }
 }
 

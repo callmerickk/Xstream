@@ -75,6 +75,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.material.icons.filled.Shuffle
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -430,6 +432,8 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
     }
     // Xstream: the in-app voice panel (falls back to the phone's dialog when the phone has no speech service).
     var voiceSheet by remember { mutableStateOf(false) }
+    /** The search bar is tapped: recent searches show instead of Discover. */
+    var fieldFocused by remember { mutableStateOf(false) }
     fun startVoice() {
         if (android.speech.SpeechRecognizer.isRecognitionAvailable(ctx)) { voiceSheet = true; return }
         val i = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
@@ -453,7 +457,8 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
             cursorBrush = SolidColor(Accent),
             keyboardOptions = tvKeyboard(KeyboardOptions(imeAction = ImeAction.Search)),
             keyboardActions = KeyboardActions(onSearch = { addRecent(q); keyboard?.hide(); focus.clearFocus() }),
-            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp).tvOkKeyboard(),
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp).tvOkKeyboard()
+                .onFocusChanged { fieldFocused = it.isFocused },
             decorationBox = { inner ->
                 Row(
                     Modifier.fillMaxWidth().height(52.dp)
@@ -524,8 +529,8 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
                         .shuffled(java.util.Random(HomeShuffle.seed)).take(45)
                 }
                 androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 18.dp, bottom = 140.dp)) {
-                    item(key = "moods") { MoodDiscover(vm, onOpen); Spacer(Modifier.height(14.dp)) }
-                    if (recent.isNotEmpty()) {
+                    // Search bar tapped: your recent searches. Otherwise Discover, with Surprise me.
+                    if (fieldFocused && recent.isNotEmpty()) {
                         item(key = "recentHead") {
                             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text("Recent searches", Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = SubText)
@@ -533,21 +538,27 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
                                     .padding(horizontal = 8.dp, vertical = 4.dp), fontSize = 14.sp, color = Accent)
                             }
                         }
-                        item(key = "recentChips") {
-                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                items(recent, key = { "r:$it" }) { r ->
-                                    Row(Modifier.clip(RoundedCornerShape(16.dp)).background(Color(0x14FFFFFF)).clickable { q = r; vm.searchPremium(r); keyboard?.hide() }
-                                        .padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.History, null, tint = SubText, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(r, fontSize = 14.sp, maxLines = 1)
-                                    }
-                                }
+                        items(recent, key = { "r:$it" }) { r ->
+                            Row(Modifier.fillMaxWidth().clickable { q = r; vm.searchPremium(r); addRecent(r); keyboard?.hide(); focus.clearFocus() }
+                                .padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.History, null, tint = SubText, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(14.dp))
+                                Text(r, Modifier.weight(1f), fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
+                        return@LazyColumn
                     }
                     if (pool.isNotEmpty()) item(key = "discoverHead") {
-                        Text("Discover", Modifier.padding(start = 18.dp, top = 6.dp, bottom = 8.dp), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 16.dp, top = 2.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Discover", Modifier.weight(1f), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Row(Modifier.clip(RoundedCornerShape(20.dp)).border(1.dp, Accent, RoundedCornerShape(20.dp))
+                                .clickable { (pool.filter { (it.imdbRating?.toDoubleOrNull() ?: 0.0) >= 7.0 }.ifEmpty { pool }).randomOrNull()?.let(onOpen) }
+                                .padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Shuffle, null, Modifier.size(16.dp), tint = Color.White)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Surprise me", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                            }
+                        }
                     }
                     discoverMosaic(pool, "d", onOpen = onOpen)
                 }

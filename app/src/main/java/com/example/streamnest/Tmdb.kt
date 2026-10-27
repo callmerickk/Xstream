@@ -1,6 +1,8 @@
 package com.example.streamnest
 
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -197,6 +199,7 @@ object TmdbPosters {
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
 
     fun cached(m: Meta): String? = cache[m.id]
+    fun remember(m: Meta, url: String) { cache[m.id] = url }
 
     /** A tall poster that never needs TMDB: Cinemeta's large poster by IMDb id, or the title's own when it is tall. */
     fun fallback(m: Meta): String? = hdPoster(m) ?: m.poster?.takeIf { !m.posterShape.equals("landscape", true) && !m.posterShape.equals("square", true) }?.let { hiResArt(it) }
@@ -228,5 +231,58 @@ object TmdbPosters {
             o.arr("results").firstOrNull()?.str("poster_path")
         }
         return path?.let { "${IMG}w780$it" }
+    }
+}
+
+/**
+ * Bollywood in the Top rows: the most popular new Hindi films / series (TMDB, Hindi original language), with their
+ * IMDb ids so they open and play like every other title. Fetched once per app start.
+ */
+object HindiTrending {
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, List<Meta>>()
+    private val lock = kotlinx.coroutines.sync.Mutex()
+
+    suspend fun list(kind: String): List<Meta> {
+        cache[kind]?.let { return it }
+        return lock.withLock {
+            cache[kind]?.let { return@withLock it }
+            val r = runCatching { fetch(kind) }.getOrDefault(emptyList())
+            if (r.isNotEmpty()) cache[kind] = r
+            r
+        }
+    }
+
+    private suspend fun fetch(kind: String): List<Meta> = kotlinx.coroutines.coroutineScope {
+        val vm = Public.vm ?: return@coroutineScope emptyList()
+        val key = vm.tmdbKey().ifEmpty { return@coroutineScope emptyList() }
+        val tv = kind == "series"
+        val since = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(System.currentTimeMillis() - (if (tv) 365L else 150L) * 86_400_000L))
+        val url = if (tv) "https://api.themoviedb.org/3/discover/tv?api_key=$key&with_original_language=hi&sort_by=popularity.desc&first_air_date.gte=$since&vote_count.gte=3&page=1"
+            else "https://api.themoviedb.org/3/discover/movie?api_key=$key&with_original_language=hi&sort_by=popularity.desc&primary_release_date.gte=$since&vote_count.gte=3&page=1"
+        val res = Api.json.parseToJsonElement(Api.get(url)).jsonObject.arr("results").take(6)
+        res.map { o ->
+            async {
+                runCatching {
+                    val id = o["id"]?.jsonPrimitive?.content ?: return@runCatching null
+                    val imdb = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/${if (tv) "tv" else "movie"}/$id/external_ids?api_key=$key")).jsonObject
+                        .str("imdb_id")?.takeIf { it.startsWith("tt") } ?: return@runCatching null
+                    val poster = o.str("poster_path")?.let { "${IMG}w780$it" }
+                    Meta(id = imdb, type = kind, name = o.str("title") ?: o.str("name") ?: return@runCatching null, poster = poster,
+                        background = o.str("backdrop_path")?.let { "${IMG}w1280$it" },
+                        releaseInfo = (o.str("release_date") ?: o.str("first_air_date"))?.take(4)).also { m -> if (poster != null) TmdbPosters.remember(m, poster) }
+                }.getOrNull()
+            }
+        }.awaitAll().filterNotNull()
+    }
+
+    /** Hindi titles woven into a Top row: one at every third place (2, 5, 8 …), never the same title twice. */
+    fun mix(items: List<Meta>, hindi: List<Meta>): List<Meta> {
+        if (hindi.isEmpty()) return items
+        fun k(m: Meta) = m.name.lowercase().replace(Regex("[^\\p{L}\\p{N}]"), "")
+        val have = items.flatMap { listOf(it.id.substringBefore(":"), k(it)) }.toSet()
+        val add = hindi.filter { it.id !in have && k(it) !in have }.iterator()
+        val out = ArrayList<Meta>()
+        items.forEachIndexed { i, m -> if (i % 3 == 1 && add.hasNext()) out += add.next(); out += m }
+        return out
     }
 }
