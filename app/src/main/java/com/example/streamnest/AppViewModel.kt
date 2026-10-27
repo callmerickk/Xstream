@@ -120,7 +120,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         progress.value = lib.getString("progress", null)?.let { runCatching { warm("p:${p.id}", it) { r -> Api.json.decodeFromString<List<Progress>>(r) } }.getOrNull() } ?: emptyList()
         epProgress.value = lib.getString("eprog", null)?.let { runCatching { Api.json.decodeFromString<Map<String, Progress>>(it) }.getOrNull() } ?: emptyMap()
         WatchLog.load(ctx, p.id)
-        myList.value = lib.getString("mylist", null)?.let { runCatching { warm("l:${p.id}", it) { r -> Api.json.decodeFromString<List<Meta>>(r) } }.getOrNull() } ?: emptyList()
+        myList.value = (lib.getString("mylist", null)?.let { runCatching { warm("l:${p.id}", it) { r -> Api.json.decodeFromString<List<Meta>>(r) } }.getOrNull() } ?: emptyList()).distinctBy { it.id }
         doneKeys.value = lib.getStringSet("done", emptySet())?.toSet() ?: emptySet()
         doneMs.value = lib.getLong("doneMs", 0L)
         votes.value = lib.getString("votes", null)?.let { runCatching { Api.json.decodeFromString<Map<String, Vote>>(it) }.getOrNull() } ?: emptyMap()
@@ -521,7 +521,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     fun toggleList(m: Meta) {
         val cur = myList.value
-        myList.value = if (cur.any { it.id == m.id }) cur.filter { it.id != m.id } else listOf(m) + cur
+        myList.value = (if (cur.any { it.id == m.id }) cur.filter { it.id != m.id } else listOf(m) + cur).distinctBy { it.id }
         lib.edit().putString("mylist", Api.json.encodeToString(myList.value)).apply()
         markCur("list")
         if (m.type == "series") runCatching { EpisodeAlerts.snapshot(ctx, this) }
@@ -1456,7 +1456,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             }
             "list" -> {
                 pp.edit().putString("mylist", value).apply()
-                if (isCur) myList.value = value?.let { runCatching { Api.json.decodeFromString<List<Meta>>(it) }.getOrNull() } ?: emptyList()
+                if (isCur) myList.value = (value?.let { runCatching { Api.json.decodeFromString<List<Meta>>(it) }.getOrNull() } ?: emptyList()).distinctBy { it.id }
             }
             "eprog" -> {
                 pp.edit().putString("eprog", value).apply()

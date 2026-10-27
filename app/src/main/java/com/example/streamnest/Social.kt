@@ -222,6 +222,7 @@ object Social {
                     PlanAlarm.schedule(ctx, m.item, m.plan, m.at, m.title)
                     SocialNotes.post(ctx, "${m.fromName} planned ${m.title}", "${planTime(m.at)} · you'll get a reminder", id)
                 }
+                "unplan" -> { PlanAlarm.cancel(ctx, m.item, m.plan); SocialNotes.post(ctx, "${m.fromName} cancelled ${m.title}", "${planTime(m.at)} is off the calendar", id) }
                 "watchnow" -> SocialNotes.post(ctx, "${m.fromName} wants to watch ${m.title} now", "Open Watch together › Shared lists to join", id, item = m.item, plan = m.plan)
                 "waiting" -> SocialNotes.post(ctx, "${m.fromName} is waiting for you in the room", "${m.title} · join fast", id, code = m.code, by = m.from)
                 "msg" -> if (!ChatState.open(m.item)) SocialNotes.post(ctx, if (m.title.isNotBlank()) "${m.fromName} · ${m.title}" else m.fromName, m.aboutName.ifBlank { "New message" }, "chat_" + m.item, chat = m.item)
@@ -296,6 +297,15 @@ object Social {
             val p = it.plans.firstOrNull { p -> p.id == pid } ?: return@launch
             p.with.keys.filter { u -> u != me }.forEach { u -> inbox(u, SocialMsg(t = "waiting", item = itemId, plan = pid, title = it.meta.name, code = code)) }
         }
+    }
+
+    /** Takes a plan off the calendar (everyone in it is told), and its reminder is cancelled. */
+    suspend fun removePlan(ctx: Context, item: SharedItem, plan: WatchPlan): Boolean {
+        send("DELETE", "items/${item.id}/plans/${plan.id}") ?: return false
+        PlanAlarm.cancel(ctx, item.id, plan.id)
+        plan.with.keys.filter { it != me }.forEach { inbox(it, SocialMsg(t = "unplan", item = item.id, plan = plan.id, title = item.meta.name, at = plan.at)) }
+        refresh()
+        return true
     }
 
     /** Ring the others of a plan right now ("let's watch"). */
@@ -433,6 +443,12 @@ object SocialIntent {
 
 /** Reminders for planned watches, at the planned time (also after a restart of the phone they're set again on open). */
 object PlanAlarm {
+    fun cancel(ctx: Context, item: String, plan: String) {
+        val am = ctx.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+        val i = android.content.Intent(ctx, PlanAlarmReceiver::class.java)
+        val pi = android.app.PendingIntent.getBroadcast(ctx, (item + plan).hashCode(), i, android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_NO_CREATE)
+        if (pi != null) runCatching { am.cancel(pi); pi.cancel() }
+    }
     fun schedule(ctx: Context, item: String, plan: String, at: Long, title: String) {
         if (at <= System.currentTimeMillis()) return
         val am = ctx.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager

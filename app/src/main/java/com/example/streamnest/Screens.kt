@@ -489,6 +489,8 @@ fun App(vm: AppViewModel = viewModel()) {
         // Xstream: no "Connect PenguPlay" prompt — servers come from Developer's Corner.
         val askWl by WatchlistAsk.pending.collectAsState()
         askWl?.let { m -> AddToWatchlistSheet(vm, m) { WatchlistAsk.pending.value = null } }
+        val rmWl by WatchlistAsk.removing.collectAsState()
+        rmWl?.let { (m, r) -> RemoveFriendPickSheet(vm, m, r) { WatchlistAsk.removing.value = null } }
         if (showSplash) StartupSplash { showSplash = false }
         SnackHost()
     }

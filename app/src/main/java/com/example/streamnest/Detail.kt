@@ -474,13 +474,35 @@ fun DetailScreen(
                             if (instantOn && st != null && st.key == playTarget.target.videoId)
                                 PrepDot(st, Modifier.align(Alignment.TopEnd).offset(x = (-4).dp, y = (-10).dp).tourTarget("light")) { showPrepInfo = !showPrepInfo }
                         }
-                        LabeledRound("Trailer", Modifier.tourTarget("trailer").alpha(if (hasTrailer) 1f else 0.45f).tapHold(onTap = { playTrailer() }, onHold = { holdTrailer() }), rim = Color(0x8CE50914)) { ClapperGlyph(22.dp) }
-                        LabeledRound("Library", Modifier.quietClick { WatchlistAsk.toggle(vm, meta) }, rim = if (saved) Color(0x8CE50914) else Color(0xFF23252D)) {
+                        // Play · Watchlist · Download · Trailers (long-press Play: play manually, share, friends & plans)
+                        LabeledRound("Watchlist", Modifier.quietClick { WatchlistAsk.toggle(vm, meta) }, rim = if (saved) Color(0x8CE50914) else Color(0xFF23252D)) {
                             Icon(if (saved) Icons.Default.Check else Icons.Default.Add, if (saved) "In Watchlist" else "Add to Watchlist", Modifier.size(24.dp), tint = Color.White)
                         }
-                        LabeledRound("More", Modifier.tourTarget("more").quietClick { actions = true }) {
-                            Icon(Icons.Default.MoreVert, "More", Modifier.size(24.dp), tint = Color.White)
+                        if (!BuildConfig.IS_TV) {
+                            val dls by Downloads.list.collectAsStateWithLifecycle()
+                            val dl = dls.lastOrNull { it.key == playTarget.target.videoId }
+                            var dlPct by remember(dl?.dmId) { mutableIntStateOf(-1) }
+                            LaunchedEffect(dl?.dmId) {
+                                while (dl != null) {
+                                    val st = Downloads.status(ctx, dl)
+                                    dlPct = if (st.done) 100 else if (st.total > 0) (st.bytes * 100 / st.total).toInt() else 0
+                                    if (st.done || st.failed) break
+                                    delay(1500)
+                                }
+                            }
+                            val dlDone = dlPct >= 100
+                            LabeledRound(if (dl == null) "Download" else if (dlDone) "Saved" else "${dlPct.coerceAtLeast(0)}%", Modifier.quietClick {
+                                if (dl == null) {
+                                    val tg = playTarget.target
+                                    Snack.show("Finding the best file to download…")
+                                    scope.launch { Snack.show(Downloads.start(vm, ctx, meta, tg), millis = 4500) }
+                                } else if (dlDone) Snack.show("Downloaded: plays without internet. Remove it in Downloads.")
+                                else Snack.show("Downloading… ${dlPct.coerceAtLeast(0)}%")
+                            }, rim = if (dl != null) Color(0x8CE50914) else Color(0xFF23252D)) {
+                                Icon(if (dlDone) Icons.Default.DownloadDone else Icons.Default.Download, "Download", Modifier.size(24.dp), tint = Color.White)
+                            }
                         }
+                        LabeledRound("Trailers", Modifier.tourTarget("trailer").alpha(if (hasTrailer) 1f else 0.45f).tapHold(onTap = { if (videos.size > 1) showVideos = true else playTrailer() }, onHold = { holdTrailer() }), rim = Color(0x8CE50914)) { ClapperGlyph(22.dp) }
                     }
                 }
                 // The status light's details (long-press the light), for screenshots.
@@ -584,7 +606,12 @@ fun DetailScreen(
         }
 
         if (actions) {
-          val actionList = buildList {
+          val actionList = if (!BuildConfig.IS_TV) buildList {
+                // Phone: only what isn't already beside the Play button.
+                add(TitleAction("Play manually", Icons.Default.PlayArrow) { start(playTarget.target, forceSources = true) })
+                add(TitleAction("Share", Icons.Default.Share) { share() })
+                add(TitleAction("Share with friends & plan a watch", Icons.Default.Groups) { shareFriends = true })
+            } else buildList {
                 add(TitleAction("Play manually", Icons.Default.PlayArrow) { start(playTarget.target, forceSources = true) })
                 if (playTarget.resumeMs > 0) add(TitleAction("Start from beginning", Icons.Default.Replay) { start(playTarget.target, fromStart = true) })
                 add(TitleAction(if (saved) "Remove from Watchlist" else "Add to Watchlist", if (saved) Icons.Default.Check else Icons.Default.Add) { WatchlistAsk.toggle(vm, meta) })

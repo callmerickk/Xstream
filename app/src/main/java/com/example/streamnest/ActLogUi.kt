@@ -38,8 +38,12 @@ fun ActLogScreen(onClose: () -> Unit) {
     var text by remember { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf("ALL") }
     var query by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) { devices = listOf("phone" to "This phone") + ActLog.cloudDevices() }
-    LaunchedEffect(dev) { text = null; text = if (dev == "phone") withContext(Dispatchers.IO) { ActLog.allText() } else ActLog.cloudText(dev) }
+    LaunchedEffect(Unit) {
+        devices = listOf("phone" to "This phone") + ActLog.cloudDevices()
+        // Developer: every account's devices (errors, crashes, play results; 15 days)
+        if (Public.dev) devices = devices + ActLog.allAccountsDevices().map { (k, n) -> k to "☁ $n" }
+    }
+    LaunchedEffect(dev) { text = null; text = if (dev == "phone") withContext(Dispatchers.IO) { ActLog.allText() } else if (dev.startsWith("x:")) ActLog.allAccountsText(dev) else ActLog.cloudText(dev) }
     val lines = remember(text, filter, query) {
         (text ?: "").lines().filter { l -> l.isNotBlank() && (filter == "ALL" || l.startsWith("=====") || l.drop(13).startsWith(filter)) && (query.isBlank() || l.contains(query, true)) }
     }
@@ -54,7 +58,7 @@ fun ActLogScreen(onClose: () -> Unit) {
                         val f = withContext(Dispatchers.IO) {
                             val d = java.io.File(ctx.cacheDir, "logs").apply { mkdirs() }
                             val name = devices.firstOrNull { it.first == dev }?.second?.replace(Regex("[^A-Za-z0-9]+"), "-") ?: "phone"
-                            java.io.File(d, "streamx-log-$name-3days.txt").apply { writeText(text ?: "") }
+                            java.io.File(d, "xstream-log-$name.txt").apply { writeText(text ?: "") }
                         }
                         val uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".updates", f)
                         runCatching {

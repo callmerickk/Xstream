@@ -11,6 +11,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.border
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -186,6 +191,50 @@ fun DownloadsSection(onPlay: (Screen.Player) -> Unit) {
                 Box(Modifier.padding(start = 8.dp).size(40.dp).clip(CircleShape).clickable { Downloads.remove(ctx, d) }, Alignment.Center) {
                     Icon(Icons.Default.Delete, "Delete download", Modifier.size(20.dp), tint = Color(0xFFB6BDCC))
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Home header: the downloads button left of the bell. While files download, a red number (how many) blinks on it.
+ * Tap: your downloads, with progress, play offline and delete.
+ */
+@Composable
+fun DownloadsButton(onPlay: (Screen.Player) -> Unit) {
+    val ctx = LocalContext.current
+    LaunchedEffect(Unit) { Downloads.init(ctx) }
+    val items by Downloads.list.collectAsState()
+    var active by remember { mutableIntStateOf(0) }
+    LaunchedEffect(items) {
+        while (true) {
+            active = items.count { d -> val st = Downloads.status(ctx, d); !st.done && !st.failed }
+            if (active == 0) break
+            delay(2000)
+        }
+    }
+    var open by remember { mutableStateOf(false) }
+    val blink = androidx.compose.animation.core.rememberInfiniteTransition(label = "dl")
+    val a by blink.animateFloat(1f, 0.25f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(650), androidx.compose.animation.core.RepeatMode.Reverse), label = "dlA")
+    Box {
+        Box(Modifier.size(42.dp).clip(CircleShape).background(Color(0x99101420)).border(1.dp, Color(0x33FFFFFF), CircleShape).clickable { open = true }, Alignment.Center) {
+            Icon(Icons.Default.Download, "Downloads", Modifier.size(21.dp), tint = Color.White)
+        }
+        if (active > 0) Box(Modifier.align(Alignment.TopEnd).offset(x = 3.dp, y = (-3).dp).graphicsLayer { alpha = a }
+            .size(18.dp).clip(CircleShape).background(Color(0xFFE50914)).border(1.5.dp, Color.Black, CircleShape), Alignment.Center) {
+            Text("$active", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        }
+    }
+    if (open) androidx.compose.ui.window.Dialog({ open = false }, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(Modifier.fillMaxSize().background(Color(0xFF0B0C10)).statusBarsPadding().navigationBarsPadding()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.IconButton({ open = false }) { Icon(Icons.Default.Close, "Close") }
+                Text("Downloads", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            }
+            if (items.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) {
+                Text("Nothing downloaded yet. Tap Download on a title.", color = Color(0xFF9AA3B5))
+            } else Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                DownloadsSection { p -> open = false; onPlay(p) }
             }
         }
     }

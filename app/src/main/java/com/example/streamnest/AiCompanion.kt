@@ -531,9 +531,16 @@ private fun CompanionOverlay(vm: AppViewModel, req: AiHost.Req) {
             }
         } else {
             val cw = minOf(360, sw - 20).dp
-            val ch = minOf(520, (sh * 0.66f).toInt()).dp
+            val ch0 = minOf(520, (sh * 0.66f).toInt()).dp
+            // Keyboard open: the card stays where it is; only its bottom rises to sit on the keyboard (the picture
+            // area gets shorter), so nothing jumps up and off the screen.
+            val dens = androidx.compose.ui.platform.LocalDensity.current
+            val imeDp = with(dens) { WindowInsets.ime.getBottom(dens).toDp() }
+            val navDp = with(dens) { WindowInsets.navigationBars.getBottom(dens).toDp() }
+            val lift = (imeDp - navDp + 8.dp - 120.dp).coerceAtLeast(0.dp)
+            val ch = (ch0 - lift).coerceAtLeast(200.dp)
             Column(
-                Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 10.dp, bottom = 120.dp),
+                Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 10.dp, bottom = 120.dp + lift),
                 horizontalAlignment = Alignment.End,
             ) {
                 val shape = RoundedCornerShape(32.dp)
@@ -558,7 +565,7 @@ private fun CompanionOverlay(vm: AppViewModel, req: AiHost.Req) {
                         }
                         CloseBtn { dismiss() }
                     }
-                    Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().imePadding().padding(10.dp)) {
+                    Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(10.dp)) {
                         if (showText) leadM?.let { Words(it, Modifier.padding(horizontal = 6.dp, vertical = 4.dp), 13.sp) }
                         Footer(chips, typed, { typed = it }, ::send, members.map { it.live }, showText, { showText = !showText; vm.storePut("buddyText2", if (showText) "yes" else "no") }, big = false, onChip = ::onChip)
                     }

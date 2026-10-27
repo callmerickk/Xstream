@@ -55,6 +55,9 @@ object ActLog {
         prune()
         io.launch { while (isActive) { delay(1500); flush() } }
         if (BuildConfig.IS_TV) io.launch { while (isActive) { delay(120_000); runCatching { uploadTv() } } }
+        // Every device of every account: errors, crashes, freezes and play summaries go to the developer's cloud logs
+        // (Developer's Corner › Activity log › All accounts), kept 15 days.
+        io.launch { delay(20_000); while (isActive) { runCatching { uploadImportant() }; delay(180_000) } }
         // State changes worth a line: sync, Watch together, call, VPN.
         io.launch { Cloud.status.collect { if (it.isNotBlank()) add("SYNC", it) } }
         io.launch { Together.code.collect { add("ROOM", if (it == null) "not in a room" else "room $it · ${if (Together.isHost) "host" else "joined"}") } }
@@ -208,7 +211,78 @@ object ActLog {
 
     private fun devId(): String {
         val p = app!!.getSharedPreferences("actlog", Context.MODE_PRIVATE)
-        return p.getString("dev", null) ?: ("tv-" + java.util.UUID.randomUUID().toString().take(6)).also { p.edit().putString("dev", it).apply() }
+        return p.getString("dev", null) ?: ((if (BuildConfig.IS_TV) "tv-" else "ph-") + java.util.UUID.randomUUID().toString().take(6)).also { p.edit().putString("dev", it).apply() }
+    }
+
+    // ── Cloud logs for the developer (all accounts) ──
+
+    const val CLOUD_KEEP_DAYS = 15
+    private val importantRx = Regex("(?i)(\\bERROR\\b|crash|app ended|froze|not responding|exception|failed|refused|can't play|cannot play|no streams|no links|nothing found|first picture|= ✓|stopped|gave up|timeout|timed out|HTTP [45]\\d\\d|wake word|live (closed|failed)|APP +opened)")
+
+    /** Sends the important lines written since the last upload (errors, crashes, play results) to xshared/logs. */
+    private suspend fun uploadImportant() {
+        flush()
+        val user = Cloud.user.value ?: return
+        val t = Cloud.token() ?: return
+        val p = app!!.getSharedPreferences("actlog", Context.MODE_PRIVATE)
+        val day = today()
+        val f = fileFor(day)
+        val sent = if (p.getString("cUpDay", "") == day) p.getLong("cUpAt", 0) else 0L
+        val len = f.length()
+        val base = XNs.url("logs/${user.uid}/${devId()}").removeSuffix(".json")
+        // once a day: days older than 15 are deleted
+        if (p.getString("cPruned", "") != day) {
+            runCatching {
+                val txt = Api.get("$base/days.json?shallow=true&auth=$t")
+                val keys = runCatching { Api.json.parseToJsonElement(txt).jsonObject.keys }.getOrDefault(emptySet())
+                val keep = (0 until CLOUD_KEEP_DAYS).map { dayFmt.format(Date(System.currentTimeMillis() - it * 86_400_000L)) }.toSet()
+                keys.filter { it !in keep }.forEach { old -> Api.http.newCall(Request.Builder().url("$base/days/$old.json?auth=$t").delete().build()).execute().close() }
+            }
+            p.edit().putString("cPruned", day).apply()
+        }
+        if (len <= sent) return
+        val chunk = runCatching { f.inputStream().use { it.skip(sent); it.readBytes() } }.getOrNull()?.decodeToString() ?: return
+        val keep = chunk.lines().filter { it.isNotBlank() && importantRx.containsMatchIn(it) }.joinToString("\n").take(120_000)
+        if (keep.isNotBlank()) {
+            val body = buildJsonObject { put("t", keep); put("at", System.currentTimeMillis()) }
+            val ok = Api.http.newCall(Request.Builder().url("$base/days/$day.json?auth=$t").post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { it.isSuccessful }
+            if (!ok) return
+        }
+        p.edit().putString("cUpDay", day).putLong("cUpAt", len).apply()
+        val info = buildJsonObject {
+            put("model", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}" + if (BuildConfig.IS_TV) " (TV)" else "")
+            put("os", "Android ${android.os.Build.VERSION.RELEASE}"); put("ver", BuildConfig.VERSION_NAME)
+            put("who", user.email ?: user.uid); put("at", System.currentTimeMillis())
+        }
+        Api.http.newCall(Request.Builder().url("$base/info.json?auth=$t").put(info.toString().toRequestBody("application/json".toMediaType())).build()).execute().close()
+    }
+
+    /** Developer: every device of every account that sent logs: (uid/dev, label). */
+    suspend fun allAccountsDevices(): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        val t = Cloud.token() ?: return@withContext emptyList()
+        val root = XNs.url("logs").removeSuffix(".json")
+        val uids = runCatching { Api.json.parseToJsonElement(Api.get("$root.json?shallow=true&auth=$t")).jsonObject.keys.toList() }.getOrDefault(emptyList())
+        uids.flatMap { uid ->
+            val devs = runCatching { Api.json.parseToJsonElement(Api.get("$root/$uid.json?shallow=true&auth=$t")).jsonObject.keys.toList() }.getOrDefault(emptyList())
+            devs.mapNotNull { d ->
+                val o = runCatching { Api.json.parseToJsonElement(Api.get("$root/$uid/$d/info.json?auth=$t")).jsonObject }.getOrNull()
+                val at = o?.get("at")?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
+                val label = listOfNotNull(o?.get("model")?.jsonPrimitive?.contentOrNull, o?.get("who")?.jsonPrimitive?.contentOrNull?.substringBefore('@'), o?.get("ver")?.jsonPrimitive?.contentOrNull).joinToString(" · ").ifBlank { d }
+                Triple("x:$uid/$d", label, at)
+            }
+        }.sortedByDescending { it.third }.map { it.first to it.second }
+    }
+
+    /** Developer: one device's cloud log (15 days). */
+    suspend fun allAccountsText(key: String): String = withContext(Dispatchers.IO) {
+        val t = Cloud.token() ?: return@withContext ""
+        val path = key.removePrefix("x:")
+        val txt = runCatching { Api.get(XNs.url("logs/$path/days", t)) }.getOrNull() ?: return@withContext ""
+        val o = runCatching { Api.json.parseToJsonElement(txt).jsonObject }.getOrNull() ?: return@withContext ""
+        o.entries.sortedBy { it.key }.joinToString("\n") { (day, v) ->
+            "===== $day =====\n" + (runCatching { v.jsonObject.values.mapNotNull { e -> runCatching { e.jsonObject }.getOrNull() }
+                .sortedBy { it["at"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L }.joinToString("\n") { it["t"]?.jsonPrimitive?.contentOrNull.orEmpty() } }.getOrDefault(""))
+        }
     }
 
     private suspend fun uploadTv() {

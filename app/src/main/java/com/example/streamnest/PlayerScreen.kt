@@ -17,6 +17,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -530,6 +531,12 @@ fun PlayerScreen(
     // the black bars that are part of the picture in wide films. Pinch in steps back.
     var cinematic by remember { mutableStateOf(false) }
     val cineScale by animateFloatAsState(if (cinematic && !BuildConfig.IS_TV) 1.2f else 1f, tween(260), label = "cine")
+    // Free zoom (phones, More › Free zoom): pinch to any size and drag the picture around, like a photo.
+    var freeZoom by remember { mutableStateOf(vm.playerPref("freeZoom") == "yes") }
+    var fz by remember { mutableFloatStateOf(1f) }
+    var fzX by remember { mutableFloatStateOf(0f) }
+    var fzY by remember { mutableFloatStateOf(0f) }
+    val vScale = if (freeZoom && !BuildConfig.IS_TV) fz else cineScale
     var hud by remember { mutableStateOf<Pair<String, Float>?>(null) }
     // ───── Remote / keyboard (TV): a focusable root that reads the keys; D-pad seeking moves a pending target first ─────
     val rootFocus = remember { FocusRequester() }
@@ -2980,7 +2987,7 @@ fun PlayerScreen(
                     // black bars instead: Crop = 1.33× (fills a wide film), Stretch = taller only.
                     modifier = Modifier.fillMaxSize().then(if (BuildConfig.IS_TV) Modifier.graphicsLayer {
                         when (aspectIdx) { 1 -> { scaleX = 1.33f; scaleY = 1.33f }; 2 -> { scaleX = 1f; scaleY = 1.33f }; else -> { scaleX = 1f; scaleY = 1f } }
-                    } else Modifier.graphicsLayer { scaleX = cineScale; scaleY = cineScale }),
+                    } else Modifier.graphicsLayer { scaleX = vScale; scaleY = vScale; if (freeZoom) { translationX = fzX; translationY = fzY } }),
                 )
                 // Plugin mode's quiet swap: the second player's picture, above the main one (fades in, then stays).
                 val sh = shadow
@@ -3000,7 +3007,7 @@ fun PlayerScreen(
                             outer
                         },
                         update = { v -> (v.tag as? AspectRatioFrameLayout)?.resizeMode = resize; if (sh === player) videoView = v },
-                        modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shadowAlpha; scaleX = cineScale; scaleY = cineScale },
+                        modifier = Modifier.fillMaxSize().graphicsLayer { alpha = shadowAlpha; scaleX = vScale; scaleY = vScale; if (freeZoom) { translationX = fzX; translationY = fzY } },
                     )
                 }
                 // Subtitles live outside the video frame, so zoom / crop never moves or enlarges them.
@@ -3049,12 +3056,25 @@ fun PlayerScreen(
                     val stepPx = 36.dp.toPx()
                     var lastTapAt = 0L
                     var lastTapX = 0f
+                    // Gestures & controls: what swiping up/down does on the left, in the middle and on the right.
+                    val zoneL = opt("gestLeft").ifBlank { "brightness" }
+                    val zoneM = opt("gestMiddle").ifBlank { "watchnext" }
+                    val zoneR = opt("gestRight").ifBlank { "volume" }
+                    val midW = (opt("gestMidWidth").toFloatOrNull() ?: 0.5f).coerceIn(0.2f, 0.8f)
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val start = down.position
                         val downAt = SystemClock.uptimeMillis()
-                        var mode = 0 // 0 = undecided, 1 = brightness/volume, 2 = hold speed, 3 = pinch, 4 = ignore
-                        val left = start.x < size.width / 2f
+                        var mode = 0 // 0 = undecided, 1 = brightness/volume, 2 = hold speed, 3 = pinch, 4 = ignore, 5 = watch next, 6 = pan (free zoom)
+                        val zoneRole = when {
+                            start.x < size.width * (0.5f - midW / 2f) -> zoneL
+                            start.x > size.width * (0.5f + midW / 2f) -> zoneR
+                            else -> zoneM
+                        }
+                        // brightness or volume for this swipe
+                        val left = zoneRole == "brightness"
+                        var fzStart = 1f; var fzX0 = 0f; var fzY0 = 0f; var c0 = androidx.compose.ui.geometry.Offset.Zero
+                        var lastRateAt = 0L
                         var level = 0f
                         var pinchStart = 0f
                         var pinchRatio = 1f
@@ -3077,19 +3097,35 @@ fun PlayerScreen(
                             }
                             val pressed = ev.changes.filter { it.pressed }
                             if (pressed.isEmpty()) break
-                            if (pressed.size >= 2 && (mode == 0 || mode == 3)) {
+                            if (pressed.size >= 2 && (mode == 0 || mode == 3 || mode == 6)) {
                                 val d = (pressed[0].position - pressed[1].position).getDistance()
-                                if (mode == 0) { mode = 3; pinchStart = d.coerceAtLeast(1f) } else pinchRatio = d / pinchStart
+                                val cen = (pressed[0].position + pressed[1].position) / 2f
+                                if (mode != 3) { mode = 3; pinchStart = d.coerceAtLeast(1f); fzStart = fz; fzX0 = fzX; fzY0 = fzY; c0 = cen }
+                                else pinchRatio = d / pinchStart
+                                if (freeZoom && !BuildConfig.IS_TV) {
+                                    val nz = (fzStart * pinchRatio).coerceIn(1f, 5f)
+                                    // zoom around the point between the fingers, and follow them as they move
+                                    val cx = c0.x - size.width / 2f; val cy = c0.y - size.height / 2f
+                                    val k = nz / fzStart
+                                    fz = nz
+                                    val maxX = (nz - 1f) * size.width / 2f; val maxY = (nz - 1f) * size.height / 2f
+                                    fzX = (cx - (cx - fzX0) * k + (cen.x - c0.x)).coerceIn(-maxX, maxX)
+                                    fzY = (cy - (cy - fzY0) * k + (cen.y - c0.y)).coerceIn(-maxY, maxY)
+                                }
                                 ev.changes.forEach { it.consume() }
                                 continue
                             }
                             val c = ev.changes.firstOrNull { it.id == down.id } ?: pressed.first()
                             val delta = c.position - start
                             when (mode) {
-                                0 -> if (!BuildConfig.IS_TV && abs(delta.y) > slop && abs(delta.y) > abs(delta.x) && start.x in (size.width / 3f)..(size.width * 2f / 3f)) {
+                                0 -> if (freeZoom && fz > 1.01f && !BuildConfig.IS_TV && delta.getDistance() > slop) {
+                                    mode = 6
+                                } else if (!BuildConfig.IS_TV && abs(delta.y) > slop && abs(delta.y) > abs(delta.x) && zoneRole == "watchnext") {
                                     // Xstream: the middle third — swiping up there pulls Watch Next up (like YouTube).
                                     mode = 5
                                     wnDrag = 0f; wnLastY = c.position.y; wnLastT = SystemClock.uptimeMillis(); wnVel = 0f
+                                } else if (abs(delta.y) > slop && abs(delta.y) > abs(delta.x) && zoneRole == "none") {
+                                    mode = 4
                                 } else if (abs(delta.y) > slop && abs(delta.y) > abs(delta.x)) {
                                     mode = 1
                                     val act = ctx as Activity
@@ -3122,10 +3158,19 @@ fun PlayerScreen(
                                         lastStep = step
                                         val sp = (2f + 0.25f * step).coerceIn(0.5f, 4f)
                                         if (sp != holdSpeed) {
-                                            setRate(sp); holdSpeed = sp
-                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            holdSpeed = sp
+                                            // the number follows the finger at once; the player's speed changes at most
+                                            // every 120 ms (changing it on every pixel made the video stutter)
+                                            val tNow = SystemClock.uptimeMillis()
+                                            if (tNow - lastRateAt > 120) { setRate(sp); lastRateAt = tNow }
                                         }
                                     }
+                                    c.consume()
+                                }
+                                6 -> {
+                                    val maxX = (fz - 1f) * size.width / 2f; val maxY = (fz - 1f) * size.height / 2f
+                                    fzX = (fzX + c.position.x - c.previousPosition.x).coerceIn(-maxX, maxX)
+                                    fzY = (fzY + c.position.y - c.previousPosition.y).coerceIn(-maxY, maxY)
                                     c.consume()
                                 }
                             }
@@ -3175,7 +3220,7 @@ fun PlayerScreen(
                                 hud = null
                             }
                             2 -> { setRate(baseSpeed); holdSpeed = null }
-                            3 -> when {
+                            3 -> if (freeZoom && !BuildConfig.IS_TV) { if (fz < 1.03f) { fz = 1f; fzX = 0f; fzY = 0f } } else when {
                                 pinchRatio > 1.12f && aspectIdx != 1 -> setAspect(1, "Zoomed to fill")
                                 pinchRatio > 1.12f && aspectIdx == 1 && !cinematic -> { cinematic = true; aspectLabel = "Cinematic zoom" }
                                 pinchRatio < 0.9f && cinematic -> { cinematic = false; aspectLabel = "Zoomed to fill" }
@@ -3208,8 +3253,6 @@ fun PlayerScreen(
                     Text("${(holdSpeed ?: 2f).let { if (it % 1f == 0f) it.toInt().toString() else it.toString() }}x", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.width(6.dp))
                     Icon(Icons.Default.FastForward, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Text("Slide ◀ ▶ to change", fontSize = 11.sp, color = Color(0xFFB6BDCC))
                 }
             }
 
@@ -3236,7 +3279,23 @@ fun PlayerScreen(
                     Text("${(lvl * 100).toInt()}%", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
-            LaunchedEffect(aspectLabel) { if (aspectLabel != null) { delay(1500); aspectLabel = null } }
+            // "Pinch out to fill the screen": once per title, when the picture doesn't reach the edges.
+            var pinchHint by remember { mutableStateOf(false) }
+            if (!BuildConfig.IS_TV) LaunchedEffect(firstFrame) {
+                if (!firstFrame) return@LaunchedEffect
+                delay(2500)
+                val vs = if (usingVlc) null else player.videoSize
+                val cfgNow = ctx.resources.configuration
+                val sw = cfgNow.screenWidthDp.toFloat(); val sh = cfgNow.screenHeightDp.toFloat()
+                val vr = vs?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width * it.pixelWidthHeightRatio / it.height } ?: return@LaunchedEffect
+                val sr = maxOf(sw, sh) / minOf(sw, sh)
+                val key = "pinchHint:" + p.key.substringBefore(":")
+                if (aspectIdx == 0 && !cinematic && fz <= 1.01f && kotlin.math.abs(vr - sr) > 0.08f && vm.store(key) == null && sw > sh) {
+                    vm.storePut(key, "1"); pinchHint = true; delay(3600); pinchHint = false
+                }
+            }
+            if (pinchHint) PinchHint(Modifier.align(Alignment.Center))
+            LaunchedEffect(aspectLabel) { if (aspectLabel != null) { pinchHint = false; delay(1500); aspectLabel = null } }
             aspectLabel?.let {
                 Text(it, Modifier.align(Alignment.Center).padding(top = 110.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xB3000000))
                     .padding(horizontal = 16.dp, vertical = 8.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
@@ -3524,7 +3583,10 @@ fun PlayerScreen(
                                         add(Triple(Icons.Default.CloudQueue, "Sources") { pick { panel = "sources" } })
                                         add(Triple(Icons.Default.Speed, "Speed · ${speed.let { if (it % 1f == 0f) it.toInt().toString() else it.toString() }}x") { pick { panel = "speed" } })
                                         add(Triple(Icons.Default.Bedtime, if (sleepAt != null || sleepEnd) "Sleep on" else "Sleep timer") { pick { panel = "sleep" } })
-                                        add(Triple(Icons.Default.AspectRatio, AspectModes[aspectIdx].first) { poke++; setAspect((aspectIdx + 1) % AspectModes.size) })
+                                        add(Triple(Icons.Default.ZoomOutMap, if (freeZoom) "Free zoom: on" else "Free zoom: off") {
+                                            poke++; freeZoom = !freeZoom; fz = 1f; fzX = 0f; fzY = 0f; vm.setPlayerPref("freeZoom", if (freeZoom) "yes" else "no")
+                                            aspectLabel = if (freeZoom) "Free zoom: pinch anywhere, drag to move" else "Free zoom off: pinch to fill"
+                                        })
                                         if (PipState.supported(ctx)) add(Triple(Icons.Default.PictureInPictureAlt, "Picture in picture") { pick { PipState.enter(ctx as Activity, player.videoSize) } })
                                         add(Triple(Icons.Default.OpenInNew, "Other player") { pick { pauseNow(); now?.let { openExternal(ctx, it.url, p.title) } } })
                                         add(Triple(Icons.Outlined.Info, "Info") { pick { infoManual = true; showInfo = true; controls = false } })
@@ -3642,7 +3704,11 @@ fun PlayerScreen(
                                 add(Triple(Icons.Default.CloudQueue, "Sources") { pick { panel = "sources" } })
                                 add(Triple(Icons.Default.Speed, "Speed · ${speed.let { if (it % 1f == 0f) it.toInt().toString() else it.toString() }}x") { pick { panel = "speed" } })
                                 add(Triple(Icons.Default.Bedtime, if (sleepAt != null || sleepEnd) "Sleep on" else "Sleep timer") { pick { panel = "sleep" } })
-                                add(Triple(Icons.Default.AspectRatio, AspectModes[aspectIdx].first) { setAspect((aspectIdx + 1) % AspectModes.size); poke++ })
+                                if (BuildConfig.IS_TV) add(Triple(Icons.Default.AspectRatio, AspectModes[aspectIdx].first) { setAspect((aspectIdx + 1) % AspectModes.size); poke++ })
+                                else add(Triple(Icons.Default.ZoomOutMap, if (freeZoom) "Free zoom: on" else "Free zoom: off") {
+                                    poke++; freeZoom = !freeZoom; fz = 1f; fzX = 0f; fzY = 0f; vm.setPlayerPref("freeZoom", if (freeZoom) "yes" else "no")
+                                    aspectLabel = if (freeZoom) "Free zoom: pinch anywhere, drag to move" else "Free zoom off: pinch to fill"
+                                })
                                 add(Triple(Icons.Default.GraphicEq, "Sound") { pick { panel = "sound" } })
                                 add(Triple(Icons.Default.Groups, "Watch together") { pick { panel = "together" } })
                                 if (type == "series" && episodes.isNotEmpty()) add(Triple(Icons.Default.VideoLibrary, "Episodes") { pick { showEpisodes = true; controls = false } })
@@ -4184,7 +4250,7 @@ fun PlayerScreen(
                             }
                           }
                           // Sources: by visual tag, no server / provider names. Dev sources (chosen accounts): everything, as before.
-                          if (which == "devsources") DevSourcesPanel(vm, type, p.key, now?.url, quickList.filter { it.manualOk() }, meta, onSwitch = pickSource)
+                          if (which == "devsources") DevSourcesPanel(vm, type, p.key, now?.url, quickList.filter { it.manualOk() }, meta, onSwitch = pickSource, nowItem = now?.url?.let { itemFor(it) }, nowName = now?.let { listOfNotNull(it.addon, it.source).distinct().joinToString(" · ") })
                           // TV: by quality (Instant · 4K · Full HD · Mid HD) with every link's picture / sound tags.
                           else if (BuildConfig.IS_TV) TvSourcesPanel(vm, type, p.key, now?.url, (known + quickList).distinctBy { it.stream.url }.filter { it.manualOk() }, panelFocus) { st, all ->
                               if (st.stream.url == tvUp?.stream?.url) tvUp = null
@@ -4754,7 +4820,11 @@ private val Flags = mapOf("hindi" to "🇮🇳", "english" to "🇺🇸", "tamil
 @kotlin.OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playingUrl: String?, quick: List<StreamItem>, meta: Meta?,
-                            onSwitch: (StreamItem, List<StreamItem>) -> Unit) {
+                            onSwitch: (StreamItem, List<StreamItem>) -> Unit, nowItem: StreamItem? = null, nowName: String? = null) {
+    // The same link can come back slightly different (other query, http/https): compared without those.
+    fun bare(u: String?) = u?.substringBefore('#')?.substringBefore('?')?.removePrefix("https://")?.removePrefix("http://")?.trimEnd('/')?.lowercase()
+    val playBare = bare(playingUrl)
+    fun isNow(s: StreamItem) = isNow(s) || (playBare != null && bare(s.stream.url) == playBare) || (nowItem != null && s === nowItem)
     val pack by vm.badgePack.collectAsStateWithLifecycle()
     val pctx = LocalContext.current
     var reload by remember { mutableIntStateOf(0) }
@@ -4779,7 +4849,7 @@ private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playing
     // Groups fold: the one holding what's playing starts open, the rest closed (tap a header to open it).
     var openGroups by remember(key) { mutableStateOf<Set<String>?>(null) }
     val playingGroup = remember(others, qs, playingUrl) {
-        (qs.firstOrNull { it.stream.url == playingUrl } ?: others.flatMap { it.second }.firstOrNull { it.stream.url == playingUrl })?.addonName
+        (qs.firstOrNull { isNow(it) } ?: others.flatMap { it.second }.firstOrNull { isNow(it) })?.addonName
     }
     val opened = openGroups ?: setOfNotNull(playingGroup)
     fun toggle(g: String) { openGroups = if (g in opened) opened - g else opened + g }
@@ -4794,16 +4864,25 @@ private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playing
         }
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             DevColumn("Quick play", qs.size, Modifier.weight(1f)) {
+                // What's playing is always shown, even when it isn't in the lists (a swapped-in file, a plugin link).
+                val listed = qs.any { isNow(it) } || allFiles.any { isNow(it) }
+                if (!listed && playingUrl != null) item(key = "nowPlaying") {
+                    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(12.dp)).background(Color(0x26E50914)).border(1.dp, Color(0x99E50914), RoundedCornerShape(12.dp)).padding(10.dp)) {
+                        Text("Playing now", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF9AA1))
+                        Text(nowItem?.addonName ?: nowName ?: "This video", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                        Text(hostOf(playingUrl), fontSize = 11.sp, color = Color(0xFF8A94A8), maxLines = 1)
+                    }
+                }
                 if (qs.isEmpty()) item { Text(if (done) "Nothing from quick play" else "Asking…", Modifier.padding(8.dp), fontSize = 12.sp, color = Color(0xFF8A94A8)) }
                 qs.groupBy { it.addonName }.forEach { (addon, files) ->
-                    item(key = "qh$addon") { DevGroupHeader(addon, files.size, addon in opened, files.any { it.stream.url == playingUrl }) { toggle(addon) } }
-                    if (addon in opened) items(files, key = { "q" + it.stream.url }) { s -> DevFileCard(s, s.stream.url == playingUrl, pack) { onSwitch(s, qs) } }
+                    item(key = "qh$addon") { DevGroupHeader(addon, files.size, addon in opened, files.any { isNow(it) }) { toggle(addon) } }
+                    if (addon in opened) items(files, key = { "q" + it.stream.url }) { s -> DevFileCard(s, isNow(s), pack) { onSwitch(s, qs) } }
                 }
             }
             DevColumn("All addons", others.sumOf { it.second.size }, Modifier.weight(1.35f)) {
                 others.forEach { (addon, files) ->
-                    item(key = "h$addon") { DevGroupHeader(addon, files.size, addon in opened, files.any { it.stream.url == playingUrl }) { toggle(addon) } }
-                    if (addon in opened) items(files, key = { "a" + it.stream.url }) { s -> DevFileCard(s, s.stream.url == playingUrl, pack) { onSwitch(s, allFiles) } }
+                    item(key = "h$addon") { DevGroupHeader(addon, files.size, addon in opened, files.any { isNow(it) }) { toggle(addon) } }
+                    if (addon in opened) items(files, key = { "a" + it.stream.url }) { s -> DevFileCard(s, isNow(s), pack) { onSwitch(s, allFiles) } }
                 }
                 if (!done) item { Box(Modifier.fillMaxWidth().padding(10.dp), Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) } }
             }
@@ -6001,5 +6080,21 @@ private fun PluginQualityBar(
                 }
             }
         }
+    }
+}
+
+
+/** Two fingers spreading apart, looping, with "Pinch out to fill the screen". */
+@Composable
+private fun PinchHint(modifier: Modifier) {
+    val t = rememberInfiniteTransition(label = "pinch")
+    val k by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Restart), label = "k")
+    Column(modifier.clip(RoundedCornerShape(24.dp)).background(Color(0xB3000000)).padding(horizontal = 22.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(width = 120.dp, height = 56.dp)) {
+            val gap = 10.dp + 34.dp * k
+            Box(Modifier.align(Alignment.Center).offset(x = -gap, y = gap * 0.5f).size(18.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f - 0.4f * k)))
+            Box(Modifier.align(Alignment.Center).offset(x = gap, y = -gap * 0.5f).size(18.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f - 0.4f * k)))
+        }
+        Text("Pinch out to fill the screen", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }

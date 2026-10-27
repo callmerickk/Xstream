@@ -1320,6 +1320,30 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
             }
         }
 
+        if (!BuildConfig.IS_TV) {
+            SectionLabel("Gestures & controls")
+            SettingsCard {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+                    Text("Swipe up / down on the video", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text("Pick what each part of the screen does. The middle part is wide by default, so Watch Next is easy to reach with one hand.", fontSize = 13.sp, color = Muted)
+                    val roles = listOf("brightness" to "Brightness", "watchnext" to "Watch Next", "volume" to "Volume", "none" to "Nothing")
+                    listOf(Triple("gestLeft", "Left", "brightness"), Triple("gestMiddle", "Middle", "watchnext"), Triple("gestRight", "Right", "volume")).forEach { (key, label, def) ->
+                        Text(label, Modifier.padding(top = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            roles.forEach { (id, name) ->
+                                val on = v(key).ifBlank { def } == id
+                                FilterChip(on, { vm.setText(key, id) }, { Text(name) })
+                            }
+                        }
+                    }
+                    val mw = v("gestMidWidth").toFloatOrNull() ?: 0.5f
+                    Text("Middle part: ${(mw * 100).toInt()}% of the width", Modifier.padding(top = 14.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Slider(mw, { vm.setText("gestMidWidth", "%.2f".format(java.util.Locale.US, it)) }, valueRange = 0.2f..0.8f)
+                    Text("Press and hold anywhere: 2x. Keep holding and slide left / right to change the speed.", fontSize = 12.sp, color = Muted)
+                }
+            }
+        }
+
         SectionLabel("Next episode")
         SettingsCard {
             ToggleRow("Auto-play Next Episode", "Start the next episode automatically near the end.", isOn(v("autoNext"))) { vm.setText("autoNext", yn(it)) }

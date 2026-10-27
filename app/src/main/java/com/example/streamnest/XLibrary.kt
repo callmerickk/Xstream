@@ -83,10 +83,16 @@ object Recs {
     /** A friend's recommendation arrived. */
     fun incoming(ctx: Context, m: SocialMsg) {
         init(ctx)
+        // The same message can arrive more than once: it goes in the watchlist only the first time (and stays out if
+        // you removed it).
+        val already = all.value.any { !it.out && it.id == m.item && it.friend == m.from }
         save(listOf(Rec(m.item, m.plan.ifBlank { "movie" }, m.title, m.code.ifBlank { null }, m.from, m.fromName, out = false, at = System.currentTimeMillis()))
             + all.value.filterNot { !it.out && it.id == m.item && it.friend == m.from })
-        addToList?.invoke(Meta(id = m.item, type = m.plan.ifBlank { "movie" }, name = m.title, poster = m.code.ifBlank { null }))
+        if (!already) addToList?.invoke(Meta(id = m.item, type = m.plan.ifBlank { "movie" }, name = m.title, poster = m.code.ifBlank { null }))
     }
+
+    /** A friend's recommendation of this title you haven't answered, if any. */
+    fun fromFriend(id: String): Rec? = all.value.firstOrNull { !it.out && it.id == id }
 
     /** A friend's feedback about something you recommended. */
     fun feedback(ctx: Context, m: SocialMsg) {
@@ -104,8 +110,37 @@ object Recs {
 /** Xstream: adding to the watchlist anywhere asks "my library or a friend's room?" (shown by the app's root). */
 object WatchlistAsk {
     val pending = MutableStateFlow<Meta?>(null)
+    /** Removing a title a friend put in your watchlist: tell them, or remove quietly. */
+    val removing = MutableStateFlow<Pair<Meta, Rec>?>(null)
     /** Removes when already saved; otherwise asks where to add it. */
-    fun toggle(vm: AppViewModel, m: Meta) { if (vm.myList.value.any { it.id == m.id }) vm.toggleList(m) else pending.value = m }
+    fun toggle(vm: AppViewModel, m: Meta) {
+        if (vm.myList.value.any { it.id == m.id }) {
+            val r = Recs.fromFriend(m.id)
+            if (r != null && !BuildConfig.IS_TV) removing.value = m to r else vm.toggleList(m)
+        } else pending.value = m
+    }
+}
+
+/** "Remove ${title}?" for a friend's pick: tell them you're not into it, or just remove it. */
+@Composable
+fun RemoveFriendPickSheet(vm: AppViewModel, m: Meta, r: Rec, onDone: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("Remove ${m.name}?") },
+        text = { Text("${r.friendName} put it in your watchlist.") },
+        confirmButton = {
+            androidx.compose.material3.TextButton({
+                vm.toggleList(m)
+                scope.launch { runCatching { Recs.answer(r, "Not for me, thanks 🙂") } }
+                Snack.show("Removed · ${r.friendName} knows it's not for you"); onDone()
+            }) { Text("Tell ${r.friendName} I'm not into it") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton({ vm.toggleList(m); Snack.show("Removed"); onDone() }) { Text("Remove without telling") }
+        },
+        containerColor = Color(0xFF1A1C22),
+    )
 }
 
 /** "Add to watchlist": your own library, or a friend's room (it goes into their watchlist and they're told it's from you). */

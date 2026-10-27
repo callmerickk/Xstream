@@ -71,6 +71,24 @@ fun NotificationBell(onTogether: () -> Unit, onOpen: (Meta) -> Unit) {
         (alerts + rec).sortedByDescending { it.at }.take(40)
     }
     val unread = pending.isNotEmpty() || items.any { it.at > seen }
+    // Something new arrived while the app is open: a banner drops from the top for a few seconds.
+    var banner by remember { mutableStateOf<BellItem?>(null) }
+    var announced by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(items.firstOrNull()?.at) {
+        val top = items.firstOrNull() ?: return@LaunchedEffect
+        if (top.at > announced && top.at > seen) { announced = top.at; banner = top; kotlinx.coroutines.delay(4000); banner = null }
+    }
+    banner?.let { b ->
+        Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, 40), onDismissRequest = { banner = null }) {
+            Row(Modifier.padding(horizontal = 16.dp).shadow(12.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp)).background(Color(0xF21A1C24))
+                .border(1.dp, Color(0x66E50914), RoundedCornerShape(18.dp)).clickable { banner = null; open = true; markSeen(ctx) }.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Notifications, null, Modifier.size(18.dp), tint = Accent)
+                Spacer(Modifier.width(10.dp))
+                Column { Text("New notification", fontSize = 11.sp, color = Color(0xFF9AA3B5)); Text(b.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) }
+            }
+        }
+    }
     Box {
         Box(
             Modifier.size(42.dp).clip(CircleShape).background(Color(0x99101420)).border(1.dp, Color(0x33FFFFFF), CircleShape)

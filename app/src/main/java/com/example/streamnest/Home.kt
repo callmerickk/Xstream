@@ -298,6 +298,7 @@ fun HomeScreen(
                         }
                     }
                     Spacer(Modifier.weight(1f))
+                    if (!BuildConfig.IS_TV) { DownloadsButton(onPlay); Spacer(Modifier.width(10.dp)) }
                     NotificationBell(onTogether = { BellNav.together.value = true }, onOpen = onOpen)
                 }
             }

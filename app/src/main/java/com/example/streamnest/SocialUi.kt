@@ -354,6 +354,7 @@ fun SharedItemSheet(vm: AppViewModel, item: SharedItem, friends: List<Person>, o
                         WtButton("Watch now", primary = p.room == null) { Social.watchNow(item, p); pendingDetailPlay.value = item.meta.id; onOpen(item.meta) }
                         WtButton("Reschedule") { planning = p }
                         if (others.isNotEmpty()) WtButton("Ring") { Social.ring(item, p) }
+                        WtButton("Remove") { scope.launch { if (Social.removePlan(ctx, item, p)) { Snack.show("Removed from ${Social.planTime(p.at)}"); onClose() } else Snack.show("Couldn't remove the plan") } }
                     }
                 }
             }

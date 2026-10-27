@@ -39,19 +39,23 @@ fun <T> ReorderColumn(
     val heights = remember { mutableStateMapOf<Any, Int>() }
     val haptics = LocalHapticFeedback.current
     val cur by rememberUpdatedState(items)
+    // The drag gestures live as long as their row; they must call the newest onMove / locked (the list behind them
+    // changes after every move). With the first ones, a second move was computed on the old order and undid the first.
+    val moveNow by rememberUpdatedState(onMove)
+    val lockedNow by rememberUpdatedState(locked)
     fun h(i: Int): Int = cur.getOrNull(i)?.let { heights[key(it)] } ?: 0
     fun from(): Int = cur.indexOfFirst { key(it) == dragKey }
     fun target(): Int {
         val f = from(); if (f < 0) return -1
         var t = f; var y = dragY
-        if (y > 0) while (t < cur.lastIndex && !locked(cur[t + 1]) && y > h(t + 1) / 2f) { y -= h(t + 1); t++ }
-        else while (t > 0 && !locked(cur[t - 1]) && -y > h(t - 1) / 2f) { y += h(t - 1); t-- }
+        if (y > 0) while (t < cur.lastIndex && !lockedNow(cur[t + 1]) && y > h(t + 1) / 2f) { y -= h(t + 1); t++ }
+        else while (t > 0 && !lockedNow(cur[t - 1]) && -y > h(t - 1) / 2f) { y += h(t - 1); t-- }
         return t
     }
     fun end() {
         val f = from(); val t = target()
         dragKey = null; dragY = 0f
-        if (f >= 0 && t >= 0 && f != t) onMove(f, t)
+        if (f >= 0 && t >= 0 && f != t) moveNow(f, t)
     }
     Column(modifier) {
         items.forEachIndexed { i, item ->
