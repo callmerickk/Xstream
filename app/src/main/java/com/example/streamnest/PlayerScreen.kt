@@ -4824,7 +4824,7 @@ private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playing
     // The same link can come back slightly different (other query, http/https): compared without those.
     fun bare(u: String?) = u?.substringBefore('#')?.substringBefore('?')?.removePrefix("https://")?.removePrefix("http://")?.trimEnd('/')?.lowercase()
     val playBare = bare(playingUrl)
-    fun isNow(s: StreamItem) = isNow(s) || (playBare != null && bare(s.stream.url) == playBare) || (nowItem != null && s === nowItem)
+    fun isNow(s: StreamItem): Boolean = s.stream.url == playingUrl || (playBare != null && bare(s.stream.url) == playBare) || (nowItem != null && s === nowItem)
     val pack by vm.badgePack.collectAsStateWithLifecycle()
     val pctx = LocalContext.current
     var reload by remember { mutableIntStateOf(0) }

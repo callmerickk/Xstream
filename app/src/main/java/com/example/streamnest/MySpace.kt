@@ -151,6 +151,29 @@ fun MySpaceScreen(
             // My Space shows your charts instead.
             item { LaunchedEffect(profile?.id) { WatchLog.load(ctx, profile?.id) } ; WatchCharts { k -> progress.firstOrNull { it.key == k }?.let { onOpen(it.toMeta()) } ?: onOpen(Meta(id = k.substringBefore(":"), type = if (k.contains(":")) "series" else "movie", name = "")) } }
             if (!BuildConfig.IS_TV) item { DownloadsSection(onPlay) }
+            if (!BuildConfig.IS_TV) item {
+                var tasteOpen by remember { mutableStateOf(false) }
+                Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color(0xFF15161C))
+                    .clickable { tasteOpen = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Tune, null, tint = Color(0xFFB6BDCC))
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text("Your taste & languages", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Text(vm.tasteLangs().joinToString(" · ") { c -> TasteLangs.firstOrNull { it.code == c }?.name ?: c }.ifBlank { "Pick what Home is made from" }, fontSize = 12.sp, color = Color(0xFF9AA3B5))
+                    }
+                }
+                if (tasteOpen) TasteOnboarding(vm) { tasteOpen = false }
+            }
+            if (!BuildConfig.IS_TV) item {
+                val di by Donate.info.collectAsState()
+                if (di.on) Row(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color(0x1FE50914)).border(1.dp, Color(0x55E50914), RoundedCornerShape(18.dp))
+                    .clickable { Donate.ask.value = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Favorite, null, tint = Color(0xFFFF5A64))
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text("Support Xstream", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Keep the servers running and new features coming", fontSize = 12.sp, color = Color(0xFF9AA3B5))
+                    }
+                }
+            }
             item { Spacer(Modifier.navigationBarsPadding().height(120.dp)) }
         }
     }

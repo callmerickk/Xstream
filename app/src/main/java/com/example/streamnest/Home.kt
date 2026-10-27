@@ -222,6 +222,14 @@ fun HomeScreen(
         mixed.distinctBy { it.meta.id }.take(12)
     }
 
+    val tasteKey = t("tasteLangs") + "|" + t("tasteTypes")
+    var newForYou by remember { mutableStateOf<List<Meta>>(emptyList()) }
+    var tasteExtras by remember { mutableStateOf<List<Shelf>>(emptyList()) }
+    LaunchedEffect(tasteKey, profile?.id) {
+        if (BuildConfig.IS_TV) return@LaunchedEffect
+        newForYou = runCatching { TasteRows.newForYou(vm) }.getOrDefault(emptyList())
+        tasteExtras = runCatching { TasteRows.extras(vm) }.getOrDefault(emptyList())
+    }
     val autoSlide = t("autoSlide").trim().lowercase() != "no"
     val slideSecs = t("slideSeconds").trim().toIntOrNull()?.coerceIn(2, 20) ?: 5
     val showBrand = t("showBrand").trim().lowercase() == "yes"
@@ -306,6 +314,7 @@ fun HomeScreen(
                 Text(t("forYou"), fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFEDEFF7),
                     modifier = Modifier.padding(start = 16.dp, top = 18.dp, bottom = 16.dp))
             }
+            if (!BuildConfig.IS_TV) item(key = "langPills", contentType = "langPills") { LanguagePills(vm, onOpen) }
             if (shelves.isEmpty()) {
                 item(key = "empty", contentType = "empty") {
                     Box(Modifier.fillMaxWidth().height(420.dp), Alignment.Center) {
@@ -341,6 +350,14 @@ fun HomeScreen(
             if (recs.isNotEmpty() && filter == null && showRecs && recsFirst) {
                 item(key = "recTitle", contentType = "title") { SectionTitle(recTitle) }
                 item(key = "recRow", contentType = "row") { ShelfRow(recs, onOpen) }
+            }
+            // Personal: the newest titles in all your languages, mixed; Anime / K-Drama when you picked them.
+            if (filter == null && newForYou.isNotEmpty()) {
+                item(key = "newForYouTitle", contentType = "title") { SectionTitle("New for you · " + vm.tasteLangs().take(3).joinToString(" · ") { c -> TasteLangs.firstOrNull { it.code == c }?.name ?: c }) }
+                item(key = "newForYouRow", contentType = "row") { PortraitRow(newForYou, onOpen) }
+            }
+            if (filter == null) itemsIndexed(tasteExtras, key = { i, s -> "taste:$i:${s.title}" }, contentType = { _, _ -> "shelf" }) { _, sh ->
+                SectionTitle(sh.title); PortraitRow(sh.items, onOpen)
             }
             if (filter == null) item(key = "collections", contentType = "collections") { CollectionsRows(vm) { c, f -> onOpenCollection(c, f) } }
             // Keys include the index so two catalogs with the same name can never collide (duplicate keys crash).

@@ -424,6 +424,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             "quickStart" -> QuickStartPage(vm) { subPage = null }
             "codeNames" -> CodeNamesPage(vm) { subPage = null }
             "assistant" -> DevAssistantPage(vm) { subPage = null }
+            "donate" -> DonatePage(vm) { subPage = null }
             else -> StreamFiltersPage(vm) { subPage = null }
         }
         return
@@ -451,6 +452,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             }
         }
         item { DevFold("AI assistant", "Analyse logs, tune auto-play, design the AI's name — with the app's AI or by copy & paste", false) { subPage = "assistant" } }
+        item { DevFold("Payments & donations", "UPI ID, PayPal / Ko-fi, monthly goal — the Support Xstream bubble for everyone", false) { subPage = "donate" } }
         item { DevFold("Code names", "Hotstar → Helios, MovieBox → Mercury Swift / Prime… see and edit every name", false) { subPage = "codeNames" } }
         item { DevFold("Sources & plugins", "Official set for everyone, CloudStream plugins, Quick Start, filters, built-in servers", devOpen == "src") { devOpen = if (devOpen == "src") null else "src" } }
         if (devOpen == "src") {

@@ -448,6 +448,8 @@ fun App(vm: AppViewModel = viewModel()) {
         if (profile != null && texts["guideDone"].isNullOrEmpty()) QuickGuide { vm.setText("guideDone", "1") }
         // First start on a profile: Turbo or Classic (each profile chooses once; Settings › Sources & Extensions later).
         if (!BuildConfig.IS_TV && profile != null && texts["srcMode"].isNullOrEmpty()) FirstWatchChooser(vm)
+        // Then once: what do you like to watch, and in which languages (Home is personalised from it).
+        else if (!BuildConfig.IS_TV && profile != null && !texts["guideDone"].isNullOrEmpty() && texts["tasteDone"].isNullOrEmpty() && !showSplash) TasteOnboarding(vm) {}
         // Built-in servers (CNCVerse / HdHub links published from Developer's Corner) and the Connect PenguPlay card.
         // The look everyone shares (app logo, AI logo, X's voice) first — it's quick, and it used to wait behind the rest.
         LaunchedEffect(profile?.id) { if (profile != null) { Public.vm = vm; runCatching { AppLook.fetch(vm.appContext) }; runCatching { BuiltIns.sync(vm) }; runCatching { DevDefaults.sync(vm) }; runCatching { Official.apply(vm, vm.appContext) } } }
@@ -489,6 +491,10 @@ fun App(vm: AppViewModel = viewModel()) {
         // Xstream: no "Connect PenguPlay" prompt — servers come from Developer's Corner.
         val askWl by WatchlistAsk.pending.collectAsState()
         askWl?.let { m -> AddToWatchlistSheet(vm, m) { WatchlistAsk.pending.value = null } }
+        // Support Xstream: published by the developer; asks after an hour with the app open.
+        LaunchedEffect(profile?.id) { if (profile != null && !BuildConfig.IS_TV) { Donate.load(); Donate.timer(buddyCtx) } }
+        val donateAsk by Donate.ask.collectAsState()
+        if (donateAsk && profile != null && stack.lastOrNull() !is Screen.Player) DonateBubble { Donate.ask.value = false }
         val rmWl by WatchlistAsk.removing.collectAsState()
         rmWl?.let { (m, r) -> RemoveFriendPickSheet(vm, m, r) { WatchlistAsk.removing.value = null } }
         if (showSplash) StartupSplash { showSplash = false }
