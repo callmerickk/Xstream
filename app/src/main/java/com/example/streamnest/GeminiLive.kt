@@ -254,7 +254,7 @@ class GeminiLive(
                     val args = co["args"] as? JsonObject ?: JsonObject(emptyMap())
                     val tool = tools.firstOrNull { it.name == name }
                     val res: JsonElement = try {
-                        withContext(Dispatchers.Main) { tool?.run?.invoke(args) } ?: buildJsonObject { put("error", "unknown function") }
+                        withContext(Dispatchers.IO) { tool?.run?.invoke(args) } ?: buildJsonObject { put("error", "unknown function") }
                     } catch (e: Exception) { buildJsonObject { put("error", e.message ?: "failed") } }
                     ActLog.add("AI", "tool $name ${args.toString().take(120)} → ${res.toString().take(120)}")
                     buildJsonObject {

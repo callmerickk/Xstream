@@ -55,7 +55,7 @@ object AvatarSpec {
     /** Mouth on the talking frames (frame pixels): centre x, lip line y, half width, chin y; face centre x. */
     val mouth: Map<AiBuddy, FloatArray> = mapOf(
         AiBuddy.June to floatArrayOf(266f, 207f, 32f, 247f, 266f),
-        AiBuddy.Aiden to floatArrayOf(256f, 205f, 34f, 242f, 256f),
+        AiBuddy.Aiden to floatArrayOf(247f, 207f, 38f, 257f, 250f),
     )
 }
 
