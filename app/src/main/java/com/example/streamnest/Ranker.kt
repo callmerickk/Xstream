@@ -264,7 +264,7 @@ object Ranker {
 
     /** Downloads the shared ranking (no sign-in needed). */
     suspend fun fetchShared(): Boolean = withContext(Dispatchers.IO) {
-        val f = runCatching { Api.json.decodeFromString<RankFile>(Api.get("${CloudConfig.DB_URL}/shared/sourceRanks.json")) }.getOrNull()
+        val f = runCatching { Api.json.decodeFromString<RankFile>(XNs.read("sourceRanks")!!) }.getOrNull()
             ?: return@withContext false
         if (f.entries.isNotEmpty() && f.at > file.at) {
             AutoPlayRules.checkpoint(Public.vm, "Before the shared ranking")
@@ -278,7 +278,7 @@ object Ranker {
         if (file.entries.isEmpty()) return@withContext "No ranking yet — run the Source Test first."
         val t = Cloud.token() ?: return@withContext "Sign in first (Settings › Account & Cloud Sync)."
         runCatching {
-            val req = Request.Builder().url("${CloudConfig.DB_URL}/shared/sourceRanks.json?auth=$t")
+            val req = Request.Builder().url(XNs.url("sourceRanks", t))
                 .put(Api.json.encodeToString(file).toRequestBody(jsonType)).build()
             Api.http.newCall(req).execute().use { r -> if (r.isSuccessful) null else if (r.code == 401 || r.code == 403) "Not allowed: only the owner's account can upload." else "HTTP ${r.code}" }
         }.getOrElse { "Couldn't reach the cloud: ${it.javaClass.simpleName}" }
@@ -289,7 +289,7 @@ object Ranker {
         val t = Cloud.token() ?: return@withContext
         val id = Integer.toHexString(r.key.hashCode())
         runCatching {
-            val req = Request.Builder().url("${CloudConfig.DB_URL}/shared/reports/$uid/$id.json?auth=$t")
+            val req = Request.Builder().url(XNs.url("reports/$uid/$id", t))
                 .put(Api.json.encodeToString(r).toRequestBody(jsonType)).build()
             Api.http.newCall(req).execute().close()
         }
@@ -299,7 +299,7 @@ object Ranker {
     suspend fun allReports(): Pair<List<FailReport>, String?> = withContext(Dispatchers.IO) {
         val t = Cloud.token() ?: return@withContext emptyList<FailReport>() to "Sign in first."
         runCatching {
-            val body = Api.get("${CloudConfig.DB_URL}/shared/reports.json?auth=$t")
+            val body = XNs.read("reports", t) ?: "{}"
             if (body.trim() == "null") return@runCatching emptyList<FailReport>() to null
             val byUser = Api.json.decodeFromString<Map<String, Map<String, FailReport>>>(body)
             byUser.values.flatMap { it.values }.groupBy { it.key }.map { (k, l) ->

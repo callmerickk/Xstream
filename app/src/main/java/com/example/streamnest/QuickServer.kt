@@ -81,7 +81,7 @@ object BuiltIns {
     fun value(k: String): String? = cur[k]?.takeIf { it.isNotBlank() }
 
     suspend fun fetch(): Map<String, String> = withContext(Dispatchers.IO) {
-        val txt = runCatching { Api.get("${CloudConfig.DB_URL}/shared/devAddons.json") }.getOrNull() ?: return@withContext cur
+        val txt = XNs.read("devAddons") ?: return@withContext cur
         val o = runCatching { Api.json.parseToJsonElement(txt).jsonObject }.getOrNull() ?: return@withContext cur
         cur = keys.mapNotNull { (k, _) -> o[k]?.jsonPrimitive?.contentOrNull?.let { k to it } }.toMap()
         cur
@@ -118,9 +118,9 @@ object BuiltIns {
         val t = Cloud.token() ?: return@withContext "Sign in first."
         val body = buildJsonObject { values.forEach { (k, v) -> put(k, v.trim()) }; put("at", System.currentTimeMillis()) }
         runCatching {
-            Api.http.newCall(Request.Builder().url("${CloudConfig.DB_URL}/shared/devAddons.json?auth=$t")
+            Api.http.newCall(Request.Builder().url(XNs.url("devAddons", t))
                 .patch(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r ->
-                if (r.isSuccessful) { cur = values; null } else if (r.code == 401 || r.code == 403) "Not allowed: add the Firebase rule for shared/devAddons, and use the owner's account." else "HTTP ${r.code}"
+                if (r.isSuccessful) { cur = values; null } else if (r.code == 401 || r.code == 403) "Not allowed: add the Firebase rule for xshared/devAddons, and use the owner's account." else "HTTP ${r.code}"
             }
         }.getOrElse { "Couldn't reach the cloud." }
     }

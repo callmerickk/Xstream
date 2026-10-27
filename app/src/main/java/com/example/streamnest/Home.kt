@@ -189,7 +189,9 @@ fun HomeScreen(
     val rowsHidden = t("rowsHidden")
     val arranged = remember(allShelves, rowsOrder, rowsHidden) {
         val hidden = rowsHidden.split("|").toSet()
+        // Fresh every time the app starts (same order while it stays open): each row is shuffled once per launch.
         arrangeShelves(allShelves, rowsOrder).filter { it.pinned || it.title !in hidden }
+            .map { sh -> if (isOn(t("shuffleRows"))) sh.copy(items = sh.items.shuffled(java.util.Random(HomeShuffle.seed xor sh.title.hashCode().toLong()))) else sh }
     }
     val shelves = remember(arranged, filter) {
         arranged.filter { s ->
@@ -340,9 +342,15 @@ fun HomeScreen(
             }
             if (filter == null) item(key = "collections", contentType = "collections") { CollectionsRows(vm) { c, f -> onOpenCollection(c, f) } }
             // Keys include the index so two catalogs with the same name can never collide (duplicate keys crash).
-            itemsIndexed(shelves, key = { i, s -> "shelf:$i:${s.title}" }, contentType = { _, _ -> "shelf" }) { _, shelf ->
+            itemsIndexed(shelves, key = { i, s -> "shelf:$i:${s.title}" }, contentType = { _, _ -> "shelf" }) { i, shelf ->
                 SectionTitle(rowName(shelf.title) ?: if (shelf.title.startsWith("New")) "$newOn · ${shelf.title.removePrefix("New ").trim()}" else shelf.title)
-                ShelfRow(shelf.items, onOpen)
+                // The first two rows: tall rounded posters with big 1, 2, 3 numbers (Home Layout can change any row's style).
+                when (RowStyles.of(shelf.title, i)) {
+                    "numbered" -> NumberedRow(shelf.items, onOpen)
+                    "portrait" -> PortraitRow(shelf.items, onOpen)
+                    "landscape" -> LandscapeRow(shelf.items, onOpen)
+                    else -> ShelfRow(shelf.items, onOpen)
+                }
             }
             if (recs.isNotEmpty() && filter == null && showRecs && !recsFirst) {
                 item(key = "recTitle", contentType = "title") { SectionTitle(recTitle) }
@@ -417,6 +425,65 @@ val PosterCorners = linkedMapOf("Sharp" to 0, "Subtle" to 4, "Classic" to 8, "Ro
 @Composable fun posterWidth(): Dp = (PosterWidths[t("posterWidth")] ?: 126).dp
 @Composable fun posterCorner(): Dp = (PosterCorners[t("posterCorner")] ?: 12).dp
 
+/** Rows are shuffled once per app start. */
+object HomeShuffle { val seed: Long = System.nanoTime() }
+
+/** How each Home row looks: "numbered" (top 10 style), "portrait", "landscape" or "auto"; set in Home Layout by the developer. */
+object RowStyles {
+    @Volatile private var raw: String? = null
+    @Volatile private var parsed: Map<String, String> = emptyMap()
+    fun map(): Map<String, String> {
+        val r = Public.vm?.texts?.value?.get("rowStyles")
+        if (r != raw) {
+            raw = r
+            parsed = (r ?: "").lines().mapNotNull { l -> val i = l.indexOf('='); if (i <= 0) null else l.substring(0, i) to l.substring(i + 1).trim() }.toMap()
+        }
+        return parsed
+    }
+    fun of(title: String, index: Int): String = map()[title] ?: if (index < 2) "numbered" else "auto"
+    fun set(vm: AppViewModel, title: String, style: String) {
+        val m = map().toMutableMap(); m[title] = style
+        vm.setText("rowStyles", m.entries.joinToString("\n") { "${it.key}=${it.value}" })
+    }
+}
+
+/** Top 10 style: tall rounded posters, a big outlined number beside each one (1, 2, 3 …). */
+@Composable
+fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
+    val corner = Palette.corner.dp.coerceAtMost(18.dp)
+    val shape = remember(corner) { RoundedCornerShape(corner) }
+    LazyRow(contentPadding = PaddingValues(start = 8.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        itemsIndexed(items.take(10), key = { _, m -> "n" + m.type + m.id }, contentType = { _, _ -> "num" }) { i, m ->
+            Box(Modifier.width(if (i + 1 >= 10) 196.dp else 168.dp).height(196.dp)) {
+                // the number sits behind the poster's lower-left corner
+                Text("${i + 1}", Modifier.align(Alignment.BottomStart).offset(y = 22.dp),
+                    fontSize = 150.sp, fontWeight = FontWeight.Black, letterSpacing = (-10).sp, lineHeight = 150.sp,
+                    style = androidx.compose.ui.text.TextStyle(
+                        brush = Brush.verticalGradient(listOf(Color(0xFF3A3F4C), Color(0xFF0E1016))),
+                        drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(width = 5f),
+                    ), color = Color(0xFFB9BFCC))
+                AsyncImage(hiResArt(m.poster ?: hdPoster(m)), m.name,
+                    Modifier.align(Alignment.BottomEnd).width(126.dp).aspectRatio(2f / 3f).softHalo(corner, spread = 8.dp, strength = 0.5f, dy = 4.dp)
+                        .clip(shape).background(Surface1).titleTap(m) { onOpen(m) },
+                    contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+            }
+        }
+    }
+}
+
+/** Tall rounded posters (same corners as the top cards). */
+@Composable
+fun PortraitRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
+    val corner = Palette.corner.dp.coerceAtMost(18.dp)
+    val shape = remember(corner) { RoundedCornerShape(corner) }
+    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(items, key = { "p" + it.type + it.id }) { m ->
+            AsyncImage(hiResArt(m.poster ?: hdPoster(m)), m.name, Modifier.width(posterWidth()).aspectRatio(2f / 3f).clip(shape).background(Surface1).titleTap(m) { onOpen(m) },
+                contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+        }
+    }
+}
+
 /** Applies the row order chosen in Home Layout; rows not in the list keep their original order at the end. */
 /** A Home row's name as the developer renamed it for everyone (Home Layout › rename), or null = its own name. */
 fun rowName(original: String): String? = RowNames.map()[original]
@@ -478,7 +545,7 @@ fun ShelfRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
                 ratio != null -> AddonPosterCard(m, ratio, onRatio) { onOpen(m) }
                 landscape -> LandscapeCard(m, w * 1.87f) { onOpen(m) }
                 else -> AsyncImage(
-                    m.poster, m.name,
+                    hiResArt(m.poster), m.name,
                     Modifier.width(w).aspectRatio(2f / 3f).clip(posterShape).background(Surface1).titleTap(m) { onOpen(m) },
                     contentScale = ContentScale.Crop,
                     onSuccess = { st -> val sz = st.painter.intrinsicSize; if (addonDesign && sz.width > 0f && sz.height > 0f) onRatio(sz.width / sz.height) },
@@ -807,8 +874,19 @@ private fun DeckCard(
     // While the trailer plays (under this card) the card is see-through: no dark fill, the poster fades away.
     Box(modifier.fillMaxWidth().aspectRatio(0.76f).clip(shape).drawBehind { if (!videoOn) drawRect(Color(0xFF05070C)) }
         .combinedClickable(onClick = onOpen, onLongClick = onHold)) {
-        val art = if (m.posterShape.equals("landscape", true) || m.posterShape.equals("square", true)) backdropOf(m) ?: m.poster else m.poster ?: backdropOf(m)
-        AsyncImage(hiResArt(art), m.name, Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha }, contentScale = ContentScale.Crop)
+        // Always a sharp, tall poster (HD copy by IMDb id when there is one), anchored at the top so faces and titles
+        // stay in view. A wide picture is shown whole at the top over a blurred copy of itself, never cut in the middle.
+        var hdFailed by remember(m.id) { mutableStateOf(false) }
+        val own = m.poster?.takeIf { !m.posterShape.equals("landscape", true) && !m.posterShape.equals("square", true) }
+        val tall = (if (!hdFailed) hdPoster(m) else null) ?: own
+        if (tall != null) {
+            AsyncImage(hiResArt(tall), m.name, Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha }, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter,
+                onError = { if (tall != own) hdFailed = true })
+        } else {
+            val wide = hiResArt(backdropOf(m) ?: m.poster)
+            AsyncImage(wide, null, Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha * 0.9f }.blur(28.dp), contentScale = ContentScale.Crop)
+            AsyncImage(wide, m.name, Modifier.fillMaxWidth().aspectRatio(16f / 9f).padding(top = 0.dp).graphicsLayer { alpha = posterAlpha }, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+        }
         // While a trailer plays the shade is lighter (only enough for the text at the bottom): a brighter picture.
         Box(Modifier.fillMaxSize().background(if (videoOn) Brush.verticalGradient(0.62f to Color.Transparent, 0.86f to Color(0x99000000), 1f to Color(0xD9000000))
             else Brush.verticalGradient(0.42f to Color.Transparent, 0.82f to Color(0xEE000000), 1f to Color.Black)))
@@ -1066,6 +1144,9 @@ private suspend fun cardLooksBlack(window: android.view.Window, rect: android.gr
 
 
 /** Big cards (Picked for you): the sharp version of a poster — Cinemeta "large", TMDB w780 — instead of the small one. */
+/** A sharp tall poster for an IMDb title (the same art Cinemeta uses, large size). */
+fun hdPoster(m: Meta): String? = m.id.takeIf { it.startsWith("tt") }?.substringBefore(":")?.let { "https://images.metahub.space/poster/large/$it/img" }
+
 fun hiResArt(url: String?): String? = url
     ?.replace(Regex("/poster/(small|medium)/"), "/poster/large/")
     ?.replace(Regex("/background/(small|medium)/"), "/background/large/")

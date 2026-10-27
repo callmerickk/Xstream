@@ -63,7 +63,7 @@ fun AppViewModel.streamMode(): String? = texts.value["streamMode"]?.takeIf { it 
  * also runs on mobile data.
  */
 fun AppViewModel.eliteOn(): Boolean =
-    streamMode() == "elite" && (!isOn(texts.value["eliteWifiOnly"] ?: "yes") || isOnWifi(appContext))
+    streamMode() == "elite" && (!isOn(texts.value["eliteWifiStrict"] ?: "no") || isOnWifi(appContext))
 
 private val EliteBg = Brush.linearGradient(listOf(Color(0xFF3A0A10), Color(0xFF1B0B10), Color(0xFF12121A)))
 private val RegularBg = Brush.linearGradient(listOf(Color(0xFF282A34), Color(0xFF16171E)))
@@ -205,10 +205,10 @@ internal fun StreamingModeSection(vm: AppViewModel) {
         RowDivider(20.dp)
         ToggleRow(
             "Elite only on Wi-Fi",
-            if (isOn(texts["eliteWifiOnly"] ?: "yes")) "On: Elite features run only on Wi-Fi (Ethernet counts). On mobile data Xstream works like Regular."
+            if (isOn(texts["eliteWifiStrict"] ?: "no")) "On: Elite features run only on Wi-Fi (Ethernet counts). On mobile data Xstream works like Regular."
             else "Off: Elite features run on Wi-Fi and on mobile data.",
-            isOn(texts["eliteWifiOnly"] ?: "yes"),
-        ) { vm.setText("eliteWifiOnly", if (it) "yes" else "no") }
+            isOn(texts["eliteWifiStrict"] ?: "no"),
+        ) { vm.setText("eliteWifiStrict", if (it) "yes" else "no") }
         if (mode == "elite") {
             RowDivider(20.dp)
             ToggleRow(

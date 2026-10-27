@@ -335,6 +335,11 @@ private fun HomeLayoutPage(vm: AppViewModel, onBack: () -> Unit) {
             }
         }
         SettingsCard {
+            ToggleRow("Shuffle rows each time the app opens", "Titles in each row come in a new order every launch (the same while the app stays open).", isOn(v("shuffleRows"))) {
+                vm.setText("shuffleRows", if (it) "yes" else "no")
+            }
+        }
+        SettingsCard {
             ToggleRow("Addon poster designs", "Show posters exactly as your catalog addon designs them (rank numbers, ratings, providers), in their own shape — wide, square or tall.", isOn(v("addonPosters"))) {
                 vm.setText("addonPosters", if (it) "yes" else "no")
             }
@@ -409,6 +414,13 @@ private fun HomeLayoutPage(vm: AppViewModel, onBack: () -> Unit) {
                             }
                             Text("Empty or the same as the add-on's name = its own name. Publish below sends it to everyone.",
                                 Modifier.padding(start = 20.dp, end = 20.dp, bottom = 10.dp), fontSize = 12.sp, color = Muted)
+                            // How this row looks for everyone (published with the row names).
+                            val cur = RowStyles.of(shelf.title, i)
+                            Row(Modifier.padding(start = 20.dp, end = 12.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf("auto" to "Auto", "numbered" to "1 2 3", "portrait" to "Portrait", "landscape" to "Landscape").forEach { (k, label) ->
+                                    FilterChip(cur == k, { RowStyles.set(vm, shelf.title, k) }, { Text(label) })
+                                }
+                            }
                         }
                     }
                 }
@@ -1309,7 +1321,7 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
             ToggleRow("Auto-play Next Episode", "Start the next episode automatically near the end.", isOn(v("autoNext"))) { vm.setText("autoNext", yn(it)) }
             RowDivider(20.dp)
             Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
-                val th = v("nextThreshold").toFloatOrNull() ?: 95f
+                val th = v("nextThreshold").toFloatOrNull()?.let { if (it == 95f) 98f else it } ?: 98f
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Threshold Percentage", fontSize = 18.sp, fontWeight = FontWeight.Medium)

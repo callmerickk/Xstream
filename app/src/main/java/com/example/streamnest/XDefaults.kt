@@ -17,7 +17,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * applies them when a profile opens, so nobody has to get their own keys.
  */
 object DevDefaults {
-    private fun textKeys(): List<String> = listOf("aiOn", "aiProvider", "aiLogoUrl", "tmdbKey", "mdbKey", "giphyKey", "traktClientId", "codeNames", "homeRows", "tagRules", "rowNames", "aiName", "aiNameStyle", "appNameStyle") +
+    private fun textKeys(): List<String> = listOf("aiOn", "aiProvider", "aiLogoUrl", "tmdbKey", "mdbKey", "giphyKey", "traktClientId", "codeNames", "homeRows", "tagRules", "rowNames", "rowStyles", "liveVoice_June", "liveVoice_Aiden", "liveModel", "aiName", "aiNameStyle", "appNameStyle") +
         AiProviders.flatMap { listOf("aiKey_${it.id}", "aiModel_${it.id}") }
     private val storeKeys = listOf("aiVoice", "aiVoiceEn", "aiVoiceHi", "aiVoiceRate", "aiVoiceOut")
 
@@ -31,9 +31,9 @@ object DevDefaults {
             put("at", System.currentTimeMillis())
         }
         runCatching {
-            Api.http.newCall(Request.Builder().url("${CloudConfig.DB_URL}/shared/devDefaults.json?auth=$t")
+            Api.http.newCall(Request.Builder().url(XNs.url("devDefaults", t))
                 .put(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r ->
-                if (r.isSuccessful) null else if (r.code == 401 || r.code == 403) "Not allowed: add the Firebase rule for shared/devDefaults (write: owner only, read: signed-in)." else "HTTP ${r.code}"
+                if (r.isSuccessful) null else if (r.code == 401 || r.code == 403) "Not allowed: add the Firebase rule for xshared/devDefaults (write: owner only, read: signed-in)." else "HTTP ${r.code}"
             }
         }.getOrElse { "Couldn't reach the cloud." }
     }
@@ -42,7 +42,7 @@ object DevDefaults {
     suspend fun sync(vm: AppViewModel) {
         val t = Cloud.token() ?: return
         val o = withContext(Dispatchers.IO) {
-            runCatching { Api.json.parseToJsonElement(Api.get("${CloudConfig.DB_URL}/shared/devDefaults.json?auth=$t")) as? JsonObject }.getOrNull()
+            runCatching { Api.json.parseToJsonElement(XNs.read("devDefaults", t)!!) as? JsonObject }.getOrNull()
         } ?: return
         val changed = ArrayList<String>()
         withContext(Dispatchers.Main) {

@@ -76,7 +76,7 @@ object AppLook {
 
     suspend fun fetch(ctx: Context) = withContext(Dispatchers.IO) {
         lastFetch = System.currentTimeMillis()
-        val txt = runCatching { Api.get("${CloudConfig.DB_URL}/shared/appLook.json") }.getOrNull() ?: return@withContext
+        val txt = XNs.read("appLook") ?: return@withContext
         val o = runCatching { Api.json.parseToJsonElement(txt).jsonObject }.getOrNull() ?: return@withContext
         fun str(k: String) = runCatching { o[k]?.jsonPrimitive?.contentOrNull }.getOrNull()?.takeIf { it.isNotBlank() }
         // AI logo and X's voice: the same on every Xstream account.
@@ -99,9 +99,9 @@ object AppLook {
         val t = Cloud.token() ?: return@withContext "Sign in first."
         val body = buildJsonObject { fields.forEach { (k, v) -> put(k, v) }; put("at", System.currentTimeMillis()) }
         runCatching {
-            Api.http.newCall(Request.Builder().url("${CloudConfig.DB_URL}/shared/appLook.json?auth=$t")
+            Api.http.newCall(Request.Builder().url(XNs.url("appLook", t))
                 .patch(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r ->
-                if (r.isSuccessful) null else if (r.code == 401 || r.code == 403) "Not allowed: add the Firebase rule for shared/appLook, and use the owner's account." else "HTTP ${r.code}"
+                if (r.isSuccessful) null else if (r.code == 401 || r.code == 403) "Not allowed: add the Firebase rule for xshared/appLook, and use the owner's account." else "HTTP ${r.code}"
             }
         }.getOrElse { "Couldn't reach the cloud." }
     }

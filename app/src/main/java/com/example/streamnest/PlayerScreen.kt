@@ -2294,7 +2294,9 @@ fun PlayerScreen(
     LaunchedEffect(Unit) {
         AiPlayerBus.cmd.collect { (act, secs) ->
             when (act) {
-                "pause" -> pauseNow()
+                "duck" -> { AiPlayerBus.wasPlaying = isPlayingNow() || player.playWhenReady; pauseNow() }
+                "unduck" -> { if (AiPlayerBus.wasPlaying) playNow(); AiPlayerBus.wasPlaying = false }
+                "pause" -> { AiPlayerBus.wasPlaying = false; pauseNow() }
                 "resume" -> playNow()
                 "next_episode" -> playNext()
                 "forward" -> seekBy(secs * 1000L)
@@ -2886,7 +2888,8 @@ fun PlayerScreen(
             PlayTiming.late("Next episode: no HD file — it starts from the quick server")
         }
     }
-    val threshold = (opt("nextThreshold").toIntOrNull() ?: 95).coerceIn(50, 100) / 100f
+    // 98 % by default (the old default 95 counts as 98): the skip / next-episode pill shows at the credits anyway.
+    val threshold = (opt("nextThreshold").toIntOrNull()?.let { if (it == 95) 98 else it } ?: 98).coerceIn(50, 100) / 100f
     LaunchedEffect(pos, dur) {
         if (!autoNextDone && isOn(opt("autoNext")) && nextEp != null && dur > 60_000 && pos >= dur * threshold) {
             autoNextDone = true

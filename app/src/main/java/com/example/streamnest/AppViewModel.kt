@@ -1267,7 +1267,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     /** Settings that belong to this device / the app, not to a profile. */
     private val AppLocalKeys = setOf("lastProfile", "rememberProfile", "autoProfileSecs", "splash", "engineMigrated", "dns",
-        "streamMode", "eliteWifiOnly", "guideDone", "searchHistory", "notifyOn")
+        "streamMode", "eliteWifiOnly", "eliteWifiStrict", "guideDone", "searchHistory", "notifyOn")
     /** App-wide texts (app name, Developer's Corner labels): the same for every profile, synced as one field. */
     private val AppSyncKeys = setOf(
         "appName", "showBrand", "forYou", "badge", "newOn", "watchNow", "continueWatching", "recommendedFor", "myList",

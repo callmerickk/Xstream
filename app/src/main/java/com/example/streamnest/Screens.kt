@@ -267,6 +267,9 @@ fun App(vm: AppViewModel = viewModel()) {
             life.addObserver(o); onDispose { life.removeObserver(o); WakeWord.stop() }
         }
         val liveOk = vm.liveReady()
+        val onPlayer = stack.lastOrNull() is Screen.Player
+        LaunchedEffect(onPlayer) { WakeWord.strict = onPlayer }
+        LaunchedEffect(compReq == null) { if (compReq == null) WakeWord.quietUntil = System.currentTimeMillis() + 3500 }
         LaunchedEffect(profile?.id, compReq == null, callMic, appResumed, texts["wakeOn"], liveOk) {
             WakeWord.onName = { b -> if (AiHost.req.value == null) AiHost.summon(b, AiHost.Mode.Stage) }
             val on = profile != null && compReq == null && !callMic && appResumed && liveOk && isOn(texts["wakeOn"] ?: "yes")

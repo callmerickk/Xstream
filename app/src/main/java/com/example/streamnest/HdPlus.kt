@@ -18,7 +18,7 @@ fun hostOf(url: String?): String = runCatching { java.net.URI(url ?: "").host?.l
 /** HD upgrade, background saving, remembered HD file, next-episode HD: off only when Elite's "Only on Wi-Fi" is on and
  *  the phone is on mobile data. */
 fun AppViewModel.upgradeAllowed(): Boolean =
-    streamMode() != "elite" || !isOn(texts.value["eliteWifiOnly"] ?: "yes") || isOnWifi(appContext)
+    streamMode() != "elite" || !isOn(texts.value["eliteWifiStrict"] ?: "no") || isOnWifi(appContext)
 
 /**
  * An addon's name in Xstream: the name you gave it (Settings › Addons › pencil, kept per addon link), else its own

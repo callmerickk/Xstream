@@ -47,6 +47,23 @@ object CloudConfig {
     const val WEB_CLIENT_ID = "51125528685-qfne7qo3qihoo3ke6hl1ehi50s6ot03h.apps.googleusercontent.com"
 }
 
+/**
+ * Xstream's own shelf in the cloud: everything the developer publishes from Xstream (defaults, look, built-in add-ons,
+ * source ranks, payments, logs) lives under xshared/, so it never reaches StreamX accounts (StreamX reads shared/).
+ * Reading falls back to the old shared/ copy until something has been published under xshared/.
+ */
+object XNs {
+    const val ROOT = "xshared"
+    fun url(path: String, auth: String? = null) = "${CloudConfig.DB_URL}/$ROOT/$path.json" + (auth?.let { "?auth=$it" } ?: "")
+    /** Reads xshared/<path> (falls back to shared/<path>). Null when neither has it. */
+    suspend fun read(path: String, auth: String? = null): String? {
+        val q = auth?.let { "?auth=$it" } ?: ""
+        val own = runCatching { Api.get("${CloudConfig.DB_URL}/$ROOT/$path.json$q") }.getOrNull()
+        if (own != null && own.trim() != "null") return own
+        return runCatching { Api.get("${CloudConfig.DB_URL}/shared/$path.json$q") }.getOrNull()?.takeIf { it.trim() != "null" }
+    }
+}
+
 /** What the cloud needs from the app: read a field's current local value, and apply a value that came from the cloud. */
 interface CloudHost {
     /** All profile ids on this device. */

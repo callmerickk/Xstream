@@ -45,10 +45,10 @@ data class OfficialSet(
 )
 
 object Official {
-    private const val PATH = "shared/devAddons/official.json"
+    private const val PATH = "xshared/devAddons/official.json"
 
     suspend fun fetch(): OfficialSet? = withContext(Dispatchers.IO) {
-        runCatching { Api.json.decodeFromString<OfficialSet>(Api.get("${CloudConfig.DB_URL}/$PATH")) }.getOrNull()?.takeIf { it.at > 0 }
+        runCatching { Api.json.decodeFromString<OfficialSet>(XNs.read("devAddons/official")!!) }.getOrNull()?.takeIf { it.at > 0 }
     }
 
     /** This phone's current set-up (the developer's): add-ons, CloudStream repositories, plugins on, Quick Play / 4K picks. */
@@ -66,7 +66,7 @@ object Official {
         runCatching {
             Api.http.newCall(Request.Builder().url("${CloudConfig.DB_URL}/$PATH?auth=$t")
                 .put(Api.json.encodeToString(OfficialSet.serializer(), s.copy(at = System.currentTimeMillis())).toRequestBody("application/json".toMediaType())).build())
-                .execute().use { r -> if (r.isSuccessful) null else if (r.code == 401 || r.code == 403) "Not allowed: the Firebase rule for shared/devAddons, and the owner's account." else "HTTP ${r.code}" }
+                .execute().use { r -> if (r.isSuccessful) null else if (r.code == 401 || r.code == 403) "Not allowed: the Firebase rule for xshared/devAddons, and the owner's account." else "HTTP ${r.code}" }
         }.getOrElse { "Couldn't reach the cloud." }
     }
 
