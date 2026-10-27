@@ -86,6 +86,8 @@ object AiPlayerBus {
     val cmd = MutableSharedFlow<Pair<String, Int>>(extraBufferCapacity = 8)
     @Volatile var open = false
     @Volatile var title = ""
+    /** Was the video playing when an assistant paused it (it resumes when they leave)? */
+    @Volatile var wasPlaying = false
 }
 
 object AiHost {

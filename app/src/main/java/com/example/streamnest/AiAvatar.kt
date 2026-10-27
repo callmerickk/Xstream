@@ -99,7 +99,8 @@ class AvatarFrames private constructor(private val ctx: Context, val buddy: AiBu
     fun want(list: IntArray) {
         for (f in list) {
             if (f < 0 || f >= count) continue
-            synchronized(pending) { if (cache.get(f) != null || !pending.add(f)) continue }
+            val skip = synchronized(pending) { cache.get(f) != null || !pending.add(f) }
+            if (skip) continue
             exec.execute {
                 val b = runCatching {
                     ctx.assets.open("$dir/f%03d.webp".format(f)).use { s ->

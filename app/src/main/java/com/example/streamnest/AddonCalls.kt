@@ -42,4 +42,5 @@ object AddonCalls {
 
     /** A title's links failed / were refused: the next request asks the server again. */
     fun forgetTitle(id: String) { val k = id.substringBefore(':'); recent.keys.removeIf { it.contains(k) } }
+    fun forgetAll() { recent.clear() }
 }

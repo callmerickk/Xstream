@@ -187,11 +187,12 @@ fun HomeScreen(
     val hasSports = remember(allShelves) { allShelves.any { it.title.contains("sport", ignoreCase = true) } }
     val rowsOrder = t("rowsOrder")
     val rowsHidden = t("rowsHidden")
-    val arranged = remember(allShelves, rowsOrder, rowsHidden) {
+    val shuffleOn = isOn(t("shuffleRows"))
+    val arranged = remember(allShelves, rowsOrder, rowsHidden, shuffleOn) {
         val hidden = rowsHidden.split("|").toSet()
         // Fresh every time the app starts (same order while it stays open): each row is shuffled once per launch.
         arrangeShelves(allShelves, rowsOrder).filter { it.pinned || it.title !in hidden }
-            .map { sh -> if (isOn(t("shuffleRows"))) sh.copy(items = sh.items.shuffled(java.util.Random(HomeShuffle.seed xor sh.title.hashCode().toLong()))) else sh }
+            .map { sh -> if (shuffleOn) sh.copy(items = sh.items.shuffled(java.util.Random(HomeShuffle.seed xor sh.title.hashCode().toLong()))) else sh }
     }
     val shelves = remember(arranged, filter) {
         arranged.filter { s ->

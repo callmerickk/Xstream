@@ -591,7 +591,11 @@ private fun StreamsPage(vm: AppViewModel, onBack: () -> Unit) {
                 OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth().padding(top = 10.dp).tvOkKeyboard(), singleLine = true, shape = RoundedCornerShape(12.dp),
                     placeholder = { Text("https://…/badges.json") },
                     trailingIcon = { if (url != v("badgePack")) TextButton({ vm.setText("badgePack", url.trim()) }) { Text("Save") } }, keyboardOptions = tvKeyboard())
-                if (v("badgePack").isNotBlank()) Text(if (pack.isEmpty()) "No badges loaded from this link yet." else "${pack.size} badges loaded.", Modifier.padding(top = 6.dp), fontSize = 13.sp, color = if (pack.isEmpty()) Muted else Accent)
+                val packErr by vm.badgePackError.collectAsStateWithLifecycle()
+                if (v("badgePack").isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (pack.isEmpty()) (packErr ?: "Loading badges…") else "${pack.size} badges loaded.", Modifier.weight(1f).padding(top = 6.dp), fontSize = 13.sp, color = if (pack.isEmpty()) Muted else Accent)
+                    TextButton({ vm.loadBadgePack(v("badgePack"), force = true) }) { Text("Reload") }
+                }
             }
         }
         SectionLabel("Display")

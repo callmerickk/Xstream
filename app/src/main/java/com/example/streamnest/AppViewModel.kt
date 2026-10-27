@@ -29,6 +29,8 @@ import kotlinx.serialization.encodeToString
 import java.io.File
 import androidx.compose.ui.graphics.Color
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.put
@@ -955,28 +957,67 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     val badgePack = MutableStateFlow<List<PackBadge>>(emptyList())
     private var packUrl: String? = null
 
-    /** Accepts {"pattern": "imageUrl"}, [{"pattern","image","name"}] or {"badges": [...]}. */
-    fun loadBadgePack(url: String) {
+    /** Why the last badge link loaded nothing (shown under the field). */
+    val badgePackError = MutableStateFlow<String?>(null)
+
+    /**
+     * Reads badge packs in any of the usual shapes: {"pattern": "imageUrl"}, [{"pattern","image","name"}],
+     * {"badges": [...]}, groups of badges, and Fusion / XPerience style packs (regex / match / keywords + image / url /
+     * icon / logo, nested anywhere). Plain words that aren't valid regexes are matched as text.
+     */
+    fun loadBadgePack(url: String, force: Boolean = false) {
         val u = url.trim()
-        if (u == packUrl) return
+        if (u == packUrl && !force) return
         packUrl = u
+        badgePackError.value = null
         if (u.isBlank()) { badgePack.value = emptyList(); return }
         viewModelScope.launch(Dispatchers.IO) {
-            val list = runCatching {
-                val el = Api.json.parseToJsonElement(Api.get(u))
-                val arr = (el as? JsonArray) ?: (el as? JsonObject)?.get("badges") as? JsonArray
-                if (arr != null) arr.mapNotNull { e ->
-                    val o = e.jsonObject
-                    val pat = o["pattern"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                    val img = (o["image"] ?: o["url"])?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                    PackBadge(Regex(pat, RegexOption.IGNORE_CASE), img, o["name"]?.jsonPrimitive?.contentOrNull ?: "")
-                } else (el as JsonObject).mapNotNull { (k, v) ->
-                    val img = v.jsonPrimitive.contentOrNull ?: return@mapNotNull null
-                    runCatching { PackBadge(Regex(k, RegexOption.IGNORE_CASE), img, "") }.getOrNull()
-                }
-            }.getOrDefault(emptyList())
+            val body = runCatching { Api.get(u) }.onFailure { badgePackError.value = "Couldn't download it: ${it.message?.take(80)}" }.getOrNull() ?: return@launch
+            val list = runCatching { parseBadgePack(Api.json.parseToJsonElement(body)) }
+                .onFailure { badgePackError.value = "Not a badge list (JSON couldn't be read)." }.getOrDefault(emptyList())
+            if (list.isEmpty() && badgePackError.value == null) badgePackError.value = "The file has no pattern + image pairs we recognise."
+            ActLog.add("APP", "badge pack: ${list.size} badge(s) from $u")
             badgePack.value = list
         }
+    }
+
+    private fun parseBadgePack(root: JsonElement): List<PackBadge> {
+        val out = ArrayList<PackBadge>()
+        val patKeys = listOf("pattern", "regex", "regexp", "match", "matcher", "expression", "filter", "keywords", "keyword", "terms", "contains", "test")
+        val imgKeys = listOf("image", "imageUrl", "image_url", "url", "icon", "iconUrl", "logo", "logoUrl", "src", "img", "badge", "badgeUrl", "png", "svg")
+        fun rxOf(p: String): Regex? = runCatching { Regex(p, RegexOption.IGNORE_CASE) }.getOrNull() ?: runCatching { Regex(Regex.escape(p), RegexOption.IGNORE_CASE) }.getOrNull()
+        fun str(e: JsonElement?): String? = when (e) {
+            is JsonPrimitive -> e.contentOrNull?.takeIf { it.isNotBlank() }
+            is JsonArray -> e.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { s -> s.isNotBlank() } }.takeIf { it.isNotEmpty() }
+                ?.joinToString("|") { w -> if (w.any { c -> c in "\\^$.[]()|?*+{}" }) w else Regex.escape(w) }
+            is JsonObject -> null
+            else -> null
+        }
+        fun isImg(s: String) = s.startsWith("http") || s.startsWith("data:image")
+        fun walk(e: JsonElement, depth: Int) {
+            if (depth > 6) return
+            when (e) {
+                is JsonArray -> e.forEach { walk(it, depth + 1) }
+                is JsonObject -> {
+                    val pat = patKeys.firstNotNullOfOrNull { k -> str(e[k]) }
+                    val img = imgKeys.firstNotNullOfOrNull { k -> (e[k] as? JsonPrimitive)?.contentOrNull?.takeIf(::isImg) }
+                    if (pat != null && img != null) {
+                        rxOf(pat)?.let { out += PackBadge(it, img, (e["name"] ?: e["label"] ?: e["title"] ?: e["text"])?.let { n -> (n as? JsonPrimitive)?.contentOrNull } ?: "") }
+                        return
+                    }
+                    // {"pattern": "imageUrl"} maps
+                    var mapped = 0
+                    e.forEach { (k, v) ->
+                        val vs = (v as? JsonPrimitive)?.contentOrNull
+                        if (vs != null && isImg(vs) && k !in imgKeys) { rxOf(k)?.let { out += PackBadge(it, vs, ""); mapped++ } }
+                    }
+                    e.values.forEach { v -> if (v is JsonObject || v is JsonArray) walk(v, depth + 1) }
+                }
+                else -> {}
+            }
+        }
+        walk(root, 0)
+        return out.distinctBy { it.re.pattern + it.image }
     }
 
     suspend fun subtitles(type: String, id: String): List<Subtitle> = coroutineScope {
@@ -1306,6 +1347,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     private fun loadProfileData(pid: String) {
+        // Each profile has its own watch mode (Turbo / Classic) and sources: nothing found for the previous profile
+        // is reused (links, prepared files, plugin answers), so a Classic profile's add-ons never show in a Turbo one.
+        if (dataPid != null && dataPid != pid) { forgetAllStreams(); runCatching { Prepare.cancel(); Prepare.state.value = null }; PluginSources.forgetAll(); AddonCalls.forgetAll() }
         dataPid = pid
         val pp = prefsForId(pid)
         profTexts = decodeMap(pp.getString("pcustom", null)) ?: emptyMap()

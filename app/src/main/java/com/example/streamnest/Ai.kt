@@ -67,7 +67,8 @@ private val PreferredModels = mapOf(
     "groq" to listOf("openai/gpt-oss-120b", "llama-3.3-70b-versatile", "meta-llama/llama-4-maverick-17b-128e-instruct",
         "openai/gpt-oss-20b", "meta-llama/llama-4-scout-17b-16e-instruct", "qwen/qwen3-32b", "llama-3.1-8b-instant"),
     "gemini" to listOf("gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-1.5-flash"),
-    "openrouter" to listOf("meta-llama/llama-3.3-70b-instruct:free", "openai/gpt-oss-120b:free", "google/gemini-2.0-flash-exp:free", "deepseek/deepseek-chat-v3-0324:free"),
+    "openrouter" to listOf("deepseek/deepseek-chat-v3.1:free", "openai/gpt-oss-120b:free", "meta-llama/llama-3.3-70b-instruct:free", "qwen/qwen3-235b-a22b:free",
+        "google/gemini-2.0-flash-exp:free", "mistralai/mistral-small-3.2-24b-instruct:free", "openai/gpt-oss-20b:free", "deepseek/deepseek-chat-v3-0324:free"),
     "openai" to listOf("gpt-4o-mini", "gpt-4.1-mini", "gpt-4o"),
 )
 
@@ -84,6 +85,8 @@ suspend fun AppViewModel.aiModels(p: AiProvider, key: String): List<String> = wi
                 val m = e.jsonObject
                 (m["id"] ?: m["name"])?.jsonPrimitive?.contentOrNull?.removePrefix("models/")
             }.filterNot { id -> listOf("whisper", "tts", "guard", "embed", "playai", "distil", "vision-preview", "orpheus", "compound").any { id.contains(it, true) } }
+                // OpenRouter lists every model, most of them paid (HTTP 402 without credits): only the free ones.
+                .filter { id -> p.id != "openrouter" || id.endsWith(":free") }
         }
     }.getOrDefault(emptyList())
 }
@@ -113,7 +116,7 @@ private suspend fun AppViewModel.rawChat(
     val req = Request.Builder().url(p.url)
         .header("Authorization", "Bearer $key")
         .header("Content-Type", "application/json")
-        .apply { if (p.id == "openrouter") header("X-Title", "Xstream") }
+        .apply { if (p.id == "openrouter") { header("X-Title", "Xstream"); header("HTTP-Referer", "https://github.com/callmerickk/xstream") } }
         .post(body.toString().toRequestBody("application/json".toMediaType()))
         .build()
     return aiHttp().newCall(req).execute().use { r ->
@@ -141,14 +144,27 @@ suspend fun AppViewModel.aiChat(
         var lowEffort = maxTokens != null
         var limit = maxTokens
         var lastError: Exception? = null
-        repeat(4) {
+        val tried = HashSet<String>()
+        repeat(6) {
             try {
                 return@withContext rawChat(p, key, model, json, system, history, user, limit, lowEffort)
             } catch (e: AiHttpError) {
                 lastError = e
                 val m = e.msg.lowercase()
                 when {
-                    e.code == 401 || e.code == 403 -> throw IllegalStateException("The API key was rejected. Check it in Integrations.")
+                    e.code == 401 -> throw IllegalStateException("The API key was rejected. Check it in Integrations.")
+                    // OpenRouter: 402 = this model needs credits, 404 / "no endpoints" = the free model was retired,
+                    // 429 on a :free model = that model is busy. Move to another free model.
+                    p.id == "openrouter" && (e.code == 402 || e.code == 404 || e.code == 429 || e.code == 403 || m.contains("no endpoints") || m.contains("not a valid model")) -> {
+                        tried += model
+                        val available = aiModels(p, key)
+                        val pick = PreferredModels[p.id].orEmpty().firstOrNull { it in available && it !in tried }
+                            ?: available.firstOrNull { it !in tried }
+                            ?: throw IllegalStateException(if (e.code == 402) "OpenRouter: this model needs credits and no free model answered. Pick a model ending in :free." else e.msg)
+                        model = pick
+                        withContext(Dispatchers.Main) { setText("aiModel_${p.id}", pick) }
+                    }
+                    e.code == 403 -> throw IllegalStateException("The API key was rejected. Check it in Integrations.")
                     e.code == 429 -> {
                         // Free limit reached: another AI with a key (Gemini, OpenRouter…) answers instead.
                         val other = if (p.id != aiProvider().id) null else AiProviders.firstOrNull { it.id != p.id && aiKey(it).isNotEmpty() }

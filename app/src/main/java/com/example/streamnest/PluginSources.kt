@@ -226,6 +226,7 @@ object PluginSources {
         return d.await()
     }
     fun forget(id: String) { answers.keys.filter { it.endsWith("|$id") }.forEach { answers.remove(it) } }
+    fun forgetAll() { answers.clear() }
     private val metas = java.util.concurrent.ConcurrentHashMap<String, Meta>()
     /** The title's name and year (Cinemeta) — plugins search by name. */
     suspend fun metaFor(type: String, id: String): Meta? {
