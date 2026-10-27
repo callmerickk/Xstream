@@ -43,6 +43,7 @@ object Api {
             // playlist and refuse the video pieces (403 / 428) without it.
             .cookieJar(MemoryCookies)
             // VPN Smart mode: a source that doesn't answer from here is sent through the VPN and tried again.
+            .addInterceptor(TmdbAuth)
             .addInterceptor(Vpn.SmartRetry)
             .addInterceptor(ActLog.Net)
         b.dns(CachedDns(dohFor(provider)?.let { FallbackDns(it) } ?: Dns.SYSTEM))

@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipInputStream
 
 /*
- * "June!" / "Aiden!": the names wake the assistants while Xstream is open (also during a movie).
+ * "Hey Aiden": wakes the AI card while Xstream is open (also during a movie).
  * An offline listener (Vosk, Apache 2.0) that only knows a handful of words, so it is light and nothing you say
  * leaves the phone until a name is heard. Its small voice model (~36 MB) downloads once, the first time.
  * It pauses while an assistant is talking with you, during Watch together calls, and when the app is in the background.
@@ -29,32 +29,36 @@ object WakeWord {
     @Volatile private var thread: Thread? = null
     @Volatile private var lastHit = 0L
     @Volatile private var gen = 0
-    var onName: (AiBuddy) -> Unit = {}
-    /** Something is playing: only the full "Hey June / Hey Aiden" wakes them, said clearly. */
+    var onName: () -> Unit = {}
+    /** Something is playing: only the full "Hey Aiden", said clearly. */
     @Volatile var strict = false
     /** No wake-ups until then (e.g. right after a chat closes). */
     @Volatile var quietUntil = 0L
 
-    /** Reads one final Vosk result: which name, if it was said clearly enough. */
-    private fun pick(json: String, rms: Double): AiBuddy? {
-        val o = runCatching { Api.json.parseToJsonElement(json) as kotlinx.serialization.json.JsonObject }.getOrNull() ?: return null
+    private val names = setOf("aiden", "aidan", "eden", "aidin")
+    private val heys = setOf("hey", "hi", "okay", "ok")
+
+    /** Reads one final Vosk result: true when "Hey Aiden" (or just "Aiden" when nothing plays) was said clearly. */
+    private fun pick(json: String, rms: Double): Boolean {
+        val o = runCatching { Api.json.parseToJsonElement(json) as kotlinx.serialization.json.JsonObject }.getOrNull() ?: return false
         val words = (o["result"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { e ->
             val w = e as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
             val word = (w["word"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@mapNotNull null
             val conf = (w["conf"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull() ?: 0.0
             word to conf
         }.orEmpty()
-        if (words.isEmpty() || words.any { it.first == "[unk]" }) return null
-        val i = words.indexOfFirst { it.first in setOf("june", "aiden", "aidan", "eden") }
-        if (i < 0) return null
-        // the name must be the whole utterance (with "hey" / "hi" / "okay" before it), not part of other talk
-        if (words.size > 2 || (words.size == 2 && i != 1)) return null
-        val hasHey = i == 1 && words[0].first in setOf("hey", "hi", "okay")
-        val need = if (strict) 0.93 else 0.82
-        if (strict && !hasHey) return null
-        if (words.any { it.second < need }) return null
+        if (words.isEmpty() || words.any { it.first == "[unk]" }) return false
+        // The whole utterance must be the phrase ("hey aiden" / "aiden"), never a name inside other talk.
+        val hasHey = words.size == 2 && words[0].first in heys && words[1].first in names
+        val bare = words.size == 1 && words[0].first in names
+        if (!hasHey && !bare) return false
+        if (strict && !hasHey) return false
+        // Quiet mumbles that only look like the name are ignored.
+        if (rms < 0.004) return false
+        val need = if (strict) 0.90 else 0.80
+        if (words.any { it.second < need }) return false
         ActLog.add("AI", "wake heard: ${words.joinToString(" ") { it.first + "(" + "%.2f".format(it.second) + ")" }}")
-        return if (words[i].first == "june") AiBuddy.June else AiBuddy.Aiden
+        return true
     }
 
     private fun modelDir(ctx: Context) = File(ctx.filesDir, "vosk/$MODEL_DIR")
@@ -118,9 +122,9 @@ object WakeWord {
         var ar: AudioRecord? = null
         try {
             model = org.vosk.Model(modelDir(ctx).absolutePath)
-            // A few short phrases plus "unknown". Whole results only, with per-word confidence:
-            // "Hey June" / "Hey Aiden" always works; the bare name only when nothing is playing.
-            val words = "[\"hey june\", \"hi june\", \"okay june\", \"june\", \"hey aiden\", \"hi aiden\", \"okay aiden\", \"aiden\", \"hey aidan\", \"aidan\", \"hey eden\", \"[unk]\"]"
+            // A few short phrases plus "unknown" (everything else lands there, so ordinary talk never wakes it).
+            // Whole results only, with per-word confidence: "Hey Aiden" always works; the bare name only when nothing plays.
+            val words = "[\"hey aiden\", \"hi aiden\", \"okay aiden\", \"ok aiden\", \"aiden\", \"hey aidan\", \"aidan\", \"hey eden\", \"hey aidin\", \"[unk]\"]"
             rec = org.vosk.Recognizer(model, 16000f, words)
             runCatching { rec.setWords(true) }
             val min = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -129,19 +133,22 @@ object WakeWord {
             ar.startRecording()
             status.value = "listening"
             val buf = ShortArray(1600)
+            var peak = 0.0
             while (running.get() && g == gen) {
                 val n = ar.read(buf, 0, buf.size)
                 if (n <= 0) continue
                 var sum = 0.0
                 for (k in 0 until n) { val v = buf[k] / 32768.0; sum += v * v }
                 val rms = kotlin.math.sqrt(sum / n)
+                if (rms > peak) peak = rms
                 if (!rec.acceptWaveForm(buf, n)) continue
-                val b = pick(rec.result, rms) ?: continue
+                if (!pick(rec.result, peak)) { peak = 0.0; continue }
+                peak = 0.0
                 if (System.currentTimeMillis() - lastHit > 4000 && System.currentTimeMillis() > quietUntil) {
                     lastHit = System.currentTimeMillis()
                     rec.reset()
-                    ActLog.add("AI", "wake word: ${b.label}")
-                    android.os.Handler(android.os.Looper.getMainLooper()).post { onName(b) }
+                    ActLog.add("AI", "wake word: hey aiden")
+                    android.os.Handler(android.os.Looper.getMainLooper()).post { onName() }
                 }
             }
         } catch (e: Throwable) {

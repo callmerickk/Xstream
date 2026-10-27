@@ -60,7 +60,8 @@ object CsPlugins {
     /** key → what's happening ("Downloading…", "Ready · 2 providers", "Error: …"). */
     val status = MutableStateFlow<Map<String, String>>(emptyMap())
     val loaded = java.util.concurrent.ConcurrentHashMap<String, CsBridge.Registered>()
-    private val loadLock = Mutex()
+    /** One lock per plugin: plugins now load side by side (each on its own thread), not one after another. */
+    private val loadLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
     private var prefs: android.content.SharedPreferences? = null
     private lateinit var appCtx: Context
 
@@ -167,7 +168,7 @@ object CsPlugins {
     }
 
     /** Downloads (when missing or outdated) and loads one plugin. Returns its providers, or throws with the reason. */
-    suspend fun ensureLoaded(e: CsPluginEntry): CsBridge.Registered = loadLock.withLock {
+    suspend fun ensureLoaded(e: CsPluginEntry): CsBridge.Registered = loadLocks.getOrPut(e.key) { Mutex() }.withLock {
         loaded[e.key]?.let { if ((installed.value[e.key] ?: -1) == e.version) return it }
         val f = fileFor(e)
         if (!f.exists() || (installed.value[e.key] ?: -1) != e.version) {
@@ -184,10 +185,50 @@ object CsPlugins {
             installed.value = installed.value + (e.key to e.version); save()
         }
         setStatus(e.key, "Loading…")
-        val reg = withContext(Dispatchers.Main) { loadFile(e, f) }
+        val reg = loadOffMain(e, f)
         loaded[e.key] = reg
-        setStatus(e.key, "Ready · " + reg.apis.joinToString { it.name }.ifEmpty { "no providers" } + (if (reg.extractors.isNotEmpty()) " · ${reg.extractors.size} link readers" else ""))
+        setStatus(e.key, readyText(reg))
         reg
+    }
+
+    private fun readyText(reg: CsBridge.Registered) =
+        "Ready · " + reg.apis.joinToString { it.name }.ifEmpty { "no providers" } + (if (reg.extractors.isNotEmpty()) " · ${reg.extractors.size} link readers" else "")
+
+    /**
+     * Runs a plugin's load() on its own thread (with a Looper, for plugins that make a Handler), never on the main one:
+     * some plugins read their site address from the internet while loading (UHDmovies, 4KHDHub), which froze the app
+     * ("not responding"). Gives up after 12 s so one slow site can't hold up the rest; if it finishes later it is
+     * still kept. A plugin that really needs the main thread (it touches the screen while loading) gets one try there.
+     */
+    private suspend fun loadOffMain(e: CsPluginEntry, f: File): CsBridge.Registered {
+        val done = kotlinx.coroutines.CompletableDeferred<CsBridge.Registered>()
+        val t0 = System.currentTimeMillis()
+        val ht = android.os.HandlerThread("cs-load-" + e.internalName.take(20)).apply { start() }
+        android.os.Handler(ht.looper).post {
+            try {
+                val r = loadFile(e, f)
+                if (!done.complete(r)) {
+                    // Finished after we gave up on it: keep it for next time.
+                    loaded[e.key] = r; setStatus(e.key, readyText(r) + " (slow start)")
+                    ActLog.add("CSLOAD", "${e.name} finished late in ${System.currentTimeMillis() - t0} ms")
+                }
+            } catch (t: Throwable) { done.completeExceptionally(t) }
+            finally { ht.quitSafely() }
+        }
+        val res = kotlinx.coroutines.withTimeoutOrNull(12_000) { runCatching { done.await() } }
+        if (res == null) {
+            ActLog.add("CSLOAD", "${e.name} took over 12 s to load: skipped for now")
+            setStatus(e.key, "Slow to start (its site is slow): skipped for now")
+            error("${e.name} took too long to start")
+        }
+        res.exceptionOrNull()?.let { err ->
+            val needsMain = err.javaClass.simpleName.contains("WrongThread") || (err.message ?: "").contains("thread", true) || (err.message ?: "").contains("Looper", true)
+            if (!needsMain) throw err
+            ActLog.add("CSLOAD", "${e.name} needs the main thread: ${err.message}")
+            return withContext(Dispatchers.Main) { loadFile(e, f) }
+        }
+        ActLog.add("CSLOAD", "${e.name} loaded in ${System.currentTimeMillis() - t0} ms")
+        return res.getOrThrow()
     }
 
     private fun loadFile(e: CsPluginEntry, f: File): CsBridge.Registered {

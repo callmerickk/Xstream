@@ -13,8 +13,18 @@ object CsBridge {
         val apis = CopyOnWriteArrayList<MainAPI>()
         val extractors = CopyOnWriteArrayList<ExtractorApi>()
     }
-    /** The plugin whose load() is running now (registrations go to it). */
-    @Volatile var loading: Registered? = null
+    /**
+     * The plugin whose load() is running now (registrations go to it). Per thread: plugins load on their own threads
+     * (never the main one) and a slow one that was given up on can't send its providers to the next plugin.
+     */
+    private val byThread = java.util.concurrent.ConcurrentHashMap<Thread, Registered>()
+    @Volatile private var last: Registered? = null
+    var loading: Registered?
+        get() = byThread[Thread.currentThread()] ?: last
+        set(v) {
+            val t = Thread.currentThread()
+            if (v == null) { if (byThread.remove(t) === last) last = null } else { byThread[t] = v; last = v }
+        }
     val allExtractors = CopyOnWriteArrayList<ExtractorApi>()
     /** Log sink (set by Xstream's plugin test). */
     @Volatile var sink: ((String) -> Unit)? = null

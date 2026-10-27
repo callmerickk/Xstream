@@ -156,6 +156,18 @@ private val OrbRim = Brush.sweepGradient(listOf(Color(0xFFE50914), Color(0xFFFF6
 
 // ───────────── Live voice conversation with X ─────────────
 
+/** The player listens here: voice commands ("pause", "next episode", "forward 30") and a pause while the AI card is open. */
+object AiPlayerBus {
+    val cmd = kotlinx.coroutines.flow.MutableSharedFlow<Pair<String, Int>>(extraBufferCapacity = 8)
+    @Volatile var open = false
+    @Volatile var title = ""
+    /** Was the video playing when the AI card paused it (it carries on when the card closes)? */
+    @Volatile var wasPlaying = false
+    fun send(act: String, secs: Int = 0) { if (open) cmd.tryEmit(act to secs) }
+    fun duck() = send("duck")
+    fun unduck() = send("unduck")
+}
+
 internal enum class XState { Idle, Listening, Thinking, Speaking }
 
 private class ChatLine(val id: Long, val user: Boolean, val text: String, val items: List<Meta> = emptyList(), val rowTitle: String = "")
@@ -205,6 +217,10 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
     private var voiceIsHindi: Boolean? = null
     private var utt: String? = null
     private var pendingOpen: Meta? = null
+    /** What to start when [pendingOpen] opens: null = just show the page, "" = play, else an episode id. */
+    private var pendingPlay: String? = null
+    private var closeAfterSpeech = false
+    var onClose: () -> Unit = {}
     private var job: Job? = null
     private var seq = 0
     private var nextId = 1L
@@ -446,7 +462,8 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
             // The bubble shows exactly the words the voice says (same text), so they can light up together.
             val say = humanize(r.say)
             val id = addLine(false, say, r.items, r.rowTitle)
-            speak(id, say, r.open)
+            closeAfterSpeech = r.closeAfter
+            speak(id, say, r.open, if (r.play) (r.episode ?: "") else null)
         }
     }
 
@@ -477,8 +494,9 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
         speak(id, humanize(hello), null)
     }
 
-    private fun speak(lineId: Long, text: String, thenOpen: Meta?) {
+    private fun speak(lineId: Long, text: String, thenOpen: Meta?, thenPlay: String? = null) {
         pendingOpen = thenOpen
+        pendingPlay = thenPlay
         val t = tts
         if (!voiceOut || t == null || !ttsReady || text.isBlank()) {
             // Text only: let the typewriter finish, then carry on.
@@ -514,8 +532,10 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
     private fun finishTurn() {
         if (!alive) return
         val o = pendingOpen
-        pendingOpen = null
-        if (o != null) { openTitle(o); return }
+        val play = pendingPlay
+        pendingOpen = null; pendingPlay = null
+        if (o != null) { if (play != null) playTitle(o, play) else openTitle(o); return }
+        if (closeAfterSpeech) { closeAfterSpeech = false; handsFree = false; dropRecognizer(); onClose(); return }
         if (handsFree && lastViaVoice) listen() else { state = XState.Idle; if (hint.isEmpty()) hint = "Tap to talk" }
     }
 
@@ -623,6 +643,13 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
         if (!voiceOut && state == XState.Speaking) { stopSpeaking(); state = XState.Idle; postAfter(300) { finishTurn() } }
     }
 
+    /** Straight to the video: the title page opens and presses Play by itself (Continue Watching / that episode). */
+    fun playTitle(m: Meta, episode: String) {
+        ActLog.add("AI", "play ${m.name} ${episode}")
+        pendingDetailPlay.value = episode.ifEmpty { m.id }
+        openTitle(m)
+    }
+
     fun openTitle(m: Meta) {
         cancelAfter()
         handsFree = false
@@ -643,6 +670,7 @@ fun VoiceAssistant(vm: AppViewModel, onClose: () -> Unit, onOpen: (Meta) -> Unit
     val scope = rememberCoroutineScope()
     val s = remember { XSession(ctx, vm, scope) }
     s.onOpen = onOpen
+    s.onClose = onClose
 
     val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> s.onMic(ok) }
     s.requestMic = { runCatching { askMic.launch(Manifest.permission.RECORD_AUDIO) } }
@@ -742,7 +770,8 @@ fun VoiceAssistant(vm: AppViewModel, onClose: () -> Unit, onOpen: (Meta) -> Unit
                         LazyColumn(
                             Modifier.fillMaxSize(), state = listState, reverseLayout = true,
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
+                            // The hello sits at the top, under the core; new lines push it up as the chat grows.
+                            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Top),
                         ) {
                             if (showPartial) item(key = "partial") { UserBubble(s.partial, live = true) }
                             items(s.lines.asReversed(), key = { it.id }) { line ->

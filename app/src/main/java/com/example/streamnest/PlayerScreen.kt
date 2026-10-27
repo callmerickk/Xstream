@@ -521,6 +521,8 @@ fun PlayerScreen(
     /** An online subtitle drawn by the app (no reload), its timing shift, and the size preview while dragging Size. */
     var ext by remember { mutableStateOf<ExtActive?>(null) }
     var subOffsetMs by remember { mutableLongStateOf(0L) }
+    /** Auto sync's frame-rate stretch for the online subtitle (1.0 = none; 25/23.976 etc. for a file made for another fps). */
+    var subRatio by remember { mutableDoubleStateOf(1.0) }
     /** Follow the speaker (beta): where the talking person is across the picture (0.5 = centre). */
     var speakerAt by remember { mutableFloatStateOf(0.5f) }
     var subPreview by remember { mutableStateOf(false) }
@@ -2036,7 +2038,7 @@ fun PlayerScreen(
     }
     // Online subtitles drawn by the app, in step with the video (moved by "Adjust timing"); while Size is dragged, two
     // sample lines (one line, then two) show at the real size and place.
-    LaunchedEffect(ext, subOffsetMs, subPreview) {
+    LaunchedEffect(ext, subOffsetMs, subRatio, subPreview) {
         if (subPreview) {
             var i = 0
             while (true) {
@@ -2047,7 +2049,7 @@ fun PlayerScreen(
         val e = ext
         if (e == null) { cues = emptyList(); return@LaunchedEffect }
         while (true) {
-            val t = curPos() - subOffsetMs
+            val t = ((curPos() - subOffsetMs) / subRatio).toLong()
             cues = ExtSubs.at(e.cues, t).map { Cue.Builder().setText(it.text).build() }
             delay(80)
         }
@@ -2064,11 +2066,16 @@ fun PlayerScreen(
     fun syncNow() {
         val e = ext ?: return
         val t = curPos()
-        val off = Speech.bestOffset(e.cues, t - 180_000, t, subOffsetMs)
-        syncNote = when {
-            off != null -> { subOffsetMs = off; "Synced " + (if (off > 0) "+" else "") + "%.1f s".format(off / 1000f) }
-            Speech.lastWhy == "ok" -> "In step ✓"
-            else -> "Needs a little more talking — try again in ~30 s"
+        syncNote = "Syncing…"
+        scope.launch {
+            val f = withContext(kotlinx.coroutines.Dispatchers.Default) { Speech.fit(e.cues, t - 240_000, t, subOffsetMs, subRatio) }
+            syncNote = when {
+                f != null && Speech.lastWhy == "moved" -> { subOffsetMs = f.offsetMs; subRatio = f.ratio; manualSync = false
+                    ActLog.add("SUBSYNC", "sync now: ${f.offsetMs} ms ×${"%.4f".format(f.ratio)} fit ${"%.2f".format(f.fit)}")
+                    "Synced " + (if (f.offsetMs > 0) "+" else "") + "%.1f s".format(f.offsetMs / 1000f) + (if (f.ratio != 1.0) " · frame rate fixed" else "") }
+                Speech.lastWhy == "ok" -> "In step ✓"
+                else -> "Needs a little more talking — try again in ~30 s"
+            }
         }
     }
     // Subtitle auto sync (Xstream): listen once at the start until there's enough talking, sync once, then only check
@@ -2077,37 +2084,40 @@ fun PlayerScreen(
         val e0 = ext ?: run { syncNote = ""; return@LaunchedEffect }
         if (!isOn(opt("subAutoSync")) || usingVlc) { syncNote = ""; return@LaunchedEffect }
         // Another subtitle file: its timing starts from 0 again (the last file's shift doesn't carry over).
-        if (syncTick == 0 && !manualSync) subOffsetMs = 0L
+        if (syncTick == 0 && !manualSync) { subOffsetMs = 0L; subRatio = 1.0 }
         var e = e0
-        /** One check: the best-fitting subtitle, its best shift for the last 3 minutes heard, and how well it fits. */
-        fun check(): Pair<Long, Float>? {
+        /** One check (off the main thread): the best-fitting subtitle, its timing for the last 4 minutes heard, and the fit. */
+        suspend fun check(): SyncFit? {
             if (manualSync || ext?.sub?.url != e.sub.url || !isPlayingNow()) return null
             val t = curPos()
-            val scored = (if (autoPickedSub) subCands else listOf(e)).mapNotNull { c ->
-                Speech.evaluate(c.cues, t - 180_000, t, if (c.sub.url == e.sub.url) subOffsetMs else 0L)?.let { c to it }
+            val cands = if (autoPickedSub) subCands else listOf(e)
+            val off = subOffsetMs; val ratio = subRatio
+            val scored = withContext(kotlinx.coroutines.Dispatchers.Default) {
+                cands.mapNotNull { c -> Speech.fit(c.cues, t - 240_000, t, if (c.sub.url == e.sub.url) off else 0L, if (c.sub.url == e.sub.url) ratio else 1.0)?.let { c to it } }
             }
             if (scored.isEmpty()) return null
-            val (bestSub, fit) = scored.maxBy { it.second.second }
-            if (bestSub.sub.url != e.sub.url && fit.second >= 0.7f) { e = bestSub; ext = bestSub }
+            val (bestSub, fit) = scored.maxBy { it.second.fit }
+            if (bestSub.sub.url != e.sub.url && fit.fit >= 0.7f) { e = bestSub; ext = bestSub }
             return fit
         }
-        // Starts at 0 and keeps listening in the background the whole time (every 20 s). The timing only moves when it's
-        // sure: the same shift found in several checks in a row (3 for small shifts, 4 for shifts over 8 s) and a good
-        // fit — so a guess never pushes a subtitle that was already right to -30 s.
+        // Listens from the start and checks every 15 s (the first time after 25 s). The timing moves only when it's sure:
+        // the same timing found twice in a row for the first lock, then 3 times (4 for shifts over 8 s) and a good fit.
         syncNote = "Auto sync: listening · in step (0.0 s)"
-        var cand: Long? = null; var agree = 0
+        var cand: SyncFit? = null; var agree = 0; var locked = false
+        delay(10_000L)
         while (true) {
-            delay(20_000L)
+            delay(15_000L)
             if (manualSync || ext?.sub?.url != e.sub.url) return@LaunchedEffect
-            val (off, fit) = check() ?: continue
-            if (kotlin.math.abs(off - subOffsetMs) < 300) { cand = null; agree = 0
+            val f = check() ?: continue
+            if (kotlin.math.abs(f.offsetMs - subOffsetMs) < 300 && f.ratio == subRatio) { cand = null; agree = 0
                 syncNote = "Auto sync: listening · in step (" + (if (subOffsetMs > 0) "+" else "") + "%.1f s)".format(subOffsetMs / 1000f); continue }
-            if (cand != null && kotlin.math.abs(off - cand!!) < 300) agree++ else { cand = off; agree = 1 }
-            val need = if (kotlin.math.abs(off) > 8_000) 4 else 3
-            if (agree >= need && fit >= 0.62f) {
-                subOffsetMs = off; cand = null; agree = 0
-                syncNote = "Auto sync: in step (" + (if (off > 0) "+" else "") + "%.1f s)".format(off / 1000f)
-                ActLog.add("SUBSYNC", "moved to $off ms (fit ${"%.2f".format(fit)}, $need checks agreed)")
+            val c0 = cand
+            if (c0 != null && kotlin.math.abs(f.offsetMs - c0.offsetMs) < 300 && f.ratio == c0.ratio) agree++ else { cand = f; agree = 1 }
+            val need = if (!locked) 2 else if (kotlin.math.abs(f.offsetMs) > 8_000) 4 else 3
+            if (agree >= need && f.fit >= 0.6f) {
+                subOffsetMs = f.offsetMs; subRatio = f.ratio; cand = null; agree = 0; locked = true
+                syncNote = "Auto sync: in step (" + (if (f.offsetMs > 0) "+" else "") + "%.1f s)".format(f.offsetMs / 1000f) + (if (f.ratio != 1.0) " · frame rate fixed" else "")
+                ActLog.add("SUBSYNC", "moved to ${f.offsetMs} ms ×${"%.4f".format(f.ratio)} (fit ${"%.2f".format(f.fit)}, $need checks agreed)")
             } else syncNote = "Auto sync: listening…"
         }
     }
@@ -2297,8 +2307,8 @@ fun PlayerScreen(
         )
     }
     fun playNext() { nextEp?.let { playEpisode(it) } }
-    // June & Aiden: voice commands for this video ("pause", "next episode", "forward 30").
-    DisposableEffect(Unit) { AiPlayerBus.open = true; AiPlayerBus.title = p.title; onDispose { AiPlayerBus.open = false } }
+    // The AI card: voice commands for this video ("pause", "next episode", "forward 30"); it pauses the video while you talk.
+    DisposableEffect(Unit) { AiPlayerBus.open = true; AiPlayerBus.title = p.title; onDispose { AiPlayerBus.open = false; AiPlayerBus.wasPlaying = false } }
     LaunchedEffect(Unit) {
         AiPlayerBus.cmd.collect { (act, secs) ->
             when (act) {
@@ -2480,6 +2490,8 @@ fun PlayerScreen(
     }
     fun setAspect(i: Int, label: String = AspectModes[i].first) {
         cinematic = false
+        // A pinch zoom left on top made Fit / Crop look like nothing changed: a frame choice starts from no zoom.
+        fz = 1f; fzX = 0f; fzY = 0f
         aspectIdx = i; resize = AspectModes[i].second; aspectLabel = label
         vlc?.setAspect(i)
         vm.setPlayerPref("aspect", i.toString())

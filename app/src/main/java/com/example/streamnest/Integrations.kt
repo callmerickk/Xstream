@@ -190,7 +190,10 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean
         }
 
         SectionLabel("TMDB")
-        SettingsCard { KeyField(vm, "tmdbKey", "TMDB API key (v3)", "Sharper backdrops and title logos on detail pages.", "https://www.themoviedb.org/settings/api") }
+        SettingsCard {
+            KeyField(vm, "tmdbKey", "TMDB API key or Read Access Token", "Posters, logos, search, collections and Source Test. Either TMDB key works (the short API key or the long token).", "https://www.themoviedb.org/settings/api")
+            TmdbKeyStatus(vm)
+        }
         SectionLabel("MDBList ratings")
         SettingsCard { KeyField(vm, "mdbKey", "MDBList API key", "Rotten Tomatoes, Metacritic, TMDB and Letterboxd ratings on detail pages.", "https://mdblist.com/preferences/") }
         SectionLabel("GIPHY")
@@ -248,4 +251,15 @@ private fun DebridPage(vm: AppViewModel, onBack: () -> Unit) {
             KeyField(vm, "debridTb", "TorBox API key", "torbox.app › Settings › API key.", "https://torbox.app/settings")
         }
     }
+}
+
+/** Green / red line under the TMDB key: checked when the page opens and whenever the key changes. */
+@Composable
+fun TmdbKeyStatus(vm: AppViewModel) {
+    val texts by vm.texts.collectAsStateWithLifecycle()
+    val key = texts["tmdbKey"] ?: ""
+    val st by TmdbAuth.state.collectAsStateWithLifecycle()
+    LaunchedEffect(key) { TmdbAuth.state.value = ""; TmdbAuth.check(key) }
+    val c = when { st == "ok" -> Color(0xFF3CCF7A); st.isEmpty() -> Color(0xFF9AA3B5); else -> Color(0xFFFF6B6B) }
+    Text("● " + TmdbAuth.label(st), Modifier.padding(start = 20.dp, end = 20.dp, bottom = 14.dp), fontSize = 12.sp, color = c)
 }

@@ -501,6 +501,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         item {
             SettingsCard {
                 SettingRow(Icons.Default.Speed, "Source Test", "Play every link of 2 movies and 2 series, rank the providers, share the ranking, download the log.") { sourceTest = true }
+                TmdbKeyStatus(vm)
                 SettingRow(Icons.Default.Restore, "Auto-play logic", "CNCVerse refresh schedule and upgrade servers. Undo last change, restore any saved logic, classic switch.") { autoPlay = true }
                 SettingRow(Icons.Default.Timer, "Refresh Lab", "Measure when CNCVerse links appear and play, for the Refresh Lab Analyzer page.") { refreshLab = true }
                 SettingRow(Icons.Default.Key, "Defaults for everyone", "API keys, the AI's logo and voice — publish them so users need no setup.") { defaultsPage = true }

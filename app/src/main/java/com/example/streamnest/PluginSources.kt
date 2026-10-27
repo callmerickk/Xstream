@@ -267,24 +267,30 @@ object PluginSources {
         val acc = ArrayList<StreamItem>(); val lock = Mutex()
         val jobs = ArrayList<kotlinx.coroutines.Job>()
         coroutineScope {
-            val regs = CsPlugins.enabledEntries().map { e -> async { runCatching { CsPlugins.ensureLoaded(e) }.getOrNull() } }.awaitAll().filterNotNull()
-            val apis = regs.flatMap { it.apis }.filter { wanted(csDisplayName(it.name)) }
+            // Each plugin is asked the moment it has loaded (it used to wait until every plugin had loaded: a slow
+            // site held up the first link by 20 s or more).
+            val entries = CsPlugins.enabledEntries()
             val nuvio = if (only != null) emptyList() else runCatching { NuvioPlugins.init(ctx); NuvioPlugins.enabledScrapers() }.getOrDefault(emptyList())
                 .filter { s -> wanted("Nuvio · ${s.name}") && (s.types.isEmpty() || (if (series) ("tv" in s.types || "series" in s.types) else "movie" in s.types)) }
-            val total = apis.size + (if (nuvio.isEmpty()) 0 else 1)
-            if (total == 0) { send(emptyList<StreamItem>() to true); return@coroutineScope }
-            var done = 0
-            suspend fun add(l: List<StreamItem>) = lock.withLock {
+            var pending = entries.size + (if (nuvio.isEmpty()) 0 else 1)
+            if (pending == 0) { send(emptyList<StreamItem>() to true); return@coroutineScope }
+            suspend fun add(l: List<StreamItem>, delta: Int = -1) = lock.withLock {
                 acc += l.filter { keep(it) && !it.isInstantDownload() && !TitleMatch.wrong(it, type, id) && !vm.extHides(it) }
-                done++
-                send(acc.distinctBy { it.stream.url } to (done == total))
+                pending += delta
+                send(acc.distinctBy { it.stream.url } to (pending <= 0))
             }
             val t0 = System.currentTimeMillis()
-            apis.forEach { api -> jobs += launch {
-                val l = shared(api, id) { linksFrom(api, meta.name, year, series, season, episode) }
-                // Timing of each plugin (Activity log → PLUGIN), to see which one is slow.
-                ActLog.add("PLUGIN", "${api.name}: ${l.size} links in ${System.currentTimeMillis() - t0} ms · $id")
-                add(l)
+            entries.forEach { e -> jobs += launch {
+                val reg = runCatching { CsPlugins.ensureLoaded(e) }.onFailure { x -> ActLog.add("PLUGIN", "${e.name}: not loaded — ${x.message ?: x.javaClass.simpleName}".take(200)) }.getOrNull()
+                val apis = reg?.apis?.filter { wanted(csDisplayName(it.name)) }.orEmpty()
+                if (apis.isEmpty()) { add(emptyList()); return@launch }
+                lock.withLock { pending += apis.size - 1 }
+                apis.forEach { api -> launch {
+                    val l = shared(api, id) { linksFrom(api, meta.name, year, series, season, episode) }
+                    // Timing of each plugin (Activity log → PLUGIN), to see which one is slow.
+                    ActLog.add("PLUGIN", "${api.name}: ${l.size} links in ${System.currentTimeMillis() - t0} ms · $id")
+                    add(l)
+                } }
             } }
             if (nuvio.isNotEmpty()) jobs += launch {
                 val all = ArrayList<StreamItem>()

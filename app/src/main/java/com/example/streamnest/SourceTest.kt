@@ -168,6 +168,7 @@ object SourceTester {
             HostStats.summary().let { hs -> if (hs.isEmpty()) w("  none yet") else hs.forEach { w("  $it") } }
         }
         w("")
+        w(TmdbAuth.label(TmdbAuth.check(vm.tmdbKey())) + " (titles come from the Home rows when TMDB can't be used)")
         // 2 movies + 2 series. A title no addon has links for is swapped for another (up to 6 tries per slot).
         val perTitle = mutableListOf<Pair<TestTitle, List<StreamItem>>>()
         for ((si, tv) in listOf(false, false, true, true).withIndex()) {
@@ -183,7 +184,7 @@ object SourceTester {
                     step.value = "Asking $a · ${t.name}"
                     val t0 = SystemClock.elapsedRealtime()
                     var l = withTimeoutOrNull(35_000) {
-                        runCatching { vm.streamsFlow(t.type, t.videoId, only = setOf(a)).first { it.second }.first }.getOrDefault(emptyList())
+                        runCatching { vm.addonStreamsFlow(t.type, t.videoId, setOf(a), null).first { it.second }.first }.getOrDefault(emptyList())
                     }
                     val ms = SystemClock.elapsedRealtime() - t0
                     if (l == null) w("  Addon $a: no answer in 35 s")
@@ -254,13 +255,29 @@ object SourceTester {
     /** One random popular title (Hindi or English, any year since 1995); series get a random aired episode. */
     internal suspend fun pickOne(vm: AppViewModel, tv: Boolean, exclude: Set<String>): TestTitle? {
         val key = vm.tmdbKey()
+        // TMDB first (a few tries: a random year can come back empty); when TMDB doesn't answer (no key, refused key,
+        // no network to it) the tests still run, with titles from the Home rows / Cinemeta's popular list.
+        if (key.isNotEmpty()) repeat(3) { runCatching { pickTmdb(vm, key, tv, exclude) }.getOrNull()?.let { return it } }
+        return pickLocal(vm, tv, exclude)
+    }
+
+    /** A popular title without TMDB: Home rows first, then Cinemeta's top list; series get a random aired episode. */
+    private suspend fun pickLocal(vm: AppViewModel, tv: Boolean, exclude: Set<String>): TestTitle? {
+        val kind = if (tv) "series" else "movie"
+        var pool = vm.shelves.value.flatMap { it.items }.filter { it.type == kind && it.id.startsWith("tt") && it.id.substringBefore(":") !in exclude }.distinctBy { it.id }
+        if (pool.isEmpty()) pool = runCatching { Api.fetch<CatalogResponse>("$CINEMETA/catalog/$kind/top.json").metas }.getOrDefault(emptyList())
+            .filter { it.id.startsWith("tt") && it.id !in exclude }
+        val m = pool.shuffled().firstOrNull() ?: return null
+        val imdb = m.id.substringBefore(":")
+        if (!tv) return TestTitle(imdb, "movie", m.name, m.releaseInfo, imdb, "${m.name} · movie · $imdb (from Home)")
+        val meta = runCatching { vm.fullMeta(Meta(id = imdb, type = "series")) }.getOrNull() ?: return null
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val ep = meta.videos.orEmpty().filter { (it.season ?: 0) > 0 && it.episode != null && (it.released?.take(10)?.let { r -> r <= today } ?: true) }.shuffled().firstOrNull() ?: return null
+        return TestTitle(imdb, "series", m.name, m.releaseInfo, ep.id, "${m.name} S${ep.season} E${ep.episode} · series · ${ep.id} (from Home)")
+    }
+
+    private suspend fun pickTmdb(vm: AppViewModel, key: String, tv: Boolean, exclude: Set<String>): TestTitle? {
         val rnd = java.util.Random()
-        if (key.isEmpty()) {
-            // No TMDB key: a movie from the Home rows.
-            if (tv) return null
-            val m = vm.shelves.value.flatMap { it.items }.filter { it.type == "movie" && it.id.startsWith("tt") && it.id !in exclude }.distinctBy { it.id }.shuffled().firstOrNull() ?: return null
-            return TestTitle(m.id, "movie", m.name, m.releaseInfo, m.id, "${m.name} · movie · ${m.id} (from Home)")
-        }
         val nowYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
         val lang = if (rnd.nextBoolean()) "hi" else "en"
         val year = 1995 + rnd.nextInt((nowYear - 1995).coerceAtLeast(1))
@@ -271,7 +288,7 @@ object SourceTester {
         val list = runCatching {
             Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/discover/$kind?api_key=$key&with_original_language=$lang&$yearParam=$year&sort_by=popularity.desc&vote_count.gte=$votes&page=1"))
                 .jsonObject["results"]!!.jsonArray.map { it.jsonObject }
-        }.getOrDefault(emptyList())
+        }.onFailure { e -> ActLog.add("NET", "Source Test: TMDB discover failed: ${e.message}") }.getOrDefault(emptyList())
         val hit: JsonObject = list.take(10).shuffled().firstOrNull() ?: return null
         val tmdbId = hit["id"]?.jsonPrimitive?.content ?: return null
         val name = (hit["title"] ?: hit["name"])?.jsonPrimitive?.content ?: return null

@@ -213,13 +213,23 @@ fun HomeScreen(
             ?.let { sh -> sh.items.map { DeckItem(it, sh.title) } }.orEmpty()
         // Most of the top cards are AIDEN's picks for you; a few popular / new titles keep it fresh.
         val rest = (0 until maxOf(a.size, b.size, n.size)).flatMap { i -> listOfNotNull(a.getOrNull(i), b.getOrNull(i), n.getOrNull(i)) }
+        // One card per title: the same film can come from two rows with different ids (an addon id and an IMDb id), so
+        // titles are matched by IMDb id and by name. A title that is trending stays a trending card: AIDEN picks something else.
+        fun nameKey(m: Meta) = m.name.lowercase().replace(Regex("[^\\p{L}\\p{N}]"), "")
+        fun keys(m: Meta) = listOf("id:" + m.id.substringBefore(":"), "n:" + nameKey(m))
+        val restOk = rest.filter { it.meta.poster != null }
+        val trendingKeys = restOk.take(12).flatMap { keys(it.meta) }.toSet()
+        val ri = r.filter { it.meta.poster != null && keys(it.meta).none { k -> k in trendingKeys } }.iterator()
+        val oi = restOk.iterator()
+        val seen = HashSet<String>()
         val mixed = ArrayList<DeckItem>()
-        val ri = r.filter { it.meta.poster != null }.iterator(); val oi = rest.filter { it.meta.poster != null }.iterator()
+        fun put(d: DeckItem): Boolean { val k = keys(d.meta); if (k.any { it in seen }) return false; seen += k; mixed += d; return true }
         while (mixed.size < 12 && (ri.hasNext() || oi.hasNext())) {
-            repeat(3) { if (ri.hasNext()) mixed += ri.next() }
-            if (oi.hasNext()) mixed += oi.next()
+            var got = 0
+            while (got < 3 && ri.hasNext()) if (put(ri.next())) got++
+            while (oi.hasNext()) if (put(oi.next())) break
         }
-        mixed.distinctBy { it.meta.id }.take(12)
+        mixed.take(12)
     }
 
     val tasteKey = t("tasteLangs") + "|" + t("tasteTypes")
@@ -466,26 +476,58 @@ object RowStyles {
     }
 }
 
-/** Top 10 style: tall rounded posters, a big outlined number beside each one (1, 2, 3 …). */
+/** Top 10 style: tall rounded posters (real portrait art from TMDB), a big solid number beside each one (1, 2, 3 …). */
 @Composable
 fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     val corner = Palette.corner.dp.coerceAtMost(18.dp)
     val shape = remember(corner) { RoundedCornerShape(corner) }
-    LazyRow(contentPadding = PaddingValues(start = 8.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        itemsIndexed(items.take(10), key = { _, m -> "n" + m.type + m.id }, contentType = { _, _ -> "num" }) { i, m ->
-            Box(Modifier.width(if (i + 1 >= 10) 196.dp else 168.dp).height(196.dp)) {
-                // the number sits behind the poster's lower-left corner
-                Text("${i + 1}", Modifier.align(Alignment.BottomStart).offset(y = 22.dp),
-                    fontSize = 150.sp, fontWeight = FontWeight.Black, letterSpacing = (-10).sp, lineHeight = 150.sp,
-                    style = androidx.compose.ui.text.TextStyle(
-                        brush = Brush.verticalGradient(listOf(Color(0xFF3A3F4C), Color(0xFF0E1016))),
-                        drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(width = 5f),
-                    ), color = Color(0xFFB9BFCC))
-                AsyncImage(hiResArt(m.poster ?: hdPoster(m)), m.name,
-                    Modifier.align(Alignment.BottomEnd).width(126.dp).aspectRatio(2f / 3f).softHalo(corner, spread = 8.dp, strength = 0.5f, dy = 4.dp)
-                        .clip(shape).background(Surface1).titleTap(m) { onOpen(m) },
-                    contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+    val top = remember(items) { items.take(10) }
+    // All ten posters are asked for at once (one quick TMDB call each, remembered), so the row fills in together.
+    LaunchedEffect(top) { top.forEach { m -> launch { runCatching { TmdbPosters.portrait(m) } } } }
+    val fill = remember { Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFFC9CED8), Color(0xFF8C93A3))) }
+    LazyRow(contentPadding = PaddingValues(start = 8.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        itemsIndexed(top, key = { _, m -> "n" + m.type + m.id }, contentType = { _, _ -> "num" }) { i, m ->
+            Box(Modifier.width(if (i + 1 >= 10) 204.dp else 172.dp).height(196.dp)) {
+                // A solid, bright number with a dark edge, behind the poster's lower-left corner: easy to read on any background.
+                val num = "${i + 1}"
+                Text(num, Modifier.align(Alignment.BottomStart).offset(y = 24.dp), style = androidx.compose.ui.text.TextStyle(
+                    color = Color(0xFF05060A), fontSize = 148.sp, fontWeight = FontWeight.Black, letterSpacing = (-8).sp, lineHeight = 148.sp,
+                    drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(width = 14f, join = androidx.compose.ui.graphics.StrokeJoin.Round)))
+                Text(num, Modifier.align(Alignment.BottomStart).offset(y = 24.dp), style = androidx.compose.ui.text.TextStyle(
+                    brush = fill, fontSize = 148.sp, fontWeight = FontWeight.Black, letterSpacing = (-8).sp, lineHeight = 148.sp,
+                    shadow = androidx.compose.ui.graphics.Shadow(Color(0xCC000000), androidx.compose.ui.geometry.Offset(0f, 6f), 18f)))
+                TallPoster(m, Modifier.align(Alignment.BottomEnd).width(126.dp).aspectRatio(2f / 3f)
+                    .softHalo(corner, spread = 8.dp, strength = 0.5f, dy = 4.dp).clip(shape).titleTap(m) { onOpen(m) })
             }
+        }
+    }
+}
+
+/**
+ * A real tall poster: TMDB's full-size portrait art (w780), else Cinemeta's large poster, else the title's own tall one.
+ * Only when a title has nothing tall at all is its wide picture shown whole at the top over a blurred copy — never cut.
+ */
+@Composable
+fun TallPoster(m: Meta, modifier: Modifier) {
+    var tries by remember(m.id) { mutableIntStateOf(0) }
+    val choices by produceState<List<String>?>(TmdbPosters.cached(m)?.let { listOfNotNull(it, TmdbPosters.fallback(m)) }, m.id) {
+        if (value == null) {
+            val t = kotlinx.coroutines.withTimeoutOrNull(3500) { TmdbPosters.portrait(m) }
+            value = listOfNotNull(t, TmdbPosters.fallback(m)).distinct()
+        }
+    }
+    Box(modifier.background(Surface1)) {
+        val list = choices ?: return@Box
+        val url = list.getOrNull(tries)
+        if (url != null) {
+            AsyncImage(url, m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter,
+                onError = { tries++ })
+        } else {
+            val wide = hiResArt(backdropOf(m) ?: m.poster)
+            AsyncImage(wide, null, Modifier.fillMaxSize().blur(24.dp), contentScale = ContentScale.Crop)
+            AsyncImage(wide, m.name, Modifier.fillMaxWidth().aspectRatio(16f / 9f).align(Alignment.TopCenter), contentScale = ContentScale.Fit)
+            Text(m.name, Modifier.align(Alignment.BottomCenter).padding(8.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }
@@ -1075,7 +1117,7 @@ private fun FloatingFilters(
         // Xstream: no TV / Movies / Live capsule — only the AI voice button.
         Box(Modifier.align(Alignment.CenterEnd).tourTarget("ai")) { AiOrbButton(vm, 52.dp, hide, onAi) }
         // AIDEN wakes up when the app opens: slides out of the button, says hello, and goes back to sleep.
-        if (!vm.liveReady()) Box(Modifier.align(Alignment.CenterEnd).padding(end = 56.dp)) { AidenWake(vm, onAi) }
+        Box(Modifier.align(Alignment.CenterEnd).padding(end = 56.dp).offset(y = (-58).dp)) { AidenWake(vm, onAi) }
     }
 }
 

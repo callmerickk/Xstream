@@ -1,5 +1,6 @@
 package com.example.streamnest
 
+import kotlinx.coroutines.async
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -41,6 +42,43 @@ private fun JsonObject.arr(k: String) = (this[k] as? JsonArray)?.mapNotNull { it
 private fun JsonObject.obj(k: String) = this[k] as? JsonObject
 
 fun AppViewModel.tmdbKey(): String = (texts.value["tmdbKey"] ?: "").trim()
+
+/**
+ * TMDB sign-in for every request in the app: TMDB gives two kinds of key, the short "API key" (v3, sent as api_key=…)
+ * and the long "API Read Access Token" (starts with eyJ…, must be sent as "Authorization: Bearer"). Pasting the long one
+ * into the key field made every TMDB call fail with 401 (Source Test, plugin test, posters, search). Any request with a
+ * long token in api_key is rewritten to the Bearer form here, so both kinds simply work.
+ */
+object TmdbAuth : okhttp3.Interceptor {
+    fun isToken(k: String) = k.startsWith("eyJ") || k.length > 40
+    override fun intercept(chain: okhttp3.Interceptor.Chain): okhttp3.Response {
+        val req = chain.request()
+        if (req.url.host != "api.themoviedb.org") return chain.proceed(req)
+        val k = req.url.queryParameter("api_key")?.trim().orEmpty()
+        if (k.isEmpty() || !isToken(k)) return chain.proceed(req)
+        val url = req.url.newBuilder().removeAllQueryParameters("api_key").build()
+        return chain.proceed(req.newBuilder().url(url).header("Authorization", "Bearer $k").header("accept", "application/json").build())
+    }
+
+    /** Last check of the key: "ok", "bad" (TMDB refused it: 401), "none" (no key), or "net: …" (couldn't reach TMDB). */
+    val state = kotlinx.coroutines.flow.MutableStateFlow("")
+    suspend fun check(key: String): String {
+        val k = key.trim()
+        val r = if (k.isEmpty()) "none" else runCatching { Api.get("https://api.themoviedb.org/3/configuration?api_key=$k"); "ok" }.getOrElse { e ->
+            if ((e.message ?: "").contains("401")) "bad" else "net: " + (e.message ?: e.javaClass.simpleName).take(60)
+        }
+        state.value = r
+        ActLog.add("NET", "TMDB key check: $r")
+        return r
+    }
+    fun label(r: String) = when {
+        r == "ok" -> "TMDB key works"
+        r == "bad" -> "TMDB refused the key (401): paste the v3 API key or the Read Access Token from themoviedb.org › Settings › API"
+        r == "none" -> "No TMDB key: add one in Integrations"
+        r.startsWith("net") -> "Couldn't reach TMDB (${r.removePrefix("net: ")})"
+        else -> "Checking TMDB key…"
+    }
+}
 
 suspend fun AppViewModel.tmdbInfo(imdb: String, type: String): TmdbInfo? {
     val key = tmdbKey()
@@ -146,3 +184,49 @@ val TmdbGenres: Map<Int, String> = mapOf(
     878 to "Sci-Fi", 10770 to "TV Movie", 53 to "Thriller", 10752 to "War", 37 to "Western",
     10759 to "Action", 10762 to "Kids", 10763 to "News", 10764 to "Reality", 10765 to "Sci-Fi", 10766 to "Soap", 10767 to "Talk", 10768 to "War",
 )
+
+/**
+ * Tall posters for the numbered (Top 10) rows: TMDB's own full-size portrait poster, found by IMDb id (or by name and
+ * year for titles without one). Catalogs that only have a wide design are never cropped into a tall card any more.
+ * Remembered for the whole session; the answer for each title is asked once.
+ */
+object TmdbPosters {
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val none = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val running = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+
+    fun cached(m: Meta): String? = cache[m.id]
+
+    /** A tall poster that never needs TMDB: Cinemeta's large poster by IMDb id, or the title's own when it is tall. */
+    fun fallback(m: Meta): String? = hdPoster(m) ?: m.poster?.takeIf { !m.posterShape.equals("landscape", true) && !m.posterShape.equals("square", true) }?.let { hiResArt(it) }
+
+    suspend fun portrait(m: Meta): String? {
+        cache[m.id]?.let { return it }
+        if (m.id in none) return null
+        val vm = Public.vm ?: return null
+        val key = vm.tmdbKey()
+        if (key.isEmpty()) return null
+        val d = running.getOrPut(m.id) { scope.async { runCatching { look(m, key) }.getOrNull() } }
+        val r = d.await()
+        running.remove(m.id)
+        if (r != null) cache[m.id] = r else none += m.id
+        return r
+    }
+
+    private suspend fun look(m: Meta, key: String): String? {
+        val imdb = m.id.substringBefore(":").takeIf { it.startsWith("tt") }
+        val path: String? = if (imdb != null) {
+            val f = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/find/$imdb?api_key=$key&external_source=imdb_id")).jsonObject
+            val first = if (m.type == "series") listOf("tv_results", "movie_results") else listOf("movie_results", "tv_results")
+            first.firstNotNullOfOrNull { k -> f.arr(k).firstOrNull()?.str("poster_path") }
+        } else {
+            val kind = if (m.type == "series") "tv" else "movie"
+            val year = m.releaseInfo?.take(4)?.toIntOrNull()
+            val yp = if (year == null) "" else if (kind == "tv") "&first_air_date_year=$year" else "&year=$year"
+            val o = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/search/$kind?api_key=$key&query=${java.net.URLEncoder.encode(m.name, "UTF-8")}$yp&page=1")).jsonObject
+            o.arr("results").firstOrNull()?.str("poster_path")
+        }
+        return path?.let { "${IMG}w780$it" }
+    }
+}

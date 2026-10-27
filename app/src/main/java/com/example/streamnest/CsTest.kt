@@ -111,6 +111,7 @@ object CsTester {
         if (CsPlugins.catalog.value.isEmpty()) CsPlugins.refresh()?.let { w("Repositories: $it") }
         val entries = CsPlugins.enabledEntries()
         w("Plugins switched on: " + entries.joinToString { "${it.name} v${it.version}" }.ifEmpty { "none" })
+        w(TmdbAuth.label(TmdbAuth.check(vm.tmdbKey())) + " (titles come from the Home rows when TMDB can't be used)")
         // Load every plugin, timing each.
         for (e in entries) {
             step.value = "Loading ${e.name}…"
@@ -126,6 +127,7 @@ object CsTester {
             for (tv in listOf(false, false, true, true)) { step.value = "Picking titles…"; SourceTester.pickOne(vm, tv, map { it.imdb }.toSet())?.let { add(it) } }
         }
         w("Titles: " + titles.joinToString { it.label })
+        if (titles.isEmpty()) { w("No titles to test: TMDB didn't answer and Home has no rows yet. Open Home once, then run the test again."); return }
         for (t in titles) for ((e, api) in providers) {
             step.value = "${api.name} · ${t.name}"
             val r = testOne(ctx, vm, api, e, t, playTest)

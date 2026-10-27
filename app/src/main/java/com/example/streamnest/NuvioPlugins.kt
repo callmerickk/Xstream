@@ -276,6 +276,7 @@ object NuvioTester {
         w("Plugins switched on: " + list.joinToString { "${it.name} ${it.version}" }.ifEmpty { "none" })
         if (list.isEmpty()) return
         if (vm.tmdbKey().isEmpty()) { w("No TMDB key — Nuvio plugins need TMDB ids (set it in Developer's Corner › Defaults for everyone)."); return }
+        TmdbAuth.check(vm.tmdbKey()).let { r -> w(TmdbAuth.label(r)); if (r == "bad") return }
         val titles = if (manual != null) listOf(TestTitle(manual.id.substringBefore(":"), manual.type, manual.name, manual.releaseInfo?.take(4), manual.id.substringBefore(":") + if (manual.type == "series") ":1:1" else "", "${manual.name} (picked)"))
         else buildList { for (tv in listOf(false, false, true, true)) { step.value = "Picking titles…"; SourceTester.pickOne(vm, tv, map { it.imdb }.toSet())?.let { add(it) } } }
         w("Titles: " + titles.joinToString { it.label })

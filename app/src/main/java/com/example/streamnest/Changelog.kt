@@ -13,6 +13,18 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.6.0", "27 Oct 2026", "The AI card is back, faster and steadier", listOf(
+        "The AI is the card again: tap the AI button, talk or type, the greeting sits at the top",
+        "Say \"play Thor\" and it starts straight away; a series carries on where you left off, or say \"season 2 episode 3\"",
+        "Say \"Hey Aiden\" anywhere in the app (only the full phrase during a movie); the movie pauses while you talk",
+        "During a movie: \"pause\", \"resume\", \"forward 30\", \"next episode\"",
+        "No more freezes from slow plugins: they load in the background, and videos start on the first link that works",
+        "Trending rows: real full-size portrait posters and bold, easy-to-read numbers",
+        "Top cards: each title shows once",
+        "Search: a new Discover page like Instagram's Explore — big tall posters beside small wide cards; results look the same",
+        "Subtitle auto sync rebuilt: listens to voices (centre channel on 5.1), fixes frame-rate drift, locks in faster",
+        "Changing Fit / Crop / Stretch always works, even after a pinch zoom",
+    )),
     Release("0.5.9", "27 Oct 2026", "New June & Aiden, and lots more", listOf(
         "June and Aiden got a new look from your new video: upper body, red light on their edges, chest melting into blur; each stands straight on their own",
         "They move like people now: smooth blending, breathing, small head moves, real mouth shapes while they talk",
@@ -365,6 +377,19 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.6.0", "27 Oct 2026", "AI revert, plugin threads, TMDB auth, tests fixed", listOf(
+        "Removed AiAvatar / AiCompanion / GeminiLive and the avatar assets (−3.9 MB, less memory); AI button + wake word open VoiceAssistant (XSession)",
+        "XConversation: playerCommand (AiPlayerBus), fastPath play/open with season/episode, findOne (Continue Watching → Home → search exact); XResult.play → pendingDetailPlay",
+        "WakeWord: Hey Aiden grammar only, whole-utterance match, peak RMS gate, strict (needs hey) on the player",
+        "CsPlugins: load() on a per-plugin HandlerThread with 12 s limit (late finish kept), per-thread CsBridge.loading, per-plugin locks (parallel loads); main-thread retry only for WrongThread errors",
+        "modeStreams: each plugin is queried as soon as it loads (no awaitAll of every plugin)",
+        "TmdbAuth interceptor: eyJ… / long keys sent as Bearer; key check (/3/configuration) shown in Integrations, Developer's Corner and test logs",
+        "Source Test: addons tested via addonStreamsFlow even in plugin mode; pickOne retries TMDB 3× then falls back to Home / Cinemeta top; CsTest stops with a clear line when no titles",
+        "TmdbPosters (find by IMDb / search by name+year → w780) + TallPoster for numbered rows; solid gradient numbers with dark stroke",
+        "Deck: dedupe by IMDb id and normalised name; AIDEN picks skip titles already trending",
+        "Discover.kt mosaic (big tall + 2 small wide, alternating) for Search idle and phone results",
+        "Speech.fit: local-floor VAD, 7 frame-rate ratios with centred shift search, off main thread; subRatio applied to cue timing; centre channel for ≥6 ch",
+    )),
     Release("0.5.9", "27 Oct 2026", "Avatars v2, pair mode, Xstream cloud namespace, 2 lists of features", listOf(
         "Avatars: new Gemini video cut with isnet + background-plate difference matte, per-person split, ECC-stabilised and straightened, 480 px tall, red rim + chest blur baked; calm / speak loops with similarity jumps, frame blending, ghost glide between clips, mouth atlas (20 shapes) by voice level",
         "GeminiLive: realtimeInput.text (fixes 1007), VAD low sensitivity, sessionResumption + goAway reconnect, shared LiveMic for two sessions, spokenNow() subtitles by play head; pair mode with pass_to_friend / call_friend and reactions",

@@ -874,7 +874,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     fun streamsFlow(type: String, id: String, only: Set<String>? = null, except: Set<String>? = null): Flow<Pair<List<StreamItem>, Boolean>> =
         if (pluginMode()) PluginSources.modeStreams(this, type, id, only, except) else addonStreamsFlow(type, id, only, except)
 
-    private fun addonStreamsFlow(type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
+    internal fun addonStreamsFlow(type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
         val addons = active.filter { it.supports("stream", type, id) && (only == null || it.label() in only) && (except == null || it.label() !in except) }
         // Plugins (Settings › Content & Discovery › Plugins) are asked alongside the addons.
         val plugins = if (BuildConfig.IS_TV) emptyList() else Plugins.enabled().filter { type in it.types && (only == null || it.name in only) && (except == null || it.name !in except) }

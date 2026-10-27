@@ -516,9 +516,43 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
         val wide = LocalConfiguration.current.screenWidthDp >= 600
         val cells = if (wide) GridCells.Adaptive(minSize = 220.dp) else GridCells.Fixed(2)
         when {
+            // Phone: Discover — moods, recent searches, then the Explore-style mosaic of titles (big tall + small wide cards).
+            tq.length < 3 && !BuildConfig.IS_TV -> {
+                val shelvesNow by vm.shelves.collectAsStateWithLifecycle()
+                val pool = remember(shelvesNow) {
+                    shelvesNow.flatMap { it.items }.filter { it.poster != null || it.background != null }.distinctBy { it.id.substringBefore(":") }
+                        .shuffled(java.util.Random(HomeShuffle.seed)).take(45)
+                }
+                androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 18.dp, bottom = 140.dp)) {
+                    item(key = "moods") { MoodDiscover(vm, onOpen); Spacer(Modifier.height(14.dp)) }
+                    if (recent.isNotEmpty()) {
+                        item(key = "recentHead") {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Recent searches", Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = SubText)
+                                Text("Clear", Modifier.clip(RoundedCornerShape(10.dp)).clickable { recent = emptyList(); vm.storePut("searchRecent", null) }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp), fontSize = 14.sp, color = Accent)
+                            }
+                        }
+                        item(key = "recentChips") {
+                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(recent, key = { "r:$it" }) { r ->
+                                    Row(Modifier.clip(RoundedCornerShape(16.dp)).background(Color(0x14FFFFFF)).clickable { q = r; vm.searchPremium(r); keyboard?.hide() }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.History, null, tint = SubText, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(r, fontSize = 14.sp, maxLines = 1)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (pool.isNotEmpty()) item(key = "discoverHead") {
+                        Text("Discover", Modifier.padding(start = 18.dp, top = 6.dp, bottom = 8.dp), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                    discoverMosaic(pool, "d", onOpen = onOpen)
+                }
+            }
             tq.length < 3 && recent.isNotEmpty() -> Column(Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(top = 18.dp, bottom = 140.dp)) {
-                if (!BuildConfig.IS_TV) MoodDiscover(vm, onOpen)
-                if (!BuildConfig.IS_TV) Spacer(Modifier.height(18.dp))
                 Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("Recent searches", Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = SubText)
                     Text("Clear", Modifier.clip(RoundedCornerShape(10.dp)).clickable { recent = emptyList(); vm.storePut("searchRecent", null) }
@@ -535,11 +569,6 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
                     }
                 }
             }
-            tq.length < 3 && !BuildConfig.IS_TV -> Column(Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(bottom = 140.dp)) {
-                MoodDiscover(vm, onOpen)
-                Text("Type at least 3 letters to search", Modifier.fillMaxWidth().padding(top = 24.dp), fontSize = 14.sp, color = SubText,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            }
             tq.length < 3 -> CenterNote("Type at least 3 letters to search")
             loading && hits.isEmpty() -> ShimmerGrid(cells)
             !loading && hits.isEmpty() && shownQuery.isNotEmpty() && dym != null -> Column(Modifier.fillMaxWidth().padding(top = 80.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -548,6 +577,22 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
                     fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFF8A80))
             }
             !loading && hits.isEmpty() && shownQuery.isNotEmpty() -> CenterNote("No results for “$tq”")
+            // Phone results: the same Explore-style mosaic (collections on top as widgets).
+            !BuildConfig.IS_TV && !wide -> Box(Modifier.fillMaxSize()) {
+                val backs = remember(hits) { hits.associate { it.meta.id to it.backdrop } }
+                androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 14.dp, bottom = 140.dp)) {
+                    if (dym != null) item(key = "dym") {
+                        Text(buildString { append("Did you mean "); append(dym); append("?") }, Modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(14.dp)).clickable { setQuery(dym!!); addRecent(dym!!) }
+                            .padding(vertical = 6.dp), fontSize = 16.sp, color = Color(0xFFFF8A80), fontWeight = FontWeight.SemiBold)
+                    }
+                    if (groups.isNotEmpty()) item(key = "groups") { Box(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) { GroupWidgets(groups) { openGroup = it } } }
+                    discoverMosaic(hits.map { it.meta }, "s:$shownQuery", wide = { backs[it.id] }) { m -> addRecent(q); onOpen(m) }
+                }
+                if (loading) LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(2.dp).align(Alignment.TopCenter),
+                    color = Accent, trackColor = Color.Transparent,
+                )
+            }
             else -> Box(Modifier.fillMaxSize()) {
                 LazyVerticalGrid(
                     columns = cells,

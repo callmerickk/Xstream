@@ -230,32 +230,8 @@ fun App(vm: AppViewModel = viewModel()) {
     CompositionLocalProvider(LocalTexts provides texts) {
         LaunchedEffect(profile == null) { if (profile == null) stack.clear() }
         val open: (Meta) -> Unit = { stack.add(Screen.Detail(it)) }
-        // June & Aiden: what they do for you, the hello after picking a profile, and their names as wake words.
-        val compReq by AiHost.req.collectAsState()
-        LaunchedEffect(Unit) {
-            AiHost.actions.collect { a ->
-                when (a) {
-                    is AiAction.Play -> {
-                        while (stack.lastOrNull() is Screen.Player) stack.removeAt(stack.lastIndex)
-                        pendingDetailPlay.value = a.episode ?: a.meta.id
-                        stack.add(Screen.Detail(a.meta))
-                    }
-                    is AiAction.Tab -> when (a.name) {
-                        "watchlist" -> stack.add(Screen.Watchlist())
-                        "notifications" -> stack.add(Screen.Notes)
-                        else -> { stack.clear(); tab = when (a.name) { "search" -> 1; "library", "downloads" -> 3; "my_space" -> 2; else -> 0 } }
-                    }
-                }
-            }
-        }
+        // "Hey Aiden": the offline wake word opens the AI card (anywhere in the app, also during a movie).
         val buddyCtx = androidx.compose.ui.platform.LocalContext.current
-        LaunchedEffect(profile?.id) {
-            if (profile == null || AiHost.greetedThisRun || !vm.liveReady() || !isOn(texts["aiWake"] ?: "yes")) return@LaunchedEffect
-            AiHost.greetedThisRun = true
-            AvatarFrames.warm(buddyCtx)
-            delay(1600)
-            if (stack.isEmpty() && AiHost.req.value == null) AiHost.summon(vm.greeter(), AiHost.Mode.Card, greet = true)
-        }
         val callMic by Call.micOn.collectAsState()
         val life = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
         var appResumed by remember { mutableStateOf(true) }
@@ -266,13 +242,13 @@ fun App(vm: AppViewModel = viewModel()) {
             }
             life.addObserver(o); onDispose { life.removeObserver(o); WakeWord.stop() }
         }
-        val liveOk = vm.liveReady()
         val onPlayer = stack.lastOrNull() is Screen.Player
+        val aiBusy = voiceOpen || VoiceAskBus.pending.collectAsState().value != null
         LaunchedEffect(onPlayer) { WakeWord.strict = onPlayer }
-        LaunchedEffect(compReq == null) { if (compReq == null) WakeWord.quietUntil = System.currentTimeMillis() + 3500 }
-        LaunchedEffect(profile?.id, compReq == null, callMic, appResumed, texts["wakeOn"], liveOk) {
-            WakeWord.onName = { b -> if (AiHost.req.value == null) AiHost.summon(b, AiHost.Mode.Stage) }
-            val on = profile != null && compReq == null && !callMic && appResumed && liveOk && isOn(texts["wakeOn"] ?: "yes")
+        LaunchedEffect(aiBusy) { if (!aiBusy) WakeWord.quietUntil = System.currentTimeMillis() + 3000 }
+        LaunchedEffect(profile?.id, aiBusy, callMic, appResumed, texts["wakeOn"]) {
+            WakeWord.onName = { if (!voiceOpen) { AiPlayerBus.duck(); voiceOpen = true } }
+            val on = !BuildConfig.IS_TV && profile != null && !aiBusy && !callMic && appResumed && isOn(texts["wakeOn"] ?: "yes")
             if (on) { delay(700); WakeWord.start(buddyCtx) } else WakeWord.stop()
         }
         if (profile == null && gateOpen) CloudGate(onDone = { gateOpen = false })
@@ -324,12 +300,12 @@ fun App(vm: AppViewModel = viewModel()) {
                 // Watches every touch (never consumes it) to wake the dock.
                 awaitPointerEventScope { while (true) { awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial); lastTouch[0] = System.currentTimeMillis(); if (idleHidden) idleHidden = false } }
             }) {
-                Box(Modifier.fillMaxSize().then(if (voiceOpen || compReq?.mode == AiHost.Mode.Card) Modifier.blur(10.dp) else Modifier)) {
+                Box(Modifier.fillMaxSize().then(if (voiceOpen) Modifier.blur(10.dp) else Modifier)) {
                 when (tab) {
                     0 -> HomeScreen(
                         vm, homeList, capsuleAnim, open, { stack.add(it) },
                         onLive = { stack.add(Screen.Live) },
-                        onAi = { if (vm.liveReady()) AiHost.summon(AiBuddy.of(vm.store("lastBuddy") ?: vm.greeter().name), AiHost.Mode.Card) else voiceOpen = true },
+                        onAi = { voiceOpen = true },
                         onManual = { m, k -> stack.add(Screen.Detail(m, k)) },
                         onOpenCollection = { c, f -> stack.add(Screen.Collection(c.id, f.id)) },
                     )
@@ -358,7 +334,6 @@ fun App(vm: AppViewModel = viewModel()) {
                     },
                     modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"),
                 )
-                if (voiceOpen) VoiceAssistant(vm, onClose = { voiceOpen = false }, onOpen = { voiceOpen = false; open(it) })
                 val bellTogether by BellNav.together.collectAsState()
                 LaunchedEffect(bellTogether) { if (bellTogether) { BellNav.together.value = false; stack.add(Screen.Together()) } }
                 // Voice search handed a request to the AI.
@@ -369,7 +344,12 @@ fun App(vm: AppViewModel = viewModel()) {
         if (profile != null && stack.lastOrNull() !is Screen.Player && stack.lastOrNull() !is Screen.Trailer) voteFor?.let { m ->
             key(m.id) { VoteCapsule(m, onVote = { v -> vm.vote(m, v) }, onDismiss = { voteFor = null }) }
         }
-        if (profile != null) CompanionHost(vm)
+        // The AI card: over any screen (the wake word can call it during a movie). Playing a title leaves the player.
+        if (profile != null && voiceOpen) VoiceAssistant(vm, onClose = { voiceOpen = false; AiPlayerBus.unduck() }, onOpen = { m ->
+            voiceOpen = false
+            if (pendingDetailPlay.value != null) while (stack.lastOrNull() is Screen.Player) stack.removeAt(stack.lastIndex) else AiPlayerBus.unduck()
+            open(m)
+        })
         // Watch together invite (🔔 notification or a link): "Who's watching?" first, then join the room and open its video.
         val joinAsk by JoinIntent.code.collectAsState()
         LaunchedEffect(joinAsk, profile) {

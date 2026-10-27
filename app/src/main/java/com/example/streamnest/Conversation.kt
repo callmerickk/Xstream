@@ -22,7 +22,14 @@ import java.util.Locale
 data class XTurn(val say: String, val action: String, val query: String, val titles: List<String>)
 
 /** What the overlay shows / does after a turn. [open] = a title to open right after speaking. */
-data class XResult(val say: String, val items: List<Meta>, val rowTitle: String, val open: Meta?, val failed: Boolean = false)
+data class XResult(val say: String, val items: List<Meta>, val rowTitle: String, val open: Meta?, val failed: Boolean = false,
+    /** Close the card after speaking (a player command was done). */
+    val closeAfter: Boolean = false,
+    /** Start playing [open] right away (Continue Watching for a series), or this episode id (tt…:season:episode). */
+    val play: Boolean = false, val episode: String? = null)
+
+/** "play dark season 2 episode 3" → ("dark", 2, 3); also "s2 e3", "season 2". */
+private val epAsk = Regex("\\s+(?:season|s)\\s*(\\d{1,2})(?:\\s*(?:,|and)?\\s*(?:episode|ep|e)\\s*(\\d{1,3}))?\\s*$")
 
 /** True when the text contains Devanagari letters (Hindi written in Hindi script). */
 fun hasDevanagari(s: String): Boolean = s.any { it in '\u0900'..'\u097F' }
@@ -127,7 +134,7 @@ How to talk:
 Actions (the app does them for you, so just talk naturally about it):
 - "recommend": you suggest specific titles; put 4 to 10 real, existing titles in "titles" as "Title (Year)". Prefer things on their Home screen, things they haven't watched, never ones they disliked.
 - "search": they want to find something by name, actor, genre or keyword; put the search text in "query".
-- "play": they clearly want to start one specific title now; put it first in "titles".
+- "play": they clearly want to start one specific title now; put it first in "titles". The app starts it immediately (a series resumes where they left off).
 - "open": they want to see the details of one specific title; put it first in "titles".
 - "none": just chatting or asking a question back.
 
@@ -139,22 +146,68 @@ Answer ONLY with JSON, exactly this shape:
     private fun partOfDay(): String = when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
         in 5..11 -> "morning"; in 12..16 -> "afternoon"; in 17..21 -> "evening"; else -> "late night" }
 
-    /** Fast local path for "play Interstellar" / "open Dark": no AI round-trip needed when the title is obvious. */
+    /** Video controls while a movie plays: "pause", "resume", "next episode", "forward 30", "stop". */
+    private fun playerCommand(text: String): XResult? {
+        if (!AiPlayerBus.open) return null
+        val t = text.lowercase().trim().trimEnd('.', '!', '?')
+        val n = Regex("(\\d{1,3})").find(t)?.value?.toIntOrNull()
+        val mins = t.contains("minute")
+        val (act, secs, say) = when {
+            Regex("^(pause|stop it|hold on|ruko)\\b").containsMatchIn(t) -> Triple("pause", 0, "Paused.")
+            Regex("^(resume|continue|play( it)?|carry on|unpause|chalao)$").matches(t) -> Triple("resume", 0, "Back to it.")
+            t.contains("next episode") -> Triple("next_episode", 0, "Next episode coming up.")
+            Regex("(forward|skip|aage)").containsMatchIn(t) -> Triple("forward", (n ?: 10) * (if (mins) 60 else 1), "Skipping ahead.")
+            Regex("(rewind|back|go back|peeche|piche)").containsMatchIn(t) && !t.startsWith("go back home") -> Triple("rewind", (n ?: 10) * (if (mins) 60 else 1), "Going back.")
+            Regex("^(stop|close|exit)( the)?( movie| video| player)?$").matches(t) -> Triple("stop", 0, "Stopped.")
+            else -> return null
+        }
+        AiPlayerBus.send(act, secs)
+        return XResult(say, emptyList(), "", null, closeAfter = act != "pause")
+    }
+
+    /** Fast local path for "play Interstellar" / "open Dark" / "play Dark season 2 episode 3": no AI round-trip. */
     private suspend fun fastPath(text: String): XResult? {
-        val m = Regex("^(please )?(play|open|start|put on)\\s+(.+)$").find(text.lowercase().trim().trimEnd('.', '!', '?')) ?: return null
-        val rest = m.groupValues[3].trim()
-        if (rest.split(" ").size > 5 || genericWords.containsMatchIn(rest)) return null
-        val res = runCatching { vm.searchNow(rest) }.getOrDefault(emptyList())
-        val norm = { s: String -> s.lowercase().replace(Regex("[^\\p{L}\\p{N} ]"), "").replace(Regex("\\s+"), " ").trim() }
-        val hit = res.firstOrNull { norm(it.name) == norm(rest) } ?: return null
-        val say = if (hasDevanagari(text)) "${hit.name} खोल रहा हूँ!" else "Opening ${hit.name}. Enjoy!"
-        return XResult(say, listOf(hit), hit.name, hit)
+        val m = Regex("^(please )?(play|open|start|put on|chalao|lagao)\\s+(.+)$").find(text.lowercase().trim().trimEnd('.', '!', '?')) ?: return null
+        val verb = m.groupValues[2]
+        var rest = m.groupValues[3].trim().removeSuffix(" please").removePrefix("the movie ").removePrefix("the series ").trim()
+        val ep = epAsk.find(rest)
+        if (ep != null) rest = rest.substring(0, ep.range.first).trim()
+        if (rest.isEmpty() || rest.split(" ").size > 6 || (ep == null && genericWords.matches(rest))) return null
+        if (Regex("^(something|anything|a movie|a film|a show|some movie|kuch)\\b").containsMatchIn(rest)) return null
+        val hit = findOne(rest) ?: return null
+        val play = verb != "open"
+        val episode = ep?.let { e -> if (hit.type == "series") "${hit.id.substringBefore(":")}:${e.groupValues[1]}:${e.groupValues[2].ifEmpty { "1" }}" else null }
+        val say = when {
+            !play -> if (hasDevanagari(text)) "${hit.name} खोल रहा हूँ!" else "Opening ${hit.name}."
+            episode != null -> "Playing ${hit.name}, season ${ep!!.groupValues[1]} episode ${ep.groupValues[2].ifEmpty { "1" }}. Enjoy!"
+            hit.type == "series" -> "Playing ${hit.name} from where you left off. Enjoy!"
+            else -> if (hasDevanagari(text)) "${hit.name} चला रहा हूँ!" else "Playing ${hit.name}. Enjoy!"
+        }
+        return XResult(say, listOf(hit), hit.name, hit, play = play, episode = episode)
+    }
+
+    /** The one title a name means: Continue Watching first, then Home, then search (exact name, newest / most popular first). */
+    private suspend fun findOne(name: String): Meta? {
+        val norm = { s: String -> s.lowercase().replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim() }
+        val want = norm(name)
+        val yearAsk = Regex("\\b(19|20)\\d{2}\\b").find(want)?.value
+        val bare = if (yearAsk != null) norm(want.replace(yearAsk, "")) else want
+        fun ok(m: Meta) = norm(m.name) == bare && (yearAsk == null || m.releaseInfo?.startsWith(yearAsk) == true)
+        vm.progress.value.firstOrNull { norm(it.title.substringBefore("  S")) == bare }?.let { p ->
+            val id = p.key.substringBefore(":")
+            vm.shelves.value.flatMap { it.items }.firstOrNull { it.id.substringBefore(":") == id }?.let { return it }
+        }
+        vm.shelves.value.flatMap { it.items }.firstOrNull(::ok)?.let { return it }
+        val res = runCatching { vm.searchNow(bare) }.getOrDefault(emptyList())
+        return res.firstOrNull(::ok) ?: res.firstOrNull { norm(it.name) == bare }
+            ?: res.firstOrNull { norm(it.name).startsWith(bare) && bare.length >= 4 }
     }
 
     /** One user utterance in, one reply out. Never throws (except cancellation). */
     suspend fun reply(text: String): XResult {
+        playerCommand(text)?.let { return it }
         fastPath(text)?.let { r ->
-            turns.add(text to turnJson(XTurn(r.say, "open", "", listOfNotNull(r.open?.name))))
+            turns.add(text to turnJson(XTurn(r.say, if (r.play) "play" else "open", "", listOfNotNull(r.open?.name))))
             return r
         }
         if (!vm.aiReady()) return offline(text, hint = !keyHintGiven).also { keyHintGiven = true }
@@ -203,7 +256,7 @@ Answer ONLY with JSON, exactly this shape:
             }
             else -> items = emptyList()
         }
-        val result = XResult(turn.say.ifBlank { if (items.isNotEmpty()) "Here you go." else "Okay!" }, items, row, open)
+        val result = XResult(turn.say.ifBlank { if (items.isNotEmpty()) "Here you go." else "Okay!" }, items, row, open, play = turn.action == "play" && open != null)
         memorize(text, result, turn.titles)
         return result
     }
