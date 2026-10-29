@@ -405,13 +405,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             }
         }
         applyPalette()
-        // Cloudflare (1.1.1.1) is the default. Phones still on the old default ("System") move to it once; a DNS the
-        // person picks by hand is theirs from then on (the developer's published DNS never replaces it).
-        if (glob.getBoolean("dnsMigrated1", false).not()) {
-            if (store("ownKey_dns") != "1" && (texts.value["dns"] ?: "system") == "system") setText("dns", "cloudflare")
-            glob.edit().putBoolean("dnsMigrated1", true).apply()
-        }
-        Api.setDns(texts.value["dns"] ?: "cloudflare")
+        // DNS: set up after the saved settings are loaded (see the init block with appTexts below).
     }
 
     fun setDns(provider: String, byUser: Boolean = true) {
@@ -1373,16 +1367,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     // ───────────── Per-profile data + cloud sync ─────────────
 
-    /** Settings that belong to this device / the app, not to a profile. */
-    private val AppLocalKeys = setOf("lastProfile", "rememberProfile", "autoProfileSecs", "splash", "engineMigrated", "dns",
-        "streamMode", "eliteWifiOnly", "eliteWifiStrict", "guideDone", "searchHistory", "notifyOn")
-    /** App-wide texts (app name, Developer's Corner labels): the same for every profile, synced as one field. */
-    private val AppSyncKeys = setOf(
-        "appName", "showBrand", "forYou", "badge", "newOn", "watchNow", "continueWatching", "recommendedFor", "myList",
-        "pillLeft", "pillRight", "pillSports", "navHome", "navMySpace", "pillLive", "helpSettings", "whoWatching",
-        "navSearch", "navLive", "navLibrary", "navProfile", "searchHint", "playBtn", "chooseSource", "noStreams",
-        "emptyMsg", "addonsTitle", "addonsHint", "addonUrlHint", "installBtn", "aiLogoUrl",
-    )
+    // In a companion object: settings are written while the ViewModel is still being built (the one-time DNS move on a
+    // fresh install), before members declared down here exist — as instance fields they were still null (crash).
+    companion object {
+        /** Settings that belong to this device / the app, not to a profile. */
+        private val AppLocalKeys = setOf("lastProfile", "rememberProfile", "autoProfileSecs", "splash", "engineMigrated", "dns",
+            "streamMode", "eliteWifiOnly", "eliteWifiStrict", "guideDone", "searchHistory", "notifyOn")
+        /** App-wide texts (app name, Developer's Corner labels): the same for every profile, synced as one field. */
+        private val AppSyncKeys = setOf(
+            "appName", "showBrand", "forYou", "badge", "newOn", "watchNow", "continueWatching", "recommendedFor", "myList",
+            "pillLeft", "pillRight", "pillSports", "navHome", "navMySpace", "pillLive", "helpSettings", "whoWatching",
+            "navSearch", "navLive", "navLibrary", "navProfile", "searchHint", "playBtn", "chooseSource", "noStreams",
+            "emptyMsg", "addonsTitle", "addonsHint", "addonUrlHint", "installBtn", "aiLogoUrl",
+        )
+    }
     private fun isAppKey(k: String) = k in AppLocalKeys || k in AppSyncKeys
 
     private var appTexts: Map<String, String> = emptyMap()
@@ -1439,6 +1437,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         val last = appTexts["lastProfile"]
         val start = profiles.value.firstOrNull { it.id == last } ?: profiles.value.firstOrNull()
         start?.let { loadProfileData(it.id) }
+        // (Runs here, after the saved settings are loaded: setText needs them.) Cloudflare (1.1.1.1) is the default. Phones still on the old default ("System") move to it once; a DNS the
+        // person picks by hand is theirs from then on (the developer's published DNS never replaces it).
+        if (glob.getBoolean("dnsMigrated1", false).not()) {
+            if (store("ownKey_dns") != "1" && (appTexts["dns"] ?: "system") == "system") setText("dns", "cloudflare")
+            glob.edit().putBoolean("dnsMigrated1", true).apply()
+        }
+        Api.setDns(appTexts["dns"] ?: "cloudflare")
         Cloud.init(ctx)
         Cloud.attach(this)
         // Xstream: a friend's recommendation lands in your watchlist.
