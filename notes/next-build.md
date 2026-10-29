@@ -26,3 +26,22 @@ Still open: collection cards check (needs working TMDB key), smart downloads, sa
 - Merge plugins + addons: one pool, one ranking, tiers (fast 3–5 first, then backups), concurrency by device; behind a Developer's Corner switch first.
 - PencariMovie: bot-only login (no personal cloud), files indexed by pencarimovie.com (WordPress) + leased guest bots; MIT; Rust (axum + grammers),
   ~30k lines + 19 MB dashboard. Discussing: Telegram source inside the C app (xstream-tv), TV only, with CloudStream on the Android side.
+
+## NEXT VERSION — Smooth trailers like Nuvio Enhanced (saved 29 Oct 2026, 07:52) — DO NOT BUILD until Rakesh says "build"
+Source studied: github.com/yesnt10/NuvioMobile-Enhanced (InAppYouTubeExtractor.kt, TrailerExtractionPlatform.android.kt,
+YoutubeChunkedDataSourceFactory.kt, HeroTrailerPlayerSurface.android.kt, HomeHeroSection.kt).
+Applies to StreamX Android (YtDirect.kt / Trailer.kt) and web StreamX (hero cards, title page background, Trailers tab, which use the YouTube iframe today).
+1. Watch-page first step: read INNERTUBE_API_KEY + VISITOR_DATA, send x-goog-visitor-id (stops "sign in / not a bot" refusals).
+2. Clients: VISIONOS first, then ANDROID 20.10.35, IOS 20.10.1 (update ours: ANDROID 19.44.38 is old); ask ALL, pool the answers.
+3. Pick best: HLS manifest best variant vs progressive vs separate video+audio; prefer the original (default) audio track over dubs; mp4 over webm.
+4. Link check: probe googlevideo URL with Range bytes=0-0; try the backup servers in the "mn" param in parallel, first that answers wins (2 s).
+5. Chunked download: add YouTube's &range=start-end in 10 MB pieces (no throttling / stalls).
+6. IPv4-first DNS for YouTube hosts (IPv6 to googlevideo slow on Jio etc.).
+7. Reveal: trailer invisible over the backdrop, 420 ms fade-in only at READY / first frame; on error or end fade back to backdrop. Never show a black box or YouTube bars.
+8. Embedded YouTube player only as the last fallback, and kept hidden until it is actually playing.
+9. Zoom & full screen: our own video surface fills the card edge to edge (cover-crop, no black bars), optional zoom (e.g. 1.35x hero option B);
+   full screen continues the same playback (no reload).
+10. Web StreamX: server endpoint /api/trailer/:id doing 1-6 (cache 3 h), play via our proxy (HLS with hls.js, or the muxed mp4), hidden <video> + fade-in
+    in hero cards, title page and Trailers tab; proxy turns Range into &range= pieces for googlevideo.
+11. Android StreamX: port 1-8 into YtDirect.kt + a chunked OkHttp DataSource; keep Piped/Invidious mirrors as fallback before the WebView.
+12. Test: YouTube is blocked in the Claude workspace, so Rakesh tests on PC / phone. Clients need refreshing every few months.
