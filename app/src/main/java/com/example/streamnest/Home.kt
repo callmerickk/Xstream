@@ -158,7 +158,6 @@ fun HomeScreen(
     onOpenCollection: (NCollection, NFolder) -> Unit = { _, _ -> },
 ) {
     val allShelves by vm.shelves.collectAsStateWithLifecycle()
-    var cwAll by remember { mutableStateOf(false) }
     // At app open, in the background: Discover's titles and the Hindi titles for both Trending rows, so neither changes
     // in front of you.
     LaunchedEffect(allShelves.isNotEmpty()) {
