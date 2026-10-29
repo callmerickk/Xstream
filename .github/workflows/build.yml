@@ -44,11 +44,11 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          gradle assemblePhoneDebug assembleUniversalDebug --no-daemon 2>&1 | tee build.log
+          gradle assemblePhoneDebug --no-daemon 2>&1 | tee build.log
           ls -la app/build/outputs/apk/*/debug/*.apk
       - name: Check the APKs
         run: |
-          for a in app/build/outputs/apk/phone/debug/*.apk app/build/outputs/apk/universal/debug/*.apk; do
+          for a in app/build/outputs/apk/phone/debug/*.apk; do
             n=$(basename "$a"); sz=$(du -m "$a" | cut -f1)
             live=$(unzip -l "$a" | grep -c "libxlive.so" || true)
             libs=$(unzip -l "$a" | grep "lib/" | awk '{print $1, $4}' | sort -rn | head -8 | awk '{printf "%s %.1fMB; ", $2, $1/1048576}')
@@ -87,16 +87,11 @@ jobs:
         with:
           name: Xstream-phone-apk
           path: app/build/outputs/apk/phone/debug/*.apk
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Xstream-universal-apk
-          path: app/build/outputs/apk/universal/debug/*.apk
       - name: Prepare release files
         if: ${{ inputs.publish }}
         run: |
           mkdir -p release
           cp app/build/outputs/apk/phone/debug/*.apk release/Xstream-phone.apk
-          cp app/build/outputs/apk/universal/debug/*.apk release/Xstream-phone-universal.apk
           G=app/build.gradle.kts
           CODE=$(grep 'versionCode = ' $G | sed -n 1p | grep -o '[0-9]\+')
           NAME=$(grep 'versionName = ' $G | sed -n 1p | sed 's/.*"\(.*\)".*/\1/')
@@ -114,6 +109,5 @@ jobs:
           make_latest: true
           files: |
             release/Xstream-phone.apk
-            release/Xstream-phone-universal.apk
             release/versions.json
             release/notes.md

@@ -118,7 +118,7 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean
             SettingsCard {
                 Column(Modifier.padding(16.dp)) {
                     Text("Set the keys, the AI's logo (use a link) and its voice here, then publish. Every Xstream user gets them when they sign in.", fontSize = 13.sp, color = Muted)
-                    Button({ msg = "Publishing…"; scope.launch { msg = DevDefaults.publish(vm) ?: "Published ✓ — everyone gets these on their next start" } },
+                    if (!BuildConfig.NO_PUBLISH) Button({ msg = "Publishing…"; scope.launch { msg = DevDefaults.publish(vm) ?: "Published ✓ — everyone gets these on their next start" } },
                         Modifier.padding(top = 10.dp).fillMaxWidth(), shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn)) { Text("Publish for everyone", fontWeight = FontWeight.SemiBold) }
                     msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Muted) }

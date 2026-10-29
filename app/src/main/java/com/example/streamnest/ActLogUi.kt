@@ -39,7 +39,8 @@ fun ActLogScreen(onClose: () -> Unit) {
     var filter by remember { mutableStateOf("ALL") }
     var query by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
-        devices = listOf("phone" to "This phone") + ActLog.cloudDevices()
+        // Phones: only Xstream's own logs (the account's TV logs there are written by StreamX TV as well).
+        devices = listOf("phone" to "This phone") + if (BuildConfig.IS_TV) ActLog.cloudDevices() else emptyList()
         // Developer: every account's devices (errors, crashes, play results; 15 days)
         if (Public.dev) devices = devices + ActLog.allAccountsDevices().map { (k, n) -> k to "☁ $n" }
     }

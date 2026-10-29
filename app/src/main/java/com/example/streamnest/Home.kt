@@ -74,6 +74,7 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.sign
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
@@ -740,7 +741,8 @@ private fun Deck(
     LaunchedEffect(n) { if (n > 1 && (pager.currentPage < n * 2 || pager.currentPage > n * (DeckLoops - 2))) pager.scrollToPage(n * (DeckLoops / 2)) }
     // Phones: 83 % of the width. Tablets / landscape: never taller than ~68 % of the screen (cards keep their shape).
     val cfg = LocalConfiguration.current
-    val cardW = minOf(cfg.screenWidthDp * 0.83f, cfg.screenHeightDp * 0.68f * 0.76f).coerceAtLeast(240f).dp
+    // Xstream stack: the front card in the centre with the deck fanned out behind it on both sides.
+    val cardW = minOf(cfg.screenWidthDp * 0.70f, cfg.screenHeightDp * 0.62f * 0.76f).coerceAtLeast(220f).dp
     // Only flips when the deck crosses half-visible, so this read recomposes Deck rarely (never per scroll frame).
     val visible = onScreen.value
     val dragged by pager.interactionSource.collectIsDraggedAsState()
@@ -849,7 +851,8 @@ private fun Deck(
                     .onGloballyPositioned { rootY.floatValue = it.positionInRoot().y },
             ) {
                 val frontMeta = items.getOrNull(pager.settledPage % n)?.meta
-                TrailerVideo(tid, muted, Modifier.fillMaxSize(), fitWhole = true, zoom = 1f,
+                // Fills the card edge to edge (cover-crop), like Nuvio's hero cards.
+                TrailerVideo(tid, muted, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
                     backdrop = frontMeta?.let { backdropOf(it) ?: it.poster }, onPlaying = { videoFor = tid },
                     onEnded = { nextTrailer() }, onError = { nextTrailer() })
                 // Keeps touches away from the video (the pager above gets them anyway).
@@ -876,13 +879,14 @@ private fun Deck(
             // Xstream: the card sits in the centre (same size as before); only a thin slice of the cards beside it shows.
             contentPadding = PaddingValues(horizontal = ((cfg.screenWidthDp.dp - cardW) / 2).coerceAtLeast(12.dp)),
             pageSpacing = 8.dp,
-            beyondViewportPageCount = 1,
-            // Smooth like Hotstar: one card per swipe, a soft glide that settles without a bounce.
+            // Two cards each side stay built: they are the deck's visible edges.
+            beyondViewportPageCount = 2,
+            // Smooth: one card per swipe, a soft glide that settles without a bounce.
             flingBehavior = androidx.compose.foundation.pager.PagerDefaults.flingBehavior(
                 state = pager,
                 pagerSnapDistance = androidx.compose.foundation.pager.PagerSnapDistance.atMost(1),
-                snapAnimationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.92f, stiffness = 170f),
-                snapPositionalThreshold = 0.3f,
+                snapAnimationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 160f),
+                snapPositionalThreshold = 0.25f,
             ),
             key = { "${at(it).meta.id}#${it / n}" },
             modifier = Modifier.fillMaxWidth(),
@@ -907,18 +911,35 @@ private fun Deck(
                     }
                 },
                 modifier = Modifier
-                    .zIndex(-abs(page - pager.currentPage).toFloat())
+                    .zIndex(-abs(page - pager.currentPage - pager.currentPageOffsetFraction))
                     .graphicsLayer {
-                        // The side cards shrink a little and darken, so the centre card is clearly the one in focus.
-                        val r = abs(page - pager.currentPage - pager.currentPageOffsetFraction).coerceAtMost(1f)
-                        val sc = 1f - 0.08f * r
+                        // The stack: cards behind the front one are pulled in towards the centre, shrink and tilt a
+                        // little, so the deck's edges peek out on the left and the right. All draw-phase, per frame.
+                        val o = page - pager.currentPage - pager.currentPageOffsetFraction
+                        val a = abs(o)
+                        val w = size.width
+                        val target = when {
+                            a <= 1f -> 0.22f * a
+                            a <= 2f -> 0.22f + 0.16f * (a - 1f)
+                            else -> 0.38f + 0.08f * (a - 2f)
+                        } * w
+                        val natural = a * (w + 8.dp.toPx())
+                        translationX = -sign(o) * (natural - target)
+                        val sc = when {
+                            a <= 1f -> 1f - 0.14f * a
+                            a <= 2f -> 0.86f - 0.12f * (a - 1f)
+                            else -> (0.74f - 0.1f * (a - 2f)).coerceAtLeast(0.6f)
+                        }
                         scaleX = sc; scaleY = sc
+                        cameraDistance = 14f * density
+                        rotationY = -sign(o) * 9f * a.coerceAtMost(1f)
+                        alpha = if (a <= 2f) 1f else (1f - (a - 2f) * 2f).coerceIn(0f, 1f)
                     }
                     .drawWithContent {
                         drawContent()
-                        val r = abs(page - pager.currentPage - pager.currentPageOffsetFraction).coerceAtMost(1f)
+                        val r = abs(page - pager.currentPage - pager.currentPageOffsetFraction).coerceAtMost(2f)
                         val dimCr = Palette.corner.dp.toPx()
-                        if (r > 0.01f) drawRoundRect(Color.Black, alpha = 0.55f * r, cornerRadius = CornerRadius(dimCr, dimCr))
+                        if (r > 0.01f) drawRoundRect(Color.Black, alpha = (0.42f * r).coerceAtMost(0.7f), cornerRadius = CornerRadius(dimCr, dimCr))
                     }
                     // Remember where the front card is (relative to the deck box) while a trailer is up.
                     .then(

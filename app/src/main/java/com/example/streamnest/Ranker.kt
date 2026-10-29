@@ -488,6 +488,8 @@ object HostStats {
     /** How long a link may stay silent (nothing arrived) before the player tries the next one. */
     fun startBudgetMs(url: String): Long {
         val k = key(url)
+        // Live server (this phone): it fetches the file's start before answering, 3–10 s; 30 s before it counts as stuck.
+        if (url.startsWith("http://127.0.0.1")) return 30_000L
         if (failing(url)) return 3_500L
         val o = ok[k] ?: 0
         val slow = slowest[k] ?: 0L

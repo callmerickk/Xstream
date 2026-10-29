@@ -9,6 +9,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -26,6 +27,12 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -52,17 +59,21 @@ object YtDirect {
 
     private class Client(val name: String, val num: Int, val version: String, val ua: String, val extra: Map<String, Any>)
 
-    // The app clients YouTube serves plain addresses to (no page scripts to decode), tried in order.
+    // The app clients YouTube serves plain addresses to (no page scripts to decode). All are asked at once and the
+    // answers pooled (Nuvio's order: visionOS first, then Android, then iPhone; the VR client is a last extra).
     private val clients = listOf(
+        Client("VISIONOS", 101, "1.02",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
+            mapOf("deviceMake" to "Apple", "deviceModel" to "RealityDevice17,1", "osName" to "visionOS", "osVersion" to "26.5.23O471")),
+        Client("ANDROID", 3, "20.10.35",
+            "com.google.android.youtube/20.10.35 (Linux; U; Android 14; en_US) gzip",
+            mapOf("osName" to "Android", "osVersion" to "14", "platform" to "MOBILE", "androidSdkVersion" to 34)),
+        Client("IOS", 5, "20.10.1",
+            "com.google.ios.youtube/20.10.1 (iPhone16,2; U; CPU iOS 17_4 like Mac OS X)",
+            mapOf("deviceModel" to "iPhone16,2", "osName" to "iPhone", "osVersion" to "17.4.0.21E219", "platform" to "MOBILE")),
         Client("ANDROID_VR", 28, "1.62.27",
             "com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
             mapOf("deviceMake" to "Oculus", "deviceModel" to "Quest 3", "androidSdkVersion" to 32, "osName" to "Android", "osVersion" to "12L")),
-        Client("IOS", 5, "20.10.4",
-            "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
-            mapOf("deviceMake" to "Apple", "deviceModel" to "iPhone16,2", "osName" to "iPhone", "osVersion" to "18.3.2.22D82")),
-        Client("ANDROID", 3, "19.44.38",
-            "com.google.android.youtube/19.44.38 (Linux; U; Android 11) gzip",
-            mapOf("androidSdkVersion" to 30, "osName" to "Android", "osVersion" to "11")),
     )
 
     private val cache = object : LinkedHashMap<String, Pair<Long, Src?>>(32, 0.75f, true) {
@@ -73,26 +84,88 @@ object YtDirect {
     /** Tallest picture to ask for: small on TV sticks (a second decoder next to the movie's), sharper on phones. */
     private val maxHeight: Int get() = if (BuildConfig.IS_TV) 480 else 720
 
+    /** IPv4 first for YouTube (IPv6 to googlevideo is slow on some networks, e.g. Jio). Keeps the app's DNS choice. */
+    val http: okhttp3.OkHttpClient by lazy {
+        val base = Api.http
+        base.newBuilder().dns(object : okhttp3.Dns {
+            override fun lookup(hostname: String) = base.dns.lookup(hostname).sortedBy { if (it is java.net.Inet4Address) 0 else 1 }
+        }).build()
+    }
+    private val probeHttp by lazy { http.newBuilder().callTimeout(2, java.util.concurrent.TimeUnit.SECONDS).build() }
+
+    /** The watch page's API key and visitor id (stops most "sign in to confirm you're not a bot" refusals). 6 h. */
+    @Volatile private var watchCfg: Triple<Long, String?, String?>? = null
+    private fun watchConfig(videoId: String): Pair<String?, String?> {
+        watchCfg?.let { (at, k, v) -> if (System.currentTimeMillis() - at < 6 * 3600_000L && v != null) return k to v }
+        val html = runCatching {
+            quick.newCall(Request.Builder().url("https://www.youtube.com/watch?v=$videoId&hl=en")
+                .header("User-Agent", BROWSER_UA).header("Accept-Language", "en-US,en;q=0.9").build()).execute().use { r -> r.body?.string() }
+        }.getOrNull().orEmpty()
+        val key = Regex("\"INNERTUBE_API_KEY\":\"([^\"]+)\"").find(html)?.groupValues?.get(1)
+        val visitor = Regex("\"VISITOR_DATA\":\"([^\"]+)\"").find(html)?.groupValues?.get(1)
+        if (visitor != null) watchCfg = Triple(System.currentTimeMillis(), key, visitor)
+        return key to visitor
+    }
+
     /** The trailer's addresses, or null when YouTube offers nothing playable. Remembered for 3 hours. */
     suspend fun resolve(videoId: String): Src? = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         synchronized(cache) { cache[videoId] }?.let { (at, src) -> if (now - at < 3 * 3600_000L) return@withContext src }
+        val (key, visitor) = watchConfig(videoId)
+        // Every client at once; the answers are pooled and kept in the clients' order of preference.
+        val answers = coroutineScope { clients.map { c -> async { runCatching { ask(c, videoId, key, visitor) }.getOrNull() } }.awaitAll() }
+        val pool = clients.indices.flatMap { i -> answers[i].orEmpty().map { clients[i].name to it } }
         var out: Src? = null
-        for (c in clients) {
-            out = runCatching { ask(c, videoId) }.getOrNull()
-            if (out != null) { ActLog.add("TRAILER", "$videoId · ${c.name} · ${if (out.hls) "HLS" else "${out.height}p"}"); break }
+        if (pool.isNotEmpty()) {
+            // Each candidate's link is checked (and moved to a backup server that answers) in parallel; the best that works wins.
+            val checked = coroutineScope { pool.take(6).map { (n, s) -> async { n to reachable(s) } }.awaitAll() }
+            val ok = checked.firstOrNull { it.second != null }
+            out = ok?.second
+            if (ok != null) ActLog.add("TRAILER", "$videoId · ${ok.first} · ${if (out!!.hls) "HLS" else "${out.height}p"}${if (visitor != null) " · visitor" else ""}")
+            else ActLog.add("TRAILER", "$videoId · ${pool.size} links, none answered")
         }
         // YouTube said no to every app client: ask public Piped / Invidious mirrors (they hand out playable addresses).
         if (out == null) out = runCatching { mirrors(videoId) }.getOrNull()
-        if (out == null) ActLog.add("TRAILER", "$videoId · no direct video (embedded player instead)")
+        if (out == null) ActLog.add("TRAILER", "$videoId · no direct video (hidden embedded player instead)")
         synchronized(cache) { cache[videoId] = now to out }
         out
     }
 
+    /** [s] with its video (and audio) moved to a googlevideo server that answers, or null when none does. */
+    private suspend fun reachable(s: Src): Src? {
+        if (s.hls) return s
+        val v = alive(s.video, s.ua) ?: return null
+        val a = s.audio?.let { alive(it, s.ua) ?: return null }
+        return s.copy(video = v, audio = a)
+    }
+
+    /** The link itself or one of its backup servers (the "mn" list), whichever answers a 1-byte request first (2 s). */
+    private suspend fun alive(url: String, ua: String): String? = coroutineScope {
+        val u = android.net.Uri.parse(url)
+        val host = u.host.orEmpty()
+        val cands = mutableListOf(url)
+        if (host.contains("googlevideo.com")) {
+            u.getQueryParameter("mn")?.split(',')?.map { it.trim() }?.filter { it.isNotBlank() }?.forEachIndexed { i, sv ->
+                val alt = host.replaceFirst(Regex("^rr\\d+---"), "rr${i + 1}---").replaceFirst(Regex("sn-[a-z0-9]+-[a-z0-9]+"), sv)
+                if (alt != host) cands += url.replace(host, alt)
+            }
+        }
+        val win = kotlinx.coroutines.CompletableDeferred<String?>()
+        val jobs = cands.distinct().map { c -> launch(Dispatchers.IO) { if (probe(c, ua)) win.complete(c) } }
+        launch { jobs.joinAll(); win.complete(null) }
+        val r = kotlinx.coroutines.withTimeoutOrNull(2_500) { win.await() }
+        coroutineContext.cancelChildren()
+        r
+    }
+
+    private fun probe(url: String, ua: String): Boolean = runCatching {
+        probeHttp.newCall(Request.Builder().url(url).header("Range", "bytes=0-0").header("User-Agent", ua).build()).execute().use { it.code in 200..299 }
+    }.getOrDefault(false)
+
     /** The media source for a resolved trailer (video + audio merged, one muxed file, or HLS). */
     @OptIn(UnstableApi::class)
     fun source(src: Src): MediaSource {
-        val ds = OkHttpDataSource.Factory(Api.http).setUserAgent(src.ua)
+        val ds = dataSource(src.ua)
         fun prog(u: String): MediaSource = ProgressiveMediaSource.Factory(ds).createMediaSource(MediaItem.fromUri(u))
         return when {
             src.hls -> HlsMediaSource.Factory(ds).createMediaSource(MediaItem.fromUri(src.video))
@@ -101,11 +174,17 @@ object YtDirect {
         }
     }
 
-    private val quick by lazy { Api.http.newBuilder().callTimeout(6, java.util.concurrent.TimeUnit.SECONDS).build() }
-    private const val BROWSER_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36"
+    /** OkHttp (IPv4 first) with googlevideo links fetched in 10 MB "&range=" pieces (no throttling, no stalls). */
+    @OptIn(UnstableApi::class)
+    fun dataSource(ua: String): androidx.media3.datasource.DataSource.Factory {
+        val up = OkHttpDataSource.Factory(http).setUserAgent(ua)
+        return androidx.media3.datasource.DataSource.Factory { YtChunked(up.createDataSource()) }
+    }
+
+    private val quick by lazy { http.newBuilder().callTimeout(6, java.util.concurrent.TimeUnit.SECONDS).build() }
+    private const val BROWSER_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36"
     private val pipedApis = listOf("https://pipedapi.kavin.rocks", "https://pipedapi.adminforge.de", "https://api.piped.private.coffee")
     private val invidious = listOf("https://inv.nadeko.net", "https://invidious.nerdvpn.de", "https://yewtu.be", "https://invidious.f5.si")
-
     private fun getJson(url: String): JsonObject? = quick.newCall(Request.Builder().url(url).header("User-Agent", BROWSER_UA).build()).execute().use { r ->
         if (!r.isSuccessful) null else r.body?.string()?.let { Api.json.parseToJsonElement(it) as? JsonObject }
     }
@@ -139,39 +218,111 @@ object YtDirect {
         return null
     }
 
-    private fun ask(c: Client, videoId: String): Src? {
+    /** One client's playable choices, best first: video + default-language audio, one muxed file, HLS. */
+    private fun ask(c: Client, videoId: String, key: String?, visitor: String?): List<Src> {
         val body = buildJsonObject {
             putJsonObject("context") {
                 putJsonObject("client") {
                     put("clientName", c.name); put("clientVersion", c.version); put("hl", "en"); put("gl", "US")
+                    if (visitor != null) put("visitorData", visitor)
                     c.extra.forEach { (k, v) -> if (v is Int) put(k, v) else put(k, v.toString()) }
                 }
             }
             put("videoId", videoId); put("contentCheckOk", true); put("racyCheckOk", true)
+            putJsonObject("playbackContext") { putJsonObject("contentPlaybackContext") { put("html5Preference", "HTML5_PREF_WANTS") } }
         }
-        val req = Request.Builder().url("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+        val url = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false" + (key?.let { "&key=$it" } ?: "")
+        val req = Request.Builder().url(url)
             .header("User-Agent", c.ua).header("X-YouTube-Client-Name", c.num.toString()).header("X-YouTube-Client-Version", c.version)
-            .header("Origin", "https://www.youtube.com")
+            .header("Origin", "https://www.youtube.com").header("Accept-Language", "en-US,en;q=0.9")
+            .apply { if (visitor != null) header("X-Goog-Visitor-Id", visitor) }
             .post(body.toString().toRequestBody(JSONT)).build()
-        val text = Api.http.newCall(req).execute().use { r -> if (!r.isSuccessful) return null; r.body?.string() } ?: return null
+        val text = quick.newCall(req).execute().use { r -> if (!r.isSuccessful) return emptyList(); r.body?.string() } ?: return emptyList()
         val root = Api.json.parseToJsonElement(text).jsonObject
         val status = ((root["playabilityStatus"] as? JsonObject)?.get("status") as? JsonPrimitive)?.contentOrNull
-        if (status != "OK") return null
-        val sd = root["streamingData"] as? JsonObject ?: return null
+        if (status != "OK") return emptyList()
+        val sd = root["streamingData"] as? JsonObject ?: return emptyList()
         fun s(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.contentOrNull
         fun i(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.intOrNull ?: 0
         fun l(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.longOrNull ?: 0L
+        // The original soundtrack, not a dubbed one (formats without track info count as the original).
+        fun isDefault(o: JsonObject) = ((o["audioTrack"] as? JsonObject)?.get("audioIsDefault") as? JsonPrimitive)?.contentOrNull != "false"
+        val out = mutableListOf<Src>()
         val adaptive = ((sd["adaptiveFormats"] as? JsonArray) ?: JsonArray(emptyList())).mapNotNull { it as? JsonObject }.filter { s(it, "url") != null }
         val video = adaptive.filter { s(it, "mimeType")?.startsWith("video/mp4") == true && s(it, "mimeType")?.contains("avc1") == true && i(it, "height") in 1..maxHeight }
             .maxWithOrNull(compareBy({ i(it, "height") }, { l(it, "bitrate") }))
-        val audio = adaptive.filter { s(it, "mimeType")?.startsWith("audio/mp4") == true }.maxByOrNull { l(it, "bitrate") }
-        if (video != null && audio != null) return Src(s(video, "url")!!, s(audio, "url")!!, false, c.ua, i(video, "height"))
-        // One file with both (usually 360p), then the HLS playlist (iPhone client).
+        val audio = adaptive.filter { s(it, "mimeType")?.startsWith("audio/mp4") == true }
+            .maxWithOrNull(compareBy({ isDefault(it) }, { l(it, "bitrate") }))
+        if (video != null && audio != null) out += Src(s(video, "url")!!, s(audio, "url")!!, false, c.ua, i(video, "height"))
+        // One file with both (usually 360p), then the HLS playlist (iPhone / visionOS clients).
         val muxed = ((sd["formats"] as? JsonArray) ?: JsonArray(emptyList())).mapNotNull { it as? JsonObject }.filter { s(it, "url") != null }.maxByOrNull { i(it, "height") }
-        if (muxed != null) return Src(s(muxed, "url")!!, null, false, c.ua, i(muxed, "height"))
-        s(sd, "hlsManifestUrl")?.let { return Src(it, null, true, c.ua, 0) }
-        return null
+        s(sd, "hlsManifestUrl")?.let { out += Src(it, null, true, c.ua, 0) }
+        if (muxed != null) out += Src(s(muxed, "url")!!, null, false, c.ua, i(muxed, "height"))
+        return out
     }
+}
+
+/**
+ * googlevideo links read in 10 MB pieces with YouTube's own "&range=start-end" (one long download gets throttled or
+ * cut). Other links pass straight through.
+ */
+@OptIn(UnstableApi::class)
+private class YtChunked(private val up: androidx.media3.datasource.DataSource) : androidx.media3.datasource.DataSource {
+    private val chunk = 10L * 1024 * 1024
+    private var yt = false
+    private var spec: androidx.media3.datasource.DataSpec? = null
+    private var pos = 0L
+    private var left = androidx.media3.common.C.LENGTH_UNSET.toLong()
+    private var chunkEnd = 0L
+    private var inChunk = 0L
+
+    override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) = up.addTransferListener(transferListener)
+
+    override fun open(dataSpec: androidx.media3.datasource.DataSpec): Long {
+        yt = dataSpec.uri.host.orEmpty().contains("googlevideo.com") && dataSpec.uri.getQueryParameter("range") == null
+        if (!yt) return up.open(dataSpec)
+        spec = dataSpec; pos = dataSpec.position
+        val clen = dataSpec.uri.getQueryParameter("clen")?.toLongOrNull()
+        left = when {
+            dataSpec.length != androidx.media3.common.C.LENGTH_UNSET.toLong() -> dataSpec.length
+            clen != null -> (clen - pos).coerceAtLeast(0)
+            else -> androidx.media3.common.C.LENGTH_UNSET.toLong()
+        }
+        openChunk()
+        return left
+    }
+
+    private fun openChunk() {
+        val s = spec!!
+        val unset = androidx.media3.common.C.LENGTH_UNSET.toLong()
+        chunkEnd = if (left != unset) minOf(pos + chunk, pos + left) - 1 else pos + chunk - 1
+        val uri = s.uri.buildUpon().appendQueryParameter("range", "$pos-$chunkEnd").build()
+        inChunk = 0
+        up.open(s.buildUpon().setUri(uri).setPosition(0).setLength(unset).build())
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (!yt) return up.read(buffer, offset, length)
+        val unset = androidx.media3.common.C.LENGTH_UNSET.toLong()
+        if (left == 0L) return androidx.media3.common.C.RESULT_END_OF_INPUT
+        var n = up.read(buffer, offset, length)
+        if (n == androidx.media3.common.C.RESULT_END_OF_INPUT) {
+            up.close()
+            // A short piece means the file ended.
+            if (inChunk < chunkEnd - pos + 1 || (left != unset && left <= 0)) return androidx.media3.common.C.RESULT_END_OF_INPUT
+            pos += inChunk
+            openChunk()
+            n = up.read(buffer, offset, length)
+            if (n == androidx.media3.common.C.RESULT_END_OF_INPUT) return n
+        }
+        inChunk += n
+        if (left != unset) left -= n
+        return n
+    }
+
+    override fun getUri() = up.uri
+    override fun getResponseHeaders() = up.responseHeaders
+    override fun close() { up.close() }
 }
 
 /**
@@ -189,13 +340,7 @@ fun DirectTrailer(
     val ended by rememberUpdatedState(onEnded)
     val failed by rememberUpdatedState(onError)
     val player = remember(src) {
-        val ds = OkHttpDataSource.Factory(Api.http).setUserAgent(src.ua)
-        fun prog(u: String): MediaSource = ProgressiveMediaSource.Factory(ds).createMediaSource(MediaItem.fromUri(u))
-        val source: MediaSource = when {
-            src.hls -> HlsMediaSource.Factory(ds).createMediaSource(MediaItem.fromUri(src.video))
-            src.audio != null -> MergingMediaSource(prog(src.video), prog(src.audio))
-            else -> prog(src.video)
-        }
+        val source: MediaSource = YtDirect.source(src)
         // A small buffer: trailers start fast and leave memory for the app (and the movie, on TV).
         val load = DefaultLoadControl.Builder().setBufferDurationsMs(4_000, 15_000, 800, 1_500).build()
         ExoPlayer.Builder(ctx).setLoadControl(load).build().apply {
@@ -204,6 +349,10 @@ fun DirectTrailer(
         }
     }
     LaunchedEffect(muted) { player.volume = if (muted) 0f else 1f }
+    // Invisible over the backdrop until the first picture, then a 420 ms fade in (never a black box).
+    val shown = remember(src) { androidx.compose.animation.core.Animatable(0f) }
+    var first by remember(src) { androidx.compose.runtime.mutableStateOf(false) }
+    LaunchedEffect(first) { if (first) shown.animateTo(1f, androidx.compose.animation.core.tween(420)) }
     val view = remember { arrayOfNulls<TextureView>(1) }
     fun fit(tv: TextureView, vs: VideoSize) {
         val w = tv.width.toFloat(); val h = tv.height.toFloat()
@@ -217,7 +366,7 @@ fun DirectTrailer(
     }
     DisposableEffect(player) {
         val l = object : Player.Listener {
-            override fun onRenderedFirstFrame() { playing() }
+            override fun onRenderedFirstFrame() { first = true; playing() }
             override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_ENDED) ended() }
             override fun onPlayerError(error: PlaybackException) { ActLog.add("TRAILER", "play error ${error.errorCodeName}"); failed() }
             override fun onVideoSizeChanged(videoSize: VideoSize) { view[0]?.let { fit(it, videoSize) } }
@@ -233,6 +382,6 @@ fun DirectTrailer(
                 player.setVideoTextureView(tv)
             }
         },
-        modifier = modifier.graphicsLayer { scaleX = zoom; scaleY = zoom },
+        modifier = modifier.graphicsLayer { scaleX = zoom; scaleY = zoom; alpha = shown.value },
     )
 }

@@ -1099,7 +1099,8 @@ fun PlayerScreen(
         // silent links) and the server's other links go last for the rest of this play.
         if (n != null && !firstFrame && n.url.startsWith("http")) {
             val silent = code == "TIMEOUT" && tracks.isEmpty && !usingVlc && player.bufferedPosition <= 0L
-            if (code.contains("HTTP") || silent) HostStats.noteFail(n.url)
+            // The Live server is slow to start, never "failing" for that (its links would get only 3.5 s next time).
+            if ((code.contains("HTTP") || silent) && !n.url.startsWith("http://127.0.0.1")) HostStats.noteFail(n.url)
             val hk = Ranker.hostKey(n.url)
             if (code.contains("HTTP")) skipHosts += hk
             if (silent) { val c = (silentCount[hk] ?: 0) + 1; silentCount[hk] = c; if (c >= 2) skipHosts += hk }
@@ -1164,7 +1165,7 @@ fun PlayerScreen(
             delay(budget)
             var waited = budget
             while (waited < maxOf(14_000L, budget) && !firstFrame && (tracks.groups.isNotEmpty() || player.bufferedPosition > 0)) { delay(500); waited += 500 }
-        } else delay(30_000L)
+        } else delay(if (now?.url.orEmpty().startsWith("http://127.0.0.1")) 45_000L else 30_000L)
         if (!firstFrame && failure == null && now != null && !recovering) onEngineError("TIMEOUT")
     }
     // The paused player from the title page: if no picture 6 s after Play, it is treated like a stuck link.

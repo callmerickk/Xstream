@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.xstream"
         minSdk = 24
         targetSdk = 34
-        versionCode = 27
-        versionName = "0.7.0"
+        versionCode = 28
+        versionName = "0.7.1"
     }
     // Two apps from one project: the phone app and StreamX TV (Fire TV / Android TV).
     // "gradle assembleDebug" builds both APKs.
@@ -25,6 +25,8 @@ android {
             buildConfigField("boolean", "IS_TV", "false")
             // The Live server (PencariMovie Server, src/phone/jniLibs, built by tools/build-live-server.sh) runs here.
             buildConfigField("boolean", "HAS_LIVE", "true")
+            // Testing app: no "Publish for everyone" buttons.
+            buildConfigField("boolean", "NO_PUBLISH", "true")
             // 64-bit ARM phones only: every phone from the last ~6 years. Keeps the VLC engine small.
             ndk { abiFilters += listOf("arm64-v8a") }
             // The app's own words are in its code; the libraries' translations into ~80 languages are left out (smaller APK).
@@ -35,6 +37,7 @@ android {
             dimension = "device"
             buildConfigField("boolean", "IS_TV", "false")
             buildConfigField("boolean", "HAS_LIVE", "false")
+            buildConfigField("boolean", "NO_PUBLISH", "false")
             ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
             resourceConfigurations += listOf("en")
         }
@@ -45,6 +48,7 @@ android {
             versionName = "TV 0.7.2 beta"
             buildConfigField("boolean", "IS_TV", "true")
             buildConfigField("boolean", "HAS_LIVE", "false")
+            buildConfigField("boolean", "NO_PUBLISH", "false")
             // Fire TV Sticks run 32-bit Android; 32-bit ARM also runs on every 64-bit TV box.
             ndk { abiFilters += listOf("armeabi-v7a") }
         }

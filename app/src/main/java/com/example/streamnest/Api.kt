@@ -43,6 +43,12 @@ object Api {
             // playlist and refuse the video pieces (403 / 428) without it.
             .cookieJar(MemoryCookies)
             // VPN Smart mode: a source that doesn't answer from here is sent through the VPN and tried again.
+            // The Live server on this phone fetches a file's first bytes before it answers (3–10 s): its requests may
+            // wait up to a minute instead of being cut at 20 s.
+            .addInterceptor { chain ->
+                if (chain.request().url.host == "127.0.0.1") chain.withReadTimeout(60, TimeUnit.SECONDS).withConnectTimeout(5, TimeUnit.SECONDS).proceed(chain.request())
+                else chain.proceed(chain.request())
+            }
             .addInterceptor(TmdbAuth)
             .addInterceptor(Vpn.SmartRetry)
             .addInterceptor(ActLog.Net)

@@ -437,7 +437,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             val scope = rememberCoroutineScope()
             var res by remember { mutableStateOf<List<Pair<String, String?>>>(emptyList()) }
             var busy by remember { mutableStateOf(false) }
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color(0x1AE50914))
+            if (!BuildConfig.NO_PUBLISH) Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color(0x1AE50914))
                 .border(1.dp, Color(0x66E50914), RoundedCornerShape(20.dp)).padding(16.dp)) {
                 Text("Publish everything", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Text("Add-ons, plugins, Quick Play and 4K picks, code names, Home rows, filters, keys and the logo — exactly as on this phone — to every account on every device.",
@@ -496,7 +496,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                     BuiltIns.keys.forEach { (k, label) ->
                         androidx.compose.material3.OutlinedTextField(vals[k] ?: "", { vals[k] = it }, Modifier.fillMaxWidth().padding(top = 10.dp), singleLine = true, label = { Text(label) })
                     }
-                    androidx.compose.material3.Button({
+                    if (!BuildConfig.NO_PUBLISH) androidx.compose.material3.Button({
                         msg = "Publishing…"
                         scope.launch { msg = BuiltIns.publish(vals.toMap()) ?: "Published ✓ — phones update on their next launch" }
                     }, Modifier.padding(top = 12.dp).fillMaxWidth()) { Text("Publish to everyone") }
@@ -519,7 +519,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         }
 
         }
-        item { DevFold("Publish for everyone", "Watch together call relay", devOpen == "pub") { devOpen = if (devOpen == "pub") null else "pub" } }
+        if (!BuildConfig.NO_PUBLISH) item { DevFold("Publish for everyone", "Watch together call relay", devOpen == "pub") { devOpen = if (devOpen == "pub") null else "pub" } }
         if (devOpen == "pub") {
         item { SectionLabel("Watch together call relay (everyone)") }
         item {
@@ -536,7 +536,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                     androidx.compose.material3.OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth().padding(top = 10.dp), singleLine = true, label = { Text("TURN url(s), comma separated (turn:… / turns:…)") })
                     androidx.compose.material3.OutlinedTextField(user, { user = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Username") })
                     androidx.compose.material3.OutlinedTextField(pass, { pass = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, label = { Text("Password / credential") })
-                    androidx.compose.material3.Button({ msg = "Publishing…"; scope.launch { msg = AppLook.publishTurn(url, user, pass) ?: "Published ✓ — used for calls from the next room" } }, Modifier.padding(top = 10.dp)) { Text("Publish for everyone") }
+                    if (!BuildConfig.NO_PUBLISH) androidx.compose.material3.Button({ msg = "Publishing…"; scope.launch { msg = AppLook.publishTurn(url, user, pass) ?: "Published ✓ — used for calls from the next room" } }, Modifier.padding(top = 10.dp)) { Text("Publish for everyone") }
                     msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Color(0xFF9AA3B5)) }
                 }
             }
@@ -578,7 +578,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                         Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Color(0xFF8A94A8))
                     Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         androidx.compose.material3.OutlinedButton({ AppLook.set(ctx, logo, anim); msg = "On this phone now (restart Xstream to see the animation)" }) { Text("Use on this phone") }
-                        androidx.compose.material3.Button({
+                        if (!BuildConfig.NO_PUBLISH) androidx.compose.material3.Button({
                             msg = "Publishing…"
                             scope.launch { msg = AppLook.publish(logo, anim) ?: run { AppLook.set(ctx, logo, anim); "Published ✓ — every phone switches when Xstream opens next" } }
                         }) { Text("Publish for everyone") }

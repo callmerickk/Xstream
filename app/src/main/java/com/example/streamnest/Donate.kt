@@ -229,7 +229,7 @@ fun DonatePage(vm: AppViewModel, onBack: () -> Unit) {
             OutlinedTextField(d.note, { d = d.copy(note = it.take(300)) }, Modifier.fillMaxWidth().padding(top = 10.dp), label = { Text("Message") }, shape = RoundedCornerShape(12.dp))
             num("Ask again after (days)", d.everyDays) { d = d.copy(everyDays = it.coerceIn(1, 60)) }
             Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button({ msg = "Publishing…"; scope.launch { msg = Donate.publish(d) ?: "Published ✓ — every account sees it on its next start" } },
+                if (!BuildConfig.NO_PUBLISH) Button({ msg = "Publishing…"; scope.launch { msg = Donate.publish(d) ?: "Published ✓ — every account sees it on its next start" } },
                     Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(25.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)) { Text("Publish", fontWeight = FontWeight.Bold) }
                 Button({ Donate.info.value = d; preview = true }, Modifier.weight(1f).height(50.dp), shape = RoundedCornerShape(25.dp),

@@ -1,3 +1,14 @@
+Xstream 0.7.1
+
+• Live server streams now play (the player waits for the server instead of skipping).
+• No more freeze while a title's streams are sorted.
+• New top cards: the card in the centre with the deck on both sides, smooth sliding.
+• StreamX's bottom bar by default (the capsule is in Settings › Layout). Both hide while you scroll.
+• Smoother trailers that fill the card and fade in.
+• Activity log shows only this app; publish buttons removed.
+
+---
+
 Xstream 0.7.0
 
 Two apps this time:

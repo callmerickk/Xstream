@@ -166,6 +166,8 @@ object PublishAll {
 /** A Publish button with its result line (Developer's Corner pages). */
 @Composable
 fun PublishBar(label: String, modifier: Modifier = Modifier, action: suspend () -> String?) {
+    // Xstream 64-bit is a testing app: nothing is published from it.
+    if (BuildConfig.NO_PUBLISH) return
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }

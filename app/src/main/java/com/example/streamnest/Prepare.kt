@@ -88,9 +88,10 @@ object Prepare {
             var wideL: List<StreamItem> = emptyList(); var wideDone = false
             var wide: Job? = null
             var wideOn = false
-            fun publish() {
+            suspend fun publish() {
                 val l = (quickL + wideL + if (wideOn) SlowAddons.links.value[id].orEmpty() else emptyList()).distinctBy { it.stream.url }
-                val merged = if (wideOn) vm.filtered(l).list else l
+                // Sorting a long list (the Live server alone can send 40+ links) runs off the screen's thread (it froze the app).
+                val merged = if (wideOn) withContext(Dispatchers.Default) { vm.filtered(l).list } else l
                 live.value = merged to (if (wideOn) wideDone else quickDone)
             }
             /** Quick play is slow or empty: ask every addon (HdHub…) and CNCVerse again, and prepare the best of them. */
@@ -236,7 +237,7 @@ object Prepare {
                     // Play was pressed on MovieBox: the player itself swaps to the Netflix-type link now.
                     if (backup != null && !Preloader.has(id)) return@launch
                     list = live.value.first.ifEmpty { list }
-                    val ranked = vm.rankedCandidates(list, level, quickOnly = false).filter { it.stream.url !in tried && it.stream.url !in bad }
+                    val ranked = withContext(Dispatchers.Default) { vm.rankedCandidates(list, level, quickOnly = false) }.filter { it.stream.url !in tried && it.stream.url !in bad }
                     val ott = ranked.filter { it.isOtt() && (backup == null || vm.langRank(it) <= vm.langRank(backup!!)) }
                     if (ott.isNotEmpty() && shown == 0) { shown = 1; PlayTiming.mark("plugin: first Netflix-type link in ${System.currentTimeMillis() - t0} ms (${ott.size})") }
                     var won = false
@@ -275,7 +276,7 @@ object Prepare {
 
             while (true) {
                 list = live.value.first.ifEmpty { list }
-                val all0 = vm.rankedCandidates(list, level, quickOnly = useQuick).filter { it.stream.url !in tried }
+                val all0 = withContext(Dispatchers.Default) { vm.rankedCandidates(list, level, quickOnly = useQuick) }.filter { it.stream.url !in tried }
                     .let { if (quick && level == "auto" && !plugMode) vm.movieBoxFirst(it) else it }
                     .let { l -> if (quick && !wideOn && !plugMode) l.filter { it.isPlaylist() } else l }
                 // MovieBox MP4s through PenguPlay's server: only when nothing else can play.
@@ -334,7 +335,7 @@ object Prepare {
                     SlowAddons.links.first { mm -> mm[id].orEmpty().any { it.stream.url != null && it.stream.url !in known } }
                 }
                 val more = m?.get(id)?.filter { it.stream.url != null && it.stream.url !in known } ?: break
-                list = vm.filtered((list + more).distinctBy { it.stream.url }).list
+                list = withContext(Dispatchers.Default) { vm.filtered((list + more).distinctBy { it.stream.url }).list }
                 live.value = list to true
             }
             feeder.cancel()

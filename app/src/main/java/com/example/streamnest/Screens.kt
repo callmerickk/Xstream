@@ -329,14 +329,16 @@ fun App(vm: AppViewModel = viewModel()) {
                 }
                 }
                 val navHidden by NavHide.on.collectAsState()
-                if (!(navHidden && tab == 3)) BottomNav(
-                    tab, vm, compact = barAnim,
-                    onTab = {
-                        scrolledDown = false
-                        if (it == 0 && tab == 0) { scope.launch { homeList.animateScrollToItem(0) }; vm.refresh() } else tab = it
-                    },
-                    modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"),
-                )
+                val onNavTab: (Int) -> Unit = {
+                    scrolledDown = false
+                    if (it == 0 && tab == 0) { scope.launch { homeList.animateScrollToItem(0) }; vm.refresh() } else tab = it
+                }
+                // Bottom bar: StreamX's bar (default on phones) or the capsule dock. Both get out of the way while scrolling.
+                val sxBar = !BuildConfig.IS_TV && (texts["navBar"] ?: "streamx") == "streamx"
+                if (!(navHidden && tab == 3)) {
+                    if (sxBar) StreamXBar(tab, vm, compact = capsuleAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
+                    else BottomNav(tab, vm, compact = barAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
+                }
                 // Music (Live server): the small player sits just above the dock while songs are queued.
                 if (BuildConfig.HAS_LIVE && !(navHidden && tab == 3)) MusicMiniBar(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 92.dp))
                 val bellTogether by BellNav.together.collectAsState()

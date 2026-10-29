@@ -268,6 +268,11 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
             ToggleRow("AMOLED Black", "Use pure black backgrounds for OLED screens.", isOn(texts["amoled"] ?: "no")) { vm.setText("amoled", if (it) "yes" else "no") }
             RowDivider(20.dp)
             SettingRow(null, "Navigation Bar", navNames[navStyle] ?: "Adaptive") { navDialog = true }
+            if (!BuildConfig.IS_TV) {
+                RowDivider(20.dp)
+                val bar = texts["navBar"] ?: "streamx"
+                SettingRow(null, "Bottom bar", if (bar == "streamx") "StreamX bar" else "Capsule") { vm.setText("navBar", if (bar == "streamx") "capsule" else "streamx") }
+            }
         }
         if (!BuildConfig.IS_TV) {
             SectionLabel("App Icon")
@@ -391,7 +396,7 @@ private fun HomeLayoutPage(vm: AppViewModel, onBack: () -> Unit) {
             var push by remember { mutableStateOf(vm.pushedRows().map { it.src }.toSet()) }
             var pubMsg by remember { mutableStateOf<String?>(null) }
             val scope = rememberCoroutineScope()
-            if (dev) Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(CardShape).background(Color(0x14E50914))
+            if (dev && !BuildConfig.NO_PUBLISH) Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(CardShape).background(Color(0x14E50914))
                 .border(1.dp, Color(0x55E50914), CardShape).padding(16.dp)) {
                 Text("Publish rows for everyone", fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 Text("Tick rows below (Push). They show first on every account's Home, in your order, locked; each account's own rows follow under them.",

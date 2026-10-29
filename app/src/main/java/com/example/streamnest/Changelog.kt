@@ -13,6 +13,15 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.7.1", "29 Oct 2026", "Live streams play, new cards and bottom bar, smooth trailers", listOf(
+        "Live server streams now play: the player waits for the server's first bytes instead of giving up and skipping",
+        "No more freeze while a title's streams are sorted",
+        "Top cards: the card sits in the centre with the deck fanned out on both sides, and slides smoothly",
+        "Bottom bar: StreamX's bar is the new default; the capsule is still in Settings › Layout › Bottom bar. Both get out of the way while you scroll",
+        "Trailers: faster and smoother, fill the card edge to edge and fade in when they start (no black boxes)",
+        "Activity log on the phone shows only this app",
+        "Publish buttons removed (testing app)",
+    )),
     Release("0.7.0", "29 Oct 2026", "Live server, music, and everything new from StreamX", listOf(
         "Live server (64-bit app): a streaming server runs on your phone and finds streams for every movie and episode",
         "How you watch: Turbo, Classic, or Live; Live server links also join Turbo and Classic so Quick Play starts sooner",
@@ -390,6 +399,14 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.7.1", "29 Oct 2026", "Live playback fix, Prepare ANR fix, NO_PUBLISH, StreamXBar, stacked deck, Nuvio-style YtDirect", listOf(
+        "Api: 127.0.0.1 calls get 60 s read / 5 s connect; Ranker.startBudgetMs 30 s for Live; PlayerScreen skips HostStats.noteFail for Live and waits 45 s",
+        "Prepare: publish/rankedCandidates/filtered on Dispatchers.Default (ANR in Ranker.keepsFailing on main)",
+        "ActLogUi: cloud devices only on TV; BuildConfig.NO_PUBLISH (phone) hides every publish control",
+        "StreamXBar.kt (navBar = streamx | capsule, hides with capsuleAnim); Deck: stacked pager (pull-in translationX, scale, rotationY, beyondViewport 2)",
+        "YtDirect: watch-page key + visitorData, VISIONOS/ANDROID 20.10.35/IOS 20.10.1/ANDROID_VR in parallel, pooled; default audio; mn mirror probe 2.5 s; YtChunked 10 MB &range=; IPv4-first DNS; 420 ms fade-in; hidden WebView fallback",
+        "build.yml: phone APK only",
+    )),
     Release("0.7.0", "29 Oct 2026", "Live server (PencariMovie Server), Live mode, music, StreamX 0.9.56–0.9.57 merge, universal APK", listOf(
         "Live server: PencariMovie Server v3.0.4 (MIT) built unchanged for aarch64-linux-android in CI (tools/build-live-server.sh, cargo-ndk, cached per tag), web player files pruned from public/ (-17 MB), shipped as jniLibs libxlive.so in the phone flavor only",
         "LiveServer.kt: ProcessBuilder from nativeLibraryDir (--port 8088..8099 --host 127.0.0.1 --no-open --app-version), PM_APP_ROOT=files/live, reuse of a running copy, restart with backoff, log ring, status flow; started 2.5 s after MainActivity",

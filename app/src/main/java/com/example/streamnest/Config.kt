@@ -46,6 +46,7 @@ val Defaults: Map<String, String> = linkedMapOf(
     "accent2" to "#FF6A5C",
     "amoled" to "no",
     "navStyle" to "adaptive",
+    "navBar" to "streamx",
     "showHero" to "yes",
     "rowsHidden" to "",
     "rowsOrder" to "",
@@ -214,5 +215,5 @@ val DefaultDeviceKeys = listOf(
     "qsQuality", "tagRules", "autoRegex", "playerEngine", "playerChoice", "autoPlayMode", "fastStart", "qsPreload",
     "subSize", "subBold", "subColor", "subBg", "subOutline", "subOutlineColor", "seekThumbs",
     "startBright", "startBrightLevel", "startBrightMode", "startVol", "startVolLevel", "startVolMode",
-    "navStyle", "cardTrailers", "posterWidth",
+    "navStyle", "navBar", "cardTrailers", "posterWidth",
 )

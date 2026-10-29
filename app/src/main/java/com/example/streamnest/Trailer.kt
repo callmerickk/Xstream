@@ -11,6 +11,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.background
 import androidx.compose.ui.viewinterop.AndroidView
 
 /**
@@ -43,7 +44,15 @@ fun TrailerVideo(
     LaunchedEffect(videoId) { src = YtDirect.resolve(videoId); if (src == null) noDirect = true }
     val s = src
     when {
-        noDirect -> TrailerWebVideo(videoId, muted, modifier, fitWhole, backdrop, zoom, onPlaying, onEnded, onError)
+        // Last fallback: YouTube's embedded player, kept hidden under the backdrop until it is really playing.
+        noDirect -> androidx.compose.foundation.layout.Box(modifier) {
+            var webOn by remember(videoId) { mutableStateOf(false) }
+            TrailerWebVideo(videoId, muted, Modifier.matchParentSize(), fitWhole, backdrop, zoom, { webOn = true; onPlaying() }, onEnded, onError)
+            if (!webOn) {
+                if (backdrop != null) coil.compose.AsyncImage(backdrop, null, Modifier.matchParentSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                else androidx.compose.foundation.layout.Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Color.Black))
+            }
+        }
         s != null -> androidx.compose.foundation.layout.Box(modifier) {
             if (fitWhole && backdrop != null) coil.compose.AsyncImage(backdrop, null, Modifier.matchParentSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
             DirectTrailer(s, muted, Modifier.matchParentSize(), crop = !fitWhole, zoom = zoom, onPlaying = onPlaying, onEnded = onEnded, onError = { noDirect = true })
