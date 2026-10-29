@@ -45,3 +45,11 @@ Applies to StreamX Android (YtDirect.kt / Trailer.kt) and web StreamX (hero card
     in hero cards, title page and Trailers tab; proxy turns Range into &range= pieces for googlevideo.
 11. Android StreamX: port 1-8 into YtDirect.kt + a chunked OkHttp DataSource; keep Piped/Invidious mirrors as fallback before the WebView.
 12. Test: YouTube is blocked in the Claude workspace, so Rakesh tests on PC / phone. Clients need refreshing every few months.
+
+## 0.7.0 (29 Oct 2026) — built on branch wip-0.7.0, merged to main
+Live server (PencariMovie Server v3.0.4 for Android arm64, built in CI, web player pruned), Live mode + Live links in Turbo/Classic,
+music player (search, latest, recent, mini bar, now playing, background + lock screen), StreamX 0.9.56–0.9.57 merged,
+two APKs (Xstream-phone.apk with Live server, Xstream-phone-universal.apk without), English-only library resources.
+Speed: Live server starts 2.5 s after app open, restarts on resume, top 2 links warmed, deck top 3 prefetched,
+Live links count as fast-starting in Prepare, no jump test for them.
+Still open: smooth Nuvio-style trailers (list above), music extras (lyrics, Up next filters, Listen together), Firebase rules.

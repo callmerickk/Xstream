@@ -7,7 +7,7 @@ sleep 30
 adb logcat -d -b crash > crash.txt || true
 adb logcat -d | grep -E "AndroidRuntime|FATAL|Caused by|Exception|^.*\tat " | head -150 > logcat.txt || true
 adb shell pidof com.example.xstream > pid.txt || true
-{ echo "running pid: $(cat pid.txt)"; cat crash.txt | head -70; echo "----"; grep -A40 "FATAL" logcat.txt | head -60; } > report.txt
+{ echo "running pid: $(cat pid.txt)"; echo "== causes:"; grep -E "Caused by|Exception:|Error:" crash.txt | head -12; grep -A3 "Caused by" crash.txt | grep "at com.example" | head -12; echo "== crash:"; cat crash.txt | head -40; echo "----"; grep -A40 "FATAL" logcat.txt | head -60; } > report.txt
 cat report.txt
 msg=$(head -70 report.txt | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
 echo "::warning title=Smoke::$msg"
