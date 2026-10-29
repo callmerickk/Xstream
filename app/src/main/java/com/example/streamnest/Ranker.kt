@@ -327,6 +327,8 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
     val sorted = pool.sortedWith(
         compareBy<StreamItem>({ if (Ranker.score(it) <= -1000.0) 1 else 0 }, { if (Ranker.knownUnseekable(it)) 1 else 0 }, { if (it.unplayableHere()) 1 else 0 },
             { if (it.isEmbedBackup()) 1 else 0 },
+            // Recorded in a cinema (CAM / HDTS / HDTC): only when nothing else exists.
+            { if (it.isCamCopy()) 1 else 0 },
             // Plugin mode, Auto: Netflix / Prime Video / Hotstar / MPlayer first, MovieBox (DASH first) as the backup, then the rest.
             { if (plugTiers) it.ottTier() else 0 },
             // M Player's DASH link often shows nothing (its HLS starts in ~1 s): HLS first for these.
@@ -353,7 +355,9 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
 /** Netflix / Prime Video / Hotstar / MPlayer plugin links: plugin mode's first choice (they start like the apps). */
 fun StreamItem.isOtt(): Boolean = addonName.lowercase().let { n -> "netflix" in n || "prime" in n || "hotstar" in n || "mplayer" in n || "m player" in n || "allott" in n || "disney" in n }
 /** VegaMovies (CNCVerse): the HD backup — first in Backup Play, and first for Upgrade to 4K. */
-fun StreamItem.isVega(): Boolean = addonName.contains("vega", true)
+/** VegaMovies and its Indian twin Rogmovies (same site family): same priority everywhere. */
+fun isVegaName(n: String) = n.contains("vega", true) || n.contains("rogmovies", true)
+fun StreamItem.isVega(): Boolean = isVegaName(addonName)
 /**
  * Plugin mode's order: 0 = Netflix-type, 1 = MovieBox DASH / HLS (instant backup), 2 = VegaMovies, 3 = anything else,
  * 4 = MovieBox MP4 (the last fallback), 5 = Extensions (Nuvio).
@@ -523,4 +527,11 @@ fun StreamItem.unplayableHere(): Boolean {
     if (DeviceCodecs.dolbyVision) return false
     val t = allText()
     return dvRx.containsMatchIn(t) && !hdrRx.containsMatchIn(t)
+}
+
+/** A copy recorded in a cinema (CAM, HDCAM, HDTS / telesync, HDTC / telecine): poor picture and sound. */
+fun StreamItem.isCamCopy(): Boolean {
+    val t = " " + listOfNotNull(stream.name, stream.title, stream.description, stream.behaviorHints?.filename).joinToString(" ")
+        .lowercase().replace(Regex("[^a-z0-9]+"), " ") + " "
+    return Regex(" (cam|hdcam|camrip|hdts|hdtc|telesync|telecine|predvd) ").containsMatchIn(t) || t.contains(" hd cam ") || t.contains(" hq hdtc ")
 }

@@ -14,8 +14,8 @@ val Defaults: Map<String, String> = linkedMapOf(
     "badge" to "#{rank} in {catalog} Today",
     "newOn" to "New on {app}",
     "watchNow" to "Watch Now",
-    "continueWatching" to "Continue Watching for {name}",
-    "recommendedFor" to "Recommended for {name}",
+    "continueWatching" to "Pick up where you left off",
+    "recommendedFor" to "{ai} picked for {name}",
     "myList" to "My List",
     "pillLeft" to "TV",
     "pillRight" to "Movies",
@@ -119,9 +119,11 @@ val Defaults: Map<String, String> = linkedMapOf(
     "startVol" to "yes",
     "startVolLevel" to "50",
     "startVolMode" to "fixed",
-    "dns" to "system",
+    "dns" to "cloudflare",
     "cardTrailers" to "yes",
     "accent" to "#E50914",
+    "btnColor" to "",
+    "btnText" to "",
     "background" to "#07080C",
     "deckTint" to "#3A0E17",
     "cardCorner" to "34",
@@ -181,7 +183,14 @@ object Palette {
     var tint by mutableStateOf(Color(0xFF3A0E17))
     var accent2 by mutableStateOf(Color(0xFFFF6A5C))
     var corner by mutableIntStateOf(34)
+    /** Selected buttons, chips and switches (a custom theme can set them; otherwise the accent). */
+    var button by mutableStateOf(Color(0xFFE50914))
+    var onButton by mutableStateOf(Color.White)
 }
+
+val BtnColor: Color get() = Palette.button
+val OnBtn: Color get() = Palette.onButton
+fun buttonTextFor(c: Color): Color = if (c.red * 0.299f + c.green * 0.587f + c.blue * 0.114f > 0.62f) Color.Black else Color.White
 
 fun parseColor(s: String): Color? = runCatching {
     Color(android.graphics.Color.parseColor(if (s.trim().startsWith("#")) s.trim() else "#${s.trim()}"))

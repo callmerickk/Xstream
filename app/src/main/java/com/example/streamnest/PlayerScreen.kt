@@ -701,6 +701,17 @@ fun PlayerScreen(
 
     fun curPos(): Long = if (usingVlc) vlc?.time ?: 0L else player.currentPosition
     fun curDur(): Long = if (usingVlc) vlc?.length ?: 0L else player.duration.coerceAtLeast(0L)
+    /** The streaming playlist this title started on (Netflix / Prime / MovieBox…) and its qualities: the quality menu's
+     *  "This stream" keeps them even while an upgraded 4K file plays, so 1080p / 720p go straight back to it. */
+    var basePl by remember { mutableStateOf<StreamItem?>(null) }
+    var baseLadder by remember { mutableStateOf<List<Int>>(emptyList()) }
+    var wantVariant by remember { mutableStateOf<Int?>(null) }
+    /** The end credits were reached (IntroDB's credits mark): Continue Watching counts this as watched. */
+    var creditsReached by remember { mutableStateOf(false) }
+    /** Bumped after a jump: your place is saved a moment later. */
+    var saveSoon by remember { mutableIntStateOf(0) }
+    /** Where you are, for Continue Watching (the end once the credits are on). */
+    fun reportPos(): Long { val d = curDur(); return if (creditsReached && d > 0) d else curPos() }
     // Seek previews for the whole video, made ahead in the background (phones; on mobile data a little later).
     LaunchedEffect(thumbs, firstFrame) {
         val th = thumbs ?: return@LaunchedEffect
@@ -1205,6 +1216,9 @@ fun PlayerScreen(
         if (pre != null) {
             ways = waysFor(pre.url, "exo"); wayIdx = 0
             buffering = player.playbackState == Player.STATE_BUFFERING
+            // The paused player was made when the title page opened; if you watched on since (a jump, another device),
+            // it starts from where you really are now.
+            if (p.resumeMs > 0 && kotlin.math.abs(player.currentPosition - p.resumeMs) > 5_000) player.seekTo(p.resumeMs)
             player.playWhenReady = true
         } else now?.let { load(it, p.resumeMs) }
     }
@@ -1218,6 +1232,10 @@ fun PlayerScreen(
             }
             override fun onTracksChanged(t: Tracks) {
                 tracks = t
+                t.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 1 }?.let { g ->
+                    val lad = (0 until g.length).map { g.getTrackFormat(it).height }.filter { it > 0 }.distinct().sortedDescending()
+                    if (lad.size > 1) { baseLadder = lad; now?.url?.let { u -> itemFor(u) }?.let { basePl = it } }
+                }
                 // Learn the real quality of this link (for links that don't name it).
                 t.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO }?.let { g -> (0 until g.length).maxOfOrNull { g.getTrackFormat(it).height } }
                     ?.let { h -> now?.url?.let { u -> ResMemory.put(u, h) } }
@@ -1226,8 +1244,9 @@ fun PlayerScreen(
             }
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
                 Speech.anchorHintMs = newPosition.positionMs
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) saveSoon++
             }
-            override fun onCues(cueGroup: CueGroup) { if (ext == null && !subPreview) cues = cueGroup.cues }
+            override fun onCues(cueGroup: CueGroup) { if (ext == null && !subPreview) cues = stackCues(cueGroup.cues) }
             override fun onIsPlayingChanged(isPlaying: Boolean) { if (!usingVlc) playing = isPlaying }
             override fun onRenderedFirstFrame() { if (!usingVlc) firstFrame = true }
             override fun onPlaybackStateChanged(state: Int) {
@@ -1297,8 +1316,28 @@ fun PlayerScreen(
         }
         PlayTiming.mark("racing ${top.size} link(s): " + top.joinToString(" / ") { Ranker.labelOf(Ranker.groupKey(it)).substringAfter(" · ") }, once = "race")
         val won = if (top.size == 1) null else StreamCache.race(top.mapNotNull { it.stream.url }, 8000) ?: return false
-        val url = won?.first ?: top[0].stream.url!!
-        val q = ranked.first { it.stream.url == url }
+        var url = won?.first ?: top[0].stream.url!!
+        var q = ranked.first { it.stream.url == url }
+        // Jump test before a plain file is chosen (not MovieBox / VegaMovies / Rogmovies, which always can): a piece from
+        // the middle must come back. A file that can't jump is a bad start (every jump lands at 0:00), so the next good
+        // link is used instead and that server is remembered as a last backup.
+        suspend fun canJump(u: String, size0: Long): Boolean {
+            val size = if (size0 > 0) size0 else runCatching { StreamCache.probe(u).size }.getOrDefault(0L)
+            if (size < 64L * 1024 * 1024) return true
+            val mid = (size / 2) / (1024 * 1024) * (1024 * 1024)
+            val r = withTimeoutOrNull(4_000) { Result.success(StreamCache.saveParts(ctx, u, mid, 128L * 1024, 1, null) { }) }
+            return r != null && r.getOrNull() == null && StreamCache.savedBytes(ctx, u, mid, 128L * 1024) > 0
+        }
+        fun needsJumpTest(s0: StreamItem, u: String) = !isPlaylistLink(s0, u) && !s0.isMovieBox() && !s0.isVega() && !s0.isOtt()
+        if (needsJumpTest(q, url) && !canJump(url, won?.second?.size ?: 0L)) {
+            Ranker.markUnseekable(url)
+            PlayTiming.mark("${Ranker.labelOf(Ranker.groupKey(q)).substringAfter(" · ")} can't jump inside — trying the next link", once = "jumpfail")
+            val alt = ranked.filter { it.stream.url != url && !Ranker.knownUnseekable(it) }.take(4).firstOrNull { c ->
+                val cu = c.stream.url ?: return@firstOrNull false
+                !needsJumpTest(c, cu) || canJump(cu, 0L)
+            }
+            if (alt != null) { url = alt.stream.url!!; q = alt }
+        }
         // A big file: its index (end of the file) is fetched at the same time as the player opens it — it opens faster.
         won?.second?.takeIf { it.ok && it.size > 40L * 1024 * 1024 && !isPlaylistLink(q, url) }?.let { pr ->
             scope.launch(Dispatchers.IO) {
@@ -1408,7 +1447,18 @@ fun PlayerScreen(
                 val rescue = launch {
                     // TV: the backup links (CNCVerse / HdHub…) race after 1.5 s if they're there — waiting 6 s made a
                     // Fire TV start take 18 s even though 26 links had come back in under half a second.
-                    if (BuildConfig.IS_TV) { delay(1_500); withTimeoutOrNull(4_500) { pool.first { vm.filtered(it).list.any { s -> !s.slowMp4() } } } } else delay(6_000)
+                    // Phones too: a playable backup link starts as soon as it is there (Sumo Didi waited 6 s with MovieBox's
+                    // link already in hand). A Netflix-type playlist that answers meanwhile still takes over at once.
+                    delay(1_200)
+                    withTimeoutOrNull(4_800) {
+                        while (true) {
+                            val have = vm.filtered(pool.value).list.filter { s -> s.stream.url !in tried }
+                            // Quick play (Netflix, Prime, Hotstar…) gets up to 3 s to answer with an instant playlist first.
+                            val waited = SystemClock.elapsedRealtime() - findT0
+                            if ((quickDone || waited >= 3_000) && (have.any { s -> !s.slowMp4() } || (quickDone && (have.isNotEmpty() || last.isNotEmpty())))) break
+                            delay(250)
+                        }
+                    }
                     if (started) return@launch
                     if (!vm.pluginMode()) PlayTiming.mark("no quick playlist in 6 s — racing backup servers (${vm.filtered(pool.value).list.size} known)", once = "rescue")
                     status = "Quick play is slow — trying backup servers"
@@ -1445,7 +1495,7 @@ fun PlayerScreen(
                             if (ok) { started = true; break }
                         }
                         // Every server answered and nothing can play: say so instead of spinning.
-                        if (quickDone && allDone && askedAgain && !SlowAddons.watching(p.key) && fresh.isEmpty() && el > 14_000) {
+                        if (quickDone && allDone && askedAgain && !SlowAddons.watching(p.key) && fresh.isEmpty() && el > (if (vm.pluginMode()) 5_000 else 12_000)) {
                             if (l.isEmpty() && mp4.isEmpty() && raced.isEmpty()) {
                                 nothingFound = true
                                 PlayTiming.mark("no server has this title", once = "none")
@@ -2053,7 +2103,7 @@ fun PlayerScreen(
         if (e == null) { cues = emptyList(); return@LaunchedEffect }
         while (true) {
             val t = ((curPos() - subOffsetMs) / subRatio).toLong()
-            cues = ExtSubs.at(e.cues, t).map { Cue.Builder().setText(it.text).build() }
+            cues = stackCues(ExtSubs.at(e.cues, t).map { Cue.Builder().setText(it.text).build() })
             delay(80)
         }
     }
@@ -2464,6 +2514,38 @@ fun PlayerScreen(
                 shadow?.takeIf { it !== player }?.let { runCatching { it.release() }; shadow = null; shadowAlpha = 0f }
                 ottSwapping = false
             }
+        }
+    }
+    // Netflix / Prime / Hotstar topping out at 720p or lower: a 1080p copy of the same film (VegaMovies, MovieBox MP4,
+    // other servers; same language, same length) is opened quietly and faded in at the same frame. If none fits, the
+    // usual Upgrade quality offer stays the way to get it. Above 720p nothing happens.
+    var lowOttChecked by remember { mutableStateOf(false) }
+    LaunchedEffect(firstFrame, tracks) {
+        if (lowOttChecked || !firstFrame || usingVlc || byHand || BuildConfig.IS_TV || !vm.pluginMode()) return@LaunchedEffect
+        val cur = now?.url?.let { itemFor(it) } ?: return@LaunchedEffect
+        if (!cur.isOtt()) return@LaunchedEffect
+        val g = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO } ?: return@LaunchedEffect
+        val top = (0 until g.length).maxOfOrNull { g.getTrackFormat(it).height } ?: return@LaunchedEffect
+        lowOttChecked = true
+        if (top <= 0 || top > 720) return@LaunchedEffect
+        PlayTiming.late("OTT tops out at ${top}p — looking for a 1080p copy")
+        scope.launch {
+            val pool = java.util.concurrent.ConcurrentHashMap<String, StreamItem>()
+            val gather = scope.launch { runCatching { vm.streamsFlow(type, p.key).collect { (l, _) -> vm.filtered(l).list.filter { !it.isOtt() && it.effectiveRes() in 1000..1199 }.forEach { s -> s.stream.url?.let { u -> pool.putIfAbsent(u, s) } } } } }
+            try {
+                val t0 = SystemClock.elapsedRealtime(); val triedUp = HashSet<String>()
+                while (SystemClock.elapsedRealtime() - t0 < 120_000 && triedUp.size < 3) {
+                    val playingNow = now?.url?.let { itemFor(it) } ?: break
+                    if (!playingNow.isOtt() || byHand || usingVlc) break
+                    val c = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false)
+                        .filter { it.stream.url !in triedUp && vm.langRank(it) <= vm.langRank(playingNow) && !it.unplayableHere() && !Ranker.knownUnseekable(it) }
+                        .sortedBy { if (it.isVega()) 0 else if (it.isMovieBox()) 1 else 2 }.firstOrNull()
+                    if (c == null) { delay(2_000); continue }
+                    triedUp += c.stream.url!!
+                    PlayTiming.late("OTT 1080p: trying ${Public.streamName(c)}")
+                    if (runCatching { ottSwapTo(c) }.getOrDefault(false)) break
+                }
+            } finally { gather.cancel() }
         }
     }
     /** An online subtitle: reload this link from the same second with it added first, and pick it. */
@@ -2920,6 +3002,22 @@ fun PlayerScreen(
         }
     }
 
+    // Back on the playlist from the 4K file with a quality picked: it is applied as soon as the qualities are known.
+    LaunchedEffect(tracks) {
+        val h = wantVariant ?: return@LaunchedEffect
+        val g = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 1 } ?: return@LaunchedEffect
+        val idx = (0 until g.length).filter { g.getTrackFormat(it).height == h }
+        if (idx.isNotEmpty()) player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+            .setOverrideForType(androidx.media3.common.TrackSelectionOverride(g.mediaTrackGroup, idx)).build()
+        wantVariant = null
+    }
+    // Your place is saved while you watch (every 30 s), the moment you pause, and right after a jump — not only when you
+    // leave — so Continue Watching and your other devices always have where you really are.
+    fun saveNow() { val d = curDur(); now?.let { n -> if (firstFrame && d > 0) onProgress(reportPos(), d, n.url, n.subs) } }
+    LaunchedEffect(firstFrame) { if (!firstFrame) return@LaunchedEffect; while (true) { delay(30_000); if (playing) saveNow() } }
+    LaunchedEffect(playing) { if (!playing && firstFrame) { delay(800); saveNow() } }
+    LaunchedEffect(saveSoon) { if (saveSoon > 0) { delay(1_500); saveNow() } }
+    LaunchedEffect(creditsReached) { if (creditsReached) saveNow() }
     DisposableEffect(Unit) {
         val activity = ctx as Activity
         val ctrl = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
@@ -2928,7 +3026,7 @@ fun PlayerScreen(
         ctrl.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         onDispose {
             val d = curDur()
-            now?.let { n -> if (firstFrame) onProgress(curPos(), if (d > 0) d else 0L, n.url, n.subs) }
+            now?.let { n -> if (firstFrame) onProgress(reportPos(), if (d > 0) d else 0L, n.url, n.subs) }
             if (PlayTiming.active()) PlayTiming.finish("left the player before the first picture")
             player.release()
             vlc?.release()
@@ -3299,17 +3397,26 @@ fun PlayerScreen(
             var pinchHint by remember { mutableStateOf(false) }
             if (!BuildConfig.IS_TV) LaunchedEffect(firstFrame) {
                 if (!firstFrame) return@LaunchedEffect
-                delay(2500)
-                val vs = if (usingVlc) null else player.videoSize
-                val cfgNow = ctx.resources.configuration
-                val sw = cfgNow.screenWidthDp.toFloat(); val sh = cfgNow.screenHeightDp.toFloat()
-                val vr = vs?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width * it.pixelWidthHeightRatio / it.height } ?: return@LaunchedEffect
-                val sr = maxOf(sw, sh) / minOf(sw, sh)
-                val key = "pinchHint:" + p.key.substringBefore(":")
-                if (aspectIdx == 0 && !cinematic && fz <= 1.01f && kotlin.math.abs(vr - sr) > 0.08f && vm.store(key) == null && sw > sh) {
-                    vm.storePut(key, "1"); pinchHint = true; delay(3600); pinchHint = false
+                delay(1500)
+                // Checked for a few seconds (the picture size and the landscape turn can come a moment late).
+                repeat(10) {
+                    val vs = if (usingVlc) null else player.videoSize
+                    val cfgNow = ctx.resources.configuration
+                    val sw = cfgNow.screenWidthDp.toFloat(); val sh = cfgNow.screenHeightDp.toFloat()
+                    val vr = vs?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width * it.pixelWidthHeightRatio / it.height }
+                    if (vr != null && sw > sh) {
+                        val sr = sw / sh
+                        val key = "pinchHint:" + p.key.substringBefore(":")
+                        if (aspectIdx == 0 && !cinematic && fz <= 1.01f && kotlin.math.abs(vr - sr) > 0.08f && vm.store(key) == null) {
+                            vm.storePut(key, "1"); pinchHint = true; delay(2200); pinchHint = false
+                        }
+                        return@LaunchedEffect
+                    }
+                    delay(700)
                 }
             }
+            // Any touch hides it at once.
+            LaunchedEffect(poke, controls) { pinchHint = false }
             if (pinchHint) PinchHint(Modifier.align(Alignment.Center))
             LaunchedEffect(aspectLabel) { if (aspectLabel != null) { pinchHint = false; delay(1500); aspectLabel = null } }
             aspectLabel?.let {
@@ -3337,7 +3444,11 @@ fun PlayerScreen(
             val s = segs
             val inIntro = s?.intro?.let { pos >= it.start_ms && pos < it.end_ms - 1500 } == true
             val inRecap = s?.recap?.let { pos >= it.start_ms && pos < it.end_ms - 1500 } == true
-            val nearEnd = nextEp != null && dur > 0 && (s?.outro?.let { pos >= it.start_ms } ?: (pos >= dur - 120_000))
+            // TV 0.7.4: a credits mark that is clearly wrong (past the end, or in the first 80 %) is ignored, so the pop-up
+            // still shows in the last two minutes.
+            val outroAt = s?.outro?.start_ms?.takeIf { !BuildConfig.IS_TV || (dur > 0 && it in (dur * 8 / 10)..(dur - 10_000)) }
+            val nearEnd = nextEp != null && dur > 0 && (outroAt?.let { pos >= it } ?: (pos >= dur - 120_000))
+            if (outroAt != null && dur > 0 && pos >= outroAt && !creditsReached) SideEffect { creditsReached = true }
             // Auto-skip (Settings › Skip Intro): jumps over an intro / recap by itself, once each, with a short note.
             val autoSkip = isOn(opt("autoSkipIntro"))
             LaunchedEffect(inIntro, inRecap, autoSkip) {
@@ -3457,7 +3568,8 @@ fun PlayerScreen(
                             else if (roomNow != null) Box(Modifier.align(Alignment.TopEnd).padding(top = 5.dp, end = 5.dp).size(9.dp).clip(CircleShape).background(Color(0xFF3CCF7A)).border(2.dp, Color.Black, CircleShape))
                         }
                         if (!BuildConfig.IS_TV) GlassBtn(Icons.Default.LockOpen, null, "Lock") { locked = true; controls = true; poke++ }
-                        val plugQ = !BuildConfig.IS_TV && vm.pluginMode()
+                        // Phones: plugin mode and Sources (addon) mode share the same quality button and menu.
+                        val plugQ = !BuildConfig.IS_TV
                         if (quickList.isNotEmpty() || plugQ) GlassBtn(if (qualityMenu) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                             run {
                                 // Show what is really playing (a 1080p file is never labelled 4K).
@@ -3474,7 +3586,7 @@ fun PlayerScreen(
                             }, "Quality", iconFirst = false) { qualityMenu = !qualityMenu; poke++ }
                         // Xstream: one stream that carries several qualities (an HLS playlist, like CloudStream's Netflix
                         // server): pick one of them here, or Auto.
-                        if (!BuildConfig.IS_TV && quickList.isEmpty() && !vm.pluginMode()) {
+                        if (false && !BuildConfig.IS_TV && quickList.isEmpty() && !vm.pluginMode()) {
                             val vg = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.length > 1 }
                             val heights = vg?.let { g -> (0 until g.length).map { g.getTrackFormat(it).height }.filter { it > 0 }.distinct().sortedDescending() }.orEmpty()
                             if (vg != null && heights.size > 1) Box {
@@ -3883,8 +3995,8 @@ fun PlayerScreen(
                     fun col(lo: Int, hi: Int) = all.filter { it.effectiveRes() in lo until hi }
                         .groupBy { if (it.isPlaylist()) "Instant" else VisualTags.primary(it) }.toList()
                         .sortedBy { (g, _) -> if (g == "Instant") -1 else picOrder.indexOf(g).let { i -> if (i < 0) 99 else i } }
-                        .map { (g, l) -> g to l.sortedWith(compareBy<StreamItem>({ vm.langRank(it) }, { -Ranker.score(it) })).take(if (vm.pluginMode()) 60 else 4) }
-                    (if (vm.pluginMode()) listOf("Auto" to col(0, 1)) else emptyList()) +
+                        .map { (g, l) -> g to l.sortedWith(compareBy<StreamItem>({ vm.langRank(it) }, { -Ranker.score(it) })).take(if (vm.pluginMode() || !BuildConfig.IS_TV) 60 else 4) }
+                    (if (vm.pluginMode() || !BuildConfig.IS_TV) listOf("Auto" to col(0, 1)) else emptyList()) +
                         listOf("4K" to col(1440, 100_000), "1080p" to col(1080, 1440), "720p" to col(700, 1080))
                 }.getOrDefault(emptyList()) }
             }
@@ -3933,7 +4045,19 @@ fun PlayerScreen(
                 val ladder = vgNow?.let { g -> (0 until g.length).map { g.getTrackFormat(it).height }.filter { it > 0 }.distinct().sortedDescending() }.orEmpty()
                 val pinnedH = vgNow?.takeIf { g -> player.trackSelectionParameters.overrides.keys.any { it == g.mediaTrackGroup } }
                     ?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it).height } }
-                if (vm.pluginMode()) PluginQualityBar(qCols, playing, readySet, ladder, pinnedH, onVariant = { h ->
+                // Sources (addon) mode on phones gets the same menu as plugin mode.
+                val playingRes = curItem?.effectiveRes() ?: 0
+                val fourK = curItem?.takeIf { playingRes >= 1440 } ?: qCols.firstOrNull { it.first == "4K" }?.second?.flatMap { it.second }?.firstOrNull { it.stream.url in readySet }
+                val onBasePl = basePl?.stream?.url != null && basePl?.stream?.url == playing
+                if (vm.pluginMode() || !BuildConfig.IS_TV) PluginQualityBar(qCols, playing, readySet, if (ladder.size > 1) ladder else if (onBasePl) ladder else baseLadder,
+                    if (ladder.size > 1) pinnedH else null, fourK = fourK, onBase = !onBasePl && ladder.size <= 1 && basePl != null,
+                    curLabel = curItem?.let { if (playingRes >= 1440) "4K" else if (playingRes > 0) "${playingRes}p" else null }, onVariant = { h ->
+                    // Playing the 4K file (or another file): back to the playlist first, then that quality.
+                    if (ladder.size <= 1 && basePl != null && !onBasePl) {
+                        wantVariant = h; qualityMenu = false; poke++; upgrade = null
+                        switchTo(basePl!!, h?.let { if (it >= 1440) "4K" else "${it}p" } ?: "Auto")
+                        return@PluginQualityBar
+                    }
                     val g = vgNow ?: return@PluginQualityBar
                     player.trackSelectionParameters = if (h == null) player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
                         else player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
@@ -6023,30 +6147,44 @@ internal fun liftCues(cues: List<Cue>, lift: Float): List<Cue> = cues.map { c ->
 private fun PluginQualityBar(
     cols: List<Pair<String, List<Pair<String, List<StreamItem>>>>>, playing: String?, ready: Set<String>,
     ladder: List<Int>, pinnedH: Int?, onVariant: (Int?) -> Unit, modifier: Modifier,
-    onPoke: () -> Unit, onPick: (StreamItem) -> Unit,
+    onPoke: () -> Unit, fourK: StreamItem? = null, onBase: Boolean = false, curLabel: String? = null, onPick: (StreamItem) -> Unit,
 ) {
     var open by remember { mutableStateOf<String?>(null) }
+    /** "Other streams" is folded until you open it. */
+    var otherOpen by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(20.dp)
     val red = Color(0xFFFF4D57)
     Column(modifier.width(300.dp).heightIn(max = 340.dp).clip(shape).background(Color(0xF0141418)).border(1.dp, Color(0x1FFFFFFF), shape)
         .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (ladder.size > 1) {
-            Text("THIS STREAM", Modifier.padding(start = 6.dp, top = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
-            (listOf<Int?>(null) + ladder).forEach { h ->
-                val sel = h == pinnedH
-                val rs = RoundedCornerShape(12.dp)
-                Row(Modifier.fillMaxWidth().clip(rs).background(if (sel) Color(0x26E50914) else Color(0x0DFFFFFF))
-                    .border(1.dp, if (sel) Color(0xCCE50914) else Color(0x12FFFFFF), rs).focusFill().clickable { onVariant(h) }
-                    .padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(h?.let { if (it >= 1440) "4K" else "${it}p" } ?: "Auto", Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    if (sel) Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = red)
-                }
+        // THIS STREAM: Auto, 4K (when a 4K file plays or is ready), then the playlist's own qualities (1080p, 720p, 480p).
+        // A single file with no qualities of its own shows just its quality, ticked.
+        val playing4k = fourK != null && fourK.stream.url == playing
+        Text("THIS STREAM", Modifier.padding(start = 6.dp, top = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
+        val rs = RoundedCornerShape(12.dp)
+        @Composable fun row(label: String, sel: Boolean, accent: Boolean = false, onTap: () -> Unit) {
+            Row(Modifier.fillMaxWidth().clip(rs).background(if (sel) Color(0x26E50914) else Color(0x0DFFFFFF))
+                .border(1.dp, if (sel) Color(0xCCE50914) else if (accent) Color(0x66FFCF5A) else Color(0x12FFFFFF), rs).focusFill().clickable { onTap() }
+                .padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                if (sel) Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = red)
             }
-            Spacer(Modifier.height(4.dp))
-            Text("OTHER STREAMS", Modifier.padding(start = 6.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
         }
-        if (cols.all { it.second.isEmpty() }) Text("Finding qualities…", Modifier.padding(12.dp), fontSize = 13.sp, color = Color(0xFF9AA3B5))
-        cols.forEach { (title, groups) ->
+        if (ladder.size > 1) {
+            row("Auto", !playing4k && !onBase && pinnedH == null) { onVariant(null) }
+            if (fourK != null) row("4K", playing4k, accent = true) { if (!playing4k) onPick(fourK) }
+            ladder.filter { it < 1440 }.forEach { h -> row("${h}p", !playing4k && !onBase && h == pinnedH) { onVariant(h) } }
+        } else {
+            if (fourK != null && !playing4k) row("4K", false, accent = true) { onPick(fourK) }
+            row(curLabel ?: "Auto", true) { }
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).focusFill().clickable { onPoke(); otherOpen = !otherOpen }.padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text("OTHER STREAMS · ${cols.sumOf { c -> c.second.sumOf { it.second.size } }}", Modifier.weight(1f), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
+            Icon(if (otherOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, if (otherOpen) "Fold" else "Open", Modifier.size(18.dp), tint = Color(0xFF8A94A8))
+        }
+        if (otherOpen && cols.all { it.second.isEmpty() }) Text("Finding qualities…", Modifier.padding(12.dp), fontSize = 13.sp, color = Color(0xFF9AA3B5))
+        if (otherOpen) cols.forEach { (title, groups) ->
             val files = groups.flatMap { it.second }
             if (files.isEmpty() && title == "Auto") return@forEach
             val label = when (title) { "4K" -> "4K"; "1080p" -> "Full HD"; "720p" -> "Mid HD"; else -> "Auto" }
@@ -6113,13 +6251,15 @@ private fun PluginQualityBar(
 private fun PinchHint(modifier: Modifier) {
     val t = rememberInfiniteTransition(label = "pinch")
     val k by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Restart), label = "k")
-    Column(modifier.clip(RoundedCornerShape(24.dp)).background(Color(0xB3000000)).padding(horizontal = 22.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    // See-through: only the two fingers and the words, no box over the picture.
+    Column(modifier.padding(horizontal = 22.dp, vertical = 16.dp).graphicsLayer { alpha = 0.85f }, horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.size(width = 120.dp, height = 56.dp)) {
             val gap = 10.dp + 34.dp * k
             Box(Modifier.align(Alignment.Center).offset(x = -gap, y = gap * 0.5f).size(18.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f - 0.4f * k)))
             Box(Modifier.align(Alignment.Center).offset(x = gap, y = -gap * 0.5f).size(18.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f - 0.4f * k)))
         }
-        Text("Pinch out to fill the screen", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text("Pinch out to fill the screen", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+            style = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Color.Black, androidx.compose.ui.geometry.Offset(0f, 2f), 6f)))
     }
 }
 
@@ -6149,4 +6289,17 @@ object DecoderSafe {
             }
         }
     }
+}
+
+/**
+ * Subtitle lines that are on screen at the same moment are drawn as one block (one line above the other): drawn as
+ * separate cues they all sat at the bottom, on top of each other. Repeated identical lines are shown once.
+ */
+fun stackCues(cs: List<Cue>): List<Cue> {
+    if (cs.size < 2) return cs
+    // Cues the file placed itself (a line position) keep their place.
+    if (cs.any { it.line != Cue.DIMEN_UNSET || it.bitmap != null }) return cs
+    val texts = cs.mapNotNull { it.text?.toString()?.trim()?.takeIf { t -> t.isNotEmpty() } }.distinct()
+    if (texts.isEmpty()) return cs
+    return listOf(Cue.Builder().setText(texts.joinToString("\n")).build())
 }

@@ -1,5 +1,6 @@
 package com.example.streamnest
 
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import android.content.Context
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
@@ -37,6 +38,9 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -51,6 +55,7 @@ private fun markSeen(ctx: Context) = ctx.getSharedPreferences("bell", Context.MO
  * Xstream: the notification bell (top right of Home). A small red dot when something new came in; tap it and a bubble
  * grows out of the bell with everything, newest first.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun NotificationBell(onTogether: () -> Unit, onOpen: (Meta) -> Unit) {
     val ctx = LocalContext.current
@@ -70,12 +75,20 @@ fun NotificationBell(onTogether: () -> Unit, onOpen: (Meta) -> Unit) {
         }
         (alerts + rec).sortedByDescending { it.at }.take(40)
     }
-    val unread = pending.isNotEmpty() || items.any { it.at > seen }
+    // Removed one by one (swipe) or all at once (Clear all): kept with your settings, so they stay gone everywhere.
+    val texts = Public.vm?.texts?.collectAsStateWithLifecycle()?.value.orEmpty()
+    val clearedAt = texts["bellCleared"]?.toLongOrNull() ?: 0L
+    val gone = remember(texts["bellGone"]) { texts["bellGone"].orEmpty().split("|").filter { it.isNotBlank() }.toSet() }
+    fun idOf(b: BellItem) = "${b.at}:${b.title.hashCode()}"
+    fun dismiss(b: BellItem) { Public.vm?.setText("bellGone", (gone + idOf(b)).toList().takeLast(120).joinToString("|")) }
+    fun clearAll() { Public.vm?.setText("bellCleared", System.currentTimeMillis().toString()); Public.vm?.setText("bellGone", "") }
+    val shown = items.filter { it.at > clearedAt && idOf(it) !in gone }
+    val unread = pending.isNotEmpty() || shown.any { it.at > seen }
     // Something new arrived while the app is open: a banner drops from the top for a few seconds.
     var banner by remember { mutableStateOf<BellItem?>(null) }
     var announced by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(items.firstOrNull()?.at) {
-        val top = items.firstOrNull() ?: return@LaunchedEffect
+    LaunchedEffect(shown.firstOrNull()?.at) {
+        val top = shown.firstOrNull() ?: return@LaunchedEffect
         if (top.at > announced && top.at > seen) { announced = top.at; banner = top; kotlinx.coroutines.delay(4000); banner = null }
     }
     banner?.let { b ->
@@ -115,11 +128,15 @@ fun NotificationBell(onTogether: () -> Unit, onOpen: (Meta) -> Unit) {
                         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.95f, 0f)
                     }.widthIn(max = 300.dp).fillMaxWidth(0.8f)
                         // Small by default (it fits what's there); with lots of messages it grows up to the full size.
-                        .heightIn(max = if (items.size + (if (pending.isNotEmpty()) 1 else 0) > 4) 460.dp else 330.dp).shadow(24.dp, shape).clip(shape)
+                        .heightIn(max = if (shown.size + (if (pending.isNotEmpty()) 1 else 0) > 4) 460.dp else 330.dp).shadow(24.dp, shape).clip(shape)
                         .background(Color(0xF7181620)).border(1.dp, Brush.verticalGradient(listOf(Accent.copy(alpha = 0.7f), Accent.copy(alpha = 0.15f))), shape)
                         .padding(10.dp),
                 ) {
-                    Text("Notifications", Modifier.padding(start = 8.dp, top = 4.dp, bottom = 6.dp), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                    Row(Modifier.fillMaxWidth().padding(start = 8.dp, top = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Notifications", Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                        if (shown.isNotEmpty()) Text("Clear all", Modifier.clip(RoundedCornerShape(50)).border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(50))
+                            .clickable { clearAll() }.padding(horizontal = 10.dp, vertical = 4.dp), fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    }
                     if (pending.isNotEmpty()) Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Accent.copy(alpha = 0.22f)).clickable { open = false; onTogether() }.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -127,22 +144,40 @@ fun NotificationBell(onTogether: () -> Unit, onOpen: (Meta) -> Unit) {
                         Icon(Icons.Default.Groups, null, Modifier.size(20.dp))
                         Text("${pending.size} waiting for your answer in Watch together", Modifier.padding(start = 10.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
-                    if (items.isEmpty() && pending.isEmpty()) Text("Nothing new. New episodes and friends' recommendations show up here.", Modifier.padding(10.dp), fontSize = 12.5.sp, color = Color(0xFF9AA3B5))
+                    if (shown.isEmpty() && pending.isEmpty()) Text("Nothing new. New episodes and friends' recommendations show up here.", Modifier.padding(10.dp), fontSize = 12.5.sp, color = Color(0xFF9AA3B5))
                     LazyColumn {
-                        items(items) { b ->
-                            Row(
-                                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                                    .clickable(enabled = b.metaId != null) { open = false; b.metaId?.let { onOpen(Meta(it, b.type, b.title.substringAfter(" recommended ").substringAfter(" watched "), b.image)) } }
-                                    .padding(8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                AsyncImage(b.image, null, Modifier.size(32.dp, 46.dp).clip(RoundedCornerShape(7.dp)).background(Color(0xFF22252E)), contentScale = ContentScale.Crop)
-                                Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                                    Text(b.title, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 2)
-                                    Text(b.text, fontSize = 11.5.sp, color = Color(0xFF9AA3B5), maxLines = 2)
-                                    Text(SimpleDateFormat("d MMM · h:mm a", Locale.getDefault()).format(java.util.Date(b.at)), fontSize = 10.sp, color = Color(0xFF7C8496))
+                        items(shown, key = { idOf(it) }) { b ->
+                            // Swipe left to remove · tap to open · long-press for Go to details.
+                            val dx = remember { Animatable(0f) }
+                            val scope = rememberCoroutineScope()
+                            var menu by remember { mutableStateOf(false) }
+                            val openIt = { open = false; b.metaId?.let { onOpen(Meta(it, b.type, b.title.substringAfter(" recommended ").substringAfter(" watched "), b.image)) } }
+                            Box(Modifier.fillMaxWidth().animateItem()) {
+                                Text("Remove", Modifier.align(Alignment.CenterEnd).padding(end = 14.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFFB3B8))
+                                Row(
+                                    Modifier.fillMaxWidth().offset { IntOffset(dx.value.toInt(), 0) }.clip(RoundedCornerShape(14.dp)).background(Color(0xFF1B1922))
+                                        .pointerInput(b) {
+                                            detectHorizontalDragGestures(
+                                                onDragEnd = { scope.launch { if (dx.value < -size.width * 0.35f) { dx.animateTo(-size.width.toFloat(), androidx.compose.animation.core.tween(160)); dismiss(b) } else dx.animateTo(0f) } },
+                                                onDragCancel = { scope.launch { dx.animateTo(0f) } },
+                                            ) { ch: androidx.compose.ui.input.pointer.PointerInputChange, d: Float -> ch.consume(); scope.launch { dx.snapTo((dx.value + d).coerceAtMost(0f)) } }
+                                        }
+                                        .combinedClickable(onClick = { openIt() }, onLongClick = { menu = true })
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    AsyncImage(b.image, null, Modifier.size(32.dp, 46.dp).clip(RoundedCornerShape(7.dp)).background(Color(0xFF22252E)), contentScale = ContentScale.Crop)
+                                    Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                                        Text(b.title, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 2)
+                                        Text(b.text, fontSize = 11.5.sp, color = Color(0xFF9AA3B5), maxLines = 2)
+                                        Text(SimpleDateFormat("d MMM · h:mm a", Locale.getDefault()).format(java.util.Date(b.at)), fontSize = 10.sp, color = Color(0xFF7C8496))
+                                    }
+                                    if (b.at > seen) Box(Modifier.size(7.dp).clip(CircleShape).background(Accent))
                                 }
-                                if (b.at > seen) Box(Modifier.size(7.dp).clip(CircleShape).background(Accent))
+                                androidx.compose.material3.DropdownMenu(menu, { menu = false }) {
+                                    if (b.metaId != null) androidx.compose.material3.DropdownMenuItem(text = { Text("Go to details") }, onClick = { menu = false; openIt() })
+                                    androidx.compose.material3.DropdownMenuItem(text = { Text("Remove") }, onClick = { menu = false; dismiss(b) })
+                                }
                             }
                         }
                     }

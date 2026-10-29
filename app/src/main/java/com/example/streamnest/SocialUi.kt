@@ -7,6 +7,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -81,6 +82,7 @@ private fun CardBox(content: @Composable ColumnScope.() -> Unit) {
  * Watch together, a full page: Friends (requests, introductions, your room friends), Shared lists (titles with their
  * plans), Chats, and Privacy (who can see you). Joining with a code is at the top of Friends.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun WatchTogetherPage(vm: AppViewModel, onBack: () -> Unit, onOpen: (Meta) -> Unit, onPlayRoom: (RoomState) -> Unit, startChat: String? = null, startItem: String? = null) {
     val ctx = LocalContext.current
@@ -175,7 +177,13 @@ fun WatchTogetherPage(vm: AppViewModel, onBack: () -> Unit, onOpen: (Meta) -> Un
                     items(items.chunked(3)) { row ->
                         Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             row.forEach { it2 ->
-                                Column(Modifier.weight(1f).clickable { itemOpen = it2 }) {
+                                var menu by remember { mutableStateOf(false) }
+                                androidx.compose.material3.DropdownMenu(menu, { menu = false }) {
+                                    androidx.compose.material3.DropdownMenuItem(text = { Text(if (it2.by == Social.me) "Remove for everyone" else "Remove from my lists", color = Color(0xFFFF8A91)) },
+                                        onClick = { menu = false; scope.launch { if (Social.leaveItem(ctx, it2)) Snack.show("Removed") else Snack.show("Couldn't remove it — try again") } })
+                                    androidx.compose.material3.DropdownMenuItem(text = { Text("Open") }, onClick = { menu = false; itemOpen = it2 })
+                                }
+                                Column(Modifier.weight(1f).combinedClickable(onClick = { itemOpen = it2 }, onLongClick = { menu = true })) {
                                     AsyncImage(it2.meta.poster, it2.meta.name, Modifier.fillMaxWidth().aspectRatio(0.68f).clip(RoundedCornerShape(12.dp)).background(WtCard), contentScale = ContentScale.Crop)
                                     Text(it2.meta.name, Modifier.padding(top = 4.dp), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     val next = it2.plans.firstOrNull { p -> p.at > System.currentTimeMillis() - 3 * 3600_000L }

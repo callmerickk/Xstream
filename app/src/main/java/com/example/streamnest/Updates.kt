@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -83,6 +84,8 @@ object Updater {
     val available = MutableStateFlow<UpdateInfo?>(null)
     /** 0..1 while downloading; null otherwise. */
     val progress = MutableStateFlow<Float?>(null)
+    /** Bytes per second of the update download (0 = unknown). */
+    val speed = MutableStateFlow(0L)
     val error = MutableStateFlow<String?>(null)
     @Volatile private var checkedThisRun = false
     /** "Later": hidden until the app is opened again. */
@@ -220,7 +223,7 @@ object Updater {
         val info = runCatching { check(ctx, force = true) }.getOrNull()?.takeIf { it.versionCode >= info0.versionCode } ?: info0
         UpdateService.start(ctx, info.versionName)
         try {
-            // 1) Fast: the APK in 4 parts at once (GitHub's file servers give each connection its own speed).
+            // 1) Fast: the APK in small pieces over 6 connections at once (GitHub's file servers give each connection its own speed).
             val fast = runCatching { fastDownload(ctx, info) }.getOrDefault(false)
             // 2) Android's downloader (slow but sure), 3) a plain single download.
             val ok = fast || runCatching { dmDownload(ctx, info) }.getOrNull() == true || run { progress.value = 0f; plainDownload(info, apkFile(ctx)) }
@@ -244,36 +247,51 @@ object Updater {
         if (total < 1_000_000) return@withContext false
         val f = apkFile(ctx); runCatching { f.delete() }
         java.io.RandomAccessFile(f, "rw").use { it.setLength(total) }
-        val parts = 4
-        val size = (total + parts - 1) / parts
-        val got = java.util.concurrent.atomic.AtomicLongArray(parts)
-        val jobs = (0 until parts).map { k ->
+        // Small 2 MB pieces shared by 6 connections: a fast connection simply takes more pieces, so one slow
+        // connection (common without a VPN on some networks) no longer holds back the end of the download.
+        val piece = 2L * 1024 * 1024
+        val pieces = ((total + piece - 1) / piece).toInt()
+        val next = java.util.concurrent.atomic.AtomicInteger(0)
+        val doneBytes = java.util.concurrent.atomic.AtomicLong(0)
+        val failed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val t0 = System.currentTimeMillis()
+        var lastT = t0; var lastB = 0L
+        fun report() {
+            val sum = doneBytes.get()
+            val pr = (sum.toFloat() / total).coerceIn(0f, 1f)
+            val now = System.currentTimeMillis()
+            if (now - lastT >= 800) { speed.value = (sum - lastB) * 1000 / (now - lastT); lastT = now; lastB = sum }
+            if (pr - (progress.value ?: 0f) > 0.005f || pr >= 1f) { progress.value = pr; UpdateService.progress(ctx, pr) }
+        }
+        val workers = (0 until 6).map {
             async {
-                val from = k * size; val to = minOf(total, from + size) - 1
-                var tries = 0
-                while (from + got[k] <= to && tries < 5) {
-                    tries++
-                    runCatching {
-                        c.newCall(Request.Builder().url(url).header("Range", "bytes=${from + got[k]}-$to").build()).execute().use { r ->
-                            if (r.code != 206) error("no range")
-                            java.io.RandomAccessFile(f, "rw").use { raf ->
-                                raf.seek(from + got[k])
-                                val inp = r.body!!.byteStream(); val buf = ByteArray(64 * 1024)
-                                while (true) {
-                                    val n = inp.read(buf); if (n < 0) break
-                                    raf.write(buf, 0, n); got.addAndGet(k, n.toLong())
-                                    var sum = 0L; for (j in 0 until parts) sum += got[j]
-                                    val pr = (sum.toFloat() / total).coerceIn(0f, 1f)
-                                    if (pr - (progress.value ?: 0f) > 0.005f || pr >= 1f) { progress.value = pr; UpdateService.progress(ctx, pr) }
+                java.io.RandomAccessFile(f, "rw").use { raf ->
+                    val buf = ByteArray(64 * 1024)
+                    while (!failed.get()) {
+                        val k = next.getAndIncrement(); if (k >= pieces) break
+                        val from = k * piece; val to = minOf(total, from + piece) - 1
+                        var got = 0L; var tries = 0
+                        while (from + got <= to) {
+                            if (++tries > 6) { failed.set(true); break }
+                            runCatching {
+                                c.newCall(Request.Builder().url(url).header("Range", "bytes=${from + got}-$to").build()).execute().use { r ->
+                                    if (r.code != 206) error("no range")
+                                    val inp = r.body!!.byteStream()
+                                    raf.seek(from + got)
+                                    while (from + got <= to) {
+                                        val n = inp.read(buf, 0, minOf(buf.size.toLong(), to - from - got + 1).toInt()); if (n < 0) break
+                                        raf.write(buf, 0, n); got += n; doneBytes.addAndGet(n.toLong()); report()
+                                    }
                                 }
-                            }
+                            }.onFailure { delay(400L * tries) }
                         }
                     }
                 }
-                from + got[k] > to
             }
         }
-        jobs.awaitAll().all { it } && f.length() == total
+        workers.awaitAll()
+        speed.value = 0
+        !failed.get() && doneBytes.get() >= total && f.length() == total
     }
 
     private suspend fun plainDownload(info: UpdateInfo, f: File): Boolean = withContext(Dispatchers.IO) {
@@ -384,7 +402,7 @@ fun UpdateDialog(i: UpdateInfo, onLater: () -> Unit, onSkip: (() -> Unit)? = nul
                     Box(Modifier.padding(top = 14.dp).fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(Color(0x33FFFFFF))) {
                         Box(Modifier.fillMaxWidth(prog).height(6.dp).background(BrandRed))
                     }
-                    Text("Downloading… ${(prog * 100).toInt()}%", Modifier.padding(top = 6.dp), fontSize = 12.sp, color = Color(0xFF9AA3B5))
+                    Text("Downloading… ${(prog * 100).toInt()}%" + Updater.speed.collectAsState().value.let { if (it > 0) " · " + fmtSpeed(it) else "" }, Modifier.padding(top = 6.dp), fontSize = 12.sp, color = Color(0xFF9AA3B5))
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
                     DialogBtn("Later", primary = false, Modifier) { onLater() }

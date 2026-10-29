@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -327,6 +328,7 @@ private data class CalEvent(val day: Long, val kind: String, val title: String, 
  * Watchlist with a calendar: new episodes of the shows you follow, release days of movies in your watchlist, and the
  * watches you planned (alone or with friends). Tap a day, then "Plan a watch".
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun WatchlistPage(vm: AppViewModel, onBack: () -> Unit, onOpen: (Meta) -> Unit, startCalendar: Boolean = false, embedded: Boolean = false) {
     val myList by vm.myList.collectAsStateWithLifecycle()
@@ -414,8 +416,27 @@ fun WatchlistPage(vm: AppViewModel, onBack: () -> Unit, onOpen: (Meta) -> Unit, 
                 }
             }
             items(dayEvents) { e ->
+                // Long-press: remove it from your calendar (a plan, or the title from your watchlist), or open it.
+                var menu by remember { mutableStateOf(false) }
+                val ctxE = LocalContext.current
+                val scopeE = rememberCoroutineScope()
+                androidx.compose.material3.DropdownMenu(menu, { menu = false }) {
+                    if (e.item != null) {
+                        androidx.compose.material3.DropdownMenuItem(text = { Text("Remove plan", color = Color(0xFFFF8A91)) }, onClick = {
+                            menu = false
+                            val plan = e.item.plans.firstOrNull { localDay(it.at) == e.day }
+                            scopeE.launch { if (plan != null && Social.removePlan(ctxE, e.item, plan)) Snack.show("Plan removed") }
+                        })
+                        androidx.compose.material3.DropdownMenuItem(text = { Text("Remove title and its plans", color = Color(0xFFFF8A91)) }, onClick = {
+                            menu = false; scopeE.launch { if (Social.leaveItem(ctxE, e.item)) Snack.show("Removed") }
+                        })
+                    } else e.meta?.let { m ->
+                        if (myList.any { it.id == m.id }) androidx.compose.material3.DropdownMenuItem(text = { Text("Remove from my list", color = Color(0xFFFF8A91)) }, onClick = { menu = false; vm.toggleList(m); Snack.show("Removed from your list") })
+                    }
+                    e.meta?.let { m -> androidx.compose.material3.DropdownMenuItem(text = { Text("Open") }, onClick = { menu = false; onOpen(m) }) }
+                }
                 Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(HubCard)
-                    .clickable { if (e.item != null) openItem = e.item else e.meta?.let(onOpen) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    .combinedClickable(onClick = { if (e.item != null) openItem = e.item else e.meta?.let(onOpen) }, onLongClick = { menu = true }).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     AsyncImage(e.poster, null, Modifier.size(38.dp, 56.dp).clip(RoundedCornerShape(7.dp)), contentScale = ContentScale.Crop)
                     Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                         Text(e.title, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)

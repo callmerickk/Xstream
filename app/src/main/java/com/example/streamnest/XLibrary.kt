@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -85,11 +86,15 @@ object Recs {
         init(ctx)
         // The same message can arrive more than once: it goes in the watchlist only the first time (and stays out if
         // you removed it).
+        if (prefs?.getBoolean("gone:${m.from}:${m.item}:false", false) == true) return
         val already = all.value.any { !it.out && it.id == m.item && it.friend == m.from }
         save(listOf(Rec(m.item, m.plan.ifBlank { "movie" }, m.title, m.code.ifBlank { null }, m.from, m.fromName, out = false, at = System.currentTimeMillis()))
             + all.value.filterNot { !it.out && it.id == m.item && it.friend == m.from })
         if (!already) addToList?.invoke(Meta(id = m.item, type = m.plan.ifBlank { "movie" }, name = m.title, poster = m.code.ifBlank { null }))
     }
+
+    /** Removes a recommendation from this room (it stays gone: a repeat of the same message doesn't bring it back). */
+    fun remove(r: Rec) { save(all.value.filterNot { it.id == r.id && it.friend == r.friend && it.out == r.out }); prefs?.edit()?.putBoolean("gone:${r.friend}:${r.id}:${r.out}", true)?.apply() }
 
     /** A friend's recommendation of this title you haven't answered, if any. */
     fun fromFriend(id: String): Rec? = all.value.firstOrNull { !it.out && it.id == id }
@@ -215,13 +220,22 @@ private fun FriendRoom(vm: AppViewModel, p: Person, onOpen: (Meta) -> Unit) {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun RoomShelf(title: String, recs: List<Rec>, onOpen: (Meta) -> Unit) {
     if (recs.isEmpty()) return
     Text(title, Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp), fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items(recs, key = { it.id + it.at }) { r ->
-            Column(Modifier.width(110.dp).clickable { onOpen(Meta(id = r.id, type = r.type, name = r.name, poster = r.poster)) }) {
+            // Tap opens it; long-press: Remove, Open, Add to my list.
+            var menu by remember { mutableStateOf(false) }
+            val m = Meta(id = r.id, type = r.type, name = r.name, poster = r.poster)
+            androidx.compose.material3.DropdownMenu(menu, { menu = false }) {
+                androidx.compose.material3.DropdownMenuItem(text = { Text("Remove", color = Color(0xFFFF8A91)) }, onClick = { menu = false; Recs.remove(r); Snack.show("Removed") })
+                androidx.compose.material3.DropdownMenuItem(text = { Text("Open") }, onClick = { menu = false; onOpen(m) })
+                androidx.compose.material3.DropdownMenuItem(text = { Text("Add to my list") }, onClick = { menu = false; Public.vm?.let { vm -> if (vm.myList.value.none { it.id == m.id }) vm.toggleList(m) }; Snack.show("Added to your list") })
+            }
+            Column(Modifier.width(110.dp).combinedClickable(onClick = { onOpen(m) }, onLongClick = { menu = true })) {
                 AsyncImage(r.poster, r.name, Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp)).background(LCard), contentScale = ContentScale.Crop)
                 Text(r.name, Modifier.padding(top = 4.dp), fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(SimpleDateFormat("d MMM", Locale.getDefault()).format(java.util.Date(r.at)), fontSize = 10.sp, color = LMuted)

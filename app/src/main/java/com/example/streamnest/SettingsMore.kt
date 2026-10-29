@@ -38,8 +38,8 @@ private fun Chips(options: List<Pair<String, String>>, selected: String, onPick:
     Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         options.forEach { (id, label) ->
             val on = id == selected
-            Text(label, Modifier.clip(RoundedCornerShape(16.dp)).background(if (on) Accent else Color(0xFF2A2A30)).clickable { onPick(id) }
-                .padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) OnAccent else Color.White)
+            Text(label, Modifier.clip(RoundedCornerShape(16.dp)).background(if (on) BtnColor else Color(0xFF2A2A30)).clickable { onPick(id) }
+                .padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) OnBtn else Color.White)
         }
     }
 }

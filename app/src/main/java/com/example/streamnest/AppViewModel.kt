@@ -210,6 +210,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     /** This phone's AI logo, ready for the cloud ("" = none). */
+    // ── The AI face (separate from the button logo) ──
+    suspend fun setAiFace(uri: Uri) = withContext(Dispatchers.IO) {
+        runCatching { ctx.contentResolver.openInputStream(uri)!!.use { i -> aiFaceFile().outputStream().use { o -> i.copyTo(o) } } }
+        val payload = runCatching { aiLogoPayload(aiFaceFile()) }.getOrNull().orEmpty()
+        withContext(Dispatchers.Main) {
+            setText("aiFaceData", payload)
+            ctx.getSharedPreferences("ai_face", Context.MODE_PRIVATE).edit().putInt("hash", payload.hashCode()).apply()
+            imgVersion.value = imgVersion.value + 1
+        }
+        if (Public.dev && payload.isNotBlank()) AppLook.publishAi(face = payload)
+    }
+    fun syncAiFace(payload: String) {
+        val prefs = ctx.getSharedPreferences("ai_face", Context.MODE_PRIVATE)
+        if (payload.isBlank() || prefs.getInt("hash", 0) == payload.hashCode()) return
+        if (payload == "none") { aiFaceFile().delete(); prefs.edit().putInt("hash", payload.hashCode()).apply(); imgVersion.value = imgVersion.value + 1; return }
+        val data = runCatching { android.util.Base64.decode(payload.substringAfter(':'), android.util.Base64.DEFAULT) }.getOrNull() ?: return
+        runCatching { aiFaceFile().writeBytes(data) }.onSuccess { prefs.edit().putInt("hash", payload.hashCode()).apply(); imgVersion.value = imgVersion.value + 1 }
+    }
+    fun clearAiFace() {
+        aiFaceFile().delete(); setText("aiFaceData", "")
+        ctx.getSharedPreferences("ai_face", Context.MODE_PRIVATE).edit().remove("hash").apply()
+        imgVersion.value = imgVersion.value + 1
+    }
+    fun aiFaceNow(): String = runCatching { aiFaceFile().takeIf { it.exists() }?.let { aiLogoPayload(it) } }.getOrNull().orEmpty()
+
     fun aiLogoNow(): String = runCatching { aiLogoFile().takeIf { it.exists() }?.let { aiLogoPayload(it) } }.getOrNull().orEmpty()
 
     fun clearAiLogo() {
@@ -380,10 +405,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             }
         }
         applyPalette()
-        Api.setDns(texts.value["dns"] ?: "system")
+        // Cloudflare (1.1.1.1) is the default. Phones still on the old default ("System") move to it once; a DNS the
+        // person picks by hand is theirs from then on (the developer's published DNS never replaces it).
+        if (glob.getBoolean("dnsMigrated1", false).not()) {
+            if (store("ownKey_dns") != "1" && (texts.value["dns"] ?: "system") == "system") setText("dns", "cloudflare")
+            glob.edit().putBoolean("dnsMigrated1", true).apply()
+        }
+        Api.setDns(texts.value["dns"] ?: "cloudflare")
     }
 
-    fun setDns(provider: String) {
+    fun setDns(provider: String, byUser: Boolean = true) {
+        if (byUser) storePut("ownKey_dns", "1")
         setText("dns", provider)
         Api.setDns(provider)
         refresh()
@@ -397,6 +429,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         parseColor(m["accent2"]!!)?.let { Palette.accent2 = it }
         if (isOn(m["amoled"]!!)) Palette.bg = Color.Black
         m["cardCorner"]!!.trim().toIntOrNull()?.let { Palette.corner = it.coerceIn(0, 50) }
+        // Buttons: the theme's own button colours, else the accent with readable text.
+        Palette.button = parseColor(m["btnColor"].orEmpty()) ?: Palette.accent
+        Palette.onButton = parseColor(m["btnText"].orEmpty()) ?: buttonTextFor(Palette.button)
     }
 
     fun setText(key: String, value: String) {
@@ -447,8 +482,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         val base = p.key.substringBefore(":")
         val series = p.key.contains(":")
         val others = progress.value.filter { it.key != p.key && !(series && it.key.contains(":") && it.key.substringBefore(":") == base) }
-        val done = p.durationMs > 0 && p.positionMs > p.durationMs * 0.95
-        progress.value = (if (done && !series) others else listOf(if (done) p.copy(positionMs = p.durationMs) else p) + others).take(20)
+        // Watched: a movie past 92 % (credits) leaves the row; an episode past 95 % (or at its credits) is replaced by
+        // the next episode, shown as Up next.
+        val done = p.durationMs > 0 && p.positionMs > p.durationMs * (if (series) 0.95 else 0.92)
+        // No limit: every title you started stays (and syncs with your cloud) until it is finished or removed.
+        progress.value = (if (done && !series) others else listOf(if (done) p.copy(positionMs = p.durationMs) else p) + others)
         val ed = lib.edit().putString("progress", Api.json.encodeToString(progress.value))
         if (done && p.key !in doneKeys.value) {
             doneKeys.value = doneKeys.value + p.key
@@ -749,7 +787,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             }.awaitAll().filterNotNull()
             val pushedSrc = pushed.mapNotNull { it.src }.toSet()
             shelves.value = (pushed + result.filterNotNull().filter { it.src == null || it.src !in pushedSrc })
-                .filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.map { posterFromPattern(it) }) }
+                .filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.map { posterFromPattern(it) }.distinctBy { it.type + it.id }) }
             loading.value = false
             if (!BuildConfig.IS_TV) runCatching { Posters.warm(appContext, shelves.value.take(12).flatMap { s -> s.items.take(8).map { it.poster } }) }
             // Remembered for the next start, so Home shows its cards at once (then refreshes).
@@ -1362,7 +1400,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         // Last start's Home rows, shown straight away while the fresh ones load.
         viewModelScope.launch(Dispatchers.IO) {
             val cached = runCatching { File(ctx.filesDir, "shelves_$pid.json").takeIf { it.exists() }?.readText()?.let { Api.json.decodeFromString<List<Shelf>>(it) } }.getOrNull()
-            if (!cached.isNullOrEmpty()) withContext(Dispatchers.Main) { if (dataPid == pid && (shelves.value.isEmpty() || loading.value)) shelves.value = cached }
+            if (!cached.isNullOrEmpty()) withContext(Dispatchers.Main) { if (dataPid == pid && (shelves.value.isEmpty() || loading.value)) shelves.value = cached.map { s -> s.copy(items = s.items.distinctBy { it.type + it.id }) } }
         }
     }
 

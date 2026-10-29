@@ -184,9 +184,9 @@ private fun ColFolderHero(f: NFolder) {
 @Composable
 private fun ColChip(label: String, on: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
-    Text(label, Modifier.clip(RoundedCornerShape(18.dp)).background(if (on) Accent else Color(0xFF22232A))
+    Text(label, Modifier.clip(RoundedCornerShape(18.dp)).background(if (on) BtnColor else Color(0xFF22232A))
         .clickable(interactionSource = interaction, indication = null, onClick = onClick).padding(horizontal = 14.dp, vertical = 9.dp),
-        fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) OnAccent else Color.White, maxLines = 1, softWrap = false)
+        fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) OnBtn else Color.White, maxLines = 1, softWrap = false)
 }
 
 @Composable

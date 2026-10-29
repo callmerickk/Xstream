@@ -69,6 +69,8 @@ object AppLook {
 
     /** The AI logo everyone gets (from the cloud); when set it wins over a per-account logo. */
     val aiLogo = MutableStateFlow("")
+    /** The AI face everyone gets (chat card, "picked for you"). */
+    val aiFace = MutableStateFlow("")
 
     @Volatile private var lastFetch = 0L
     /** The app came to the front: the shared look again (at most every 2 minutes), so a new AI logo shows without a restart. */
@@ -82,6 +84,7 @@ object AppLook {
         // AI logo and X's voice: the same on every Xstream account.
         val vm = Public.vm
         str("aiLogo")?.let { p -> aiLogo.value = p; vm?.syncAiLogo(p) }
+        str("aiFace")?.let { p -> aiFace.value = p; vm?.syncAiFace(p) }
         if (vm != null) withContext(Dispatchers.Main) {
             str("aiVoice")?.let { v -> if (vm.store("aiVoice") != v) { vm.storePut("aiVoice", v); vm.storePut(if (str("aiVoiceHindi") == "yes") "aiVoiceHi" else "aiVoiceEn", v) } }
             str("aiVoiceRate")?.let { r -> if (r.toFloatOrNull() != null) vm.storePut("aiVoiceRate", r) }
@@ -111,6 +114,7 @@ object AppLook {
         val vm = Public.vm
         val f = mutableMapOf("logo" to l, "anim" to a)
         vm?.aiLogoNow()?.takeIf { it.isNotBlank() }?.let { f["aiLogo"] = it }
+        vm?.aiFaceNow()?.takeIf { it.isNotBlank() }?.let { f["aiFace"] = it }
         vm?.store("aiVoice")?.takeIf { it.isNotBlank() }?.let { f["aiVoice"] = it }
         vm?.store("aiVoiceRate")?.takeIf { it.isNotBlank() }?.let { f["aiVoiceRate"] = it }
         return patch(f)
@@ -128,15 +132,16 @@ object AppLook {
     }
 
     /** The developer changed the AI logo or X's voice: it goes to every Xstream account right away. */
-    fun publishAi(logo: String? = null, voice: String? = null, hindi: Boolean = false, rate: String? = null) {
+    fun publishAi(logo: String? = null, voice: String? = null, hindi: Boolean = false, rate: String? = null, face: String? = null) {
         val f = mutableMapOf<String, String>()
         logo?.let { f["aiLogo"] = it; aiLogo.value = it }
+        face?.let { f["aiFace"] = it; aiFace.value = it }
         voice?.let { f["aiVoice"] = it; f["aiVoiceHindi"] = if (hindi) "yes" else "no" }
         rate?.let { f["aiVoiceRate"] = it }
         if (f.isEmpty()) return
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             val err = patch(f)
-            withContext(Dispatchers.Main) { if (err != null) Snack.show("Not sent to everyone: $err") else Snack.show(if (logo != null) "AI logo sent to every account" else "Voice set for every account") }
+            withContext(Dispatchers.Main) { if (err != null) Snack.show("Not sent to everyone: $err") else Snack.show(if (logo != null) "AI logo sent to every account" else if (face != null) "AI face sent to every account" else "Voice set for every account") }
         }
     }
 }

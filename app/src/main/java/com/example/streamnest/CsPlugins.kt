@@ -64,6 +64,7 @@ object CsPlugins {
     private val loadLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
     private var prefs: android.content.SharedPreferences? = null
     private lateinit var appCtx: Context
+    fun prefsOrNull(): android.content.SharedPreferences? = prefs
 
     fun init(ctx: Context) {
         if (prefs != null) return
@@ -275,7 +276,7 @@ object CsPlugins {
      * once, so their sites keep the connection and the sign-in cookie alive — the next title starts like in CloudStream.
      */
     suspend fun warmSome(names: Set<String>) = kotlinx.coroutines.coroutineScope {
-        providers().filter { (_, api) -> "CloudStream · ${api.name}" in names || (MB_ANY in names && api.name.contains("moviebox", true)) || (VEGA_ANY in names && api.name.contains("vega", true)) || (OTT_ANY in names && isOttName(api.name)) }.forEach { (_, api) ->
+        providers().filter { (_, api) -> "CloudStream · ${api.name}" in names || (MB_ANY in names && api.name.contains("moviebox", true)) || (VEGA_ANY in names && isVegaName(api.name)) || (OTT_ANY in names && isOttName(api.name)) }.forEach { (_, api) ->
             launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { kotlinx.coroutines.withTimeoutOrNull(15_000) { api.search("a", 1) ?: api.search("a") } } }
         }
     }

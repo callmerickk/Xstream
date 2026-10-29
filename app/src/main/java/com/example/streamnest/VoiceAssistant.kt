@@ -83,6 +83,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.PI
@@ -135,12 +143,12 @@ fun AiOrbButton(vm: AppViewModel, size: androidx.compose.ui.unit.Dp = 54.dp, shr
                     onDrawBehind { drawCircle(OrbRim, radius = r, style = stroke) }
                 }
         )
-        // The logo itself turns too (slowly, the other way round), with a soft breathing scale.
+        // The logo stays upright and beats like a heart (two quick pulses, then a rest), timed off the rim's turn so it
+        // costs no extra animation.
         Box(Modifier.graphicsLayer {
             alpha = 1f - (shrink?.value ?: 0f)
             compositingStrategy = CompositingStrategy.ModulateAlpha
-            rotationZ = -angle.value * 0.75f
-            val b = 1f + 0.05f * kotlin.math.sin(Math.toRadians(angle.value * 2.0)).toFloat()
+            val b = heartbeat(((angle.value / 360f) * 7000f % 1600f) / 1600f)
             scaleX = b; scaleY = b
         }) { AiLogo(vm, Modifier.size(size * 0.6f)) }
         Icon(Icons.Default.Mic, "AI assistant", Modifier.size(size * 0.42f).graphicsLayer {
@@ -148,6 +156,12 @@ fun AiOrbButton(vm: AppViewModel, size: androidx.compose.ui.unit.Dp = 54.dp, shr
             compositingStrategy = CompositingStrategy.ModulateAlpha
         }, tint = Color.White)
     }
+}
+
+/** Heartbeat scale for t in 0..1: a strong beat, a smaller one, then rest. */
+internal fun heartbeat(t: Float): Float {
+    fun bump(x: Float, at: Float, w: Float, h: Float) = if (x in at..(at + w)) h * kotlin.math.sin(((x - at) / w) * PI).toFloat() else 0f
+    return 1f + bump(t, 0f, 0.16f, 0.12f) + bump(t, 0.22f, 0.16f, 0.07f)
 }
 
 // Xstream: the dock's red — a dark ember inside, a red → orange rim with a fading tail as it spins.
@@ -257,6 +271,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
     private fun begin() {
         if (begun || !alive) return
         begun = true
+        if (GeminiLiveDev.usable(ctx, vm) && startLive()) return
         if (ttsReady || !voiceOut) greet() else listen()
     }
 
@@ -289,6 +304,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
 
     /** App went to the background: stop the mic and the voice. */
     fun pause() {
+        live?.let { g -> g.muted = true; level = 0f; state = XState.Idle; hint = "Mic off · tap to talk"; return }
         handsFree = false
         cancelAfter()
         dropRecognizer()
@@ -299,6 +315,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
     }
 
     fun release() {
+        stopLive()
         alive = false
         main.removeCallbacksAndMessages(null)
         job?.cancel()
@@ -440,6 +457,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
     fun handleUser(text: String, voice: Boolean) {
         val q = text.trim()
         if (q.isEmpty() || !alive) return
+        live?.let { g -> addLine(true, q); g.muted = false; g.sendText(q); return }
         lastViaVoice = voice
         if (voice) handsFree = true
         cancelAfter()
@@ -599,10 +617,135 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
         runCatching { t.setLanguage(if (hindi) Locale.forLanguageTag("hi-IN") else if (india) Locale.forLanguageTag("en-IN") else d) }
     }
 
+    // ── Gemini Live (developer only, Developer's Corner) ──
+
+    private var live: GeminiLive? = null
+    private val liveJobs = ArrayList<Job>()
+    private var liveLine = -1L
+    private var liveUserLine = -1L
+    /** Lines written by the live voice: shown as they grow (the words come with the voice itself). */
+    val liveIds = HashSet<Long>()
+
+    private fun setLine(id: Long, text: String) {
+        val i = lines.indexOfFirst { it.id == id }
+        if (i >= 0 && lines[i].text != text) { val o = lines[i]; lines[i] = ChatLine(id, o.user, text, o.items, o.rowTitle) }
+    }
+
+    private fun stopLive() {
+        liveJobs.forEach { it.cancel() }; liveJobs.clear()
+        live?.let { runCatching { it.close() } }
+        live = null
+    }
+
+    /** After the voice has finished the turn: open / play what the function asked for. */
+    private fun liveOpenIfDue() {
+        val o = pendingOpen ?: return
+        val play = pendingPlay
+        pendingOpen = null; pendingPlay = null
+        stopLive()
+        if (play != null) playTitle(o, play) else openTitle(o)
+    }
+
+    private fun startLive(): Boolean {
+        val key = vm.aiKey(AiProviders.first { it.id == "gemini" })
+        if (key.isEmpty() || !micGranted()) return false
+        val who = vm.current.value?.name?.trim()?.takeIf { it.isNotBlank() && it != "Me" }
+        val last = vm.progress.value.firstOrNull()?.title?.substringBefore("  S")?.takeIf { it.isNotBlank() }
+        val sys = "You are ${aiName()}, the movie and TV buddy inside the Xstream app" + (who?.let { ", talking with $it" } ?: "") + ". " +
+            "Talk like a real friend on a phone call: warm, natural, relaxed, a little playful, short (one or two sentences unless asked for more). " +
+            "Answer in the language the user speaks: English, Hindi or Hinglish. " +
+            "For anything about titles — what to watch, recommendations, finding, opening, playing, continuing, an episode, or controlling the video " +
+            "(pause, resume, skip, next episode) — ALWAYS call the streamx function with the request in plain words, then tell the result in your own words. " +
+            "Name at most three titles out loud; the cards show the rest. Never say something is playing or available unless the function said so. " +
+            "Never mention functions, tools, servers or how the app works inside." +
+            (last?.let { " They were last watching $it." } ?: "")
+        val params = buildJsonObject {
+            put("type", "OBJECT")
+            putJsonObject("properties") {
+                putJsonObject("request") { put("type", "STRING"); put("description", "What the user wants, in plain words, e.g. 'play Panchayat season 3 episode 2' or 'a feel-good Hindi comedy'") }
+            }
+            putJsonArray("required") { add(JsonPrimitive("request")) }
+        }
+        val tool = LiveTool("streamx", "Does what the user asks inside Xstream: recommend or find movies and shows, open a title, play a title or an episode, " +
+            "continue watching, or control the playing video (pause, resume, skip forward or back, next episode). Returns what happened.", params) { args ->
+            val q = (args["request"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+            val r = convo.reply(q)
+            withContext(Dispatchers.Main) {
+                if (r.items.isNotEmpty()) addLine(false, r.rowTitle.ifBlank { "Here you go" }, r.items, r.rowTitle).also { liveIds += it }
+                if (r.open != null) { pendingOpen = r.open; pendingPlay = if (r.play) (r.episode ?: "") else null
+                    // The voice says it first; if it says nothing, it opens anyway.
+                    postAfter(6_000) { liveOpenIfDue() } }
+                if (r.closeAfter) closeAfterSpeech = true
+            }
+            buildJsonObject {
+                put("result", r.say)
+                if (r.items.isNotEmpty()) put("titles", r.items.take(6).joinToString("; ") { it.name + (it.releaseInfo?.take(4)?.let { y -> " ($y)" } ?: "") })
+                r.open?.let { put("action", if (r.play) "now starting ${it.name}" else "opening ${it.name}") }
+            }
+        }
+        val g = runCatching { GeminiLive(ctx, key, "Puck", sys, listOf(tool)) }.getOrNull() ?: return false
+        live = g
+        ActLog.add("AI", "live voice on")
+        g.onError = { msg -> ActLog.add("AI", "live: $msg") }
+        liveJobs += scope.launch {
+            g.state.collect { st ->
+                if (live !== g) return@collect
+                when (st) {
+                    LiveState.Connecting -> { state = XState.Thinking; hint = "" }
+                    LiveState.Listening -> {
+                        if (liveLine >= 0) setLine(liveLine, g.said.value.trim())
+                        liveLine = -1L; liveUserLine = -1L
+                        if (pendingOpen != null) { liveOpenIfDue(); return@collect }
+                        if (closeAfterSpeech) { closeAfterSpeech = false; stopLive(); onClose(); return@collect }
+                        if (g.muted) { state = XState.Idle; hint = "Mic off · tap to talk" } else { state = XState.Listening; hint = "" }
+                    }
+                    LiveState.Thinking -> state = XState.Thinking
+                    LiveState.Speaking -> state = XState.Speaking
+                    LiveState.Ended -> { stopLive(); state = XState.Idle; hint = "Tap to talk" }
+                    LiveState.Failed -> {
+                        // Live voice didn't work (key / network): the normal assistant carries on.
+                        stopLive(); state = XState.Idle
+                        Snack.show("Live voice couldn't start — using the normal assistant")
+                        if (ttsReady || !voiceOut) greet() else listen()
+                    }
+                }
+            }
+        }
+        liveJobs += scope.launch {
+            g.heard.collect { h ->
+                val t = h.trim()
+                if (live !== g || t.isEmpty()) return@collect
+                if (liveUserLine < 0) liveUserLine = addLine(true, t) else setLine(liveUserLine, t)
+            }
+        }
+        liveJobs += scope.launch {
+            // The words follow the voice; the core's glow follows the voice (or your mic while you talk).
+            while (live === g) {
+                val st = g.state.value
+                level = if (st == LiveState.Speaking) g.level() else if (g.muted) 0f else g.micLevel.value
+                if (st == LiveState.Speaking) {
+                    val t = g.spokenNow().trim()
+                    if (t.isNotEmpty()) { if (liveLine < 0) liveLine = addLine(false, t).also { liveIds += it } else setLine(liveLine, t) }
+                }
+                delay(50)
+            }
+        }
+        state = XState.Thinking
+        g.start("(The user just opened you. Say a short, natural hello" + (who?.let { " to $it by name" } ?: "") +
+            " and ask what they feel like watching" + (last?.let { ", maybe mention carrying on with $it" } ?: "") + ". One sentence.)")
+        return true
+    }
+
     // ── user actions ──
 
     /** Tap on the orb: talk / stop / interrupt. */
     fun tapOrb() {
+        live?.let { g ->
+            // Live voice: tap mutes / unmutes the mic (you can simply talk over it to interrupt).
+            g.muted = !g.muted
+            if (g.muted) { state = XState.Idle; hint = "Mic off · tap to talk" } else { hint = ""; state = if (g.state.value == LiveState.Speaking) XState.Speaking else XState.Listening }
+            return
+        }
         when (state) {
             XState.Listening -> {
                 val p = partial.trim()
@@ -618,6 +761,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
 
     /** Stop button: quiet now (no voice, no mic) until you tap to talk again. */
     fun stopAll() {
+        live?.let { g -> g.muted = true; state = XState.Idle; hint = "Mic off · tap to talk"; return }
         handsFree = false
         cancelAfter()
         pendingOpen = null
@@ -630,6 +774,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
 
     /** The keyboard opened: stop the mic so it doesn't fight with typing. */
     fun startTyping() {
+        live?.let { it.muted = true; hint = ""; return }
         handsFree = false
         cancelAfter()
         if (state == XState.Listening) { dropRecognizer(); state = XState.Idle }
@@ -937,7 +1082,8 @@ private fun UserBubble(text: String, live: Boolean) {
 @Composable
 private fun AssistantBubble(line: ChatLine, s: XSession, onOpen: (Meta) -> Unit) {
     val full = line.text
-    var shown by remember(line.id) { mutableIntStateOf(if (s.revealed.contains(line.id)) full.length else 0) }
+    var shown by remember(line.id) { mutableIntStateOf(if (s.revealed.contains(line.id) || line.id in s.liveIds) full.length else 0) }
+    if (line.id in s.liveIds) SideEffect { if (shown != full.length) shown = full.length }
     LaunchedEffect(line.id) {
         val t0 = android.os.SystemClock.elapsedRealtime()
         while (shown < full.length) {
@@ -1041,20 +1187,29 @@ internal fun AidenCore(state: XState, level: Float, size: Dp, onTap: () -> Unit)
             }
             // Listening: rings that open with your voice
             if (listenA > 0.01f) for (i in 0..2) drawCircle(Color(0xFFFF5A64).copy(alpha = (0.6f - 0.18f * i) * listenA), R * (0.62f + 0.08f * i + 0.18f * lvl * (i + 1) / 3f), c, style = Stroke(1.6.dp.toPx()))
-            // The heart
+            // The heart (small sizes); the big card shows the colour AI face instead (drawn below).
             val core = R * (0.36f + 0.03f * breathe + 0.06f * lvl)
-            drawCircle(Brush.radialGradient(listOf(Color(0xFFFFE3E5), Color(0xFFFF5A64), Color(0xFF9E0710)), Offset(c.x - core * 0.25f, c.y - core * 0.3f), core * 1.5f), core, c)
+            if (size < 80.dp) drawCircle(Brush.radialGradient(listOf(Color(0xFFFFE3E5), Color(0xFFFF5A64), Color(0xFF9E0710)), Offset(c.x - core * 0.25f, c.y - core * 0.3f), core * 1.5f), core, c)
             // Voice meter while speaking
-            if (speakA > 0.01f) for (i in -2..2) {
+            if (size < 80.dp && speakA > 0.01f) for (i in -2..2) {
                 val hgt = core * (0.25f + 0.45f * kotlin.math.abs(sin(phase + i * 0.9f))) * speakA
                 drawLine(Color.White, Offset(c.x + i * core * 0.22f, c.y - hgt), Offset(c.x + i * core * 0.22f, c.y + hgt), strokeWidth = 2.6.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
             }
             // Touch ripple
             if (ripple.value < 1f) drawCircle(Color(0xFFFF6B74).copy(alpha = 1f - ripple.value), core * (1f + 1.4f * ripple.value), c, style = Stroke(2.dp.toPx()))
         }
+        // The colour AI face in the middle of the card: it beats like a heart, faster and stronger while speaking, and
+        // swells with your voice while listening.
+        if (size >= 80.dp) {
+            val beatT by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "beat")
+            AiFace(Modifier.size(size * 0.62f).graphicsLayer {
+                val k = heartbeat(beatT) + 0.05f * speakA * kotlin.math.abs(sin(phase)) + 0.08f * lvl
+                scaleX = k; scaleY = k
+            })
+        }
         Box(Modifier.size(size * 0.62f).clip(CircleShape).quietClick { scope.launch { ripple.snapTo(0f); ripple.animateTo(1f, tween(700)) }; onTap() }, Alignment.Center) {
             val micA = (1f - speakA).coerceIn(0f, 1f)
-            if (state == XState.Idle) Icon(Icons.Default.Mic, "Talk", Modifier.size(size * 0.17f).graphicsLayer { alpha = micA }, tint = Color.White)
+            if (state == XState.Idle && size < 80.dp) Icon(Icons.Default.Mic, "Talk", Modifier.size(size * 0.17f).graphicsLayer { alpha = micA }, tint = Color.White)
         }
     }
 }

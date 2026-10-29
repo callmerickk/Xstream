@@ -12,7 +12,9 @@ import java.util.concurrent.ConcurrentHashMap
  *  AIRS  — "New episode in 4 days" / "Tomorrow" / "Today" when you've caught up with a show that's still airing,
  *  NONE  — finished the last episode there is.
  */
-data class CwBadge(val kind: Int, val text: String, val nextId: String? = null) {
+data class CwBadge(val kind: Int, val text: String, val nextId: String? = null,
+    /** The next episode's picture and name (Continue Watching shows it as "Up next"). */
+    val nextImage: String? = null, val nextTitle: String? = null) {
     companion object { const val LEFT = 0; const val NEXT = 1; const val AIRS = 2; const val NONE = 3 }
 }
 
@@ -29,7 +31,7 @@ suspend fun AppViewModel.seriesMeta(id: String): Meta? {
 fun Progress.fraction(): Float = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 fun Progress.isSeries(): Boolean = key.contains(":")
 /** An episode watched to (about) the end — Continue Watching then points at the next one. */
-fun Progress.finished(): Boolean = isSeries() && fraction() >= 0.9f
+fun Progress.finished(): Boolean = isSeries() && fraction() >= 0.95f
 
 fun cwTimeLeft(p: Progress): String {
     val left = ((p.durationMs - p.positionMs).coerceAtLeast(0L) / 60_000L).toInt()
@@ -65,7 +67,8 @@ suspend fun AppViewModel.cwBadge(p: Progress): CwBadge {
         }
         return CwBadge(CwBadge.AIRS, txt, next.id)
     }
-    return CwBadge(CwBadge.NEXT, "Next · S${next.season} E${next.episode}", next.id)
+    return CwBadge(CwBadge.NEXT, "Next · S${next.season} E${next.episode}", next.id, next.thumbnail ?: meta.background ?: p.image,
+        "S${next.season} E${next.episode}" + ((next.name ?: next.title)?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""))
 }
 
 /** The title behind a Continue Watching entry (to open its page). */

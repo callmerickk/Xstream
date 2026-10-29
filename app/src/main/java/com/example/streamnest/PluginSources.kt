@@ -40,6 +40,24 @@ object PluginSources {
     fun apiKey(api: MainAPI): String = "${api.javaClass.name}|${api.name}|${runCatching { api.mainUrl }.getOrDefault("")}"
     private fun words(s: String) = s.lowercase().replace(Regex("[^a-z0-9 ]"), " ").split(" ").filter { it.isNotBlank() && it !in setOf("the", "a", "an", "of", "and") }.toSet()
     private fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
+    /** The name without "and" / "&" / "the": "Pritam Pedro" = "Pritam and Pedro" = "Pritam & Pedro". */
+    private fun core(s: String) = s.lowercase().replace("&", " ").replace(Regex("[^a-z0-9 ]"), " ").split(" ")
+        .filter { it.isNotBlank() && it != "and" && it != "the" }.joinToString("")
+
+    /** "This site doesn't have this title" (it searched and nothing matched), kept 3 hours: not asked again 20 times. */
+    private val noTitle = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    /**
+     * Providers whose search always comes back empty (browse-only shelves like Disney / Marvel / Star Wars / Pixar):
+     * after 6 empty searches in a row they're left out for 3 days. One hit resets it.
+     */
+    private val emptyRun = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private fun dead(k: String): Boolean = (CsPlugins.prefsOrNull()?.getLong("dead_$k", 0L) ?: 0L) > System.currentTimeMillis()
+    private fun noteEmpty(k: String, empty: Boolean) {
+        if (!empty) { if (emptyRun.remove(k) != null) CsPlugins.prefsOrNull()?.edit()?.remove("dead_$k")?.apply(); return }
+        val n = (emptyRun[k] ?: 0) + 1; emptyRun[k] = n
+        if (n >= 6) { CsPlugins.prefsOrNull()?.edit()?.putLong("dead_$k", System.currentTimeMillis() + 3 * 86_400_000L)?.apply(); emptyRun.remove(k)
+            ActLog.add("CSPLAY", "${k.substringAfter('|').substringBefore('|')}: search always empty — left out for 3 days") }
+    }
     private fun yearOf(r: SearchResponse): Int? = (r as? MovieSearchResponse)?.year ?: (r as? TvSeriesSearchResponse)?.year
         ?: Regex("\\b(19|20)\\d{2}\\b").find(r.name)?.value?.toIntOrNull()
 
@@ -51,7 +69,7 @@ object PluginSources {
     fun ranked(found: List<SearchResponse>, q: String, wantYear: Int?, series: Boolean, season: Int?): List<SearchResponse> =
         found.map { r ->
             val clean = CsTester.cleanTitle(r.name)
-            var sc = if (norm(clean) == norm(q.replace("&", " and "))) 1.0 else {
+            var sc = if (norm(clean) == norm(q.replace("&", " and ")) || core(clean) == core(q)) 1.0 else {
                 val a = words(clean); val b = words(q)
                 if (a.isEmpty() || b.isEmpty()) 0.0 else a.intersect(b).size.toDouble() / a.union(b).size * 0.9
             }
@@ -105,7 +123,9 @@ object PluginSources {
     suspend fun linksFrom(api: MainAPI, name: String, year: Int?, series: Boolean, season: Int?, episode: Int?,
                           onLink: ((StreamItem) -> Unit)? = null): List<StreamItem> {
         fun log(s: String) = ActLog.add("CSPLAY", "${api.name}: $s")
-        if (apiKey(api) in noSearch) return emptyList()          // a browse-only provider (Disney / Marvel shelves…)
+        if (apiKey(api) in noSearch || dead(apiKey(api))) return emptyList()          // a browse-only provider (Disney / Marvel shelves…)
+        val noKey = "${apiKey(api)}|${core(name)}|$year|$series"
+        noTitle[noKey]?.let { if (System.currentTimeMillis() - it < 3 * 3_600_000L) return emptyList() else noTitle.remove(noKey) }
         // The show's page (search + load) is kept 15 minutes: any other episode then needs only its links (~0.5 s),
         // so episode 4 or 10 starts as fast as episode 1.
         val pageKey = "${apiKey(api)}|$name|$series|$year|${if (series) season else ""}"
@@ -120,8 +140,9 @@ object PluginSources {
         } catch (e: NotImplementedError) { noSearch += apiKey(api); log("has no search — skipped from now on"); null
         } catch (e: Throwable) { log("search failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
         if (found == null) { log("search gave nothing (timeout or no answer)"); return emptyList() }
+        noteEmpty(apiKey(api), found.isEmpty())
         val cands = ranked(found, name, year, series, season)
-        if (cands.isEmpty()) { log("${found.size} results, none matched \"$name\"" + found.take(4).joinToString("; ", " — top: ") { it.name.take(60) }); return emptyList() }
+        if (cands.isEmpty()) { noTitle[noKey] = System.currentTimeMillis(); log("${found.size} results, none matched \"$name\"" + found.take(4).joinToString("; ", " — top: ") { it.name.take(60) }); return emptyList() }
         // The page tells the real year: a same-name show from another year is skipped for the next result.
         var hit = cands.first()
         var lr: LoadResponse? = null
@@ -239,7 +260,7 @@ object PluginSources {
         return d.await()
     }
     fun forget(id: String) { answers.keys.filter { it.endsWith("|$id") }.forEach { answers.remove(it) } }
-    fun forgetAll() { answers.clear() }
+    fun forgetAll() { answers.clear(); noTitle.clear() }
     private val metas = java.util.concurrent.ConcurrentHashMap<String, Meta>()
     /** The title's name and year (Cinemeta) — plugins search by name. */
     suspend fun metaFor(type: String, id: String): Meta? {
@@ -263,7 +284,7 @@ object PluginSources {
         val season = id.split(":").getOrNull(1)?.toIntOrNull()
         val episode = id.split(":").getOrNull(2)?.toIntOrNull()
         val year = meta.releaseInfo?.take(4)?.toIntOrNull()
-        fun wanted(name: String) = (only == null || name in only || (MB_ANY in only && name.contains("moviebox", true)) || (VEGA_ANY in only && name.contains("vega", true)) || (OTT_ANY in only && isOttName(name))) && (except == null || name !in except)
+        fun wanted(name: String) = (only == null || name in only || (MB_ANY in only && name.contains("moviebox", true)) || (VEGA_ANY in only && isVegaName(name)) || (OTT_ANY in only && isOttName(name))) && (except == null || name !in except)
         val acc = ArrayList<StreamItem>(); val lock = Mutex()
         val jobs = ArrayList<kotlinx.coroutines.Job>()
         coroutineScope {

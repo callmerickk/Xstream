@@ -43,7 +43,7 @@ val BrandFont = FontFamily(
 fun StreamNestTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = darkColorScheme(
-            primary = Accent, onPrimary = OnAccent,
+            primary = BtnColor, onPrimary = OnBtn,
             background = Bg, surface = Bg, surfaceVariant = Surface1,
             onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = Color(0xFFB6BDCC),
         ),

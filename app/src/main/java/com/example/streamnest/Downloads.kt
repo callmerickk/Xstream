@@ -47,6 +47,8 @@ import java.io.File
 data class Dl(
     val dmId: Long, val key: String, val title: String, val epLabel: String? = null, val image: String? = null,
     val type: String = "movie", val metaId: String = "", val file: String = "", val quality: String = "", val at: Long = 0,
+    /** The app's own downloads (dmId < 0): the file's address, to pause and resume it. */
+    val url: String = "",
 )
 
 /** Live state of a download from Android's download manager. */
@@ -65,6 +67,7 @@ object Downloads {
         if (prefs != null) return
         prefs = ctx.applicationContext.getSharedPreferences("downloads", Context.MODE_PRIVATE)
         list.value = runCatching { Api.json.decodeFromString<List<Dl>>(prefs?.getString("all", null) ?: "[]") }.getOrDefault(emptyList())
+        DlEngine.resumeAll(ctx.applicationContext, list.value)
     }
 
     private fun save(l: List<Dl>) {
@@ -74,7 +77,7 @@ object Downloads {
 
     private fun dm(ctx: Context) = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
 
-    fun status(ctx: Context, d: Dl): DlStatus = runCatching {
+    fun status(ctx: Context, d: Dl): DlStatus = if (d.dmId < 0) DlEngine.state(ctx, d).let { DlStatus(it.done, it.failed, it.paused, it.bytes, it.total) } else runCatching {
         dm(ctx).query(DownloadManager.Query().setFilterById(d.dmId)).use { c ->
             if (!c.moveToFirst()) return@use DlStatus(File(d.file).exists(), !File(d.file).exists(), false, 0, 0)
             val st = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
@@ -94,7 +97,7 @@ object Downloads {
     fun has(key: String): Boolean = list.value.any { it.key == key }
 
     fun remove(ctx: Context, d: Dl) {
-        runCatching { dm(ctx).remove(d.dmId) }
+        if (d.dmId < 0) DlEngine.cancel(ctx, d) else runCatching { dm(ctx).remove(d.dmId) }
         runCatching { File(d.file).delete() }
         save(list.value.filter { it.dmId != d.dmId })
     }
@@ -123,25 +126,14 @@ object Downloads {
                 .takeIf { it.length in 2..4 && it.all(Char::isLetterOrDigit) } ?: "mkv"
             val name = (target.title + (target.epLabel?.let { " $it" } ?: "")).replace(Regex("[^A-Za-z0-9 ._-]"), "").trim().take(60)
                 .ifBlank { "video" } + "-" + System.currentTimeMillis() % 100000 + "." + ext
-            val id = withContext(Dispatchers.Main) {
-                runCatching {
-                    val req = DownloadManager.Request(Uri.parse(url))
-                        .setTitle(target.title + (target.epLabel?.let { " · $it" } ?: ""))
-                        .setDescription("Xstream download")
-                        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                        .setDestinationInExternalFilesDir(ctx, Environment.DIRECTORY_MOVIES, name)
-                        .setAllowedOverMetered(true)
-                        .setAllowedOverRoaming(true)
-                    val h = StreamHeaders.forUrl(url)
-                    h.forEach { (k, v) -> req.addRequestHeader(k, v) }
-                    if (h.keys.none { it.equals("User-Agent", true) }) req.addRequestHeader("User-Agent", PlayerUserAgent)
-                    dm(ctx).enqueue(req)
-                }.getOrNull()
-            } ?: continue
+            // The app downloads it itself (pause / resume / speed); the old system downloads keep working as before.
+            StreamHeaders.remember(s)
             val file = File(ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES), name).absolutePath
-            save(list.value + Dl(id, target.videoId, target.title, target.epLabel, target.image ?: meta.poster, meta.type, meta.id, file,
-                Prepare.qualityName(s.resolution()), System.currentTimeMillis()))
-            return "Downloading ${Prepare.qualityName(s.resolution())} · ${"%.1f".format(pr.size / 1_073_741_824.0)} GB — see Downloads (the ↓ button on Home)"
+            val d = Dl(-System.currentTimeMillis(), target.videoId, target.title, target.epLabel, target.image ?: meta.poster, meta.type, meta.id, file,
+                Prepare.qualityName(s.resolution()), System.currentTimeMillis(), url = url)
+            save(list.value + d)
+            DlEngine.start(ctx, d)
+            return "Downloading ${Prepare.qualityName(s.resolution())} · ${"%.1f".format(pr.size / 1_073_741_824.0)} GB — check Downloads (the ↓ button on Home)"
         }
         return "No downloadable file found (only streaming playlists or the servers refused)"
     }
@@ -161,13 +153,18 @@ fun DownloadsSection(onPlay: (Screen.Player) -> Unit) {
             Text("Downloads", Modifier.weight(1f), fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
             Text("%.1f GB".format(Downloads.usedBytes() / 1_073_741_824.0), fontSize = 13.sp, color = Color(0xFF9AA3B5))
         }
+        val liveNow by DlEngine.live.collectAsState()
         items.asReversed().forEach { d ->
-            val st = remember(d.dmId, tick) { Downloads.status(ctx, d) }
+            val st = remember(d.dmId, tick, liveNow[d.dmId]) { Downloads.status(ctx, d) }
+            var details by remember(d.dmId) { mutableStateOf(false) }
+            Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF15161C))) {
             Row(
-                Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF15161C))
-                    .clickable(enabled = st.done) {
-                        onPlay(Screen.Player(d.title + (d.epLabel?.let { "  $it" } ?: ""), Uri.fromFile(File(d.file)).toString(), emptyList(),
+                Modifier.fillMaxWidth()
+                    .clickable {
+                        // Finished: play it. Still downloading: open its details (size, done, speed, pause / resume).
+                        if (st.done) onPlay(Screen.Player(d.title + (d.epLabel?.let { "  $it" } ?: ""), Uri.fromFile(File(d.file)).toString(), emptyList(),
                             key = d.key, image = d.image, type = d.type, source = "Downloaded · ${d.quality}", addon = "Downloads"))
+                        else details = !details
                     }
                     .padding(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -181,7 +178,7 @@ fun DownloadsSection(onPlay: (Screen.Player) -> Unit) {
                         st.failed -> Text("Failed — delete and try again", fontSize = 12.sp, color = Color(0xFFFF8A80))
                         else -> {
                             val f = if (st.total > 0) st.bytes.toFloat() / st.total else 0f
-                            Text((if (st.paused) "Waiting for network · " else "Downloading · ") + "${(f * 100).toInt()}%" +
+                            Text((if (st.paused) (if (d.dmId < 0) "Paused · " else "Waiting for network · ") else "Downloading · ") + "${(f * 100).toInt()}%" +
                                 (if (st.total > 0) " of %.1f GB".format(st.total / 1_073_741_824.0) else ""), fontSize = 12.sp, color = Color(0xFF9AA3B5))
                             LinearProgressIndicator(progress = { f }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(3.dp).clip(RoundedCornerShape(2.dp)))
                         }
@@ -193,6 +190,35 @@ fun DownloadsSection(onPlay: (Screen.Player) -> Unit) {
                 Box(Modifier.padding(start = 8.dp).size(40.dp).clip(CircleShape).clickable { Downloads.remove(ctx, d) }, Alignment.Center) {
                     Icon(Icons.Default.Delete, "Delete download", Modifier.size(20.dp), tint = Color(0xFFB6BDCC))
                 }
+            }
+            if (details && !st.done) {
+                val lv = liveNow[d.dmId]
+                val speed = lv?.speed ?: 0L
+                val left = if (speed > 0 && st.total > 0) (st.total - st.bytes) / speed else -1L
+                Column(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        @Composable fun kv(k: String, v: String, m: Modifier) = Column(m.clip(RoundedCornerShape(10.dp)).background(Color(0x0FFFFFFF)).padding(8.dp)) {
+                            Text(k.uppercase(), fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF9AA3B5), letterSpacing = 0.8.sp)
+                            Text(v, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        kv("File size", if (st.total > 0) "%.2f GB".format(st.total / 1_073_741_824.0) else "—", Modifier.weight(1f))
+                        kv("Downloaded", "%.2f GB".format(st.bytes / 1_073_741_824.0), Modifier.weight(1f))
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        @Composable fun kv(k: String, v: String, m: Modifier) = Column(m.clip(RoundedCornerShape(10.dp)).background(Color(0x0FFFFFFF)).padding(8.dp)) {
+                            Text(k.uppercase(), fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF9AA3B5), letterSpacing = 0.8.sp)
+                            Text(v, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        kv("Speed", if (st.paused) "Paused" else fmtSpeed(speed), Modifier.weight(1f))
+                        kv("Time left", if (left < 0 || st.paused) "—" else if (left >= 3600) "${left / 3600} h ${(left % 3600) / 60} min" else "${(left / 60).coerceAtLeast(1)} min", Modifier.weight(1f))
+                    }
+                    if (d.dmId < 0) Text(if (st.paused || st.failed) "▶  Resume" else "❚❚  Pause",
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(50)).background(Color(0xFFE50914))
+                            .clickable { if (st.paused || st.failed) DlEngine.start(ctx, d) else DlEngine.pause(ctx, d); tick++ }.padding(vertical = 11.dp),
+                        fontSize = 14.sp, fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    else Text("Started before this update: it can't be paused, it finishes by itself.", fontSize = 11.5.sp, color = Color(0xFF9AA3B5))
+                }
+            }
             }
         }
     }
@@ -216,6 +242,9 @@ fun DownloadsButton(onPlay: (Screen.Player) -> Unit) {
         }
     }
     var open by remember { mutableStateOf(false) }
+    // The download notification was tapped: open this bubble.
+    val req by DlEngine.openReq.collectAsState()
+    LaunchedEffect(req) { if (req > 0) { open = true; DlEngine.openReq.value = 0 } }
     val blink = androidx.compose.animation.core.rememberInfiniteTransition(label = "dl")
     val a by blink.animateFloat(1f, 0.25f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(650), androidx.compose.animation.core.RepeatMode.Reverse), label = "dlA")
     Box {

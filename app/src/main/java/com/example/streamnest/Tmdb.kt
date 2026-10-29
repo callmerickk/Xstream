@@ -1,6 +1,7 @@
 package com.example.streamnest
 
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -242,12 +243,15 @@ object HindiTrending {
     private val cache = java.util.concurrent.ConcurrentHashMap<String, List<Meta>>()
     private val lock = kotlinx.coroutines.sync.Mutex()
 
+    fun cachedOrNull(kind: String): List<Meta>? = cache[kind] ?: if (empty.contains(kind)) emptyList() else null
+    private val empty = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     suspend fun list(kind: String): List<Meta> {
         cache[kind]?.let { return it }
         return lock.withLock {
             cache[kind]?.let { return@withLock it }
             val r = runCatching { fetch(kind) }.getOrDefault(emptyList())
-            if (r.isNotEmpty()) cache[kind] = r
+            if (r.isNotEmpty()) cache[kind] = r else empty += kind
             r
         }
     }
@@ -284,5 +288,59 @@ object HindiTrending {
         val out = ArrayList<Meta>()
         items.forEachIndexed { i, m -> if (i % 3 == 1 && add.hasNext()) out += add.next(); out += m }
         return out
+    }
+}
+
+/**
+ * Films still only in cinemas (no official web, Blu-ray or TV release anywhere yet) stay off Home; search still finds
+ * them. Checked on TMDB's release dates, newest films only, remembered on the phone (a film that is out stays known;
+ * one still in cinemas is checked again after 2 days).
+ */
+object CinemaOnly {
+    val hidden = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
+    private var prefs: android.content.SharedPreferences? = null
+    private val running = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private fun p(ctx: android.content.Context) = prefs ?: ctx.getSharedPreferences("cinema_only", android.content.Context.MODE_PRIVATE).also { prefs = it }
+
+    fun load(ctx: android.content.Context) {
+        val now = System.currentTimeMillis()
+        hidden.value = p(ctx).all.mapNotNull { (k, v) -> (v as? String)?.takeIf { it.startsWith("cinema:") && now - (it.removePrefix("cinema:").toLongOrNull() ?: 0) < 2 * 86_400_000L }?.let { k } }.toSet()
+    }
+
+    suspend fun check(vm: AppViewModel, metas: List<Meta>) {
+        val key = vm.tmdbKey(); if (key.isEmpty() || !running.compareAndSet(false, true)) return
+        try {
+            val pr = p(vm.appContext)
+            val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+            val now = System.currentTimeMillis()
+            val todo = metas.asSequence().filter { it.type == "movie" && it.id.startsWith("tt") }
+                .filter { m -> (m.releaseInfo?.take(4)?.toIntOrNull() ?: year) >= year - 1 }
+                .map { it.id.substringBefore(":") }.distinct()
+                .filter { id -> val v = pr.getString(id, null); v == null || (v.startsWith("cinema:") && now - (v.removePrefix("cinema:").toLongOrNull() ?: 0) > 2 * 86_400_000L) }
+                .take(120).toList()
+            val sem = kotlinx.coroutines.sync.Semaphore(5)
+            kotlinx.coroutines.coroutineScope {
+                todo.forEach { id -> launch(kotlinx.coroutines.Dispatchers.IO) { sem.acquire(); try { runCatching { verdict(key, id) }.getOrNull()?.let { v ->
+                    pr.edit().putString(id, if (v) "web" else "cinema:$now").apply()
+                    hidden.value = if (v) hidden.value - id else hidden.value + id
+                } } finally { sem.release() } } }
+            }
+        } finally { running.set(false) }
+    }
+
+    /** true = out on web / disc / TV somewhere (or not a cinema release at all); false = only in cinemas so far. */
+    private suspend fun verdict(key: String, imdb: String): Boolean? {
+        val f = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/find/$imdb?api_key=$key&external_source=imdb_id")).jsonObject
+        val id = f.arr("movie_results").firstOrNull()?.str("id") ?: return true
+        val rd = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/movie/$id/release_dates?api_key=$key")).jsonObject
+        val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+        val dates = rd.arr("results").flatMap { it.arr("release_dates") }.mapNotNull { d ->
+            val t = (d["type"] as? JsonPrimitive)?.intOrNull ?: return@mapNotNull null
+            t to (d.str("release_date")?.take(10) ?: return@mapNotNull null)
+        }.filter { it.second <= today }
+        if (dates.isEmpty()) return null
+        if (dates.any { it.first >= 4 }) return true
+        return !dates.any { it.first == 2 || it.first == 3 }
     }
 }

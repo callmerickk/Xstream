@@ -113,7 +113,7 @@ fun WatchCharts(onOpenKey: (String) -> Unit) {
                     if (totals[i] > 0) Text(dur(totals[i]), fontSize = 8.5.sp, color = if (on) Color.White else ChartMuted, maxLines = 1)
                     Spacer(Modifier.height(3.dp))
                     Box(Modifier.fillMaxWidth().height((6 + 84 * totals[i] / max).toInt().dp).clip(RoundedCornerShape(topStart = 7.dp, topEnd = 7.dp, bottomStart = 3.dp, bottomEnd = 3.dp))
-                        .background(if (on) Accent else Color(0xFF2E3442)))
+                        .background(if (on) BtnColor else Color(0xFF2E3442)))
                     Text(SimpleDateFormat("EEE", Locale.getDefault()).format(d).take(1), Modifier.padding(top = 5.dp), fontSize = 10.sp, color = ChartMuted)
                 }
             }

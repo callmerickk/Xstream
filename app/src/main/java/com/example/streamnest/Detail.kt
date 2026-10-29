@@ -223,6 +223,8 @@ fun DetailScreen(
 
     /** Play button / episode tap: Quick Start or auto modes go straight to the player, manual opens the sources page. */
     fun start(t: SourceTarget, forceSources: Boolean = false, fromStart: Boolean = false) {
+        // Not out yet: say when it airs instead of searching every server for nothing.
+        episodes.firstOrNull { it.id == t.videoId }?.let { ep -> airsIn(ep.released)?.let { Snack.show("${t.epLabel ?: "This episode"} · $it"); return } }
         // Downloaded: play the file on the phone (no internet needed).
         if (!forceSources) Downloads.readyFile(ctx, t.videoId)?.let { f ->
             onPlay(Screen.Player(t.title, android.net.Uri.fromFile(f).toString(), emptyList(), key = t.videoId, image = t.image ?: meta.background ?: meta.poster,
@@ -889,9 +891,7 @@ private fun EpisodeRow(ep: Video, watched: Boolean, frac: Float, isNext: Boolean
             (ep.overview ?: ep.description)?.takeIf { it.isNotBlank() }?.let {
                 Text(it, fontSize = 12.sp, color = Color(0xFF9AA3B5), maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 16.sp)
             }
-            ep.released?.take(10)?.let { r ->
-                if (r > java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())) Text("Coming $r", fontSize = 11.sp, color = Accent)
-            }
+            airsIn(ep.released)?.let { Text(it, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Accent) }
         }
     }
 }
@@ -921,5 +921,24 @@ private fun PrepDot(st: Prepared, modifier: Modifier, onLong: () -> Unit) {
     Box(modifier.size(28.dp).combinedClickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null,
         onClick = {}, onLongClick = onLong), Alignment.Center) {
         Box(Modifier.size(11.dp).graphicsLayer { alpha = if (busy) a else 1f }.clip(CircleShape).background(Color(0x8C000000)).padding(1.5.dp).clip(CircleShape).background(color))
+    }
+}
+
+/**
+ * "Airs in 3 days" / "Airs in 5 h" / "Airs in 40 min" for an episode that isn't out yet (null once it is out).
+ * The release time is used when the catalogue gives one, else the start of that day.
+ */
+fun airsIn(released: String?): String? {
+    val r = released?.trim()?.takeIf { it.length >= 10 } ?: return null
+    val at = (if (r.length >= 19) runCatching { java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.parse(r.take(19))?.time }.getOrNull() else null)
+        ?: runCatching { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.parse(r.take(10))?.time }.getOrNull()
+        ?: return null
+    val left = at - System.currentTimeMillis()
+    if (left <= 0) return null
+    val mins = left / 60_000
+    return when {
+        mins < 60 -> "Airs in ${mins.coerceAtLeast(1)} min"
+        mins < 24 * 60 -> "Airs in ${mins / 60} h"
+        else -> { val d = ((mins + 24 * 60 - 1) / (24 * 60)); if (d == 1L) "Airs tomorrow" else "Airs in $d days" }
     }
 }

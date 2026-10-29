@@ -27,6 +27,7 @@
         android:theme="@style/Theme.Xstream">
         <!-- Xstream VPN (WireGuard): only Xstream's own traffic, only while switched on in Network & DNS. -->
         <service android:name=".UpdateService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".DlService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service
             android:name="com.wireguard.android.backend.GoBackend$VpnService"
             android:exported="false"

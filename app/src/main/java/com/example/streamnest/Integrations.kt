@@ -42,6 +42,22 @@ import java.io.File
 // ───────────── AI button logo (user's own transparent image) ─────────────
 
 fun AppViewModel.aiLogoFile(): File = File(appContext.filesDir, "ai_logo.img")
+/** The AI face: the chat card, "picked for you" posters and the AI's cards on the deck (the button has its own logo). */
+fun AppViewModel.aiFaceFile(): File = File(appContext.filesDir, "ai_face.img")
+
+/** The colour AI face (card, Aiden picked posters): your own uploaded AI picture when you set one, else the built-in face. */
+@Composable
+fun AiFace(modifier: Modifier) {
+    val vm = Public.vm
+    val ver = vm?.imgVersion?.collectAsStateWithLifecycle()?.value ?: 0
+    val shared by AppLook.aiFace.collectAsState()
+    val synced = shared.ifBlank { vm?.texts?.value?.get("aiFaceData").orEmpty() }.takeIf { it != "none" }.orEmpty()
+    LaunchedEffect(synced) { if (synced.isNotBlank() && vm != null) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vm.syncAiFace(synced) } }
+    val file = remember(ver) { vm?.aiFaceFile()?.takeIf { it.exists() && it.length() > 0 } }
+    if (file != null) AsyncImage(ImageRequest.Builder(LocalContext.current).data(file).memoryCacheKey("ai_face_$ver").diskCachePolicy(CachePolicy.DISABLED).build(),
+        "AI", modifier.clip(androidx.compose.foundation.shape.CircleShape), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+    else androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(R.drawable.ai_face_color), "AI", modifier, contentScale = androidx.compose.ui.layout.ContentScale.Fit)
+}
 
 /** The logo shown inside the AI button: a picked image, a link, or null (built-in sparkle). */
 @Composable
@@ -61,7 +77,8 @@ fun AiLogo(vm: AppViewModel, modifier: Modifier) {
             null, modifier, contentScale = ContentScale.Fit,
         )
         url.startsWith("http") -> AsyncImage(url, null, modifier, contentScale = ContentScale.Fit)
-        else -> Icon(Icons.Default.AutoAwesome, null, modifier, tint = Color.White)
+        // No logo uploaded: the white AI face.
+        else -> androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(R.drawable.ai_face_mono), null, modifier, contentScale = ContentScale.Fit)
     }
 }
 
@@ -90,6 +107,9 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean
     val pickLogo = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u: Uri? ->
         if (u != null) scope.launch { vm.setAiLogo(u) }
     }
+    val pickFace = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { u: Uri? ->
+        if (u != null) scope.launch { vm.setAiFace(u) }
+    }
 
     Column(Modifier.fillMaxSize().pageScroll().navigationBarsPadding().padding(bottom = 40.dp)) {
         PageHeader("Defaults for everyone", onBack)
@@ -100,7 +120,7 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean
                     Text("Set the keys, the AI's logo (use a link) and its voice here, then publish. Every Xstream user gets them when they sign in.", fontSize = 13.sp, color = Muted)
                     Button({ msg = "Publishing…"; scope.launch { msg = DevDefaults.publish(vm) ?: "Published ✓ — everyone gets these on their next start" } },
                         Modifier.padding(top = 10.dp).fillMaxWidth(), shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) { Text("Publish for everyone", fontWeight = FontWeight.SemiBold) }
+                        colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn)) { Text("Publish for everyone", fontWeight = FontWeight.SemiBold) }
                     msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Muted) }
                 }
             }
@@ -115,9 +135,9 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean
                 Row(Modifier.padding(top = 10.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AiProviders.forEach { p ->
                         val on = p.id == provider.id
-                        Text(p.label, Modifier.clip(RoundedCornerShape(16.dp)).background(if (on) Accent else Color(0xFF2A2A30))
+                        Text(p.label, Modifier.clip(RoundedCornerShape(16.dp)).background(if (on) BtnColor else Color(0xFF2A2A30))
                             .clickable { vm.setText("aiProvider", p.id); testResult = null }.padding(horizontal = 12.dp, vertical = 9.dp),
-                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) OnAccent else Color.White, maxLines = 1, softWrap = false)
+                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) OnBtn else Color.White, maxLines = 1, softWrap = false)
                     }
                 }
                 Text(provider.note, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Muted)
@@ -142,7 +162,7 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean
                             modelText = vm.texts.value["aiModel_${provider.id}"] ?: modelText // may have been switched to a model your key can use
                         }
                     }, enabled = keyText.isNotBlank() && !testing, shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) {
+                        colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn)) {
                         Text(if (testing) "Testing…" else "Save & test", fontWeight = FontWeight.SemiBold)
                     }
                     TextButton({ runCatching { uri.openUri(provider.keyPage) } }) { Text("Get a free key", color = Color.White) }
@@ -174,6 +194,17 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean
                         // A logo by link goes to every account too (each phone downloads it once).
                         if (Public.dev && logoUrl.startsWith("http")) AppLook.publishAi(logo = "url:$logoUrl")
                     }) { Text("Save") } }, keyboardOptions = tvKeyboard())
+            }
+            RowDivider(20.dp)
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+                Text("AI face", fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                Text("A picture or GIF for the chat card, the \"picked for you\" posters and the AI's cards at the top of Home. The button above keeps its own logo.", fontSize = 13.sp, color = Muted)
+                Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF1A0A0D)), Alignment.Center) { AiFace(Modifier.size(46.dp)) }
+                    Spacer(Modifier.width(12.dp))
+                    TextButton({ pickFace.launch(arrayOf("image/*")) }) { Text("Choose image") }
+                    TextButton({ vm.clearAiFace(); if (Public.dev) AppLook.publishAi(face = "none") }) { Text("Remove", color = Color(0xFFFF6B6B)) }
+                }
             }
             if (!BuildConfig.IS_TV) { RowDivider(20.dp); AiVoicePicker(vm) }
             RowDivider(20.dp)

@@ -1,6 +1,7 @@
 package com.example.streamnest
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -117,7 +118,7 @@ private fun SettingsRootPage(vm: AppViewModel, onClose: () -> Unit, open: (Strin
                 RowDivider()
                 SettingRow(Icons.Default.PlayArrow, "Playback", "Player, subtitles, and auto-play.") { open("playback") }
                 RowDivider()
-                SettingRow(Icons.Default.Dns, "Network & DNS", DnsProviders[texts["dns"] ?: "system"]?.first ?: "System default") { open("network") }
+                SettingRow(Icons.Default.Dns, "Network & DNS", DnsProviders[texts["dns"] ?: "cloudflare"]?.first ?: "System default") { open("network") }
                 RowDivider()
                 SettingRow(Icons.Default.Link, "Integrations", "Debrid services: Real-Debrid, AllDebrid, Premiumize, TorBox.") { open("integrations") }
                 RowDivider()
@@ -169,14 +170,18 @@ private fun hex(c: Color) = String.format("#%06X", c.toArgb() and 0xFFFFFF)
 
 private fun applyTheme(vm: AppViewModel, name: String, c1: Color, c2: Color) {
     vm.setText("theme", name)
+    // A built-in theme: the standard background and buttons in the accent (a saved custom theme may have changed them).
+    vm.setText("background", Defaults["background"] ?: "#07080C")
+    vm.setText("btnColor", ""); vm.setText("btnText", "")
     vm.setText("accent", hex(c1))
     vm.setText("accent2", hex(c2))
     vm.setText("deckTint", hex(lerp(Color(0xFF0B0F1A), c1, 0.22f)))
 }
 
 @Composable
-private fun ThemeDot(name: String, c1: Color, c2: Color, enhanced: Boolean, custom: Boolean, selected: Boolean, onClick: () -> Unit) {
-    Column(Modifier.width(96.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun ThemeDot(name: String, c1: Color, c2: Color, enhanced: Boolean, custom: Boolean, selected: Boolean, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
+    Column(Modifier.width(96.dp).clip(RoundedCornerShape(16.dp)).then(Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)).padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             Modifier.size(74.dp).then(if (selected) Modifier.border(2.dp, Color.White, RoundedCornerShape(18.dp)) else Modifier).padding(6.dp),
             Alignment.Center,
@@ -201,6 +206,12 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
     val cur = texts["theme"] ?: Defaults["theme"]!!
     var navDialog by remember { mutableStateOf(false) }
     var customDialog by remember { mutableStateOf(false) }
+    // Create / edit a named theme (full page).
+    var editor by remember { mutableStateOf<CustomTheme?>(null) }
+    var editorNew by remember { mutableStateOf(false) }
+    if (editorNew || editor != null) { ThemeEditor(vm, editor) { editor = null; editorNew = false }; return }
+    val mine = remember(texts["customThemes"]) { CustomThemes.list(vm) }
+    var menuFor by remember { mutableStateOf<CustomTheme?>(null) }
     val navStyle = texts["navStyle"] ?: "adaptive"
     val navNames = linkedMapOf("adaptive" to "Adaptive", "expanded" to "Always Expanded", "compact" to "Always Compact")
 
@@ -222,12 +233,34 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
                     row.forEach { name ->
                         val th = enhanced.firstOrNull { it.name == name }
                         if (th != null) ThemeDot(th.name, Color(th.c1), Color(th.c2), true, false, cur == th.name) { applyTheme(vm, th.name, Color(th.c1), Color(th.c2)) }
-                        else ThemeDot("Custom", Palette.accent, Palette.accent2, false, true, cur == "Custom") { customDialog = true }
+                        else ThemeDot("Create", Palette.accent, Palette.accent2, false, true, false) { editorNew = true }
                     }
                     repeat(3 - row.size) { Spacer(Modifier.width(96.dp)) }
                 }
             }
             Spacer(Modifier.height(12.dp))
+            // The person's own themes: tap to use, hold to edit or delete. Saved with their account.
+            if (mine.isNotEmpty()) {
+                HorizontalDivider(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = Color(0x12FFFFFF))
+                Text("Your themes", Modifier.padding(start = 20.dp, top = 6.dp, bottom = 4.dp), fontSize = 15.sp, color = Muted, letterSpacing = 1.sp)
+                mine.chunked(3).forEach { row ->
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        row.forEach { th ->
+                            Box {
+                                ThemeDot(th.name, parseColor(th.accent) ?: Accent, parseColor(th.button) ?: Accent, false, false, cur == "custom:" + th.name,
+                                    onLongClick = { menuFor = th }) { CustomThemes.apply(vm, th) }
+                                androidx.compose.material3.DropdownMenu(menuFor == th, { menuFor = null }) {
+                                    androidx.compose.material3.DropdownMenuItem({ Text("Use") }, { menuFor = null; CustomThemes.apply(vm, th) })
+                                    androidx.compose.material3.DropdownMenuItem({ Text("Edit") }, { menuFor = null; editor = th })
+                                    androidx.compose.material3.DropdownMenuItem({ Text("Delete", color = Color(0xFFFF8A80)) }, { menuFor = null; CustomThemes.delete(vm, th.name) })
+                                }
+                            }
+                        }
+                        repeat(3 - row.size) { Spacer(Modifier.width(96.dp)) }
+                    }
+                }
+                Text("Hold a theme to edit or delete it. Your themes are saved with your account.", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), fontSize = 12.sp, color = Muted)
+            }
         }
         SectionLabel("Display")
         SettingsCard {
@@ -649,7 +682,7 @@ private fun AppIconPicker() {
             text = { Text("$name will replace your current app icon. Restart now, or choose Later and it changes the next time Xstream is fully closed and opened again.") },
             confirmButton = {
                 Button({ AppIcons.markPicked(ctx); (ctx as? android.app.Activity)?.let { AppIcons.applyAndRestart(it, id) } }, shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) { Text("Restart now", fontWeight = FontWeight.SemiBold) }
+                    colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn)) { Text("Restart now", fontWeight = FontWeight.SemiBold) }
             },
             dismissButton = {
                 TextButton({ AppIcons.markPicked(ctx); AppIcons.setPending(ctx, id); pending = id; active = AppIcons.active(ctx); ask = null }) { Text("Later", color = Color.White) }
@@ -1431,7 +1464,7 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
 @Composable
 private fun NetworkPage(vm: AppViewModel, onBack: () -> Unit) {
     val texts by vm.texts.collectAsStateWithLifecycle()
-    val cur = texts["dns"] ?: "system"
+    val cur = texts["dns"] ?: "cloudflare"
     Page("Network & DNS", onBack) {
         Text(
             "Choose which DNS the app uses to find catalogs, addons, images and video streams. It uses secure DNS-over-HTTPS and only affects this app. " +
@@ -1582,7 +1615,7 @@ private fun CollectionsSettingsPage(vm: AppViewModel, onBack: () -> Unit) {
                         if (done(r)) close()
                     }
                 }, enabled = text.isNotBlank() && !busy, shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) { Text("Import", fontWeight = FontWeight.SemiBold) }
+                    colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn)) { Text("Import", fontWeight = FontWeight.SemiBold) }
             }
         }
     }
@@ -1604,7 +1637,7 @@ private fun CollectionsSettingsPage(vm: AppViewModel, onBack: () -> Unit) {
                         if (done(r)) close()
                     }
                 }, enabled = url.startsWith("http") && !busy, shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)) { Text(if (busy) "Importing…" else "Import", fontWeight = FontWeight.SemiBold) }
+                    colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn)) { Text(if (busy) "Importing…" else "Import", fontWeight = FontWeight.SemiBold) }
             }
         }
     }

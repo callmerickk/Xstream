@@ -17,7 +17,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * applies them when a profile opens, so nobody has to get their own keys.
  */
 object DevDefaults {
-    private fun textKeys(): List<String> = listOf("aiOn", "aiProvider", "aiLogoUrl", "tmdbKey", "mdbKey", "giphyKey", "traktClientId", "codeNames", "homeRows", "tagRules", "rowNames", "rowStyles", "liveVoice_June", "liveVoice_Aiden", "liveModel", "aiName", "aiNameStyle", "appNameStyle") +
+    private fun textKeys(): List<String> = listOf("aiOn", "aiProvider", "aiLogoUrl", "tmdbKey", "mdbKey", "giphyKey", "traktClientId", "codeNames", "homeRows", "tagRules", "rowNames", "rowStyles", "liveVoice_June", "liveVoice_Aiden", "liveModel", "aiName", "aiNameStyle", "appNameStyle", "dns") +
         AiProviders.flatMap { listOf("aiKey_${it.id}", "aiModel_${it.id}") }
     private val storeKeys = listOf("aiVoice", "aiVoiceEn", "aiVoiceHi", "aiVoiceRate", "aiVoiceOut")
 
@@ -51,6 +51,8 @@ object DevDefaults {
                 when {
                     // The developer's filters are the base; the user's own filter changes stay on top (never replaced).
                     k == "t_tagRules" -> if (vm.texts.value["devTagRules"] != value) { vm.setText("devTagRules", value); changed += "devTagRules" }
+                    // The developer's DNS: for everyone who hasn't picked one themselves.
+                    k == "t_dns" -> if (vm.store("ownKey_dns") != "1" && vm.texts.value["dns"] != value) { vm.setDns(value, byUser = false); changed += "dns" }
                     k.startsWith("t_") -> { val key = k.removePrefix("t_")
                         val own = vm.store("ownKey_$key") == "1" && !vm.texts.value[key].isNullOrBlank()
                         if (!own && vm.texts.value[key] != value) { vm.setText(key, value); changed += key } }

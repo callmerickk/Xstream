@@ -627,7 +627,7 @@ private fun DockItem(i: Int, water: Boolean, selected: Boolean, label: String, o
     val hold by rememberUpdatedState(onHold)
     val bob = rememberFloat(i, water)
     val fill by androidx.compose.animation.animateColorAsState(if (selected) Color(0x24FFFFFF) else Color.Transparent, label = "dock")
-    val red = Accent
+    val red = BtnColor
     Box(
         Modifier.size(50.dp).graphicsLayer {
             val (y, r) = bob.value

@@ -39,6 +39,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         )
         WidgetOpen.take(intent)
         JoinIntent.take(intent)
+        DlEngine.take(intent)
         SocialIntent.take(intent)
         enableEdgeToEdge()
         // Xstream TV (tv flavor) gets the remote-friendly TV interface; the phone app keeps its own.
@@ -84,6 +85,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         super.onNewIntent(intent)
         WidgetOpen.take(intent)
         JoinIntent.take(intent)
+        DlEngine.take(intent)
         SocialIntent.take(intent)
     }
 

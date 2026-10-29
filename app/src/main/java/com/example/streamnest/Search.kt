@@ -50,6 +50,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -109,7 +110,11 @@ data class SearchHit(
 )
 
 /** A film series or a studio found for the search (Harry Potter, Marvel…): its titles in release order. */
-data class SearchGroup(val name: String, val sub: String, val posters: List<String>, val backdrop: String?, val items: List<Meta>)
+data class SearchGroup(
+    val name: String, val sub: String, val posters: List<String>, val backdrop: String?, val items: List<Meta>,
+    /** "universe" (films + series of a shared universe), "collection" (true sequels), "versions" (same hero, another story), "studio". */
+    val kind: String = "collection",
+)
 
 object SearchState {
     val hits = MutableStateFlow<List<SearchHit>>(emptyList())
@@ -157,7 +162,7 @@ private fun runtimeText(min: Int?): String? = min?.takeIf { it > 0 }?.let { if (
 private suspend fun tmdbDetail(key: String, kind: String, id: String): JsonObject {
     val ck = "$kind:$id"
     detailCache[ck]?.let { return it }
-    val body = Api.get("https://api.themoviedb.org/3/$kind/$id?api_key=$key&append_to_response=external_ids,images&include_image_language=en,null")
+    val body = Api.get("https://api.themoviedb.org/3/$kind/$id?api_key=$key&append_to_response=external_ids,images,keywords&include_image_language=en,null")
     val o = withContext(Dispatchers.Default) { Api.json.parseToJsonElement(body).jsonObject }
     detailCache[ck] = o
     return o
@@ -193,17 +198,33 @@ private fun hitFromDetail(kind: String, d: JsonObject): SearchHit? {
 }
 
 /** TMDB search; the best matches (first 6) are handed over as soon as they are ready, then the rest. */
-private suspend fun tmdbSearch(key: String, q: String, onFirst: (List<SearchHit>) -> Unit = {}): List<SearchHit> = coroutineScope {
+/** TMDB's order (relevance and popularity) per title id, and the film series (collections) its best results belong to. */
+private class TmdbSeen {
+    val rank = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    val collections = java.util.concurrent.CopyOnWriteArrayList<Pair<Int, String>>()
+    /** Universe tags of the results (rank, TMDB keyword id, its name): "marvel cinematic universe (mcu)"… */
+    val universes = java.util.concurrent.CopyOnWriteArrayList<Triple<Int, String, String>>()
+}
+
+private suspend fun tmdbSearch(key: String, q: String, seen: TmdbSeen? = null, onFirst: suspend (List<SearchHit>) -> Unit = {}): List<SearchHit> = coroutineScope {
     val body = Api.get("https://api.themoviedb.org/3/search/multi?api_key=$key&query=${Uri.encode(q)}&include_adult=false&page=1")
     val results = withContext(Dispatchers.Default) { Api.json.parseToJsonElement(body).jsonObject.sArr("results") }
         .filter { val mt = it.sStr("media_type"); mt == "movie" || mt == "tv" }
         .take(16)
-    val jobs = results.map { r ->
+    val jobs = results.mapIndexed { i, r ->
         async {
             runCatching {
                 val kind = r.sStr("media_type")!!
                 val id = r.sStr("id")!!
-                withTimeoutOrNull(6_000) { hitFromDetail(kind, tmdbDetail(key, kind, id)) }
+                withTimeoutOrNull(6_000) {
+                    val d = tmdbDetail(key, kind, id)
+                    d.sObj("belongs_to_collection")?.sStr("id")?.let { seen?.collections?.add(i to it) }
+                    d.sObj("keywords")?.let { k -> (k.sArr("keywords") + k.sArr("results")) }.orEmpty().forEach { kw ->
+                        val n = kw.sStr("name").orEmpty(); val kid = kw.sStr("id")
+                        if (kid != null && isUniverseTag(n)) seen?.universes?.add(Triple(i, kid, n))
+                    }
+                    hitFromDetail(kind, d)?.also { h -> seen?.rank?.putIfAbsent(h.meta.id, i) }
+                }
             }.getOrNull()
         }
     }
@@ -274,14 +295,16 @@ fun AppViewModel.searchPremium(q: String) {
     SearchState.job = viewModelScope.launch {
         delay(250)
         val key = tmdbKey()
+        val tmdbSeen = TmdbSeen()
         val parts = mutableListOf<List<SearchHit>>() // in the order they arrived
         fun merged(): List<SearchHit> {
             val seen = HashSet<String>()
             val yearQ = Regex("\\b(19|20)\\d{2}\\b").find(query)?.value
+            // Equal matches: TMDB's order (relevance and popularity), so today's Avengers come before a 1998 film of the
+            // same name; the film series' own order lives in its collection card.
             return parts.flatten().filter { seen.add(it.meta.id) }.distinctBy { it.meta.type + it.meta.id }
-                .sortedWith(compareBy<SearchHit>({ matchRank(query, it.meta.name) }, { if (yearQ != null && it.year != yearQ) 1 else 0 })
-                    // same kind of match (a whole film series): oldest first, so the parts come in order
-                    .thenBy { h -> if (matchRank(query, h.meta.name) <= 2) (h.year?.toIntOrNull() ?: 9999) else 0 })
+                .sortedWith(compareBy<SearchHit>({ matchRank(query, it.meta.name) }, { if (yearQ != null && it.year != yearQ) 1 else 0 },
+                    { tmdbSeen.rank[it.meta.id] ?: 500 }))
         }
         coroutineScope {
             launch {
@@ -290,9 +313,21 @@ fun AppViewModel.searchPremium(q: String) {
                 parts += r
                 if (r.isNotEmpty()) publish(merged(), false)
             }
-            if (key.isNotEmpty()) launch {
-                val g = runCatching { searchGroups(key, query) }.getOrDefault(emptyList())
-                if (SearchState.query.value == query || SearchState.hits.value.isEmpty()) SearchState.groups.value = g
+            // Collections by name (TMDB collection search, studios) start at once; the ones the best results belong to
+            // (MCU Avengers, Harry Potter 1–8, X-Men) come with the first results, so cards and results show together.
+            val named: kotlinx.coroutines.Deferred<List<SearchGroup>>? = if (key.isNotEmpty()) async { runCatching { searchGroups(key, query) }.getOrDefault(emptyList<SearchGroup>()) } else null
+            val universeByName = if (key.isNotEmpty()) async { runCatching { universeFor(key, query) }.getOrNull() } else null
+            suspend fun allGroups(hits: List<SearchHit>): List<SearchGroup> {
+                val fromHits = runCatching { collectionsOf(key, tmdbSeen.collections.sortedBy { it.first }.map { it.second }.distinct().take(3)) }.getOrDefault(emptyList())
+                val byName = named?.let { withTimeoutOrNull(1_200) { it.await() } }.orEmpty()
+                val sameTitle = titleFamilies(query, hits)
+                // A shared universe: asked for by name (MCU, DCEU…), or one the top results belong to (First Steps → MCU).
+                val uni = universeByName?.let { withTimeoutOrNull(2_500) { it.await() } }
+                    ?: tmdbSeen.universes.sortedBy { it.first }.firstOrNull { it.first < 5 }?.let { u -> runCatching { withTimeoutOrNull(2_500) { universeById(key, u.second, u.third) } }.getOrNull() }
+                val collections = (fromHits + byName).distinctBy { it.name.lowercase().removeSuffix(" collection").trim() }
+                // Same hero, different story (Fantastic Four 1994, 2015, First Steps): beside the collection of true sequels.
+                val versions = collections.filter { it.kind == "collection" }.mapNotNull { otherVersions(it, hits) }
+                return (listOfNotNull(uni) + collections + versions + sameTitle).distinctBy { it.kind + ":" + it.name.lowercase().removeSuffix(" collection").trim() }.take(5)
             }
             if (key.isNotEmpty()) launch {
                 // TMDB's richer cards first when they arrive before anything is on screen; the top 6 show at once.
@@ -303,7 +338,12 @@ fun AppViewModel.searchPremium(q: String) {
                     else { parts += r; slot = parts.lastIndex }
                     if (r.isNotEmpty()) publish(merged(), false)
                 }
-                val r = runCatching { tmdbSearch(key, query) { first -> put(first) } }.getOrDefault(emptyList<SearchHit>())
+                var groupsDone = false
+                val r = runCatching { tmdbSearch(key, query, tmdbSeen) { first ->
+                    SearchState.groups.value = allGroups(first); groupsDone = true
+                    put(first)
+                } }.getOrDefault(emptyList<SearchHit>())
+                if (!groupsDone || SearchState.groups.value.isEmpty()) SearchState.groups.value = allGroups(r)
                 put(r)
             }
         }
@@ -361,6 +401,111 @@ private suspend fun searchGroups(key: String, q: String): List<SearchGroup> = co
         }.getOrDefault(emptyList())
     }
     col.await() + studio.await()
+}
+
+// ───────────── Shared universes (MCU, DCEU, YRF Spy Universe…) ─────────────
+
+/** What people type → the TMDB tag to look for. Anything with "universe" in it is tried as a tag too. */
+private val UniverseAliases = listOf(
+    listOf("mcu", "marvel cinematic universe", "marvel universe") to "marvel cinematic universe",
+    listOf("dceu", "dc extended universe", "dcu", "dc universe") to "dc extended universe",
+    listOf("monsterverse", "monster verse") to "monsterverse",
+    listOf("conjuring universe", "conjuring verse") to "the conjuring universe",
+    listOf("wizarding world") to "wizarding world",
+    listOf("yrf spy universe", "spy universe", "yrf spy") to "yrf spy universe",
+    listOf("cop universe", "rohit shetty cop universe", "cop verse", "copverse") to "cop universe",
+    listOf("maddock horror comedy universe", "horror comedy universe", "maddock universe", "mhcu") to "horror comedy universe",
+    listOf("sony spider-man universe", "spider-man universe", "ssu") to "spider-man universe",
+    listOf("x-men universe", "x men universe", "xmen universe") to "x-men",
+)
+
+private fun isUniverseTag(n: String): Boolean {
+    val l = n.lowercase()
+    return "cinematic universe" in l || "extended universe" in l || "spy universe" in l || "cop universe" in l || "monsterverse" in l ||
+        "conjuring universe" in l || "wizarding world" in l || "horror comedy universe" in l || "spider-man universe" in l || "shared universe" in l
+}
+
+private val universeCache = java.util.concurrent.ConcurrentHashMap<String, SearchGroup>()
+
+/** The universe asked for by name ("MCU", "Marvel Cinematic Universe", "YRF Spy Universe"), or null. */
+private suspend fun universeFor(key: String, q: String): SearchGroup? {
+    val qq = q.lowercase().replace(Regex("[^a-z0-9 -]"), " ").replace(Regex("\\s+"), " ").trim()
+    val tag = UniverseAliases.firstOrNull { (al, _) -> al.any { it == qq || (qq.length >= 5 && it.startsWith(qq)) } }?.second
+        ?: qq.takeIf { "universe" in it || "verse" in it } ?: return null
+    val res = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/search/keyword?api_key=$key&query=${Uri.encode(tag)}&page=1")).jsonObject.sArr("results")
+    val kw = res.firstOrNull { it.sStr("name").orEmpty().lowercase().startsWith(tag) && isUniverseTag(it.sStr("name").orEmpty()) }
+        ?: res.firstOrNull { isUniverseTag(it.sStr("name").orEmpty()) } ?: res.firstOrNull { it.sStr("name").orEmpty().lowercase() == tag } ?: return null
+    return universeById(key, kw.sStr("id") ?: return null, kw.sStr("name").orEmpty())
+}
+
+/** Every released film and series with that universe tag, in release order. */
+private suspend fun universeById(key: String, kid: String, tagName: String): SearchGroup? = coroutineScope {
+    universeCache[kid]?.let { return@coroutineScope it }
+    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+    suspend fun pages(kind: String): List<Meta> = (1..3).map { pg ->
+        async {
+            runCatching {
+                val url = if (kind == "tv") "https://api.themoviedb.org/3/discover/tv?api_key=$key&with_keywords=$kid&sort_by=first_air_date.asc&first_air_date.lte=$today&page=$pg"
+                    else "https://api.themoviedb.org/3/discover/movie?api_key=$key&with_keywords=$kid&sort_by=primary_release_date.asc&primary_release_date.lte=$today&page=$pg"
+                Api.json.parseToJsonElement(Api.get(url)).jsonObject.sArr("results").mapNotNull { tmdbMetaOf(it, kind) }
+            }.getOrDefault(emptyList())
+        }
+    }.awaitAll().flatten()
+    val movies = async { pages("movie") }; val tv = async { pages("tv") }
+    val all = (movies.await() + tv.await()).distinctBy { it.id }.sortedBy { it.releaseInfo ?: "9999" }
+    if (all.size < 4) return@coroutineScope null
+    val name = tagName.replace(Regex("\\s*\\(.*?\\)\\s*"), " ").trim().split(" ").joinToString(" ") { w -> if (w in setOf("dc", "yrf", "mcu", "dceu", "ssu")) w.uppercase() else w.split("-").joinToString("-") { p -> if (p == "x") "X" else p.replaceFirstChar { it.uppercase() } } }
+    val nm = all.count { it.type == "movie" }; val ns = all.size - nm
+    val years = "${all.first().releaseInfo ?: ""}–${all.last().releaseInfo ?: ""}"
+    SearchGroup(name, listOfNotNull(nm.takeIf { it > 0 }?.let { "$it films" }, ns.takeIf { it > 0 }?.let { "$it series" }, years).joinToString(" · "),
+        all.takeLast(3).mapNotNull { it.poster }, all.lastOrNull { it.background != null }?.background, all, kind = "universe").also { universeCache[kid] = it }
+}
+
+/** Films in the results with the collection's hero but not in the collection (a reboot, another universe). */
+private fun otherVersions(c: SearchGroup, hits: List<SearchHit>): SearchGroup? {
+    fun core(n: String) = n.lowercase().replace(Regex("\\b(collection|the|saga|series)\\b"), " ").replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim()
+    val base = core(c.name)
+    if (base.length < 3) return null
+    fun key(m: Meta) = core(m.name) + "|" + (m.releaseInfo?.take(4) ?: "")
+    val inColl = c.items.map { key(it) }.toSet()
+    val others = hits.map { it.meta }.filter { it.type == "movie" && core(it.name).startsWith(base) && key(it) !in inColl }
+        .distinctBy { key(it) }.sortedBy { it.releaseInfo ?: "9999" }
+    if (others.isEmpty()) return null
+    val title = c.name.replace(Regex("(?i)\\s*collection\\s*$"), "").trim()
+    return SearchGroup("Other $title films", "${others.size} · same hero, another story", others.take(3).mapNotNull { it.poster },
+        others.firstOrNull()?.background, others, kind = "versions")
+}
+
+/** TMDB collections by id, each with its films in release order (only films that are out). */
+private suspend fun collectionsOf(key: String, ids: List<String>): List<SearchGroup> = coroutineScope {
+    if (key.isEmpty() || ids.isEmpty()) return@coroutineScope emptyList()
+    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+    ids.map { id ->
+        async {
+            runCatching {
+                val d = colCache[id] ?: Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/collection/$id?api_key=$key")).jsonObject.also { colCache[id] = it }
+                val parts = d.sArr("parts").filter { (it.sStr("release_date") ?: "9999") <= today }.sortedBy { it.sStr("release_date") ?: "9999" }.mapNotNull { tmdbMetaOf(it, "movie") }
+                if (parts.size < 2) null
+                else SearchGroup(d.sStr("name") ?: "Collection", "${parts.size} films · in order", parts.take(3).mapNotNull { it.poster }, d.sStr("backdrop_path")?.let { "${SIMG}w780$it" }, parts)
+            }.getOrNull()
+        }
+    }.awaitAll().filterNotNull()
+}
+private val colCache = java.util.concurrent.ConcurrentHashMap<String, JsonObject>()
+
+/**
+ * Films sharing one title with a number or subtitle (Bhool Bhulaiyaa, Bhool Bhulaiyaa 2, 3…) when TMDB has no
+ * collection for them: one card, release order.
+ */
+private fun titleFamilies(q: String, hits: List<SearchHit>): List<SearchGroup> {
+    fun base(n: String) = n.lowercase().substringBefore(":").replace(Regex("\\b(part|chapter|vol\\.?|volume)?\\s*([0-9]+|ii|iii|iv|v)\\s*$"), "").replace(Regex("[^\\p{L}\\p{N} ]"), " ").replace(Regex("\\s+"), " ").trim()
+    val qq = q.lowercase().trim()
+    return hits.filter { it.meta.type == "movie" }.groupBy { base(it.meta.name) }
+        .filter { (b, l) -> b.isNotEmpty() && l.size >= 3 && (b.contains(qq) || qq.contains(b)) }
+        .map { (_, l) ->
+            val films = l.sortedBy { it.year ?: "9999" }.map { it.meta }
+            SearchGroup(l.minByOrNull { it.meta.name.length }!!.meta.name.substringBefore(":").trim(), "${films.size} films · in order", films.take(3).mapNotNull { it.poster }, l.firstOrNull()?.backdrop, films)
+        }
 }
 
 private fun lev(a: String, b: String): Int {
@@ -524,10 +669,12 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
             // Phone: Discover — moods, recent searches, then the Explore-style mosaic of titles (big tall + small wide cards).
             tq.length < 3 && !BuildConfig.IS_TV -> {
                 val shelvesNow by vm.shelves.collectAsStateWithLifecycle()
-                val pool = remember(shelvesNow) {
-                    shelvesNow.flatMap { it.items }.filter { it.poster != null || it.background != null }.distinctBy { it.id.substringBefore(":") }
-                        .shuffled(java.util.Random(HomeShuffle.seed)).take(45)
-                }
+                // Made from what you watch and like (Continue Watching, votes, "more like this"); Home's titles until it's ready.
+                // Chosen and arranged in the background when the app opened: nothing swaps in front of you, and the
+                // order stays until the app is opened again.
+                LaunchedEffect(shelvesNow) { DiscoverPool.ensure(vm, shelvesNow) }
+                val built by DiscoverPool.ready.collectAsStateWithLifecycle()
+                val pool = built.orEmpty()
                 androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 18.dp, bottom = 140.dp)) {
                     // Search bar tapped: your recent searches. Otherwise Discover, with Surprise me.
                     if (fieldFocused && recent.isNotEmpty()) {
@@ -550,9 +697,12 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
                     }
                     if (pool.isNotEmpty()) item(key = "discoverHead") {
                         Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 16.dp, top = 2.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Discover", Modifier.weight(1f), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Column(Modifier.weight(1f)) {
+                                Text("Discover", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                if (built != null) DiscoverPool.because?.let { Text("Because you watched $it", fontSize = 12.sp, color = SubText, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            }
                             Row(Modifier.clip(RoundedCornerShape(20.dp)).border(1.dp, Accent, RoundedCornerShape(20.dp))
-                                .clickable { (pool.filter { (it.imdbRating?.toDoubleOrNull() ?: 0.0) >= 7.0 }.ifEmpty { pool }).randomOrNull()?.let(onOpen) }
+                                .clickable { Surprise.pick(vm, pool)?.let(onOpen) }
                                 .padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Shuffle, null, Modifier.size(16.dp), tint = Color.White)
                                 Spacer(Modifier.width(6.dp))
@@ -747,6 +897,8 @@ private fun GroupCard(g: SearchGroup, modifier: Modifier, big: Boolean, onClick:
         }
         Column(Modifier.align(Alignment.BottomStart).padding(12.dp).clip(RoundedCornerShape(16.dp)).background(Color(0x59FFFFFF)).border(1.dp, Color(0x40FFFFFF), RoundedCornerShape(16.dp))
             .padding(horizontal = 12.dp, vertical = 8.dp).widthIn(max = if (big) 200.dp else 120.dp)) {
+            Text(when (g.kind) { "universe" -> "UNIVERSE"; "versions" -> "OTHER VERSIONS"; "studio" -> "STUDIO"; else -> "COLLECTION" },
+                fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, color = Color(0xFFFFE3E5))
             Text(g.name, fontSize = if (big) 17.sp else 13.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, color = Color.White)
             Text(g.sub, fontSize = 11.sp, color = Color(0xFFE6E8EE), maxLines = 1)
         }
@@ -765,14 +917,25 @@ private fun GroupPage(g: SearchGroup, onClose: () -> Unit, onOpen: (Meta) -> Uni
                     Text(g.sub, fontSize = 12.sp, color = SubText)
                 }
             }
+            // A universe: All / Movies / Series, each in release order.
+            var tab by remember { mutableStateOf("all") }
+            val shown = when (tab) { "movies" -> g.items.filter { it.type == "movie" }; "series" -> g.items.filter { it.type == "series" }; else -> g.items }
+            if (g.kind == "universe") Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("all" to "All ${g.items.size}", "movies" to "Movies ${g.items.count { it.type == "movie" }}", "series" to "Series ${g.items.count { it.type == "series" }}")
+                    .filter { it.first == "all" || !it.second.endsWith(" 0") }.forEach { (k, l) ->
+                        val on = tab == k
+                        Text(l, Modifier.weight(1f).clip(RoundedCornerShape(50)).background(if (on) Color.White else Color(0x14FFFFFF)).clickable { tab = k }.padding(vertical = 9.dp),
+                            color = if (on) Color.Black else Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    }
+            }
             LazyVerticalGrid(GridCells.Adaptive(110.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 60.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                items(g.items.size) { i ->
-                    val m = g.items[i]
+                items(shown.size, key = { shown[it].id }) { i ->
+                    val m = shown[i]
                     Column(Modifier.clickable { onOpen(m) }) {
                         AsyncImage(m.poster, m.name, Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp)), contentScale = ContentScale.Crop)
                         Text("${i + 1}. ${m.name}", Modifier.padding(top = 6.dp), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        m.releaseInfo?.let { Text(it, fontSize = 11.sp, color = SubText) }
+                        Text(listOfNotNull(m.releaseInfo, if (g.kind == "universe") (if (m.type == "series") "Series" else "Movie") else null).joinToString(" · "), fontSize = 11.sp, color = SubText)
                     }
                 }
             }

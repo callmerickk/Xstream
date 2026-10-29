@@ -367,9 +367,9 @@ private fun RatingChip(label: String, value: String, c: Color) {
 private fun Pill(text: String, on: Boolean, big: Boolean = false, mod: Modifier = Modifier, onClick: () -> Unit) {
     Text(
         text,
-        mod.clip(RoundedCornerShape(24.dp)).background(if (on) Accent else Color(0xFF1A1A1F)).clickable(onClick = onClick)
+        mod.clip(RoundedCornerShape(24.dp)).background(if (on) BtnColor else Color(0xFF1A1A1F)).clickable(onClick = onClick)
             .padding(horizontal = if (big) 20.dp else 18.dp, vertical = if (big) 12.dp else 11.dp),
-        fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = if (on) OnAccent else Color.White, maxLines = 1,
+        fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = if (on) OnBtn else Color.White, maxLines = 1,
     )
 }
 

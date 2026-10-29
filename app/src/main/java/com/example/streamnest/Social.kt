@@ -299,6 +299,21 @@ object Social {
         }
     }
 
+    /**
+     * Removes a shared title from your Shared lists (and its plans from your calendar). Shared by you: it goes for
+     * everyone in it; shared with you: only you leave it. It doesn't come back on the next sync.
+     */
+    suspend fun leaveItem(ctx: Context, item: SharedItem): Boolean {
+        item.plans.forEach { p -> runCatching { PlanAlarm.cancel(ctx, item.id, p.id) } }
+        if (item.by == me) {
+            send("DELETE", "items/${item.id}") ?: return false
+            item.members.keys.filter { it != me }.forEach { u -> runCatching { send("DELETE", "myitems/$u/${item.id}") }; inbox(u, SocialMsg(t = "unshare", item = item.id, title = item.meta.name)) }
+        } else send("DELETE", "items/${item.id}/members/$me")
+        send("DELETE", "myitems/$me/${item.id}")
+        refresh()
+        return true
+    }
+
     /** Takes a plan off the calendar (everyone in it is told), and its reminder is cancelled. */
     suspend fun removePlan(ctx: Context, item: SharedItem, plan: WatchPlan): Boolean {
         send("DELETE", "items/${item.id}/plans/${plan.id}") ?: return false

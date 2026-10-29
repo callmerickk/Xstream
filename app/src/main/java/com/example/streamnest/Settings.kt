@@ -378,7 +378,7 @@ internal fun DevGate(vm: AppViewModel, onUnlocked: () -> Unit, onBack: () -> Uni
                     Text("You are not allowed in this space", color = Color(0xFFFF6B6B), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
                 }
                 Spacer(Modifier.height(18.dp))
-                Button({ attempt() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Accent), shape = RoundedCornerShape(26.dp)) {
+                Button({ attempt() }, Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn), shape = RoundedCornerShape(26.dp)) {
                     Text("Unlock", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 }
                 if (bio) TextButton({ ProfileLock.askBiometric(gateCtx, "Developer's Corner", "Use password") { unlocking = true } }, Modifier.padding(top = 8.dp)) {
@@ -453,6 +453,16 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         }
         item { DevFold("AI assistant", "Analyse logs, tune auto-play, design the AI's name — with the app's AI or by copy & paste", false) { subPage = "assistant" } }
         item { DevFold("Payments & donations", "UPI ID, PayPal / Ko-fi, monthly goal — the Support Xstream bubble for everyone", false) { subPage = "donate" } }
+        if (!BuildConfig.IS_TV) item {
+            // Gemini Live (developer only): the AI card talks in real time with Google's live voice (your Gemini key).
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            var on by remember { mutableStateOf(GeminiLiveDev.on(ctx)) }
+            val hasKey = vm.aiKey(AiProviders.first { it.id == "gemini" }).isNotEmpty()
+            ToggleRow("Gemini Live voice (developer only)",
+                if (!hasKey) "Add a Gemini key in Help & Settings › Integrations first. Only accounts on the Dev list ever see this."
+                else "The AI card talks in real time: natural voice, interrupt any time, it still opens and plays titles. Off: the normal assistant.",
+                on && hasKey) { on = it; GeminiLiveDev.set(ctx, it) }
+        }
         item { DevFold("Code names", "Hotstar → Helios, MovieBox → Mercury Swift / Prime… see and edit every name", false) { subPage = "codeNames" } }
         item { DevFold("Sources & plugins", "Official set for everyone, CloudStream plugins, Quick Start, filters, built-in servers", devOpen == "src") { devOpen = if (devOpen == "src") null else "src" } }
         if (devOpen == "src") {
@@ -593,7 +603,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                         }
                         Spacer(Modifier.width(16.dp))
                         Column {
-                            Button({ pickLogo.launch("image/*") }, colors = ButtonDefaults.buttonColors(containerColor = Accent)) { Text("Upload logo") }
+                            Button({ pickLogo.launch("image/*") }, colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn)) { Text("Upload logo") }
                             if (logo != null) TextButton({ vm.clearLogo() }) { Text("Remove logo") }
                         }
                     }
@@ -768,7 +778,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                             }
                         },
                         enabled = curPw.isNotEmpty() && newPw.isNotEmpty(),
-                        colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                        colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn),
                     ) { Text("Update password") }
                 }
             }
@@ -829,7 +839,7 @@ fun LiveTvScreen(vm: AppViewModel, onBack: () -> Unit, onPlay: (Screen.Player) -
                 Text("Paste the link of an M3U playlist to watch live channels.", color = Muted, fontSize = 15.sp, modifier = Modifier.padding(bottom = 12.dp))
                 OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth().tvOkKeyboard(), singleLine = true, placeholder = { Text("https://.../playlist.m3u") }, shape = RoundedCornerShape(14.dp), keyboardOptions = tvKeyboard())
                 Spacer(Modifier.height(10.dp))
-                Button({ vm.loadChannels(url) }, enabled = url.isNotBlank() && !loading, colors = ButtonDefaults.buttonColors(containerColor = Accent)) {
+                Button({ vm.loadChannels(url) }, enabled = url.isNotBlank() && !loading, colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn)) {
                     if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Load channels")
                 }
                 error?.let { Text(it, color = Color(0xFFFF6B6B), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp)) }

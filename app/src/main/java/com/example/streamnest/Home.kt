@@ -41,6 +41,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -115,6 +116,8 @@ private const val AIDEN_PICK = "\u0001aiden"
 
 /** LazyColumn key of the top cards (also used to find them in the list's layout info). */
 private const val DeckKey = "deck"
+/** The endless deck repeats its cards this many times (and starts in the middle). */
+private const val DeckLoops = 2000
 
 /**
  * A soft drop shadow drawn as a few stacked translucent rounded rects behind the content.
@@ -155,6 +158,15 @@ fun HomeScreen(
     onOpenCollection: (NCollection, NFolder) -> Unit = { _, _ -> },
 ) {
     val allShelves by vm.shelves.collectAsStateWithLifecycle()
+    var cwAll by remember { mutableStateOf(false) }
+    // At app open, in the background: Discover's titles and the Hindi titles for both Trending rows, so neither changes
+    // in front of you.
+    LaunchedEffect(allShelves.isNotEmpty()) {
+        if (allShelves.isEmpty()) return@LaunchedEffect
+        launch { runCatching { HindiTrending.list("movie") } }
+        launch { runCatching { HindiTrending.list("series") } }
+    }
+    LaunchedEffect(allShelves) { DiscoverPool.ensure(vm, allShelves) }
     val loading by vm.loading.collectAsStateWithLifecycle()
     val progress by vm.progress.collectAsStateWithLifecycle()
     // Continue Watching: the first title's links are looked up ahead (home source ready → Resume starts at once).
@@ -179,7 +191,9 @@ fun HomeScreen(
         androidx.compose.animation.core.tween(320), label = "cwBlur")
     val showRecs = isOn(t("showRecs"))
     val recsFirst = isOn(t("recsAfterCw"))
-    val recTitle = t("recommendedFor").replace("{name}", profile?.name ?: "you")
+    // Old default names (kept by phones that saved them) give way to the new ones.
+    val recTitle = t("recommendedFor").let { if (it == "Recommended for {name}") "{ai} picked for {name}" else it }
+        .replace("{ai}", aiName().lowercase().replaceFirstChar { it.uppercase() }).replace("{name}", profile?.name?.takeIf { it.isNotBlank() && it != "Me" } ?: "you")
     var filter by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
@@ -188,10 +202,16 @@ fun HomeScreen(
     val rowsOrder = t("rowsOrder")
     val rowsHidden = t("rowsHidden")
     val shuffleOn = isOn(t("shuffleRows"))
-    val arranged = remember(allShelves, rowsOrder, rowsHidden, shuffleOn) {
+    // Films only in cinemas so far (no web / Blu-ray release) stay off Home; search still finds them.
+    val cinemaHidden by CinemaOnly.hidden.collectAsState()
+    LaunchedEffect(Unit) { if (!BuildConfig.IS_TV) CinemaOnly.load(vm.appContext) }
+    LaunchedEffect(allShelves.size) { if (!BuildConfig.IS_TV && allShelves.isNotEmpty()) { delay(6_000); runCatching { CinemaOnly.check(vm, allShelves.flatMap { it.items }) } } }
+    val arranged = remember(allShelves, rowsOrder, rowsHidden, shuffleOn, cinemaHidden) {
         val hidden = rowsHidden.split("|").toSet()
         // Fresh every time the app starts (same order while it stays open): each row is shuffled once per launch.
+        // A catalogue can list the same title twice; a row with two equal cards crashed Home (0.9.55), so repeats go first.
         arrangeShelves(allShelves, rowsOrder).filter { it.pinned || it.title !in hidden }
+            .map { sh -> sh.copy(items = sh.items.distinctBy { it.type + it.id }.filter { it.id.substringBefore(":") !in cinemaHidden }) }.filter { it.items.isNotEmpty() }
             .map { sh -> if (shuffleOn) sh.copy(items = sh.items.shuffled(java.util.Random(HomeShuffle.seed xor sh.title.hashCode().toLong()))) else sh }
     }
     val shelves = remember(arranged, filter) {
@@ -248,7 +268,7 @@ fun HomeScreen(
     val showHero = isOn(t("showHero"))
     val cardTrailers = isOn(t("cardTrailers"))
     val cwShow = isOn(t("cwShow"))
-    val continueTitle = t("continueWatching").replace("{name}", profile?.name ?: "")
+    val continueTitle = t("continueWatching").let { if (it == "Continue Watching for {name}") "Pick up where you left off" else it }.replace("{name}", profile?.name ?: "")
     val newOn = t("newOn").replace("{app}", appName)
     val pillLeft = t("pillLeft"); val pillRight = t("pillRight"); val pillSports = t("pillSports"); val pillLive = t("pillLive")
     // Remembered so FloatingFilters gets the same list instance and can skip recomposition.
@@ -261,10 +281,9 @@ fun HomeScreen(
         }
     }
     // The top cards keep their position when you scroll away and come back (state lives outside the lazy item).
-    val deckPager = rememberPagerState(initialPage = 1) { deck.size }
-    // Xstream: open on the 2nd card so both sides are filled (once the cards are in).
-    val deckStarted = rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(deck.size > 1) { if (deck.size > 1 && !deckStarted.value) { deckStarted.value = true; if (deckPager.currentPage == 0) deckPager.scrollToPage(1) } }
+    // Endless: a very long strip of pages that repeats the cards (card = page mod count), started in the middle, so
+    // swiping either way never reaches an end — after the last card comes the first, before the first the last.
+    val deckPager = rememberPagerState { if (deck.size > 1) deck.size * DeckLoops else deck.size }
     // True while at least half of the top cards are on screen. Recomputed on scroll, but only notifies readers
     // when the answer flips, so it costs nothing per frame. Trailers / auto-slide stop when the deck scrolls away.
     val deckOnScreen = remember(listState) {
@@ -346,7 +365,7 @@ fun HomeScreen(
                 }
                 item(key = "cwRow", contentType = "cwRow") {
                     LazyRow(Modifier.tourTarget("cw"), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(progress, key = { it.key }, contentType = { "cw" }) { p ->
+                        items(progress.take(30), key = { it.key }, contentType = { "cw" }) { p ->
                             Box(Modifier.animateItem().onGloballyPositioned { cwRects[p.key] = it.boundsInRoot() }
                                 .graphicsLayer { alpha = if (lifted == p.key && !BuildConfig.IS_TV) 0f else 1f }) {
                                 ContinueCard(p, cwStyle, vm = vm, onClick = { if (p.finished()) onOpen(p.toMeta()) else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs)) }, onRemove = { vm.removeProgress(p.key) },
@@ -356,10 +375,28 @@ fun HomeScreen(
                     }
                 }
             }
-            // "Recommended for you" right after Continue Watching (Settings › Layout › Home can move it to the end).
+            // "Recommended for you" right after Continue Watching (Settings › Layout › Home can move it after the Trending rows).
             if (recs.isNotEmpty() && filter == null && showRecs && recsFirst) {
                 item(key = "recTitle", contentType = "title") { SectionTitle(recTitle) }
-                item(key = "recRow", contentType = "row") { ShelfRow(recs, onOpen) }
+                item(key = "recRow", contentType = "row") { AidenRow(recs, onOpen) }
+            }
+            // Order: Pick up where you left off → the two Trending rows (numbers) → Aiden's picks → your languages → collections → the rest.
+            @Composable fun shelfItem(i: Int, shelf: Shelf) {
+                SectionTitle(rowName(shelf.title) ?: if (shelf.title.startsWith("New")) "$newOn · ${shelf.title.removePrefix("New ").trim()}" else shelf.title)
+                // The first two rows: tall rounded posters with big 1, 2, 3 numbers (Home Layout can change any row's style).
+                when (RowStyles.of(shelf.title, i)) {
+                    // Trending rows come in a new order every time the app opens.
+                    "numbered" -> NumberedRow(remember(shelf.items) { shelf.items.shuffled(java.util.Random(HomeShuffle.seed xor shelf.title.hashCode().toLong())) }, onOpen)
+                    "portrait" -> PortraitRow(shelf.items, onOpen)
+                    "landscape" -> LandscapeRow(shelf.items, onOpen)
+                    else -> ShelfRow(shelf.items, onOpen)
+                }
+            }
+            // Keys include the index so two catalogs with the same name can never collide (duplicate keys crash).
+            itemsIndexed(shelves.take(2), key = { i, s -> "shelf:$i:${s.title}" }, contentType = { _, _ -> "shelf" }) { i, shelf -> shelfItem(i, shelf) }
+            if (recs.isNotEmpty() && filter == null && showRecs && !recsFirst) {
+                item(key = "recTitle", contentType = "title") { SectionTitle(recTitle) }
+                item(key = "recRow", contentType = "row") { AidenRow(recs, onOpen) }
             }
             // Personal: the newest titles in all your languages, mixed; Anime / K-Drama when you picked them.
             if (filter == null && newForYou.isNotEmpty()) {
@@ -370,21 +407,7 @@ fun HomeScreen(
                 SectionTitle(sh.title); PortraitRow(sh.items, onOpen)
             }
             if (filter == null) item(key = "collections", contentType = "collections") { CollectionsRows(vm) { c, f -> onOpenCollection(c, f) } }
-            // Keys include the index so two catalogs with the same name can never collide (duplicate keys crash).
-            itemsIndexed(shelves, key = { i, s -> "shelf:$i:${s.title}" }, contentType = { _, _ -> "shelf" }) { i, shelf ->
-                SectionTitle(rowName(shelf.title) ?: if (shelf.title.startsWith("New")) "$newOn · ${shelf.title.removePrefix("New ").trim()}" else shelf.title)
-                // The first two rows: tall rounded posters with big 1, 2, 3 numbers (Home Layout can change any row's style).
-                when (RowStyles.of(shelf.title, i)) {
-                    "numbered" -> NumberedRow(shelf.items, onOpen)
-                    "portrait" -> PortraitRow(shelf.items, onOpen)
-                    "landscape" -> LandscapeRow(shelf.items, onOpen)
-                    else -> ShelfRow(shelf.items, onOpen)
-                }
-            }
-            if (recs.isNotEmpty() && filter == null && showRecs && !recsFirst) {
-                item(key = "recTitle", contentType = "title") { SectionTitle(recTitle) }
-                item(key = "recRow", contentType = "row") { ShelfRow(recs, onOpen) }
-            }
+            itemsIndexed(shelves.drop(2), key = { i, s -> "shelf:${i + 2}:${s.title}" }, contentType = { _, _ -> "shelf" }) { i, shelf -> shelfItem(i + 2, shelf) }
             item(key = "bottomSpace", contentType = "spacer") { Spacer(Modifier.navigationBarsPadding().height(180.dp)) }
         }
         }
@@ -483,13 +506,20 @@ fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     val shape = remember(corner) { RoundedCornerShape(corner) }
     // Bollywood mixed in: the newest popular Hindi titles of the same kind take every third place.
     val kind = remember(items) { if (items.count { it.type == "series" } > items.size / 2) "series" else "movie" }
-    val hindi by produceState(emptyList<Meta>(), kind) { value = runCatching { HindiTrending.list(kind) }.getOrDefault(emptyList()) }
-    val top = remember(items, hindi) { HindiTrending.mix(items, hindi).take(10) }
+    // The row appears once its Hindi titles are in (fetched at app open; at most 3 s), so it never reshuffles while you
+    // look at it — that reshuffle is what left it scrolled to 7 or 8.
+    val hindi by produceState(HindiTrending.cachedOrNull(kind), kind) {
+        if (value == null) value = kotlinx.coroutines.withTimeoutOrNull(3_000) { runCatching { HindiTrending.list(kind) }.getOrNull() } ?: emptyList()
+    }
+    val h = hindi ?: run { Spacer(Modifier.fillMaxWidth().height(186.dp)); return }
+    val top = remember(items, h) { HindiTrending.mix(items, h).take(10) }
     // All ten posters are asked for at once (one quick TMDB call each, remembered), so the row fills in together.
     LaunchedEffect(top) { top.forEach { m -> launch { runCatching { TmdbPosters.portrait(m) } } } }
     val fill = remember { Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFFD5D9E2), Color(0xFF9AA1B0))) }
     // Like Netflix: each number has its own space to the left of its poster; the poster only just touches its edge.
-    LazyRow(contentPadding = PaddingValues(start = 6.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    // A fresh scroll position for every list: it always opens at 1.
+    val rowState = remember(top) { androidx.compose.foundation.lazy.LazyListState() }
+    LazyRow(state = rowState, contentPadding = PaddingValues(start = 6.dp, end = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         itemsIndexed(top, key = { _, m -> "n" + m.type + m.id }, contentType = { _, _ -> "num" }) { i, m ->
             val num = "${i + 1}"
             val numW = if (num.length > 1) 138.dp else 78.dp
@@ -533,6 +563,24 @@ fun TallPoster(m: Meta, modifier: Modifier) {
             AsyncImage(wide, m.name, Modifier.fillMaxWidth().aspectRatio(16f / 9f).align(Alignment.TopCenter), contentScale = ContentScale.Fit)
             Text(m.name, Modifier.align(Alignment.BottomCenter).padding(8.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
+    }
+}
+
+/** Aiden's picks: tall posters, each with the colour AI face in the corner. */
+@Composable
+fun AidenRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
+    val corner = Palette.corner.dp.coerceAtMost(18.dp)
+    val shape = remember(corner) { RoundedCornerShape(corner) }
+    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        itemsIndexed(items.distinctBy { it.type + it.id }, key = { i, m -> "a$i" + m.type + m.id }) { _, m ->
+            Box(Modifier.width(posterWidth()).aspectRatio(2f / 3f).clip(shape).background(Surface1).titleTap(m) { onOpen(m) }) {
+                AsyncImage(hiResArt(TmdbPosters.fallback(m) ?: m.poster), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+                Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(30.dp).clip(CircleShape).background(Color(0xB3000000))
+                    .border(1.dp, Color(0x66FF5A64), CircleShape), Alignment.Center) {
+                    AiFace(Modifier.size(22.dp))
+                }
+            }
         }
     }
 }
@@ -675,6 +723,10 @@ private fun Deck(
     onOpen: (Meta) -> Unit, onToggle: (Meta) -> Unit,
 ) {
     if (items.isEmpty()) return
+    val n = items.size
+    fun at(page: Int) = items[((page % n) + n) % n]
+    // Start (and restart when the cards change) in the middle of the long strip, on the first card.
+    LaunchedEffect(n) { if (n > 1 && (pager.currentPage < n * 2 || pager.currentPage > n * (DeckLoops - 2))) pager.scrollToPage(n * (DeckLoops / 2)) }
     // Phones: 83 % of the width. Tablets / landscape: never taller than ~68 % of the screen (cards keep their shape).
     val cfg = LocalConfiguration.current
     val cardW = minOf(cfg.screenWidthDp * 0.83f, cfg.screenHeightDp * 0.68f * 0.76f).coerceAtLeast(240f).dp
@@ -715,7 +767,7 @@ private fun Deck(
         trailerId = null; videoFor = null
         if (!trailerMode) { userTook = false; return }
         val next = pager.settledPage + 1
-        if (next < items.size) deckScope.launch {
+        if (pager.settledPage % n + 1 < n) deckScope.launch {
             pager.animateScrollToPage(next, animationSpec = tween(900, easing = androidx.compose.animation.core.CubicBezierEasing(0.22f, 1f, 0.36f, 1f)))
         } else {
             trailerMode = false; HeroSound.trailers = false; userTook = false
@@ -732,20 +784,20 @@ private fun Deck(
         if (!trailers || !trailerMode || !userTook || !visible) return@LaunchedEffect
         // Starts right after the cards stop sliding (or straight away when you hold a card).
         delay(if (holdTick > 0) 150 else 300)
-        trailerId = items.getOrNull(pager.settledPage)?.let { vm.trailerId(it.meta) }
+        trailerId = items.getOrNull(pager.settledPage % n)?.let { vm.trailerId(it.meta) }
     }
 
     // Home source kept ready (Quick Start addons, e.g. MovieBox through PenguPlay): the card that stays in front for
     // 2 s has its links looked up quietly (remembered 20 minutes), so Play starts at once.
     LaunchedEffect(pager.settledPage, items.size) {
         delay(2_000)
-        val m = items.getOrNull(pager.settledPage)?.meta ?: return@LaunchedEffect
+        val m = items.getOrNull(pager.settledPage % n)?.meta ?: return@LaunchedEffect
         if (m.type == "movie" && vm.qsActive()) runCatching { vm.quickStreams("movie", m.id) }
     }
     // Holding a card starts looking up its streams too, so Play is ready sooner.
     LaunchedEffect(holdTick) {
         if (holdTick == 0) return@LaunchedEffect
-        val m = items.getOrNull(pager.settledPage)?.meta ?: return@LaunchedEffect
+        val m = items.getOrNull(pager.settledPage % n)?.meta ?: return@LaunchedEffect
         if (m.type == "movie") runCatching { if (vm.qsActive()) vm.quickStreams("movie", m.id) else vm.allStreams("movie", m.id) }
     }
 
@@ -755,7 +807,7 @@ private fun Deck(
         if (!auto || dragged || userTook || !visible || items.size < 2) return@LaunchedEffect
         while (true) {
             delay(secs * 1000L)
-            pager.animateScrollToPage((pager.currentPage + 1) % items.size,
+            pager.animateScrollToPage(pager.currentPage + 1,
                 animationSpec = tween(900, easing = androidx.compose.animation.core.CubicBezierEasing(0.22f, 1f, 0.36f, 1f)))
         }
     }
@@ -785,7 +837,7 @@ private fun Deck(
                     }
                     .onGloballyPositioned { rootY.floatValue = it.positionInRoot().y },
             ) {
-                val frontMeta = items.getOrNull(pager.settledPage)?.meta
+                val frontMeta = items.getOrNull(pager.settledPage % n)?.meta
                 TrailerVideo(tid, muted, Modifier.fillMaxSize(), fitWhole = true, zoom = 1f,
                     backdrop = frontMeta?.let { backdropOf(it) ?: it.poster }, onPlaying = { videoFor = tid },
                     onEnded = { nextTrailer() }, onError = { nextTrailer() })
@@ -821,13 +873,13 @@ private fun Deck(
                 snapAnimationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.92f, stiffness = 170f),
                 snapPositionalThreshold = 0.3f,
             ),
-            key = { items.getOrNull(it)?.meta?.id ?: "p$it" },
+            key = { "${at(it).meta.id}#${it / n}" },
             modifier = Modifier.fillMaxWidth(),
         ) { page ->
-            val d = items[page]
+            val d = at(page)
             val isFront = page == pager.settledPage
             DeckCard(
-                d.meta, rank = page + 1, catalog = d.catalog, saved = myList.any { it.id == d.meta.id },
+                d.meta, rank = page % n + 1, catalog = d.catalog, saved = myList.any { it.id == d.meta.id },
                 trailerOn = isFront && tid != null, videoOn = isFront && videoOn, muted = muted,
                 onMute = { muted = !muted; HeroSound.muted = muted },
                 onOpen = { onOpen(d.meta) }, onToggle = { onToggle(d.meta) },
@@ -962,7 +1014,8 @@ private fun DeckCard(
         if (catalog == AIDEN_PICK) {
             Row(Modifier.padding(16.dp).clip(badgeShape).background(Color(0xB3140A0E)).border(1.dp, Color(0x99FF5A64), badgeShape)
                 .padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(18.dp).clip(CircleShape).background(Brush.radialGradient(listOf(Color(0xFFFFE3E5), Color(0xFFFF5A64), Color(0xFF9E0710)))))
+                // The AI face (Integrations › AI face) beside "picked for you".
+                AiFace(Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("${aiName().lowercase().replaceFirstChar { it.uppercase() }} picked for you", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
             }
@@ -1036,9 +1089,18 @@ fun ContinueCard(p: Progress, style: String = "card", vm: AppViewModel? = null, 
     // Corner badge: time left / "Next · S5 E12" / "New episode in 4 days".
     var badge by remember(p.key, p.positionMs) { mutableStateOf(if (p.finished()) null else CwBadge(CwBadge.LEFT, cwTimeLeft(p))) }
     LaunchedEffect(p.key, p.positionMs) { if (vm != null && p.finished()) badge = runCatching { vm.cwBadge(p) }.getOrNull() }
-    val badgeCorner: @Composable BoxScope.() -> Unit = { badge?.let { CwBadgeView(it, Modifier.align(Alignment.TopEnd).padding(8.dp), small = true) } }
-    val tap = Modifier.combinedClickable(onClick = onClick, onLongClick = long)
-    val frac = if (p.durationMs > 0) (p.positionMs.toFloat() / p.durationMs).coerceIn(0f, 1f) else 0f
+    val badgeCorner: @Composable BoxScope.() -> Unit = { badge?.takeIf { it.kind != CwBadge.NEXT || it.nextId == null }?.let { CwBadgeView(it, Modifier.align(Alignment.TopEnd).padding(8.dp), small = true) } }
+    // An episode watched to the end shows the NEXT one: its picture and name, an "UP NEXT" tag, and a tap plays it.
+    val upNext = badge?.kind == CwBadge.NEXT && badge?.nextId != null
+    val img = if (upNext) badge?.nextImage ?: p.image else p.image
+    val ttl = if (upNext) p.title.substringBefore("  S").trim() + " · " + (badge?.nextTitle ?: "") else p.title
+    val go: () -> Unit = { if (upNext) pendingDetailPlay.value = badge?.nextId; onClick() }
+    val tap = Modifier.combinedClickable(onClick = go, onLongClick = long)
+    val frac = if (upNext) 0f else if (p.durationMs > 0) (p.positionMs.toFloat() / p.durationMs).coerceIn(0f, 1f) else 0f
+    val upTag: @Composable BoxScope.() -> Unit = {
+        if (upNext) Text("UP NEXT", Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFFE50914))
+            .padding(horizontal = 7.dp, vertical = 3.dp), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp, color = Color.White)
+    }
     val leftMin = if (p.durationMs > 0) ((p.durationMs - p.positionMs) / 60000).toInt() else 0
     val left = badge?.text ?: if (p.durationMs <= 0) "Resume" else if (leftMin >= 60) "${leftMin / 60}h ${leftMin % 60}m left" else "${maxOf(leftMin, 1)}m left"
     var menu by remember { mutableStateOf(false) }
@@ -1058,14 +1120,14 @@ fun ContinueCard(p: Progress, style: String = "card", vm: AppViewModel? = null, 
     }
     when (style) {
         "wide" -> Box(Modifier.width(300.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(corner)).background(Surface1).then(tap)) {
-            AsyncImage(p.image, p.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            AsyncImage(img, ttl, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.35f to Color.Transparent, 1f to Color(0xE6000000))))
-            badgeCorner()
+            badgeCorner(); upTag()
             Row(Modifier.align(Alignment.BottomStart).padding(start = 12.dp, end = 6.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.PlayCircle, null, Modifier.size(34.dp))
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(p.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(ttl, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(left, fontSize = 12.sp, color = Color(0xFFC9CEDB))
                 }
                 more()
@@ -1074,9 +1136,9 @@ fun ContinueCard(p: Progress, style: String = "card", vm: AppViewModel? = null, 
         }
         "poster" -> Column(Modifier.width(posterWidth())) {
             Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(corner)).background(Surface1).then(tap)) {
-                AsyncImage(p.image, p.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                AsyncImage(img, ttl, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 Icon(Icons.Default.PlayCircle, null, Modifier.align(Alignment.Center).size(40.dp))
-                badgeCorner()
+                badgeCorner(); upTag()
                 Box(Modifier.align(Alignment.BottomCenter)) { bar() }
             }
             Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1087,16 +1149,16 @@ fun ContinueCard(p: Progress, style: String = "card", vm: AppViewModel? = null, 
         else -> Column(Modifier.width(236.dp)) {
             Column(Modifier.clip(RoundedCornerShape(corner)).then(tap)) {
                 Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Surface1)) {
-                    AsyncImage(p.image, p.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    AsyncImage(img, ttl, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to Color(0x99000000))))
                     Icon(Icons.Default.PlayArrow, null, Modifier.align(Alignment.BottomStart).padding(8.dp).size(30.dp))
-                    badgeCorner()
+                    badgeCorner(); upTag()
                 }
                 bar()
             }
             Row(Modifier.padding(top = 8.dp, start = 4.dp), verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
-                    Text(p.title, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(ttl, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(left, fontSize = 13.sp, color = Color(0xFF8A94A8))
                 }
                 more()
@@ -1164,14 +1226,15 @@ private fun RankedCard(rank: Int, m: Meta, flag: String?, service: Pair<String, 
             // Dark fade on the left so the number and info stay readable.
             Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xF0000000), 0.32f to Color(0x99000000), 0.55f to Color.Transparent)))
             if (rank <= 10) Column(Modifier.align(Alignment.CenterStart).padding(start = 10.dp).width(78.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    "$rank",
-                    fontSize = if (rank >= 10) 68.sp else 92.sp, fontWeight = FontWeight.Black, lineHeight = 92.sp,
-                    style = androidx.compose.ui.text.TextStyle(
-                        brush = Brush.verticalGradient(listOf(Color(0xFFFFFFFF).copy(alpha = 0.85f), Accent.copy(alpha = 0.35f), Color(0x22FFFFFF))),
-                        shadow = androidx.compose.ui.graphics.Shadow(Color(0x99000000), androidx.compose.ui.geometry.Offset(0f, 4f), 12f),
-                    ),
-                )
+                // Same numbers as Trending: white → grey fill, black outline, soft shadow.
+                Box {
+                    val st = androidx.compose.ui.text.TextStyle(fontSize = if (rank >= 10) 68.sp else 92.sp, fontWeight = FontWeight.Black, lineHeight = 92.sp, letterSpacing = (-4).sp)
+                    Text("$rank", style = st.merge(androidx.compose.ui.text.TextStyle(color = Color(0xFF05060A),
+                        drawStyle = androidx.compose.ui.graphics.drawscope.Stroke(width = 9f, join = androidx.compose.ui.graphics.StrokeJoin.Round))), softWrap = false)
+                    Text("$rank", style = st.merge(androidx.compose.ui.text.TextStyle(
+                        brush = Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFFD5D9E2), Color(0xFF9AA1B0))),
+                        shadow = androidx.compose.ui.graphics.Shadow(Color(0xCC000000), androidx.compose.ui.geometry.Offset(0f, 5f), 14f))), softWrap = false)
+                }
                 m.genres?.firstOrNull()?.let {
                     Text(it.uppercase(), fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp, color = Color(0xFFDDE1EA), maxLines = 1)
                 }
