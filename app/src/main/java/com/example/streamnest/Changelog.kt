@@ -13,6 +13,19 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.7.0", "29 Oct 2026", "Live server, music, and everything new from StreamX", listOf(
+        "Live server (64-bit app): a streaming server runs on your phone and finds streams for every movie and episode",
+        "How you watch: Turbo, Classic, or Live; Live server links also join Turbo and Classic so Quick Play starts sooner",
+        "The title page gets the Live server's best links ready while you read, so Play starts at once",
+        "Music: songs from the Live server with search, Played recently, a mini player above the dock, and the lock-screen controls",
+        "Two apps every time: the 64-bit app with the Live server, and one for every phone without it",
+        "Pick up where you left off keeps every title you started; a finished episode turns into the next one, marked UP NEXT",
+        "The top cards never end; Trending rows always start at 1",
+        "Search: whole universes (MCU, DCEU, YRF Spy Universe and more) and sequel collections",
+        "Create your own themes with a colour wheel; Cloudflare DNS by default",
+        "Quality menu with This stream and Other streams; Netflix-type streams stuck at 720p move to a 1080p copy",
+        "Downloads with Pause, Resume, speed and time left",
+    )),
     Release("0.6.0", "27 Oct 2026", "The AI card is back, faster and steadier", listOf(
         "The AI is the card again: tap the AI button, talk or type, the greeting sits at the top",
         "Say \"play Thor\" and it starts straight away; a series carries on where you left off, or say \"season 2 episode 3\"",
@@ -377,6 +390,17 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.7.0", "29 Oct 2026", "Live server (PencariMovie Server), Live mode, music, StreamX 0.9.56–0.9.57 merge, universal APK", listOf(
+        "Live server: PencariMovie Server v3.0.4 (MIT) built unchanged for aarch64-linux-android in CI (tools/build-live-server.sh, cargo-ndk, cached per tag), web player files pruned from public/ (-17 MB), shipped as jniLibs libxlive.so in the phone flavor only",
+        "LiveServer.kt: ProcessBuilder from nativeLibraryDir (--port 8088..8099 --host 127.0.0.1 --no-open --app-version), PM_APP_ROOT=files/live, reuse of a running copy, restart with backoff, log ring, status flow; started 2.5 s after MainActivity",
+        "Streams: /stream/<type>/<id>.json → StreamItem(\"Live server\"); externalUrl-only cards become lastNote; top 2 links warmed with Range 0-1",
+        "streamsFlow: srcMode=live → Live only; liveWithOthers (default yes) merges Live into Turbo/Classic (withLive channelFlow); Live counts as quick (isQuick, qsActive); ottTier 2 in plugin mode",
+        "Home: Live streams prefetched for the first 3 movie deck cards 6 s after Home",
+        "Music: MusicService (MediaSessionService, ExoPlayer + NextRenderers, ResolvingDataSource xlive://track/<id> → /music/stream/<id>.json), MusicPlayer (MediaController, queue, recent 40), MusicLibrary / MusicNowPlaying / MusicMiniBar / Home chip",
+        "Flavors: phone (arm64, HAS_LIVE) + universal (arm64 + armv7, no Live server); release ships Xstream-phone.apk and Xstream-phone-universal.apk; updater picks by HAS_LIVE",
+        "Merged StreamX 0.9.56–0.9.57: endless deck, CW up-next and unlimited, quality bar, DlEngine downloads, universes, ThemeEditor, Cloudflare DNS default, AI face, Gemini Live (dev only); Xstream's dock, See all page and taste rows kept",
+        "Smoke test checks the Live server on the emulator (version, a movie's streams, latest songs)",
+    )),
     Release("0.6.0", "27 Oct 2026", "AI revert, plugin threads, TMDB auth, tests fixed", listOf(
         "Removed AiAvatar / AiCompanion / GeminiLive and the avatar assets (−3.9 MB, less memory); AI button + wake word open VoiceAssistant (XSession)",
         "XConversation: playerCommand (AiPlayerBus), fastPath play/open with season/episode, findOne (Continue Watching → Home → search exact); XResult.play → pendingDetailPlay",

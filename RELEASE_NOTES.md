@@ -1,3 +1,17 @@
+Xstream 0.7.0
+
+Two apps this time:
+• Xstream-phone.apk: 64-bit phones, with the Live server.
+• Xstream-phone-universal.apk: every phone, without the Live server.
+
+• Live server: a streaming server runs on your phone and finds streams for every movie and episode.
+• How you watch: Turbo, Classic, or Live. Live server links also join Turbo and Classic, so Quick Play starts sooner.
+• The title page gets the best links ready while you read, so Play starts at once.
+• Music: search songs, Played recently, a mini player above the dock, and lock-screen controls.
+• Everything new from StreamX: UP NEXT in Continue Watching, endless top cards, universes in Search, your own themes, downloads with Pause and Resume.
+
+---
+
 Xstream 0.5.7
 
 • Meet AIDEN, your movie friend: he opens in a bubble from the AI button.

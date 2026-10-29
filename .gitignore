@@ -9,3 +9,4 @@ tools/nuvio/node_modules
 tools/nuvio/package-lock.json
 live-server-cache/
 app/src/phone/jniLibs/
+app/src/phone/assets/live-server-LICENSE.txt

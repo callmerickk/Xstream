@@ -27,6 +27,8 @@ android {
             buildConfigField("boolean", "HAS_LIVE", "true")
             // 64-bit ARM phones only: every phone from the last ~6 years. Keeps the VLC engine small.
             ndk { abiFilters += listOf("arm64-v8a") }
+            // The app's own words are in its code; the libraries' translations into ~80 languages are left out (smaller APK).
+            resourceConfigurations += listOf("en")
         }
         // Xstream for every phone (32-bit too), without the Live server. Same app id: either one installs over the other.
         create("universal") {
@@ -34,6 +36,7 @@ android {
             buildConfigField("boolean", "IS_TV", "false")
             buildConfigField("boolean", "HAS_LIVE", "false")
             ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            resourceConfigurations += listOf("en")
         }
         create("tv") {
             dimension = "device"

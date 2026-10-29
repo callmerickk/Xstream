@@ -13,6 +13,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** Starts without waiting: a streaming playlist (MPD / HLS), or a Live server file (the server on this phone prepares it). */
+fun StreamItem.startsFast(): Boolean = isPlaylist() || addonName == LiveServer.NAME
+
 /** What the title page has prepared for instant play. */
 data class Prepared(
     val key: String,
@@ -113,11 +116,11 @@ object Prepare {
                 // Instant plays never reach this (MovieBox answers in well under a second).
                 val plug = vm.pluginMode()
                 // Plugin mode: the picked plugins get 20 s (they search the sites by name), then every plugin is asked.
-                val timer = launch { delay(if (plug) 20_000 else 6_000); if (if (plug) quickL.isEmpty() else quickL.none { it.isPlaylist() }) goWide("Quick play is slow — preparing a backup server…") }
+                val timer = launch { delay(if (plug) 20_000 else 6_000); if (if (plug) quickL.isEmpty() else quickL.none { it.startsFast() }) goWide("Quick play is slow — preparing a backup server…") }
                 runCatching { vm.progressiveStreams(type, id, true).collect { (l, d) -> quickL = l; quickDone = d; if (l.isNotEmpty() || wideOn) publish() } }
                 quickDone = true
                 // Quick play's addons had nothing (MovieBox empty / busy): straight on with every addon.
-                if (if (plug) quickL.isEmpty() else quickL.none { it.isPlaylist() }) { timer.cancel(); goWide("Quick play had nothing — checking backup servers…") }
+                if (if (plug) quickL.isEmpty() else quickL.none { it.startsFast() }) { timer.cancel(); goWide("Quick play had nothing — checking backup servers…") }
                 if (!wideOn) publish() else wide?.join()
             }
             // Nothing playing or being saved 10 s after the title page opened: CNCVerse is asked again (every 2 s until
@@ -134,9 +137,9 @@ object Prepare {
             // Wait for the first links, then up to 2 s more so a better addon can still answer.
             val plugMode = vm.pluginMode()
             val ottFirst = plugMode
-            val first = if (ottFirst) null else withTimeoutOrNull(if (plugMode) 45_000 else 30_000) { live.first { (l, d) -> d || (if (quick && !wideOn && !plugMode) l.any { it.isPlaylist() } else l.isNotEmpty()) } }
+            val first = if (ottFirst) null else withTimeoutOrNull(if (plugMode) 45_000 else 30_000) { live.first { (l, d) -> d || (if (quick && !wideOn && !plugMode) l.any { it.startsFast() } else l.isNotEmpty()) } }
             // A link in your top language that starts at once (MovieBox playlist) needs no waiting; otherwise ~1 s more.
-            val instant = live.value.first.any { vm.langRank(it) == 0 && it.isPlaylist() && (!quick || vm.isQuick(it)) }
+            val instant = live.value.first.any { vm.langRank(it) == 0 && it.startsFast() && (!quick || vm.isQuick(it)) }
             // Plugin mode: a few seconds more so the best quality (not just the fastest plugin) goes first.
             if (first != null && !first.second && !instant) withTimeoutOrNull(if (plugMode) 4_000 else 1_000) { live.first { it.second } }
             var list = live.value.first

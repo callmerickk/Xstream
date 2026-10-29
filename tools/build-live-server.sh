@@ -28,8 +28,11 @@ if [ ! -s "$CACHE/libxlive-$TAG.so" ]; then
   export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}}"
   PM_BUILD_VERSION="${TAG#v}" cargo ndk -t arm64-v8a --platform 24 build --release --locked
   cp target/aarch64-linux-android/release/pencarimovie-server "$CACHE/libxlive-$TAG.so"
+  cp LICENSE "$CACHE/LICENSE-$TAG.txt"
   cd "$ROOT"; rm -rf "$WORK"
 fi
+[ -s "$CACHE/LICENSE-$TAG.txt" ] || curl -sfL "https://raw.githubusercontent.com/aiskendi/pencarimovie-server/$TAG/LICENSE" -o "$CACHE/LICENSE-$TAG.txt" || true
 cp "$CACHE/libxlive-$TAG.so" "$OUT/libxlive.so"
+mkdir -p "$ROOT/app/src/phone/assets" && cp "$CACHE/LICENSE-$TAG.txt" "$ROOT/app/src/phone/assets/live-server-LICENSE.txt" 2>/dev/null || true
 ls -la "$OUT/libxlive.so"
 file "$OUT/libxlive.so" || true

@@ -84,7 +84,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     }
 
     override fun onPause() { super.onPause(); ActLog.add("APP", "to background") }
-    override fun onResume() { super.onResume(); com.lagradost.cloudstream3.CommonActivity.activity = this; ActLog.add("APP", "in front"); runCatching { Cloud.onAppForeground() } }
+    override fun onResume() { super.onResume(); com.lagradost.cloudstream3.CommonActivity.activity = this; ActLog.add("APP", "in front"); runCatching { Cloud.onAppForeground() }; LiveServer.start(this, 2_500) }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)

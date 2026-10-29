@@ -1330,7 +1330,8 @@ fun PlayerScreen(
             val r = withTimeoutOrNull(4_000) { Result.success(StreamCache.saveParts(ctx, u, mid, 128L * 1024, 1, null) { }) }
             return r != null && r.getOrNull() == null && StreamCache.savedBytes(ctx, u, mid, 128L * 1024) > 0
         }
-        fun needsJumpTest(s0: StreamItem, u: String) = !isPlaylistLink(s0, u) && !s0.isMovieBox() && !s0.isVega() && !s0.isOtt()
+        // The Live server always serves any part of a file (each jump is a ranged read on this phone): never tested.
+        fun needsJumpTest(s0: StreamItem, u: String) = !isPlaylistLink(s0, u) && !s0.isMovieBox() && !s0.isVega() && !s0.isOtt() && s0.addonName != LiveServer.NAME
         if (needsJumpTest(q, url) && !canJump(url, won?.second?.size ?: 0L)) {
             Ranker.markUnseekable(url)
             PlayTiming.mark("${Ranker.labelOf(Ranker.groupKey(q)).substringAfter(" · ")} can't jump inside — trying the next link", once = "jumpfail")

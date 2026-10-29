@@ -283,6 +283,14 @@ fun HomeScreen(
     // Endless: a very long strip of pages that repeats the cards (card = page mod count), started in the middle, so
     // swiping either way never reaches an end — after the last card comes the first, before the first the last.
     val deckPager = rememberPagerState { if (deck.size > 1) deck.size * DeckLoops else deck.size }
+    // Live server: the first three movie cards' streams are asked for quietly once Home is up (the server keeps them
+    // 5 minutes and looks up the best two files), so tapping one of them starts like a title you already opened.
+    val deckIds = remember(deck) { deck.take(3).map { it.meta }.filter { it.type == "movie" && it.id.startsWith("tt") }.map { it.id } }
+    LaunchedEffect(deckIds) {
+        if (deckIds.isEmpty() || !LiveServer.enabled(vm.appContext)) return@LaunchedEffect
+        delay(6_000)
+        deckIds.forEach { id -> runCatching { LiveServer.streams(vm.appContext, "movie", id) } }
+    }
     // True while at least half of the top cards are on screen. Recomputed on scroll, but only notifies readers
     // when the answer flips, so it costs nothing per frame. Trailers / auto-slide stop when the deck scrolls away.
     val deckOnScreen = remember(listState) {

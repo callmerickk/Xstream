@@ -46,6 +46,14 @@ jobs:
           set -o pipefail
           gradle assemblePhoneDebug assembleUniversalDebug --no-daemon 2>&1 | tee build.log
           ls -la app/build/outputs/apk/*/debug/*.apk
+      - name: Check the APKs
+        run: |
+          for a in app/build/outputs/apk/phone/debug/*.apk app/build/outputs/apk/universal/debug/*.apk; do
+            n=$(basename "$a"); sz=$(du -m "$a" | cut -f1)
+            live=$(unzip -l "$a" | grep -c "libxlive.so" || true)
+            libs=$(unzip -l "$a" | grep "lib/" | awk '{print $1, $4}' | sort -rn | head -8 | awk '{printf "%s %.1fMB; ", $2, $1/1048576}')
+            echo "::notice title=$n ($sz MB, Live server: $live)::$libs"
+          done
       - name: Report errors
         if: failure()
         run: |
