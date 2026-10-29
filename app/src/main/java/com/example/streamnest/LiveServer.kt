@@ -183,7 +183,9 @@ object LiveServer {
                     noteText = d.lines().filter { it.isNotBlank() }.take(2).joinToString(" ").replace(Regex("(?i)telegram ?"), "")
                 return@forEach
             }
-            out += StreamItem(NAME, s)
+            // The server's own wording names where its files live; Xstream just says Live server.
+            fun clean(t: String?) = t?.replace(Regex("(?i)\\btelegram\\b\\s*"), "")?.trim()
+            out += StreamItem(NAME, s.copy(name = clean(s.name), title = clean(s.title), description = clean(s.description)))
         }
         lastNote.value = noteText
         ActLog.add("LIVE", "${out.size} links in ${System.currentTimeMillis() - t0} ms · $id" + if (noteText.isNotEmpty()) " · $noteText" else "")
@@ -224,8 +226,10 @@ object LiveServer {
                 format = (o["format"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
                 artworkURL = (o["artworkURL"] as? JsonPrimitive)?.contentOrNull,
             )
-        } }.filter { it.id.isNotBlank() }
+        } }.filter { it.id.isNotBlank() && it.format.lowercase() !in VideoFormats }
     }.getOrDefault(emptyList())
+    /** The music addon also lists video files; the music player shows songs only. */
+    private val VideoFormats = setOf("mkv", "mp4", "avi", "webm", "ts", "m2ts", "mov", "wmv", "flv", "m4v", "3gp")
 
     private fun getText(url: String, readS: Long = 20): String? = runCatching {
         http.newBuilder().readTimeout(readS, TimeUnit.SECONDS).build().newCall(Request.Builder().url(url).build()).execute()
