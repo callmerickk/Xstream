@@ -43,16 +43,20 @@ private val Red = Color(0xFFE50914)
 @Composable
 internal fun WatchModeCard(vm: AppViewModel) {
     val texts by vm.texts.collectAsStateWithLifecycle()
-    val turbo = texts["srcMode"] == "plugins"
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val hasLive = LiveServer.available(ctx)
+    val mode = texts["srcMode"].let { if (it == "live" && !hasLive) "plugins" else it ?: "plugins" }
     SettingsCard {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
             Text("How you watch", fontSize = 17.sp, fontWeight = FontWeight.Medium)
-            Text(if (turbo) "Turbo: streams straight from big streaming catalogues, starts almost instantly. Your Sources rest."
-                else "Classic: your Sources and Quick Play servers, exactly as before. Extensions rest.",
+            Text(when (mode) {
+                "plugins" -> "Turbo: streams straight from big streaming catalogues, starts almost instantly. Your Sources rest."
+                "live" -> "Live: only the Live server on this phone. Its links are prepared on the title page, so Play starts at once."
+                else -> "Classic: your Sources and Quick Play servers, exactly as before. Extensions rest." },
                 fontSize = 13.sp, color = Muted, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0x14FFFFFF)).padding(4.dp)) {
-                listOf("plugins" to "Turbo", "addons" to "Classic").forEach { (k, label) ->
-                    val sel = (k == "plugins") == turbo
+                (listOf("plugins" to "Turbo", "addons" to "Classic") + if (hasLive) listOf("live" to "Live") else emptyList()).forEach { (k, label) ->
+                    val sel = k == mode
                     Text(label, Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(if (sel) (if (k == "plugins") Red else Color.White) else Color.Transparent)
                         .clickable { vm.setText("srcMode", k); forgetAllStreams() }.padding(vertical = 11.dp),
                         fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (sel) (if (k == "plugins") Color.White else Color.Black) else Color.White, textAlign = TextAlign.Center)
@@ -77,10 +81,12 @@ fun FirstWatchChooser(vm: AppViewModel) {
             }
             ModeChoice(Icons.Default.Bolt, "Turbo", "Streams straight from big streaming catalogues. Starts almost instantly, HD and 4K ready.", pick == "plugins", recommended = true) { pick = "plugins" }
             ModeChoice(Icons.Default.GridView, "Classic", "Uses your Sources and Quick Play servers, exactly as Xstream worked before.", pick == "addons", recommended = false) { pick = "addons" }
+            if (LiveServer.available(androidx.compose.ui.platform.LocalContext.current))
+                ModeChoice(Icons.Default.Bolt, "Live", "Only the Live server on this phone: movies, episodes and music, prepared before you press Play.", pick == "live", recommended = false) { pick = "live" }
             Spacer(Modifier.height(8.dp))
             Button({ vm.setText("srcMode", pick); forgetAllStreams() }, Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)) {
-                Text("Continue with " + if (pick == "plugins") "Turbo" else "Classic", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Continue with " + when (pick) { "plugins" -> "Turbo"; "live" -> "Live"; else -> "Classic" }, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

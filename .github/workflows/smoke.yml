@@ -21,6 +21,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            live-server-cache
+            ~/.cargo/bin/cargo-ndk
+          key: live-server-v3.0.4-r1
+      - name: Live server (64-bit app)
+        env:
+          PM_TAG: v3.0.4
+        run: bash tools/build-live-server.sh
       - name: Build
         run: gradle assemblePhoneDebug --no-daemon -q
       - name: Enable KVM

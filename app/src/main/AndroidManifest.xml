@@ -13,6 +13,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Needed on Android 11+ to find the phone's speech-recognition and text-to-speech engines -->
     <queries>
         <intent><action android:name="android.speech.RecognitionService" /></intent>
@@ -28,6 +29,12 @@
         <!-- Xstream VPN (WireGuard): only Xstream's own traffic, only while switched on in Network & DNS. -->
         <service android:name=".UpdateService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".DlService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <!-- Music (Live server songs): background playback with the media notification and lock-screen controls. -->
+        <service android:name=".MusicService" android:exported="true" android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
         <service
             android:name="com.wireguard.android.backend.GoBackend$VpnService"
             android:exported="false"

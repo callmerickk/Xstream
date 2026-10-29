@@ -7,3 +7,5 @@ local.properties
 app/src/main/assets/nuvio/libs.js
 tools/nuvio/node_modules
 tools/nuvio/package-lock.json
+live-server-cache/
+app/src/phone/jniLibs/

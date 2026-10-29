@@ -83,6 +83,7 @@ fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) 
         "manual" -> ManualPage(back)
         "plugins" -> XPluginsPage(vm, back)
         "extensions" -> ExtensionsPage(vm, back)
+        "live" -> LiveServerPage(vm, back)
         "notifications" -> NotificationsPage(vm, back)
         "updates" -> UpdateLogPage(vm, back, open)
         "playback" -> PlaybackPage(vm, back)
@@ -707,6 +708,11 @@ private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> 
             if (!BuildConfig.IS_TV) {
                 RowDivider(20.dp)
                 SettingRow(null, "Extensions", "Add Nuvio extension repositories and switch providers on or off.") { open("extensions") }
+                if (BuildConfig.HAS_LIVE) {
+                    RowDivider(20.dp)
+                    val ls by LiveServer.state.collectAsStateWithLifecycle()
+                    SettingRow(null, LiveServer.NAME, (if (ls.ready) "Running · " else "") + "Streams and music from the server on this phone.") { open("live") }
+                }
             }
             RowDivider(20.dp)
             SettingRow(null, "Filters", "Quality, audio language, what to hide — on top of Xstream's own picks.") { open("quickPlay") }

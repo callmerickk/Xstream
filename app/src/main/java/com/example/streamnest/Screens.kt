@@ -129,6 +129,8 @@ fun App(vm: AppViewModel = viewModel()) {
     val pop = { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex); Unit }
     val profile by vm.current.collectAsStateWithLifecycle()
     val texts by vm.texts.collectAsStateWithLifecycle()
+    // Music (Live server): its pages open from the Home chip, the mini bar and the notification.
+    if (BuildConfig.HAS_LIVE && profile != null) MusicHost()
     // Activity log: which screen is open.
     LaunchedEffect(stack.lastOrNull(), tab, profile?.id) {
         val top = stack.lastOrNull()
@@ -335,6 +337,8 @@ fun App(vm: AppViewModel = viewModel()) {
                     },
                     modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"),
                 )
+                // Music (Live server): the small player sits just above the dock while songs are queued.
+                if (BuildConfig.HAS_LIVE && !(navHidden && tab == 3)) MusicMiniBar(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 92.dp))
                 val bellTogether by BellNav.together.collectAsState()
                 LaunchedEffect(bellTogether) { if (bellTogether) { BellNav.together.value = false; stack.add(Screen.Together()) } }
                 // Voice search handed a request to the AI.

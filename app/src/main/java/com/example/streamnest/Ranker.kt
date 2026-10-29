@@ -365,6 +365,8 @@ fun StreamItem.isVega(): Boolean = isVegaName(addonName)
 fun StreamItem.ottTier(): Int = when {
     addonName.startsWith("Nuvio · ") -> 5
     isOtt() -> 0
+    // Live server files sit on this phone's own server and are prepared on the title page: with VegaMovies.
+    addonName == LiveServer.NAME -> 2
     isMovieBox() -> if (mbKind() == 2) 4 else 1
     isVega() -> 2
     else -> 3

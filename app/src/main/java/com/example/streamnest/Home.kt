@@ -339,8 +339,12 @@ fun HomeScreen(
                 }
             }
             item(key = "forYou", contentType = "forYou") {
-                Text(t("forYou"), fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFEDEFF7),
-                    modifier = Modifier.padding(start = 16.dp, top = 18.dp, bottom = 16.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(t("forYou"), fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFEDEFF7),
+                        modifier = Modifier.weight(1f).padding(start = 16.dp, top = 18.dp, bottom = 16.dp))
+                    // Live server music (64-bit app).
+                    if (!BuildConfig.IS_TV) MusicChip(Modifier.padding(end = 16.dp, top = 4.dp))
+                }
             }
             if (!BuildConfig.IS_TV) item(key = "langPills", contentType = "langPills") { LanguagePills(vm, onOpen) }
             if (shelves.isEmpty()) {

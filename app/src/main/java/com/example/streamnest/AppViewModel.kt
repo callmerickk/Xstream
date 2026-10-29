@@ -909,8 +909,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     /** Streams arriving addon by addon: emits (list so far in addon order, finished?) so the page fills in fast. */
-    fun streamsFlow(type: String, id: String, only: Set<String>? = null, except: Set<String>? = null): Flow<Pair<List<StreamItem>, Boolean>> =
-        if (pluginMode()) PluginSources.modeStreams(this, type, id, only, except) else addonStreamsFlow(type, id, only, except)
+    fun streamsFlow(type: String, id: String, only: Set<String>? = null, except: Set<String>? = null): Flow<Pair<List<StreamItem>, Boolean>> {
+        val base = if (pluginMode()) PluginSources.modeStreams(this, type, id, only, except) else addonStreamsFlow(type, id, only, except)
+        // Live server (64-bit app): its own mode, or added to Turbo / Classic (on by default). It counts as a quick
+        // server, so Quick Play and the title page's instant start get its links too.
+        val live = LiveServer.enabled(appContext) && (except == null || LiveServer.NAME !in except)
+        return when {
+            liveMode() -> if (live) liveStreamsFlow(type, id) else kotlinx.coroutines.flow.flowOf(emptyList<StreamItem>() to true)
+            live && isOn(texts.value["liveWithOthers"] ?: "yes") -> withLive(base, type, id)
+            else -> base
+        }
+    }
+
+    /** The Live server's links alone, as one answer. */
+    private fun liveStreamsFlow(type: String, id: String): Flow<Pair<List<StreamItem>, Boolean>> = kotlinx.coroutines.flow.flow {
+        val l = runCatching { LiveServer.streams(appContext, type, id) }.getOrDefault(emptyList())
+        emit(l.filterNot { TitleMatch.wrong(it, type, id) } to true)
+    }
+
+    /** [base] with the Live server's links added as soon as they arrive; done when both are done. */
+    private fun withLive(base: Flow<Pair<List<StreamItem>, Boolean>>, type: String, id: String): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
+        val lock = Any()
+        var others: List<StreamItem> = emptyList(); var othersDone = false
+        var mine: List<StreamItem> = emptyList(); var mineDone = false
+        suspend fun push() { val snap = synchronized(lock) { (mine + others).distinctBy { it.stream.url } to (othersDone && mineDone) }; send(snap) }
+        launch {
+            val l = runCatching { LiveServer.streams(appContext, type, id) }.getOrDefault(emptyList()).filterNot { TitleMatch.wrong(it, type, id) }
+            synchronized(lock) { mine = l; mineDone = true }
+            push()
+        }
+        base.collect { (l, done) -> synchronized(lock) { others = l; othersDone = done }; push() }
+    }
 
     internal fun addonStreamsFlow(type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
         val addons = active.filter { it.supports("stream", type, id) && (only == null || it.label() in only) && (except == null || it.label() !in except) }

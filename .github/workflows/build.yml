@@ -30,10 +30,22 @@ jobs:
           mkdir -p ../../app/src/main/assets/nuvio
           npx esbuild entry.js --bundle --minify --platform=browser --format=iife --outfile=../../app/src/main/assets/nuvio/libs.js
           ls -la ../../app/src/main/assets/nuvio
+      # Live server for the 64-bit app: PencariMovie Server built unchanged for Android arm64 (cached per version).
+      - uses: actions/cache@v4
+        with:
+          path: |
+            live-server-cache
+            ~/.cargo/bin/cargo-ndk
+          key: live-server-v3.0.4-r1
+      - name: Live server (64-bit app)
+        env:
+          PM_TAG: v3.0.4
+        run: bash tools/build-live-server.sh
       - name: Build
         run: |
           set -o pipefail
-          gradle assemblePhoneDebug --no-daemon 2>&1 | tee build.log
+          gradle assemblePhoneDebug assembleUniversalDebug --no-daemon 2>&1 | tee build.log
+          ls -la app/build/outputs/apk/*/debug/*.apk
       - name: Report errors
         if: failure()
         run: |
@@ -67,11 +79,16 @@ jobs:
         with:
           name: Xstream-phone-apk
           path: app/build/outputs/apk/phone/debug/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Xstream-universal-apk
+          path: app/build/outputs/apk/universal/debug/*.apk
       - name: Prepare release files
         if: ${{ inputs.publish }}
         run: |
           mkdir -p release
           cp app/build/outputs/apk/phone/debug/*.apk release/Xstream-phone.apk
+          cp app/build/outputs/apk/universal/debug/*.apk release/Xstream-phone-universal.apk
           G=app/build.gradle.kts
           CODE=$(grep 'versionCode = ' $G | sed -n 1p | grep -o '[0-9]\+')
           NAME=$(grep 'versionName = ' $G | sed -n 1p | sed 's/.*"\(.*\)".*/\1/')
@@ -89,5 +106,6 @@ jobs:
           make_latest: true
           files: |
             release/Xstream-phone.apk
+            release/Xstream-phone-universal.apk
             release/versions.json
             release/notes.md

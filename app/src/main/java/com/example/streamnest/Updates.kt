@@ -135,7 +135,7 @@ object Updater {
         val name = versions.s(if (tv) "tvName" else "phoneName") ?: ""
         // The APK of exactly this release (its tag), so the version shown is the version installed.
         val tag = versions.s("tag")
-        val url = (if (tag != null) "https://github.com/$REPO/releases/download/$tag" else base) + "/${if (tv) "Xstream-TV.apk" else "Xstream-phone.apk"}"
+        val url = (if (tag != null) "https://github.com/$REPO/releases/download/$tag" else base) + "/${if (tv) "Xstream-TV.apk" else if (BuildConfig.HAS_LIVE) "Xstream-phone.apk" else "Xstream-phone-universal.apk"}"
         val info = if (code > installedCode(ctx)) {
             val notes = fetch((if (tag != null) "https://github.com/$REPO/releases/download/$tag" else base) + "/notes.md?t=$now")?.takeIf { !it.trimStart().startsWith("<") }
                 ?: rel?.s("body")

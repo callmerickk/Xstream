@@ -435,6 +435,8 @@ fun PlayerScreen(
 
     // The audio language you last chose for this title (or series) goes first while it plays.
     remember(p.key) { LangPick.current = vm.titleLang(p.key); 0 }
+    // Music stops for the movie.
+    LaunchedEffect(Unit) { MusicPlayer.pauseForVideo() }
     val type = p.type.ifBlank { if (p.key.contains(":")) "series" else "movie" }
     var meta by remember { mutableStateOf(p.meta) }
     // A video already prepared on the title page starts instantly.

@@ -101,6 +101,8 @@ fun StreamItem.languages(): List<String> {
  * and no addon is asked. Addon mode (default): addons only, plugins are never loaded.
  */
 fun AppViewModel.pluginMode(): Boolean = !BuildConfig.IS_TV && texts.value["srcMode"] == "plugins"
+/** Live mode (64-bit app): only the Live server's links. */
+fun AppViewModel.liveMode(): Boolean = !BuildConfig.IS_TV && texts.value["srcMode"] == "live" && LiveServer.available(appContext)
 /** The name a CloudStream provider's links carry (StreamItem.addonName). */
 fun csDisplayName(provider: String) = "CloudStream · $provider"
 /** Quick Start: in plugin mode the picked CloudStream providers (by their link name), else the picked addons. */
@@ -121,11 +123,11 @@ fun AppViewModel.qsCs(): Set<String> = if (BuildConfig.IS_TV) emptySet() else qs
 /** Saved one per line (plugin keys contain "|" themselves, so "|" can't separate them). */
 fun qsCsParse(raw: String?): Set<String> = (raw ?: "").split("\n").filter { it.isNotBlank() }.toSet()
 fun csProviderKey(pluginKey: String, provider: String) = "$pluginKey#$provider"
-fun AppViewModel.qsActive(): Boolean = isOn(texts.value["qsOn"] ?: "yes") && qsAddons().isNotEmpty()
+fun AppViewModel.qsActive(): Boolean = isOn(texts.value["qsOn"] ?: "yes") && (qsAddons().isNotEmpty() || LiveServer.enabled(appContext))
 fun AppViewModel.qsLangs(): List<String> = (texts.value["qsLangs"] ?: "hindi,english,original").split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
 /** Does this stream come from a Quick Start addon? */
-fun AppViewModel.isQuick(s: StreamItem) = (pluginMode() && (s.isMovieBox() || s.isOtt() || s.isVega())) || s.addonName in qsAddons() &&
+fun AppViewModel.isQuick(s: StreamItem) = s.addonName == LiveServer.NAME || (pluginMode() && (s.isMovieBox() || s.isOtt() || s.isVega())) || s.addonName in qsAddons() &&
     // An all-in-one addon (AIOStreams) in Quick Start: only its MovieBox links count for quick play (its other servers
     // mostly answer nothing in time); everything else of it stays in All sources.
     (!(s.addonName.contains("aio", ignoreCase = true) || addons.value.firstOrNull { it.label() == s.addonName }?.baseUrl?.contains("aiostreams", true) == true) || s.isMovieBox())
