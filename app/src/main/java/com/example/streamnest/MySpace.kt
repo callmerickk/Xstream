@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -561,7 +562,7 @@ fun NotificationsPage(onBack: () -> Unit, onTogether: () -> Unit, embedded: Bool
                 Text("Remove", Modifier.align(Alignment.CenterEnd).padding(end = 18.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 Row(Modifier.fillMaxWidth().offset { androidx.compose.ui.unit.IntOffset(dx.value.toInt(), 0) }.background(HubCard)
                     .pointerInput(a) {
-                        androidx.compose.foundation.gestures.detectHorizontalDragGestures(
+                        detectHorizontalDragGestures(
                             onDragEnd = { scope.launch { if (dx.value < -size.width * 0.3f) { dx.animateTo(-size.width.toFloat(), androidx.compose.animation.core.tween(160)); dismiss(a) } else dx.animateTo(0f) } },
                             onDragCancel = { scope.launch { dx.animateTo(0f) } },
                         ) { ch, d -> ch.consume(); scope.launch { dx.snapTo((dx.value + d).coerceAtMost(0f)) } }

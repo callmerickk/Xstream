@@ -273,7 +273,7 @@ fun MusicLibrary(onClose: () -> Unit) {
                                     if (si == 0 && songs >= 4) {
                                         // Quick picks: four rows of songs, swiped sideways (like YouTube Music).
                                         androidx.compose.foundation.lazy.grid.LazyHorizontalGrid(androidx.compose.foundation.lazy.grid.GridCells.Fixed(4),
-                                            Modifier.height(4 * 62.dp), contentPadding = PaddingValues(horizontal = 16.dp),
+                                            Modifier.height(248.dp), contentPadding = PaddingValues(horizontal = 16.dp),
                                             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                             items(x.items.size) { k ->
                                                 val it = x.items[k]

@@ -318,11 +318,11 @@ private fun LibraryHome(vm: AppViewModel, friends: List<Person>, onOpen: (Meta) 
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (!BuildConfig.IS_TV) LibTile("Xstream Music", "Songs, albums, videos", Icons.Default.MusicNote, true, Modifier.weight(1f)) { MusicPlayer.openLibrary.value = true }
-                LibTile("Watch Together", "${friends.size} friend${if (friends.size == 1) "" else "s"} · ${shared.size} shared", Icons.Default.Groups, false, Modifier.weight(1f)) { onLibTile("together") }
+                LibTile("Watch Together", "${friends.size} friend${if (friends.size == 1) "" else "s"} · ${shared.size} shared", Icons.Default.Groups, false, Modifier.weight(1f)) { onTile("together") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                LibTile("Watchlist", "${list.size} title${if (list.size == 1) "" else "s"} · Calendar", Icons.Default.Favorite, false, Modifier.weight(1f)) { onLibTile("watchlist") }
-                if (!BuildConfig.IS_TV) LibTile("Downloads", "Watch without internet", Icons.Default.Download, false, Modifier.weight(1f)) { onLibTile("downloads") }
+                LibTile("Watchlist", "${list.size} title${if (list.size == 1) "" else "s"} · Calendar", Icons.Default.Favorite, false, Modifier.weight(1f)) { onTile("watchlist") }
+                if (!BuildConfig.IS_TV) LibTile("Downloads", "Watch without internet", Icons.Default.Download, false, Modifier.weight(1f)) { onTile("downloads") }
             }
         }
         if (shared.isNotEmpty()) {
@@ -345,7 +345,7 @@ private fun LibraryHome(vm: AppViewModel, friends: List<Person>, onOpen: (Meta) 
                 Text("Hold to remove", fontSize = 12.sp, color = LMuted)
             }
             friends.forEach { f ->
-                Row(Modifier.fillMaxWidth().combinedClickable(onClick = { onLibTile("together") }, onLongClick = { friendMenu = f }).padding(horizontal = 16.dp, vertical = 8.dp),
+                Row(Modifier.fillMaxWidth().combinedClickable(onClick = { onTile("together") }, onLongClick = { friendMenu = f }).padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(42.dp).clip(CircleShape).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF5B6B8A), Color(0xFF20293A)))), Alignment.Center) {
                         Text(f.name.take(1).uppercase(), fontSize = 17.sp, fontWeight = FontWeight.Bold)
