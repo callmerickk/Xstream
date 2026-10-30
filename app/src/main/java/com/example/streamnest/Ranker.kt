@@ -331,6 +331,8 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
             { if (it.isCamCopy()) 1 else 0 },
             // Plugin mode, Auto: Netflix / Prime Video / Hotstar / MPlayer first, MovieBox (DASH first) as the backup, then the rest.
             { if (plugTiers) it.ottTier() else 0 },
+            // Live server: a file bigger than Telegram can deliver per second (4K remuxes) only after the ones that can.
+            { if (it.liveTooHeavy()) 1 else 0 },
             // M Player's DASH link often shows nothing (its HLS starts in ~1 s): HLS first for these.
             { if (plugTiers && it.isOtt() && StreamType.mimeFor(it.stream.url.orEmpty(), it.fileName()) == StreamType.DASH) 1 else 0 },
             { tierCost(it) }, { HostStats.penalty(it.stream.url.orEmpty()) }, { langRank(it) }, { if (it.isHeavy()) 1 else 0 })
@@ -538,4 +540,17 @@ fun StreamItem.isCamCopy(): Boolean {
     val t = " " + listOfNotNull(stream.name, stream.title, stream.description, stream.behaviorHints?.filename).joinToString(" ")
         .lowercase().replace(Regex("[^a-z0-9]+"), " ") + " "
     return Regex(" (cam|hdcam|camrip|hdts|hdtc|telesync|telecine|predvd) ").containsMatchIn(t) || t.contains(" hd cam ") || t.contains(" hq hdtc ")
+}
+
+/**
+ * Live server files come from Telegram at roughly 1.5–3 MB/s per file. A file that needs more than that every
+ * second (its size ÷ its running time, e.g. a 45 GB 4K remux) keeps stopping to load, so it goes after the rest.
+ */
+fun StreamItem.liveTooHeavy(): Boolean {
+    if (addonName != LiveServer.NAME) return false
+    val size = stream.behaviorHints?.videoSize?.takeIf { it > 0 } ?: return false
+    val text = listOfNotNull(stream.description, stream.title, stream.name).joinToString(" ")
+    val m = Regex("""(?:(\d+)\s*h)?\s*(\d+)\s*m\b""").find(text.substringAfter("⏱", text)) ?: return false
+    val secs = ((m.groupValues[1].toIntOrNull() ?: 0) * 3600 + (m.groupValues[2].toIntOrNull() ?: 0) * 60).takeIf { it >= 600 } ?: return false
+    return size.toDouble() / secs > 1.4 * 1024 * 1024
 }

@@ -8,8 +8,8 @@
 #
 # Output: app/src/phone/jniLibs/arm64-v8a/libxlive.so (Android only runs programs shipped as app libraries).
 set -euo pipefail
-TAG="${PM_TAG:-v3.0.4}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TAG="${PM_TAG:-$(cat "$ROOT/tools/live-server.tag")}"
 CACHE="$ROOT/live-server-cache"
 OUT="$ROOT/app/src/phone/jniLibs/arm64-v8a"
 mkdir -p "$CACHE" "$OUT"

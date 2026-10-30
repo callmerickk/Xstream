@@ -249,32 +249,33 @@ private fun RoomShelf(title: String, recs: List<Rec>, onOpen: (Meta) -> Unit) {
  * from a row of tabs you can slide.
  */
 @Composable
-fun XLibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit, onPlayRoom: (RoomState) -> Unit) {
+fun XLibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit, onPlayRoom: (RoomState) -> Unit, onPlay: ((Screen.Player) -> Unit)? = null) {
     val ctx = LocalContext.current
     LaunchedEffect(Unit) { Recs.init(ctx) }
     val friends by Social.friends.collectAsStateWithLifecycle()
-    var tab by remember { mutableStateOf("watchlist") }
+    // "home": the Library overview (Music, Watch Together, Watchlist, Downloads; shared titles and friends below).
+    var tab by remember { mutableStateOf("home") }
     var room by remember { mutableStateOf<String?>(null) }
-    if (onBack != null) BackHandler { onBack() }
+    if (tab != "home") BackHandler { tab = "home" } else if (onBack != null) BackHandler { onBack() }
     Column(Modifier.fillMaxSize().background(Bg)) {
-        Row(Modifier.statusBarsPadding().padding(start = if (onBack != null) 6.dp else 16.dp, end = 16.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (onBack != null) Box(Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onBack), Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text("Library", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+        Row(Modifier.statusBarsPadding().padding(start = if (onBack != null || tab != "home") 6.dp else 16.dp, end = 16.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            val back = if (tab != "home") ({ tab = "home" }) else onBack
+            if (back != null) Box(Modifier.size(44.dp).clip(CircleShape).clickable(onClick = back), Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            Text(when (tab) { "watchlist" -> "Watchlist"; "calendar" -> "Calendar"; "together" -> "Watch Together"; "downloads" -> "Downloads"; else -> "Library" },
+                fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
         }
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (tab == "watchlist" || tab == "calendar") Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("watchlist" to "Watchlist", "calendar" to "Calendar").forEach { (k, n) ->
                 val on = tab == k
                 Text(n, Modifier.clip(RoundedCornerShape(50)).background(if (on) Color(0xFFF2F4F8) else LCard).border(1.dp, if (on) Color(0xFFF2F4F8) else LLine, RoundedCornerShape(50))
                     .clickable { tab = k }.padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (on) Color(0xFF0E1014) else LMuted)
             }
         }
-        // Watch together, up front: a red glowing card (who's online, what they're watching).
-        if (tab != "together") WatchTogetherCard(friends) { tab = "together" }
-        if (tab == "together" || tab == "calendar") BackHandler { tab = "watchlist" }
         // Calendar and Watch together (its chats type at the bottom): the bottom bar steps aside, back returns here.
-        DisposableEffect(tab) { NavHide.on.value = tab != "watchlist"; onDispose { NavHide.on.value = false } }
+        DisposableEffect(tab) { NavHide.on.value = tab == "together" || tab == "calendar"; onDispose { NavHide.on.value = false } }
         Box(Modifier.weight(1f)) {
             when (tab) {
+                "home" -> LibraryHome(vm, friends, onOpen, onTile = { tab = it })
                 "watchlist" -> Column {
                     Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         (listOf<Person?>(null) + friends).forEach { p ->
@@ -291,8 +292,97 @@ fun XLibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit
                     else FriendRoom(vm, p, onOpen)
                 }
                 "calendar" -> WatchlistPage(vm, onBack = {}, onOpen = onOpen, startCalendar = true, embedded = true)
-                else -> WatchTogetherPage(vm, onBack = { tab = "watchlist" }, onOpen = onOpen, onPlayRoom = onPlayRoom)
+                "downloads" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 140.dp)) {
+                    if (onPlay != null) DownloadsSection(onPlay) else Text("Downloads open from the title page.", Modifier.padding(16.dp), color = LMuted)
+                }
+                else -> WatchTogetherPage(vm, onBack = { tab = "home" }, onOpen = onOpen, onPlayRoom = onPlayRoom)
             }
+        }
+    }
+}
+
+/**
+ * The Library overview: four tiles (Xstream Music, Watch Together, Watchlist, Downloads), then the titles shared in
+ * Watch Together and your friends. Hold a shared title or a friend to remove it (a removed friend loses you too).
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun LibraryHome(vm: AppViewModel, friends: List<Person>, onOpen: (Meta) -> Unit, onTile: (String) -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val list by vm.myList.collectAsStateWithLifecycle()
+    val shared by Social.items.collectAsStateWithLifecycle()
+    var itemMenu by remember { mutableStateOf<SharedItem?>(null) }
+    var friendMenu by remember { mutableStateOf<Person?>(null) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 150.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (!BuildConfig.IS_TV) LibTile("Xstream Music", "Songs, albums, videos", Icons.Default.MusicNote, true, Modifier.weight(1f)) { MusicPlayer.openLibrary.value = true }
+                LibTile("Watch Together", "${friends.size} friend${if (friends.size == 1) "" else "s"} · ${shared.size} shared", Icons.Default.Groups, false, Modifier.weight(1f)) { onLibTile("together") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                LibTile("Watchlist", "${list.size} title${if (list.size == 1) "" else "s"} · Calendar", Icons.Default.Favorite, false, Modifier.weight(1f)) { onLibTile("watchlist") }
+                if (!BuildConfig.IS_TV) LibTile("Downloads", "Watch without internet", Icons.Default.Download, false, Modifier.weight(1f)) { onLibTile("downloads") }
+            }
+        }
+        if (shared.isNotEmpty()) {
+            Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {
+                Text("Watch Together", Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
+                Text("Hold to remove", fontSize = 12.sp, color = LMuted)
+            }
+            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(shared, key = { it.id }) { it2 ->
+                    Box {
+                        AsyncImage(it2.meta.poster, it2.meta.name, Modifier.size(112.dp, 164.dp).clip(RoundedCornerShape(14.dp)).background(LCard)
+                            .combinedClickable(onClick = { onOpen(it2.meta) }, onLongClick = { itemMenu = it2 }), contentScale = ContentScale.Crop)
+                    }
+                }
+            }
+        }
+        if (friends.isNotEmpty()) {
+            Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 6.dp), verticalAlignment = Alignment.Bottom) {
+                Text("Friends", Modifier.weight(1f), fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
+                Text("Hold to remove", fontSize = 12.sp, color = LMuted)
+            }
+            friends.forEach { f ->
+                Row(Modifier.fillMaxWidth().combinedClickable(onClick = { onLibTile("together") }, onLongClick = { friendMenu = f }).padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(42.dp).clip(CircleShape).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF5B6B8A), Color(0xFF20293A)))), Alignment.Center) {
+                        Text(f.name.take(1).uppercase(), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Text(f.name, Modifier.padding(start = 12.dp), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+    itemMenu?.let { it2 ->
+        PremiumAlert(onDismissRequest = { itemMenu = null }, title = { Text(it2.meta.name) },
+            text = { Text(if (it2.by == Social.me) "Remove it from Watch Together for everyone in it?" else "Remove it from your Watch Together?", fontSize = 13.sp) },
+            confirmButton = { androidx.compose.material3.TextButton({
+                itemMenu = null
+                scope.launch { if (Social.leaveItem(ctx, it2)) Snack.show("Removed") else Snack.show("Couldn't remove it — try again") }
+            }) { Text("Remove", color = Color(0xFFFF8A80)) } },
+            dismissButton = { androidx.compose.material3.TextButton({ itemMenu = null; onOpen(it2.meta) }) { Text("Open") } })
+    }
+    friendMenu?.let { f ->
+        PremiumAlert(onDismissRequest = { friendMenu = null }, title = { Text("Remove ${f.name}?") },
+            text = { Text("You leave each other's friends lists.", fontSize = 13.sp) },
+            confirmButton = { androidx.compose.material3.TextButton({ Social.removeFriend(f); friendMenu = null; Snack.show("${f.name} removed") }) { Text("Remove", color = Color(0xFFFF8A80)) } },
+            dismissButton = { androidx.compose.material3.TextButton({ friendMenu = null }) { Text("Cancel") } })
+    }
+}
+
+@Composable
+private fun LibTile(title: String, sub: String, icon: androidx.compose.ui.graphics.vector.ImageVector, music: Boolean, mod: Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(18.dp)
+    Column(mod.height(116.dp).clip(shape)
+        .background(if (music) androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF2A0D14), LCard)) else androidx.compose.ui.graphics.Brush.linearGradient(listOf(LCard, LCard)))
+        .border(1.dp, if (music) Color(0x66E50914) else LLine, shape).clickable(onClick = onClick).padding(14.dp),
+        verticalArrangement = Arrangement.SpaceBetween) {
+        Icon(icon, null, Modifier.size(26.dp), tint = if (music) Color(0xFFFF5A4E) else Color.White)
+        Column {
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(sub, fontSize = 12.sp, color = LMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

@@ -129,7 +129,7 @@ object Prepare {
             launch {
                 delay(10_000)
                 val st = state.value
-                if (st != null && st.key == id && !st.ready && !st.status.startsWith("Saving") && !vm.pluginMode()) {
+                if (st != null && st.key == id && !st.ready && !st.status.startsWith("Saving") && !vm.pluginMode() && !vm.liveMode()) {
                     PlayTiming.mark("nothing ready 10 s after the title page opened — CNCVerse asked again")
                     SlowAddons.poll(vm, type, id)
                 }

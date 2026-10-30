@@ -39,12 +39,16 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         )
         // Live server (64-bit app): started a few seconds after the app opens, so it's ready before a title page asks.
         LiveServer.start(this, 2_500)
+        // "Xstream Music" when the app icon is held.
+        MusicShortcut.publish(this)
         // The music notification was tapped: open Now playing.
         if (intent?.getBooleanExtra("openMusic", false) == true) MusicPlayer.openNow.value = true
+        if (intent?.getBooleanExtra("musicHome", false) == true) MusicPlayer.splash.value = true
         WidgetOpen.take(intent)
         JoinIntent.take(intent)
         DlEngine.take(intent)
         if (intent.getBooleanExtra("openMusic", false)) MusicPlayer.openNow.value = true
+        if (intent.getBooleanExtra("musicHome", false)) MusicPlayer.splash.value = true
         SocialIntent.take(intent)
         enableEdgeToEdge()
         // Xstream TV (tv flavor) gets the remote-friendly TV interface; the phone app keeps its own.

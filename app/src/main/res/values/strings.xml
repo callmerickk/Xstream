@@ -2,5 +2,6 @@
 <resources>
     <!-- Name shown under the app icon on your phone's home screen. Change it here and rebuild. -->
     <string name="app_name">Xstream</string>
+    <string name="widget_music_desc">Xstream Music: the song playing; tap to open music.</string>
     <string name="widget_desc">Continue watching: resume your latest title in one tap.</string>
 </resources>

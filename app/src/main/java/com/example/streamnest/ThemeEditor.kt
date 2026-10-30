@@ -139,19 +139,20 @@ fun ThemeEditor(vm: AppViewModel, start: CustomTheme?, onDone: () -> Unit) {
             }
             val warn = when {
                 textLow -> "Button text is hard to read on the button colour. Pick a lighter or darker one."
-                buttonLow -> "The button colour almost disappears on the background. Pick a brighter one."
-                accentLow -> "The accent almost disappears on the background. Pick a brighter one."
+                buttonLow -> "The button colour is close to the background. Saved anyway if you like it."
+                accentLow -> "The accent is close to the background. Saved anyway if you like it."
                 else -> null
             }
             warn?.let { Text(it, color = Color(0xFFFFCF5A), fontSize = 13.sp) }
+            // Any colour code is accepted: the notes above only warn.
             Text(if (name.isBlank()) "Give the theme a name" else "Save theme",
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(50)).background(if (warn == null && name.isNotBlank()) btn else Color(0xFF2A2B33))
-                    .clickable(enabled = warn == null && name.isNotBlank()) {
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(50)).background(if (name.isNotBlank()) btn else Color(0xFF2A2B33))
+                    .clickable(enabled = name.isNotBlank()) {
                         CustomThemes.save(vm, CustomTheme(name.trim(), colorHex(acc), colorHex(cols["accent2"]!!), colorHex(bg), colorHex(cols["tint"]!!), colorHex(btn), colorHex(btx)))
                         Snack.show("“${name.trim()}” saved to your account")
                         onDone()
                     }.padding(vertical = 14.dp),
-                color = if (warn == null && name.isNotBlank()) btx else Color(0xFF8A94A8), fontWeight = FontWeight.Bold, fontSize = 15.sp,
+                color = if (name.isNotBlank()) btx else Color(0xFF8A94A8), fontWeight = FontWeight.Bold, fontSize = 15.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }

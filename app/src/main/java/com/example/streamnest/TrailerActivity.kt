@@ -105,6 +105,9 @@ fun rememberTrailerLauncher(onPlayMovie: () -> Unit): (keys: List<String>, title
     }
 }
 
+/** One audio choice: a soundtrack [url] of this video, or another trailer ([index] ≥ 0). */
+internal data class TrailerAudio(val name: String, val url: String?, val index: Int)
+
 /** Observable player state shared by the WebView callbacks and the Compose controls. */
 internal class TrailerUi(start: Int) {
     var index by mutableIntStateOf(start)
@@ -120,6 +123,9 @@ internal class TrailerUi(start: Int) {
     var touch by mutableIntStateOf(0)
     /** Bumps when the controls should grab remote focus again. */
     var refocus by mutableIntStateOf(0)
+    /** Audio languages to switch between (dubbed tracks and other-language trailers) and the one playing. */
+    var audios by mutableStateOf<List<TrailerAudio>>(emptyList())
+    var audioNow by mutableStateOf<String?>(null)
     /** Caption languages the video has (code to name); the chosen one (null = off). */
     var captions by mutableStateOf<List<Pair<String, String>>>(emptyList())
     var cc by mutableStateOf<String?>(null)
@@ -141,6 +147,8 @@ class TrailerActivity : ComponentActivity() {
         const val EXTRA_TITLE = "streamx.trailer.title"
         /** Result extra: true = the user picked "Play the movie". */
         const val RESULT_PLAY = "playMovie"
+        /** Language code of each trailer in the next launch (set by the title page just before it opens this). */
+        @Volatile var nextLangs: List<String> = emptyList()
 
         fun intent(ctx: Context, keys: List<String>, titles: List<String>, start: Int, title: String): Intent =
             Intent(ctx, TrailerActivity::class.java)
@@ -154,13 +162,18 @@ class TrailerActivity : ComponentActivity() {
     private var web: WebView? = null
     private var keys: List<String> = emptyList()
     private var titles: List<String> = emptyList()
+    private var langs: List<String> = emptyList()
     private lateinit var ui: TrailerUi
+    /** The trailer playing now as direct video, and where to jump once the next one is ready (language switch). */
+    private var curSrc: YtDirect.Src? = null
+    private var seekOnReady: Long = -1
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         keys = intent.getStringArrayListExtra(EXTRA_KEYS).orEmpty().filter { it.isNotBlank() }
         titles = intent.getStringArrayListExtra(EXTRA_TITLES).orEmpty()
+        langs = nextLangs.takeIf { it.size == keys.size }.orEmpty(); nextLangs = emptyList()
         val title = intent.getStringExtra(EXTRA_TITLE) ?: ""
         val start = (savedInstanceState?.getInt(EXTRA_START) ?: intent.getIntExtra(EXTRA_START, 0)).coerceIn(0, (keys.size - 1).coerceAtLeast(0))
         ui = TrailerUi(start)
@@ -191,6 +204,7 @@ class TrailerActivity : ComponentActivity() {
                         js = { js(it) },
                         onNext = { next() },
                         onOpenYouTube = { k -> runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$k"))) } },
+                        onAudio = { nextAudio() },
                     )
                 }
             }
@@ -263,7 +277,10 @@ class TrailerActivity : ComponentActivity() {
             pl.addListener(object : androidx.media3.common.Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) { ui.playing = isPlaying; if (isPlaying) ui.failed = false }
                 override fun onPlaybackStateChanged(state: Int) {
-                    if (state == androidx.media3.common.Player.STATE_READY) ui.ready = true
+                    if (state == androidx.media3.common.Player.STATE_READY) {
+                        ui.ready = true
+                        if (seekOnReady > 0) { exo?.seekTo(seekOnReady); seekOnReady = -1 }
+                    }
                     if (state == androidx.media3.common.Player.STATE_ENDED) { ui.playing = false; next() }
                 }
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -289,7 +306,46 @@ class TrailerActivity : ComponentActivity() {
             main.post(tick)
         }
         p.volume = if (ui.muted) 0f else 1f
+        curSrc = src
         p.setMediaSource(YtDirect.source(src)); p.prepare(); p.playWhenReady = true
+        buildAudios(src)
+    }
+
+    /**
+     * Audio choices: the dubbed soundtracks inside this video, plus the same trailer in other languages (other videos
+     * on TMDB). Your language was picked first already; the chip cycles through the rest.
+     */
+    private fun buildAudios(src: YtDirect.Src?) {
+        val list = ArrayList<TrailerAudio>()
+        src?.tracks?.forEach { (name, url) -> list += TrailerAudio(name, url, -1) }
+        val myLang = langs.getOrNull(ui.index).orEmpty()
+        val myType = titles.getOrNull(ui.index).orEmpty().lowercase().let { if ("teaser" in it) "teaser" else "trailer" }
+        langs.forEachIndexed { i, l ->
+            if (i != ui.index && l.isNotBlank() && l != myLang && list.none { it.index >= 0 && langs[it.index] == l } &&
+                titles.getOrNull(i).orEmpty().lowercase().contains(myType))
+                list += TrailerAudio(YtDirect.langName(l) + " trailer", null, i)
+        }
+        val nowName = src?.audioName ?: myLang.takeIf { it.isNotBlank() }?.let { YtDirect.langName(it) }
+        if (list.none { it.index < 0 } && nowName != null) list.add(0, TrailerAudio(nowName, src?.audio, -1))
+        ui.audios = list
+        ui.audioNow = nowName ?: list.firstOrNull()?.name
+    }
+
+    private fun nextAudio() {
+        val l = ui.audios; if (l.size < 2) return
+        val i = l.indexOfFirst { it.name == ui.audioNow }
+        val o = l[(i + 1) % l.size]
+        val pos = exo?.currentPosition ?: (ui.pos * 1000).toLong()
+        ui.audioNow = o.name
+        if (o.index >= 0) {
+            // The same trailer in that language: another video, opened at the same moment.
+            ui.index = o.index; ui.finished = false; ui.failed = false
+            seekOnReady = pos; loadIndex()
+        } else {
+            val src = curSrc ?: return
+            val e = exo ?: return
+            e.setMediaSource(YtDirect.source(src, o.url), pos); e.prepare(); e.playWhenReady = true
+        }
     }
 
     private fun stopDirect() {
@@ -423,6 +479,7 @@ private fun Modifier.trailerFocus(shape: androidx.compose.ui.graphics.Shape, onC
 private fun TrailerControls(
     ui: TrailerUi, keys: List<String>, titles: List<String>, title: String,
     onBack: () -> Unit, onPlayMovie: () -> Unit, js: (String) -> Unit, onNext: () -> Unit, onOpenYouTube: (String) -> Unit,
+    onAudio: () -> Unit = {},
 ) {
     val key = keys.getOrNull(ui.index)
     val name = titles.getOrNull(ui.index)?.takeIf { it.isNotBlank() } ?: "Trailer"
@@ -473,6 +530,10 @@ private fun TrailerControls(
                         val i = codes.indexOf(ui.cc)
                         ui.cc = codes[(i + 1) % codes.size]
                         js("setCaptions(${ui.cc?.let { "'$it'" } ?: "null"})"); ui.touch++
+                    }.padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    // Audio: your language first; tap for the next one (dubbed track or the trailer in that language).
+                    if (ui.audios.size > 1) Text("Audio · ${ui.audioNow ?: "Original"}", Modifier.padding(end = 10.dp).clip(chip).background(Color(0xFF15161C)).trailerFocus(chip) {
+                        onAudio(); ui.touch++
                     }.padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                     Text(if (ui.fill) "Fill" else "Fit", Modifier.padding(end = 10.dp).clip(chip).background(Color(0xFF15161C)).trailerFocus(chip) {
                         ui.fill = !ui.fill; js("setFill(${ui.fill})"); ui.touch++

@@ -41,9 +41,18 @@ class MusicService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         val ctx = applicationContext
-        val upstream = DefaultDataSource.Factory(ctx, OkHttpDataSource.Factory(LiveServer.http))
+        // googlevideo songs are read in pieces (YtChunked), Live server songs straight from this phone.
+        val ok = OkHttpDataSource.Factory(LiveServer.http)
+        val upstream = DefaultDataSource.Factory(ctx, androidx.media3.datasource.DataSource.Factory { YtChunked(ok.createDataSource()) })
         val resolving = ResolvingDataSource.Factory(upstream) { spec ->
             val uri = spec.uri
+            if (uri.scheme == "ytm") {
+                // Xstream Music (SimpMusic): the song's audio in the quality the connection can carry right now.
+                val vid = uri.lastPathSegment.orEmpty()
+                val m = runBlocking { YtDirect.music(vid) } ?: throw IOException("This song isn't available right now")
+                val url = (if (MusicQuality.hi) m.hi ?: m.lo else m.lo ?: m.hi) ?: throw IOException("This song isn't available right now")
+                return@Factory spec.withUri(Uri.parse(url)).withRequestHeaders(mapOf("User-Agent" to m.ua))
+            }
             if (uri.scheme != "xlive") return@Factory spec
             val id = uri.lastPathSegment.orEmpty()
             val url = MusicPlayer.resolved[id] ?: runBlocking { LiveServer.trackUrl(ctx, LiveServer.Track(id = id)) }
@@ -62,6 +71,30 @@ class MusicService : MediaSessionService() {
         val open = PendingIntent.getActivity(ctx, 41, Intent(ctx, MainActivity::class.java).setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra("openMusic", true), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         session = MediaSession.Builder(this, player).setSessionActivity(open).build()
+        // Auto quality: a song that stops to load for more than 1.5 s drops to 128 kbps at the same second; after a
+        // minute of smooth play the next songs go back to 160 kbps.
+        MusicQuality.start(ctx)
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        var stallCheck: Runnable? = null
+        player.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                stallCheck?.let(main::removeCallbacks); stallCheck = null
+                if (state == Player.STATE_BUFFERING && player.playWhenReady && player.currentPosition > 1_000 && MusicQuality.hi &&
+                    player.currentMediaItem?.localConfiguration?.uri?.scheme == "ytm") {
+                    stallCheck = Runnable {
+                        if (player.playbackState != Player.STATE_BUFFERING) return@Runnable
+                        MusicQuality.hi = false; MusicQuality.smoothSince = System.currentTimeMillis()
+                        val i = player.currentMediaItemIndex; val pos = player.currentPosition
+                        player.currentMediaItem?.let { cur ->
+                            // Same song again at 128 kbps (a new address makes the player load it afresh).
+                            val u = cur.localConfiguration?.uri?.buildUpon()?.encodedFragment("lo${System.currentTimeMillis()}")?.build()
+                            player.replaceMediaItem(i, cur.buildUpon().setUri(u).build()); player.seekTo(i, pos)
+                        }
+                    }.also { main.postDelayed(it, 1_500) }
+                }
+                if (state == Player.STATE_READY && !MusicQuality.hi && System.currentTimeMillis() - MusicQuality.smoothSince > 60_000) MusicQuality.hi = true
+            }
+        })
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
@@ -92,6 +125,8 @@ object MusicPlayer {
     /** Full-screen music page / now-playing page requests (from Home, the mini bar or the notification). */
     val openLibrary = MutableStateFlow(false)
     val openNow = MutableStateFlow(false)
+    /** Opened from the Xstream Music icon / widget: the "Xstream Music" opening, then the music page. */
+    val splash = MutableStateFlow(false)
     internal val resolved = ConcurrentHashMap<String, String>()
 
     private var controller: MediaController? = null
@@ -99,7 +134,8 @@ object MusicPlayer {
     private var pending: (() -> Unit)? = null
     private var appCtx: Context? = null
 
-    private fun item(t: LiveServer.Track): MediaItem = MediaItem.Builder().setMediaId(t.id).setUri("xlive://track/${t.id}")
+    private fun item(t: LiveServer.Track): MediaItem = MediaItem.Builder().setMediaId(t.id)
+        .setUri(if (t.id.startsWith("yt:")) "ytm://track/${t.id.removePrefix("yt:")}" else "xlive://track/${t.id}")
         .setMediaMetadata(MediaMetadata.Builder().setTitle(t.title).setArtist(t.artist).setAlbumTitle(t.album)
             .setArtworkUri(t.artworkURL?.let(Uri::parse)).setIsPlayable(true).setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC).build()).build()
 
@@ -156,7 +192,7 @@ object MusicPlayer {
         now.value = Now(t, mc.isPlaying, mc.playbackState == Player.STATE_BUFFERING, mc.currentPosition.coerceAtLeast(0),
             mc.duration.takeIf { it > 0 } ?: (t?.durationMs ?: 0), i, mc.shuffleModeEnabled, mc.repeatMode,
             if (t?.id == prev) now.value.error else null)
-        if (t != null && t.id != prev) remember(t)
+        if (t != null && t.id != prev) { remember(t); appCtx?.let { MusicWidget.update(it, t.title, t.artist) } }
     }
 
     /** Plays [list] from [index] (the list becomes the queue). */
@@ -190,4 +226,6 @@ object MusicPlayer {
     fun stop() { controller?.let { it.stop(); it.clearMediaItems() }; queue.value = emptyList(); now.value = Now() }
     /** A movie starts: music pauses (audio focus does it too; this also covers players that don't ask for it). */
     fun pauseForVideo() { controller?.takeIf { it.isPlaying }?.pause() }
+    /** Position of the song playing now (for "Video": the music video starts at the same second). */
+    fun positionMs(): Long = controller?.currentPosition ?: 0L
 }

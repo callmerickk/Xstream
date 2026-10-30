@@ -233,7 +233,8 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     // few seconds buffered.
     val budgetMb = when { tv -> if (ramGb >= 1.6) 96 else 72; ramGb < 3.2 -> 96; ramGb < 4.8 -> 160; ramGb < 6.8 -> 220; else -> 300 }
     val load = DefaultLoadControl.Builder()
-        .setBufferDurationsMs(if (tv) 30_000 else 25_000, if (tv) 60_000 else 60_000, if (fast) 1_500 else 2_500, if (fast) 3_000 else 5_000)
+        // Phones with the Live server keep up to 2 minutes loaded ahead (Telegram files come in bursts).
+        .setBufferDurationsMs(if (tv) 30_000 else 25_000, if (tv) 60_000 else if (BuildConfig.HAS_LIVE) 120_000 else 60_000, if (fast) 1_500 else 2_500, if (fast) 3_000 else 5_000)
         .setTargetBufferBytes(budgetMb * 1024 * 1024)
         .setPrioritizeTimeOverSizeThresholds(false)
         .setBackBuffer(if (tv) 10_000 else 20_000, true)
@@ -1483,7 +1484,7 @@ fun PlayerScreen(
                         // Nothing playing 10 s after Play: CNCVerse is asked again (every 2 s until it returns links).
                         // Turbo has no slow server to ask again: "not available" can show as soon as everything answered.
                         if (!askedAgain && vm.pluginMode()) askedAgain = true
-                        if (!askedAgain && el >= 10_000 && !vm.pluginMode()) {
+                        if (!askedAgain && el >= 10_000 && !vm.pluginMode() && !vm.liveMode()) {
                             askedAgain = true
                             PlayTiming.mark("nothing playing 10 s — CNCVerse asked again", once = "cnc10")
                             SlowAddons.poll(vm, type, p.key)
@@ -2494,7 +2495,8 @@ fun PlayerScreen(
                 val triedSwap = HashSet<String>()
                 while (SystemClock.elapsedRealtime() - t0 < 600_000) {
                     val playing = now?.url?.let { itemFor(it) } ?: cur
-                    if (playing.isOtt() || usingVlc || byHand) break
+                    // Live server playback stays on the Live server (no swap to another source).
+                    if (playing.isOtt() || usingVlc || byHand || playing.addonName == LiveServer.NAME) break
                     val pt = playing.ottTier()
                     val waited = SystemClock.elapsedRealtime() - t0 >= 60_000
                     val all = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false)
@@ -2604,7 +2606,9 @@ fun PlayerScreen(
         var smoothSince = SystemClock.uptimeMillis()
         val ladder = if (BuildConfig.IS_TV) listOf(720, 1080) else listOf(720, 1080, 2160)
         fun streamAt(r: Int, cur: StreamItem): StreamItem? = quickList
-            .filter { vm.isQuick(it) && it.resolution() == r && it.stream.url.let { u -> u != null && u !in tried } }
+            .filter { vm.isQuick(it) && it.resolution() == r && it.stream.url.let { u -> u != null && u !in tried } &&
+                // On the Live server, a lighter Live server file of the same title; never another source.
+                (cur.addonName != LiveServer.NAME || it.addonName == LiveServer.NAME) }
             .sortedWith(compareBy({ if (it.addonName == cur.addonName) 0 else 1 }, { vm.langRank(it) }))
             .firstOrNull()?.takeIf { vm.langRank(it) <= vm.langRank(cur) }
         while (isActive) {

@@ -42,7 +42,7 @@ val Defaults: Map<String, String> = linkedMapOf(
     "autoSlide" to "yes",
     "slideSeconds" to "5",
     // Settings values (changed from Help & Settings, not listed in the text editor)
-    "theme" to "Crimson",
+    "theme" to "Elegant",
     "accent2" to "#FF6A5C",
     "amoled" to "no",
     "navStyle" to "adaptive",
@@ -101,7 +101,8 @@ val Defaults: Map<String, String> = linkedMapOf(
     "subFollow" to "no",
     "subOutlineColor" to "#000000",
     "playerChoice" to "builtin",
-    "autoPlayMode" to "manual",
+    // New accounts: auto play on, with the developer's published pattern (none = the first source).
+    "autoPlayMode" to "regex",
     "autoRegex" to "",
     "skipIntro" to "yes",
     "autoSkipIntro" to "no",
@@ -125,7 +126,7 @@ val Defaults: Map<String, String> = linkedMapOf(
     "accent" to "#E50914",
     "btnColor" to "",
     "btnText" to "",
-    "background" to "#07080C",
+    "background" to "#0F1014",
     "deckTint" to "#3A0E17",
     "cardCorner" to "34",
     // Collections (Nuvio-style)

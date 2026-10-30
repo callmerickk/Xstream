@@ -7,6 +7,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -26,6 +27,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -376,13 +380,19 @@ fun DetailScreen(
     // Trailers play in TrailerActivity (a plain Activity: the WebView video is never black there).
     // "Play the movie" there = press Play here (same path as the trailer route used: pendingDetailPlay).
     val launchTrailer = rememberTrailerLauncher { pendingDetailPlay.value = meta.id }
+    // Trailers in your language first (Hindi before English…), then the original; a dubbed track inside a YouTube
+    // video counts too (YtDirect picks it).
+    val tLangs = remember { vm.qsLangs().mapNotNull { YtDirect.langCode(it) } }
+    LaunchedEffect(tLangs) { YtDirect.prefLangs = tLangs }
+    fun langOrder(v: TmVideo) = v.lang?.let { tLangs.indexOf(it) }?.takeIf { it >= 0 } ?: tLangs.size
     fun openTrailers(list: List<TmVideo>, start: Int) {
         showVideos = false
+        TrailerActivity.nextLangs = list.map { it.lang.orEmpty() }
         launchTrailer(list.map { it.key }, list.map { it.name }, start, meta.name)
     }
-    /** Trailer button tap: the newest official trailer (then the other trailers and teasers). */
+    /** Trailer button tap: the newest official trailer in your language (then the other trailers and teasers). */
     fun playTrailer() {
-        val chain = videos.filter { it.type == "Trailer" } + videos.filter { it.type == "Teaser" }
+        val chain = videos.filter { it.type == "Trailer" }.sortedBy { langOrder(it) } + videos.filter { it.type == "Teaser" }.sortedBy { langOrder(it) }
         val list = chain.ifEmpty { videos }
         val fallback = trailer
         when {
@@ -431,11 +441,33 @@ fun DetailScreen(
                 // ── Poster card: artwork, title, description, year · runtime · rating, scores ──
                 item {
                     val shape = RoundedCornerShape(28.dp)
+                    // Trailer mode: the trailer (your language first) starts in the picture after a moment; once it plays
+                    // the picture grows and the title, text and ratings slide down, so the whole frame is the trailer.
+                    val heroId = remember(videos, trailer) { videos.filter { it.type == "Trailer" }.sortedBy { langOrder(it) }.firstOrNull()?.key ?: trailer }
+                    var tArm by remember(meta.id) { mutableStateOf(false) }
+                    var tPlay by remember(meta.id) { mutableStateOf(false) }
+                    var tStop by remember(meta.id) { mutableStateOf(false) }
+                    var tMuted by remember { mutableStateOf(HeroSound.muted) }
+                    LaunchedEffect(heroId) { tArm = false; if (heroId != null) { delay(1_800); tArm = true } }
+                    val grow by animateFloatAsState(if (tPlay && !tStop) 1f else 0f, tween(650, easing = FastOutSlowInEasing), label = "trailerMode")
+                    val extra = 170f * grow
                     Box(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(shape).background(TitleCardBg).border(1.dp, CardRim, shape)) {
-                        AsyncImage(artwork, meta.name, Modifier.fillMaxWidth().height(300.dp).background(Surface1),
+                        AsyncImage(artwork, meta.name, Modifier.fillMaxWidth().height((300f + extra).dp).background(Surface1).graphicsLayer { alpha = 1f - grow },
                             alignment = BiasAlignment(0f, -0.4f), contentScale = ContentScale.Crop)
-                        Box(Modifier.padding(top = 150.dp).fillMaxWidth().height(160.dp).background(Brush.verticalGradient(listOf(Color.Transparent, TitleCardBg))))
-                        Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 248.dp, bottom = 20.dp)) {
+                        if (heroId != null && tArm && !tStop && isOn(texts["cardTrailers"] ?: "yes")) {
+                            TrailerVideo(heroId, tMuted, Modifier.fillMaxWidth().height((300f + extra).dp), fitWhole = false, backdrop = backdrop,
+                                onPlaying = { tPlay = true }, onEnded = { tStop = true; tPlay = false }, onError = { tStop = true; tPlay = false })
+                        }
+                        Box(Modifier.padding(top = (150f + extra).dp).fillMaxWidth().height(160.dp).background(Brush.verticalGradient(listOf(Color.Transparent, TitleCardBg))))
+                        if (tPlay && !tStop) Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(Modifier.size(38.dp).clip(CircleShape).background(Color(0x88000000)).clickable { tMuted = !tMuted; HeroSound.muted = tMuted }, Alignment.Center) {
+                                Icon(if (tMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp, if (tMuted) "Unmute" else "Mute", Modifier.size(20.dp), tint = Color.White)
+                            }
+                            Box(Modifier.size(38.dp).clip(CircleShape).background(Color(0x88000000)).clickable { tStop = true; tPlay = false }, Alignment.Center) {
+                                Icon(Icons.Default.Close, "Stop trailer", Modifier.size(20.dp), tint = Color.White)
+                            }
+                        }
+                        Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = (248f + extra * 1.2f).dp, bottom = 20.dp)) {
                             Text(meta.name, fontSize = 32.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
                             (tm?.overview ?: meta.description)?.takeIf { it.isNotBlank() }?.let { d ->
                                 Text(d, Modifier.padding(top = 8.dp).quietClick { expanded = !expanded }, fontSize = 15.sp, lineHeight = 22.sp,

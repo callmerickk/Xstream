@@ -13,6 +13,17 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.7.2", "30 Oct 2026", "StreamX-size stacked cards, Xstream Music, trailers in your language", listOf(
+        "Top cards: StreamX's size and shape, centred, with the deck stacked behind on both sides; trailers play inside the card",
+        "Home starts with the cards right after the logo; posters only from catalogue addons (no streaming-addon error cards)",
+        "Title page: the trailer takes the whole picture and the details slide down; the Trailer button plays in Xstream's player with an Audio choice (your language first)",
+        "Xstream Music: YouTube Music through SimpMusic, quality automatic (160 / 128 kbps), Song or Video, own colours, home-screen shortcut and widget",
+        "Library: Music, Watch Together, Watchlist and Downloads up top; hold a shared title or a friend to remove it",
+        "Live server: faster (8 connections × 32 parts), heavy 4K files only after lighter ones, stays on Live while it loads, updates arrive with Xstream",
+        "Each way of watching uses only its own sources: Live, Turbo and Classic never mix",
+        "Elegant theme (default); any colour code can be saved; notifications open on tap and swipe away",
+        "New accounts start with auto play on",
+    )),
     Release("0.7.1", "29 Oct 2026", "Live streams play, new cards and bottom bar, smooth trailers", listOf(
         "Live server streams now play: the player waits for the server's first bytes instead of giving up and skipping",
         "No more freeze while a title's streams are sorted",
@@ -399,6 +410,16 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.7.2", "30 Oct 2026", "Deck stack layer, SimpMusic music, trailer languages, Live speed/separation", listOf(
+        "Home: Deck draws DeckArt stack itself (sorted by distance) under a transparent-UI HorizontalPager; StreamX cardW 0.83w; TrailerVideo inside the front DeckArt",
+        "AppViewModel.refresh: home rows only from addons without a stream resource (fallback: all); aiostreamserror/[❌] items dropped",
+        "Detail: trailer mode in the poster card (grow 170 dp, text slides); TrailerActivity Audio chip (YtDirect.Src.tracks + TMDB include_video_language, nextLangs)",
+        "YtDirect: streamingData() shared, music() = itag 251/140 with mn probe; prefLangs picks dubbed audio; YtChunked internal",
+        "Music: SimpMusic plugin (CsPlugins AllForU) for shelves/search/load; ytm:// resolver; MusicQuality stall → 128 kbps; MusicLook colours; MusicShortcut + MusicWidget; splash",
+        "LiveServer: --workers 8 --inflight 32, PM_PIPELINE=32; dashboard CSS hides update pill + tunnel; tools/live-server.tag (v3.0.5) + live-server-watch.yml daily",
+        "Live separation: no withLive merge, SlowAddons.poll off in Live mode, ottSwap and Elite auto stay on Live; liveTooHeavy() in rankedCandidates; 120 s buffer",
+        "XLibrary LibraryHome tiles; NotificationsPage tap + swipe; XBell alerts open the show; Elegant ThemeOpt bg #0F1014 default; ThemeEditor saves with warnings; autoPlayMode regex default + DevDefaults keys",
+    )),
     Release("0.7.1", "29 Oct 2026", "Live playback fix, Prepare ANR fix, NO_PUBLISH, StreamXBar, stacked deck, Nuvio-style YtDirect", listOf(
         "Api: 127.0.0.1 calls get 60 s read / 5 s connect; Ranker.startBudgetMs 30 s for Live; PlayerScreen skips HostStats.noteFail for Live and waits 45 s",
         "Prepare: publish/rankedCandidates/filtered on Dispatchers.Default (ANR in Ranker.keepsFailing on main)",

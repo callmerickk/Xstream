@@ -66,7 +66,7 @@ fun NotificationBell(onTogether: () -> Unit, onOpen: (Meta) -> Unit) {
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) { Recs.init(ctx); while (true) { kotlinx.coroutines.delay(60_000); tick++ } }
     val items = remember(recs, pending, tick, open) {
-        val alerts = EpisodeAlerts.inbox(ctx).map { BellItem(it.at, it.show, it.text, it.poster) }
+        val alerts = EpisodeAlerts.inbox(ctx).map { BellItem(it.at, it.show, it.text, it.poster, metaId = it.showId, type = "series") }
         val rec = recs.flatMap { r ->
             buildList {
                 if (!r.out) add(BellItem(r.at, "${r.friendName} recommended ${r.name}", "In your room with ${r.friendName}", r.poster, metaId = r.id, type = r.type))
@@ -151,7 +151,7 @@ fun NotificationBell(onTogether: () -> Unit, onOpen: (Meta) -> Unit) {
                             val dx = remember { Animatable(0f) }
                             val scope = rememberCoroutineScope()
                             var menu by remember { mutableStateOf(false) }
-                            val openIt = { open = false; b.metaId?.let { onOpen(Meta(it, b.type, b.title.substringAfter(" recommended ").substringAfter(" watched "), b.image)) } }
+                            val openIt = { open = false; b.metaId?.let { onOpen(Meta(it, b.type, b.title.substringAfter(" recommended ").substringAfter(" watched "), b.image)) }; Unit }
                             Box(Modifier.fillMaxWidth().animateItem()) {
                                 Text("Remove", Modifier.align(Alignment.CenterEnd).padding(end = 14.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFFB3B8))
                                 Row(

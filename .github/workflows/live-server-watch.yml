@@ -1,0 +1,35 @@
+name: Live server updates
+# Once a day: when PencariMovie Server has a newer release tag, Xstream is rebuilt with it and published, so phones
+# get it through the in-app update (Android does not let the app replace the server program by itself).
+on:
+  schedule:
+    - cron: "17 22 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Newest server tag
+        run: |
+          LATEST=$(git ls-remote --tags --refs https://github.com/aiskendi/pencarimovie-server 'v*' | sed 's#.*refs/tags/##' | sort -V | tail -1)
+          CUR=$(cat tools/live-server.tag)
+          echo "current $CUR, newest $LATEST"
+          echo "LATEST=$LATEST" >> $GITHUB_ENV
+          if [ -n "$LATEST" ] && [ "$LATEST" != "$CUR" ] && [ "$(printf '%s\n%s\n' "$CUR" "$LATEST" | sort -V | tail -1)" = "$LATEST" ]; then echo "NEW=1" >> $GITHUB_ENV; fi
+      - name: Bump and publish
+        if: env.NEW == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$LATEST" > tools/live-server.tag
+          G=app/build.gradle.kts
+          CODE=$(grep 'versionCode = ' $G | sed -n 1p | grep -o '[0-9]\+')
+          sed -i "0,/versionCode = $CODE/s//versionCode = $((CODE+1))/" $G
+          { echo "Live server updated to ${LATEST#v}."; echo; echo "---"; echo; cat RELEASE_NOTES.md; } > rn.tmp && mv rn.tmp RELEASE_NOTES.md
+          git config user.name "xstream-bot"; git config user.email "actions@users.noreply.github.com"
+          git commit -am "Live server ${LATEST}" && git push
+          gh workflow run build.yml --ref main -f publish=true

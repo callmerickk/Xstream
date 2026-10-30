@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -288,7 +289,7 @@ fun HomeScreen(
     // 5 minutes and looks up the best two files), so tapping one of them starts like a title you already opened.
     val deckIds = remember(deck) { deck.take(3).map { it.meta }.filter { it.type == "movie" && it.id.startsWith("tt") }.map { it.id } }
     LaunchedEffect(deckIds) {
-        if (deckIds.isEmpty() || !LiveServer.enabled(vm.appContext)) return@LaunchedEffect
+        if (deckIds.isEmpty() || !vm.liveMode()) return@LaunchedEffect
         delay(6_000)
         deckIds.forEach { id -> runCatching { LiveServer.streams(vm.appContext, "movie", id) } }
     }
@@ -347,15 +348,9 @@ fun HomeScreen(
                     NotificationBell(onTogether = { BellNav.together.value = true }, onOpen = onOpen)
                 }
             }
-            item(key = "forYou", contentType = "forYou") {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(t("forYou"), fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFEDEFF7),
-                        modifier = Modifier.weight(1f).padding(start = 16.dp, top = 18.dp, bottom = 16.dp))
-                    // Live server music (64-bit app).
-                    if (!BuildConfig.IS_TV) MusicChip(Modifier.padding(end = 16.dp, top = 4.dp))
-                }
-            }
-            if (!BuildConfig.IS_TV) item(key = "langPills", contentType = "langPills") { LanguagePills(vm, onOpen) }
+            // 0.7.2: the cards come right after the logo ("For you", the language buttons and the music chip are gone;
+            // music lives in Library).
+            item(key = "deckGap", contentType = "gap") { Spacer(Modifier.height(14.dp)) }
             if (shelves.isEmpty()) {
                 item(key = "empty", contentType = "empty") {
                     Box(Modifier.fillMaxWidth().height(420.dp), Alignment.Center) {
@@ -741,8 +736,9 @@ private fun Deck(
     LaunchedEffect(n) { if (n > 1 && (pager.currentPage < n * 2 || pager.currentPage > n * (DeckLoops - 2))) pager.scrollToPage(n * (DeckLoops / 2)) }
     // Phones: 83 % of the width. Tablets / landscape: never taller than ~68 % of the screen (cards keep their shape).
     val cfg = LocalConfiguration.current
-    // Xstream stack: the front card in the centre with the deck fanned out behind it on both sides.
-    val cardW = minOf(cfg.screenWidthDp * 0.70f, cfg.screenHeightDp * 0.62f * 0.76f).coerceAtLeast(220f).dp
+    // StreamX's card (same size and shape), centred, with the deck stacked behind it on both sides.
+    val cardW = minOf(cfg.screenWidthDp * 0.83f, cfg.screenHeightDp * 0.68f * 0.76f).coerceAtLeast(240f).dp
+    val cardH = cardW / 0.76f
     // Only flips when the deck crosses half-visible, so this read recomposes Deck rarely (never per scroll frame).
     val visible = onScreen.value
     val dragged by pager.interactionSource.collectIsDraggedAsState()
@@ -756,9 +752,6 @@ private fun Deck(
     // Which trailer has really started playing (its first frame is on screen): the card's poster then fades out.
     var videoFor by remember { mutableStateOf<String?>(null) }
     val videoOn = trailerId != null && videoFor == trailerId
-    // Where the settled front card is, inside the deck box: the trailer WebView is laid over exactly that spot.
-    var front by remember { mutableStateOf<Rect?>(null) }
-    val deckBox = remember { DeckCoords() }
     val scope = rememberCoroutineScope()
     // "▶ Trailer" on a card: full-screen trailer (TrailerActivity). "Play the movie" opens the title and presses Play.
     var trailerFor by remember { mutableStateOf<Meta?>(null) }
@@ -825,71 +818,85 @@ private fun Deck(
         }
     }
 
-    val corner = Palette.corner
-    val tint = Palette.tint
-    val bg = Bg
-    Box(Modifier.fillMaxWidth().onPlaced { deckBox.coords = it }) {
+    LaunchedEffect(Unit) { YtDirect.prefLangs = vm.qsLangs().mapNotNull { YtDirect.langCode(it) } }
+    val tid = trailerId
+    val glowColor = Accent
+    Box(Modifier.fillMaxWidth()) {
         modeBanner?.let { (on, at) ->
             key(at) { TrailerModeBanner(on, Modifier.align(Alignment.TopCenter).padding(top = 12.dp).zIndex(10f)) { if (modeBanner?.second == at) modeBanner = null } }
         }
-        // ── Card trailer, UNDER the pager ──
-        // The WebView must not sit inside a pager page (graphicsLayer scale, rounded clip, alpha): that draws the video
-        // black while the sound plays. So it lives here, in the plain deck box, exactly where the front card is, and the
-        // front card turns see-through (poster fades out) on top of it. Corners: masks in the page background colour.
-        val tid = trailerId
-        val r = front
-        if (tid != null && r != null) {
-            val rootY = remember { mutableFloatStateOf(0f) }
-            Box(
-                Modifier
-                    .layout { measurable, _ ->
-                        val w = r.width.roundToInt().coerceAtLeast(1)
-                        val h = r.height.roundToInt().coerceAtLeast(1)
-                        val pl = measurable.measure(Constraints.fixed(w, h))
-                        layout(w, h) { pl.place(r.left.roundToInt(), r.top.roundToInt()) }
-                    }
-                    .onGloballyPositioned { rootY.floatValue = it.positionInRoot().y },
-            ) {
-                val frontMeta = items.getOrNull(pager.settledPage % n)?.meta
-                // Fills the card edge to edge (cover-crop), like Nuvio's hero cards.
-                TrailerVideo(tid, muted, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
-                    backdrop = frontMeta?.let { backdropOf(it) ?: it.poster }, onPlaying = { videoFor = tid },
-                    onEnded = { nextTrailer() }, onError = { nextTrailer() })
-                // Keeps touches away from the video (the pager above gets them anyway).
-                Box(Modifier.fillMaxSize().pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } })
-                // Rounded corners without clipping the WebView: paint the corners in the page's background gradient
-                // (HomeScreen's 600dp tint → bg gradient, which is fixed to the top of the screen).
-                Box(Modifier.fillMaxSize().drawBehind {
-                    val cr = corner.dp.toPx()
-                    val y0 = -rootY.floatValue
-                    val brush = Brush.verticalGradient(listOf(tint, bg), startY = y0, endY = y0 + 600.dp.toPx())
-                    val mask = Path().apply {
-                        fillType = PathFillType.EvenOdd
-                        addRect(Rect(Offset.Zero, size))
-                        addRoundRect(RoundRect(Rect(Offset.Zero, size), CornerRadius(cr, cr)))
-                    }
-                    drawPath(mask, brush)
-                })
+        // ── The stack (pictures only) ──
+        // Drawn here in our own order (farthest first, front card last) so the cards behind never cover the front one;
+        // each card's place, size and shade follow the pager's position every frame (draw phase only).
+        val cur = pager.currentPage
+        val order = remember(cur, n) { (cur - 2..cur + 2).sortedByDescending { abs(it - cur) } }
+        Box(Modifier.fillMaxWidth().height(cardH + 16.dp), Alignment.Center) {
+            for (page in order) key(page) {
+                val d = at(page)
+                val isFront = page == pager.settledPage && page == cur
+                fun off() = page - pager.currentPage - pager.currentPageOffsetFraction
+                DeckArt(
+                    d.meta, trailerId = if (isFront) tid else null, muted = muted, videoOn = isFront && videoOn,
+                    onPlaying = { videoFor = tid }, onEnded = { nextTrailer() },
+                    modifier = Modifier.width(cardW).height(cardH)
+                        .graphicsLayer {
+                            val o = off(); val a = abs(o); val w = size.width
+                            // Pulled in behind the front card: the first card behind peeks ~3.5 % of a card past
+                            // its edge, the second ~6.5 %; both smaller.
+                            val target = when {
+                                a <= 1f -> 0.075f * a
+                                a <= 2f -> 0.075f + 0.07f * (a - 1f)
+                                else -> 0.145f + 0.03f * (a - 2f)
+                            } * w
+                            translationX = sign(o) * target
+                            val sc = when {
+                                a <= 1f -> 1f - 0.08f * a
+                                a <= 2f -> 0.92f - 0.08f * (a - 1f)
+                                else -> 0.84f
+                            }
+                            scaleX = sc; scaleY = sc
+                            alpha = if (a <= 2f) 1f else (1f - (a - 2f) * 2f).coerceIn(0f, 1f)
+                        }
+                        .drawBehind {
+                            // Front card: a thin white edge and a soft accent glow, so it never blends into the cards
+                            // behind it or the posters below.
+                            val a = abs(off()).coerceAtMost(1f)
+                            val cr = Palette.corner.dp.toPx()
+                            val k = 1f - a
+                            if (k > 0.01f) for (i in 1..3) {
+                                val g = (i * 3).dp.toPx()
+                                drawRoundRect(glowColor.copy(alpha = 0.10f * k / i), topLeft = Offset(-g, -g), size = Size(size.width + 2 * g, size.height + 2 * g),
+                                    cornerRadius = CornerRadius(cr + g, cr + g))
+                            }
+                        }
+                        .drawWithContent {
+                            drawContent()
+                            val a = abs(off()).coerceAtMost(2f)
+                            val cr = Palette.corner.dp.toPx()
+                            if (a > 0.01f) drawRoundRect(Color.Black, alpha = (0.4f * a).coerceAtMost(0.62f), cornerRadius = CornerRadius(cr, cr))
+                            val edge = (0.85f - 0.62f * a.coerceAtMost(1f))
+                            drawRoundRect(Color.White.copy(alpha = edge), cornerRadius = CornerRadius(cr, cr), style = Stroke(width = 1.5.dp.toPx()))
+                        },
+                )
             }
         }
 
+        // ── The front card's words and buttons, on the pager (it also takes the swipes) ──
         HorizontalPager(
             state = pager,
             pageSize = PageSize.Fixed(cardW),
-            // Xstream: the card sits in the centre (same size as before); only a thin slice of the cards beside it shows.
-            contentPadding = PaddingValues(horizontal = ((cfg.screenWidthDp.dp - cardW) / 2).coerceAtLeast(12.dp)),
+            contentPadding = PaddingValues(horizontal = ((cfg.screenWidthDp.dp - cardW) / 2).coerceAtLeast(8.dp)),
             pageSpacing = 8.dp,
-            // Two cards each side stay built: they are the deck's visible edges.
-            beyondViewportPageCount = 2,
+            beyondViewportPageCount = 1,
             // Smooth: one card per swipe, a soft glide that settles without a bounce.
             flingBehavior = androidx.compose.foundation.pager.PagerDefaults.flingBehavior(
                 state = pager,
                 pagerSnapDistance = androidx.compose.foundation.pager.PagerSnapDistance.atMost(1),
-                snapAnimationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 160f),
+                snapAnimationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 170f),
                 snapPositionalThreshold = 0.25f,
             ),
             key = { "${at(it).meta.id}#${it / n}" },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().height(cardH + 16.dp),
         ) { page ->
             val d = at(page)
             val isFront = page == pager.settledPage
@@ -897,7 +904,9 @@ private fun Deck(
                 d.meta, rank = page % n + 1, catalog = d.catalog, saved = myList.any { it.id == d.meta.id },
                 trailerOn = isFront && tid != null, videoOn = isFront && videoOn, muted = muted,
                 onMute = { muted = !muted; HeroSound.muted = muted },
-                onOpen = { onOpen(d.meta) }, onToggle = { onToggle(d.meta) },
+                // A card behind the front one: a tap brings it forward.
+                onOpen = { if (page == pager.currentPage) onOpen(d.meta) else scope.launch { pager.animateScrollToPage(page) } },
+                onToggle = { onToggle(d.meta) },
                 onHold = {
                     if (trailers) {
                         if (trailerMode && tid != null) {
@@ -910,46 +919,41 @@ private fun Deck(
                         }
                     }
                 },
-                modifier = Modifier
-                    .zIndex(-abs(page - pager.currentPage - pager.currentPageOffsetFraction))
-                    .graphicsLayer {
-                        // The stack: cards behind the front one are pulled in towards the centre, shrink and tilt a
-                        // little, so the deck's edges peek out on the left and the right. All draw-phase, per frame.
-                        val o = page - pager.currentPage - pager.currentPageOffsetFraction
-                        val a = abs(o)
-                        val w = size.width
-                        val target = when {
-                            a <= 1f -> 0.22f * a
-                            a <= 2f -> 0.22f + 0.16f * (a - 1f)
-                            else -> 0.38f + 0.08f * (a - 2f)
-                        } * w
-                        val natural = a * (w + 8.dp.toPx())
-                        translationX = -sign(o) * (natural - target)
-                        val sc = when {
-                            a <= 1f -> 1f - 0.14f * a
-                            a <= 2f -> 0.86f - 0.12f * (a - 1f)
-                            else -> (0.74f - 0.1f * (a - 2f)).coerceAtLeast(0.6f)
-                        }
-                        scaleX = sc; scaleY = sc
-                        cameraDistance = 14f * density
-                        rotationY = -sign(o) * 9f * a.coerceAtMost(1f)
-                        alpha = if (a <= 2f) 1f else (1f - (a - 2f) * 2f).coerceIn(0f, 1f)
-                    }
-                    .drawWithContent {
-                        drawContent()
-                        val r = abs(page - pager.currentPage - pager.currentPageOffsetFraction).coerceAtMost(2f)
-                        val dimCr = Palette.corner.dp.toPx()
-                        if (r > 0.01f) drawRoundRect(Color.Black, alpha = (0.42f * r).coerceAtMost(0.7f), cornerRadius = CornerRadius(dimCr, dimCr))
-                    }
-                    // Remember where the front card is (relative to the deck box) while a trailer is up.
-                    .then(
-                        if (isFront && tid != null) Modifier.onGloballyPositioned { c ->
-                            val box = deckBox.coords
-                            if (box != null && box.isAttached && c.isAttached) front = box.localBoundingBoxOf(c, false)
-                        } else Modifier
-                    ),
+                modifier = Modifier.padding(vertical = 8.dp).graphicsLayer {
+                    // The words fade while the cards move and come back on the card that settles in front.
+                    val a = abs(page - pager.currentPage - pager.currentPageOffsetFraction)
+                    alpha = (1f - 2.4f * a).coerceIn(0f, 1f)
+                },
             )
         }
+    }
+}
+
+/** A deck card's picture (poster, or its trailer once it plays inside the card). The stack draws these. */
+@Composable
+private fun DeckArt(
+    m: Meta, trailerId: String?, muted: Boolean, videoOn: Boolean, onPlaying: () -> Unit, onEnded: () -> Unit, modifier: Modifier,
+) {
+    val shape = RoundedCornerShape(Palette.corner.dp)
+    val posterAlpha by animateFloatAsState(if (videoOn) 0f else 1f, tween(420), label = "poster")
+    Box(modifier.clip(shape).background(Color(0xFF05070C))) {
+        // The trailer plays INSIDE the card (our own video surface, cropped to fill it edge to edge, rounded corners).
+        if (trailerId != null) TrailerVideo(trailerId, muted, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
+            backdrop = backdropOf(m) ?: m.poster, onPlaying = onPlaying, onEnded = onEnded, onError = onEnded)
+        var hdFailed by remember(m.id) { mutableStateOf(false) }
+        val own = m.poster?.takeIf { !m.posterShape.equals("landscape", true) && !m.posterShape.equals("square", true) }
+        val tall = (if (!hdFailed) hdPoster(m) else null) ?: own
+        if (tall != null) {
+            AsyncImage(hiResArt(tall), m.name, Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha }, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter,
+                onError = { if (tall != own) hdFailed = true })
+        } else {
+            val wide = hiResArt(backdropOf(m) ?: m.poster)
+            AsyncImage(wide, null, Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha * 0.9f }.blur(28.dp), contentScale = ContentScale.Crop)
+            AsyncImage(wide, m.name, Modifier.fillMaxWidth().aspectRatio(16f / 9f).graphicsLayer { alpha = posterAlpha }, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+        }
+        // While a trailer plays the shade is lighter (only enough for the text at the bottom): a brighter picture.
+        Box(Modifier.fillMaxSize().background(if (videoOn) Brush.verticalGradient(0.62f to Color.Transparent, 0.86f to Color(0x99000000), 1f to Color(0xD9000000))
+            else Brush.verticalGradient(0.42f to Color.Transparent, 0.82f to Color(0xEE000000), 1f to Color.Black)))
     }
 }
 
@@ -1002,7 +1006,6 @@ private fun TrailerModeBanner(on: Boolean, modifier: Modifier = Modifier, onDone
 object HeroSound { var muted = false; var trailers = true }
 
 /** Layout coordinates of the deck box (not state: only read from layout callbacks). */
-private class DeckCoords { var coords: LayoutCoordinates? = null }
 
 @Composable
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -1020,27 +1023,8 @@ private fun DeckCard(
         else -> t("badge").replace("{rank}", rank.toString()).replace("{catalog}", catalog)
     }
     var logoFailed by remember(m.id) { mutableStateOf(false) }
-    val posterAlpha by animateFloatAsState(if (videoOn) 0f else 1f, tween(600), label = "poster")
-    // While the trailer plays (under this card) the card is see-through: no dark fill, the poster fades away.
-    Box(modifier.fillMaxWidth().aspectRatio(0.76f).clip(shape).drawBehind { if (!videoOn) drawRect(Color(0xFF05070C)) }
-        .combinedClickable(onClick = onOpen, onLongClick = onHold)) {
-        // Always a sharp, tall poster (HD copy by IMDb id when there is one), anchored at the top so faces and titles
-        // stay in view. A wide picture is shown whole at the top over a blurred copy of itself, never cut in the middle.
-        var hdFailed by remember(m.id) { mutableStateOf(false) }
-        val own = m.poster?.takeIf { !m.posterShape.equals("landscape", true) && !m.posterShape.equals("square", true) }
-        val tall = (if (!hdFailed) hdPoster(m) else null) ?: own
-        if (tall != null) {
-            AsyncImage(hiResArt(tall), m.name, Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha }, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter,
-                onError = { if (tall != own) hdFailed = true })
-        } else {
-            val wide = hiResArt(backdropOf(m) ?: m.poster)
-            AsyncImage(wide, null, Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha * 0.9f }.blur(28.dp), contentScale = ContentScale.Crop)
-            AsyncImage(wide, m.name, Modifier.fillMaxWidth().aspectRatio(16f / 9f).padding(top = 0.dp).graphicsLayer { alpha = posterAlpha }, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
-        }
-        // While a trailer plays the shade is lighter (only enough for the text at the bottom): a brighter picture.
-        Box(Modifier.fillMaxSize().background(if (videoOn) Brush.verticalGradient(0.62f to Color.Transparent, 0.86f to Color(0x99000000), 1f to Color(0xD9000000))
-            else Brush.verticalGradient(0.42f to Color.Transparent, 0.82f to Color(0xEE000000), 1f to Color.Black)))
-
+    // Words and buttons only: the picture (poster or trailer) is drawn by the stack under the pager ([DeckArt]).
+    Box(modifier.fillMaxWidth().aspectRatio(0.76f).clip(shape).combinedClickable(onClick = onOpen, onLongClick = onHold)) {
         // Badge: IMDb score for highly rated titles, otherwise the rank in its row.
         val badgeShape = RoundedCornerShape(14.dp)
         if (catalog == AIDEN_PICK) {

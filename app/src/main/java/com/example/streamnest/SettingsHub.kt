@@ -155,9 +155,11 @@ private fun SettingsRootPage(vm: AppViewModel, onClose: () -> Unit, open: (Strin
 
 // ───────────── Layout ─────────────
 
-private data class ThemeOpt(val name: String, val c1: Long, val c2: Long, val enhanced: Boolean = false)
+private data class ThemeOpt(val name: String, val c1: Long, val c2: Long, val enhanced: Boolean = false, val bg: String = "#07080C")
 
 private val Themes = listOf(
+    // Elegant (the default): Hotstar's deep blue-black background with the red accent and its shine.
+    ThemeOpt("Elegant", 0xFFE50914, 0xFFFF6A5C, bg = "#0F1014"),
     ThemeOpt("White", 0xFFF2F2F2, 0xFFFFFFFF), ThemeOpt("Crimson", 0xFFE8323C, 0xFFFF6A5C),
     ThemeOpt("Ocean", 0xFF2E86DE, 0xFF5AB0FF), ThemeOpt("Violet", 0xFF9B3FD1, 0xFFC27BFF),
     ThemeOpt("Emerald", 0xFF2EAD5B, 0xFF5CD98A), ThemeOpt("Amber", 0xFFF5A20A, 0xFFFFC857),
@@ -169,10 +171,10 @@ private val Themes = listOf(
 
 private fun hex(c: Color) = String.format("#%06X", c.toArgb() and 0xFFFFFF)
 
-private fun applyTheme(vm: AppViewModel, name: String, c1: Color, c2: Color) {
+private fun applyTheme(vm: AppViewModel, name: String, c1: Color, c2: Color, bg: String = "#07080C") {
     vm.setText("theme", name)
-    // A built-in theme: the standard background and buttons in the accent (a saved custom theme may have changed them).
-    vm.setText("background", Defaults["background"] ?: "#07080C")
+    // A built-in theme: its background and buttons in the accent (a saved custom theme may have changed them).
+    vm.setText("background", bg)
     vm.setText("btnColor", ""); vm.setText("btnText", "")
     vm.setText("accent", hex(c1))
     vm.setText("accent2", hex(c2))
@@ -222,7 +224,7 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
             Text("Classic themes", Modifier.padding(start = 20.dp, top = 18.dp, bottom = 4.dp), fontSize = 15.sp, color = Muted, letterSpacing = 1.sp)
             Themes.filter { !it.enhanced }.chunked(3).forEach { row ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    row.forEach { th -> ThemeDot(th.name, Color(th.c1), Color(th.c2), false, false, cur == th.name) { applyTheme(vm, th.name, Color(th.c1), Color(th.c2)) } }
+                    row.forEach { th -> ThemeDot(th.name, Color(th.c1), Color(th.c2), false, false, cur == th.name) { applyTheme(vm, th.name, Color(th.c1), Color(th.c2), th.bg) } }
                     repeat(3 - row.size) { Spacer(Modifier.width(96.dp)) }
                 }
             }
@@ -1410,7 +1412,7 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
                 modes.forEach { (key, pair) ->
                     val on = v("autoPlayMode") == key
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(if (on) Color(0xFF34343C) else Color(0xFF222228))
-                        .clickable { vm.setText("autoPlayMode", key); modeDialog = false }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        .clickable { vm.setText("autoPlayMode", key); vm.storePut("ownKey_autoPlayMode", "1"); modeDialog = false }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(pair.first, fontSize = 17.sp, fontWeight = FontWeight.Medium)
                             Text(pair.second, fontSize = 13.sp, color = Muted)
@@ -1460,7 +1462,7 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
                     }
                 }
             },
-            confirmButton = { TextButton({ if (valid) { vm.setText("autoRegex", pats.map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")); regexDialog = false } }) { Text("Save") } },
+            confirmButton = { TextButton({ if (valid) { vm.setText("autoRegex", pats.map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")); vm.storePut("ownKey_autoRegex", "1"); regexDialog = false } }) { Text("Save") } },
             dismissButton = {
                 Row {
                     TextButton({ pats.clear(); pats.add(""); sel = 0 }) { Text("Clear") }

@@ -130,7 +130,7 @@ fun App(vm: AppViewModel = viewModel()) {
     val profile by vm.current.collectAsStateWithLifecycle()
     val texts by vm.texts.collectAsStateWithLifecycle()
     // Music (Live server): its pages open from the Home chip, the mini bar and the notification.
-    if (BuildConfig.HAS_LIVE && profile != null) MusicHost()
+    if (!BuildConfig.IS_TV && profile != null) MusicHost()
     // Activity log: which screen is open.
     LaunchedEffect(stack.lastOrNull(), tab, profile?.id) {
         val top = stack.lastOrNull()
@@ -297,7 +297,7 @@ fun App(vm: AppViewModel = viewModel()) {
             }
             Screen.Library -> LibraryPage(vm, onBack = pop, onOpen = open, onPlay = { stack.add(it) })
             is Screen.Watchlist -> key(top) { WatchlistPage(vm, onBack = pop, onOpen = open, startCalendar = top.calendar) }
-            Screen.Notes -> NotificationsPage(onBack = pop, onTogether = { stack.add(Screen.Together()) })
+            Screen.Notes -> NotificationsPage(onBack = pop, onTogether = { stack.add(Screen.Together()) }, onOpen = open)
             null -> Box(Modifier.fillMaxSize().background(Bg).nestedScroll(scrollWatcher).pointerInput(Unit) {
                 // Watches every touch (never consumes it) to wake the dock.
                 awaitPointerEventScope { while (true) { awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial); lastTouch[0] = System.currentTimeMillis(); if (idleHidden) idleHidden = false } }
@@ -340,7 +340,7 @@ fun App(vm: AppViewModel = viewModel()) {
                     else BottomNav(tab, vm, compact = barAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
                 }
                 // Music (Live server): the small player sits just above the dock while songs are queued.
-                if (BuildConfig.HAS_LIVE && !(navHidden && tab == 3)) MusicMiniBar(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 92.dp))
+                if (!BuildConfig.IS_TV && !(navHidden && tab == 3)) MusicMiniBar(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 92.dp))
                 val bellTogether by BellNav.together.collectAsState()
                 LaunchedEffect(bellTogether) { if (bellTogether) { BellNav.together.value = false; stack.add(Screen.Together()) } }
                 // Voice search handed a request to the AI.

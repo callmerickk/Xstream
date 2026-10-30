@@ -749,12 +749,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     /** Rows the developer pushed to every account (texts["homeRows"], sent with the developer's defaults). */
     fun pushedRows(): List<PushedRow> = runCatching { Api.json.decodeFromString<List<PushedRow>>(texts.value["homeRows"].orEmpty()) }.getOrDefault(emptyList())
 
+    /** Addon error placeholders shown as titles ("[❌] CNCVerse Bridge · 404 - Not Found"). */
+    private fun isErrorCard(m: Meta) = m.id.startsWith("aiostreamserror") || m.name.startsWith("[❌]") || m.name.startsWith("[\u274C]")
+
     fun refresh() {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             loading.value = true
+            // Home posters only from catalogue addons (Cinemeta, TMDB, Posters+…), never from streaming addons
+            // (CNCVerse Bridge / AIOStreams put error cards like "[❌] … 404" in their lists). If every addon streams,
+            // they are used after all so Home is never empty.
+            val catalogOnly = active.filter { !it.streams && it.manifest.catalogs.isNotEmpty() }.ifEmpty { active }
             val result = if (current.value?.kids == true) kidsShelves() else coroutineScope {
-                active.flatMap { a ->
+                catalogOnly.flatMap { a ->
                     a.manifest.catalogs
                         .filter { c -> c.extra.orEmpty().none { it.isRequired } }
                         .map { c ->
@@ -781,7 +788,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             }.awaitAll().filterNotNull()
             val pushedSrc = pushed.mapNotNull { it.src }.toSet()
             shelves.value = (pushed + result.filterNotNull().filter { it.src == null || it.src !in pushedSrc })
-                .filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.map { posterFromPattern(it) }.distinctBy { it.type + it.id }) }
+                .filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.filter { !isErrorCard(it) }.map { posterFromPattern(it) }.distinctBy { it.type + it.id }) }
             loading.value = false
             if (!BuildConfig.IS_TV) runCatching { Posters.warm(appContext, shelves.value.take(12).flatMap { s -> s.items.take(8).map { it.poster } }) }
             // Remembered for the next start, so Home shows its cards at once (then refreshes).
@@ -909,8 +916,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         // server, so Quick Play and the title page's instant start get its links too.
         val live = LiveServer.enabled(appContext) && (except == null || LiveServer.NAME !in except)
         return when {
+            // Each way of watching asks only its own sources: Live = the Live server alone; Turbo (plugins) and
+            // Classic (addons) never get Live server links mixed in.
             liveMode() -> if (live) liveStreamsFlow(type, id) else kotlinx.coroutines.flow.flowOf(emptyList<StreamItem>() to true)
-            live && isOn(texts.value["liveWithOthers"] ?: "yes") -> withLive(base, type, id)
             else -> base
         }
     }

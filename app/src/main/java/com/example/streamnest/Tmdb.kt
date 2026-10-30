@@ -22,7 +22,7 @@ import kotlinx.serialization.json.jsonPrimitive
 data class TmCast(val name: String, val role: String, val photo: String?, val id: String = "")
 data class TmCompany(val name: String, val logo: String?)
 /** [official] = uploaded by the studio's official channel; [publishedAt] = ISO date-time ("2024-05-01T16:00:05.000Z"). */
-data class TmVideo(val key: String, val name: String, val type: String, val year: String?, val official: Boolean = true, val publishedAt: String? = null)
+data class TmVideo(val key: String, val name: String, val type: String, val year: String?, val official: Boolean = true, val publishedAt: String? = null, val lang: String? = null)
 /** [score] = TMDB vote_average (0..10), [genreIds] = TMDB genre ids. */
 data class TmRec(val tmdbId: String, val kind: String, val title: String, val year: String?, val poster: String?, val score: Double = 0.0, val genreIds: List<Int> = emptyList())
 data class TmdbInfo(
@@ -95,7 +95,7 @@ suspend fun AppViewModel.tmdbInfo(imdb: String, type: String): TmdbInfo? {
         val kind = if (find.arr("tv_results").firstOrNull() === hit) "tv" else "movie"
         val id = hit["id"]!!.jsonPrimitive.content
         val extra = if (kind == "tv") "credits,videos,content_ratings,recommendations,images" else "credits,videos,release_dates,recommendations,images"
-        val d = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/$kind/$id?api_key=$key&append_to_response=$extra&include_image_language=en,null")).jsonObject
+        val d = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/$kind/$id?api_key=$key&append_to_response=$extra&include_image_language=en,null&include_video_language=en,hi,ta,te,ml,kn,bn,mr,pa,es,fr,de,it,ja,ko,zh,pt,ru,null")).jsonObject
 
         val imgs = d.obj("images")
         fun bestImg(field: String, lang: String?) = imgs?.arr(field)?.filter { lang == null || it.str("iso_639_1") == lang }
@@ -123,7 +123,7 @@ suspend fun AppViewModel.tmdbInfo(imdb: String, type: String): TmdbInfo? {
             .mapNotNull { c -> TmCompany(c.str("name") ?: return@mapNotNull null, c.str("logo_path")?.let { "${IMG}w185$it" }) }.distinctBy { it.name }.take(6)
         val videos = d.obj("videos")?.arr("results").orEmpty().filter { it.str("site") == "YouTube" }.mapNotNull { v ->
             TmVideo(v.str("key") ?: return@mapNotNull null, v.str("name") ?: "Video", v.str("type") ?: "Video", v.str("published_at")?.take(4),
-                official = (v["official"] as? JsonPrimitive)?.booleanOrNull ?: true, publishedAt = v.str("published_at"))
+                official = (v["official"] as? JsonPrimitive)?.booleanOrNull ?: true, publishedAt = v.str("published_at"), lang = v.str("iso_639_1"))
         }.distinctBy { it.key }.sortedByDescending { it.publishedAt ?: "" } // newest first
         val recs = d.obj("recommendations")?.arr("results").orEmpty().take(20).mapNotNull { r -> parseRec(r, kind) }.distinctBy { it.kind + it.tmdbId }
         TmdbInfo(

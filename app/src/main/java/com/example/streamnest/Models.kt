@@ -32,6 +32,8 @@ data class Addon(val baseUrl: String, val manifest: Manifest) {
         return p == null || p.any { id.startsWith(it) }
     }
     private val resources get() = manifest.resources
+    /** Plays things (has a "stream" resource): its own catalogues are not used for Home posters. */
+    val streams: Boolean get() = resources?.toString()?.contains("\"stream\"") == true
 }
 
 @Serializable data class Video(

@@ -55,7 +55,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
  */
 object YtDirect {
     /** A playable trailer: [video] (with [audio] when they are separate), or an HLS playlist. [ua] must be sent along. */
-    data class Src(val video: String, val audio: String?, val hls: Boolean, val ua: String, val height: Int)
+    data class Src(val video: String, val audio: String?, val hls: Boolean, val ua: String, val height: Int,
+        /** Dubbed soundtracks in the same video: (language name, audio address). */
+        val tracks: List<Pair<String, String>> = emptyList(), val audioName: String? = null)
+
+    /** Your audio languages as YouTube codes ("hi", "en"…), best first: a dubbed track in one of them is chosen. */
+    @Volatile var prefLangs: List<String> = emptyList()
 
     private class Client(val name: String, val num: Int, val version: String, val ua: String, val extra: Map<String, Any>)
 
@@ -164,15 +169,25 @@ object YtDirect {
 
     /** The media source for a resolved trailer (video + audio merged, one muxed file, or HLS). */
     @OptIn(UnstableApi::class)
-    fun source(src: Src): MediaSource {
+    fun source(src: Src, audio: String? = src.audio): MediaSource {
         val ds = dataSource(src.ua)
         fun prog(u: String): MediaSource = ProgressiveMediaSource.Factory(ds).createMediaSource(MediaItem.fromUri(u))
         return when {
             src.hls -> HlsMediaSource.Factory(ds).createMediaSource(MediaItem.fromUri(src.video))
-            src.audio != null -> MergingMediaSource(prog(src.video), prog(src.audio))
+            audio != null -> MergingMediaSource(prog(src.video), prog(audio))
             else -> prog(src.video)
         }
     }
+
+    /** "hindi" → "hi" … (the app's language names to YouTube / TMDB codes). */
+    fun langCode(name: String): String? = when (name.trim().lowercase()) {
+        "hindi" -> "hi"; "english" -> "en"; "tamil" -> "ta"; "telugu" -> "te"; "malayalam" -> "ml"; "kannada" -> "kn"
+        "bengali" -> "bn"; "marathi" -> "mr"; "punjabi" -> "pa"; "gujarati" -> "gu"; "urdu" -> "ur"; "spanish" -> "es"
+        "french" -> "fr"; "german" -> "de"; "italian" -> "it"; "japanese" -> "ja"; "korean" -> "ko"; "chinese" -> "zh"
+        "portuguese" -> "pt"; "russian" -> "ru"; "arabic" -> "ar"; "indonesian" -> "id"; "thai" -> "th"; "turkish" -> "tr"
+        else -> null
+    }
+    fun langName(code: String): String = java.util.Locale(code).getDisplayLanguage(java.util.Locale.ENGLISH).ifBlank { code.uppercase() }
 
     /** OkHttp (IPv4 first) with googlevideo links fetched in 10 MB "&range=" pieces (no throttling, no stalls). */
     @OptIn(UnstableApi::class)
@@ -218,8 +233,8 @@ object YtDirect {
         return null
     }
 
-    /** One client's playable choices, best first: video + default-language audio, one muxed file, HLS. */
-    private fun ask(c: Client, videoId: String, key: String?, visitor: String?): List<Src> {
+    /** YouTube's player answer for one client: its "streamingData", or null when it refuses. */
+    private fun streamingData(c: Client, videoId: String, key: String?, visitor: String?): JsonObject? {
         val body = buildJsonObject {
             putJsonObject("context") {
                 putJsonObject("client") {
@@ -237,23 +252,69 @@ object YtDirect {
             .header("Origin", "https://www.youtube.com").header("Accept-Language", "en-US,en;q=0.9")
             .apply { if (visitor != null) header("X-Goog-Visitor-Id", visitor) }
             .post(body.toString().toRequestBody(JSONT)).build()
-        val text = quick.newCall(req).execute().use { r -> if (!r.isSuccessful) return emptyList(); r.body?.string() } ?: return emptyList()
+        val text = quick.newCall(req).execute().use { r -> if (!r.isSuccessful) return null; r.body?.string() } ?: return null
         val root = Api.json.parseToJsonElement(text).jsonObject
         val status = ((root["playabilityStatus"] as? JsonObject)?.get("status") as? JsonPrimitive)?.contentOrNull
-        if (status != "OK") return emptyList()
-        val sd = root["streamingData"] as? JsonObject ?: return emptyList()
+        if (status != "OK") return null
+        return root["streamingData"] as? JsonObject
+    }
+
+    /** A song's audio: [hi] ≈ 160 kbps (Opus), [lo] ≈ 128 kbps (AAC). [ua] must be sent along. */
+    data class MusicSrc(val hi: String?, val lo: String?, val ua: String)
+    private val musicCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, MusicSrc>>()
+
+    /** The song's two audio qualities (first client that answers with a working link). Remembered for 3 hours. */
+    suspend fun music(videoId: String): MusicSrc? = withContext(Dispatchers.IO) {
+        musicCache[videoId]?.let { (at, m) -> if (System.currentTimeMillis() - at < 3 * 3600_000L) return@withContext m }
+        val (key, visitor) = watchConfig(videoId)
+        val got = coroutineScope { clients.map { c -> async { c to runCatching { streamingData(c, videoId, key, visitor) }.getOrNull() } }.awaitAll() }
+        for ((c, sd) in got) {
+            sd ?: continue
+            fun s(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.contentOrNull
+            fun i(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.intOrNull ?: 0
+            fun def(o: JsonObject) = ((o["audioTrack"] as? JsonObject)?.get("audioIsDefault") as? JsonPrimitive)?.contentOrNull != "false"
+            val ad = ((sd["adaptiveFormats"] as? JsonArray) ?: JsonArray(emptyList())).mapNotNull { it as? JsonObject }
+                .filter { s(it, "url") != null && s(it, "mimeType")?.startsWith("audio/") == true && def(it) }
+            val hi = ad.firstOrNull { i(it, "itag") == 251 } ?: ad.filter { s(it, "mimeType")?.contains("opus") == true }.maxByOrNull { i(it, "bitrate") }
+            val lo = ad.firstOrNull { i(it, "itag") == 140 } ?: ad.filter { s(it, "mimeType")?.startsWith("audio/mp4") == true }.maxByOrNull { i(it, "bitrate") }
+            if (hi == null && lo == null) continue
+            val h = hi?.let { alive(s(it, "url")!!, c.ua) }
+            val l = lo?.let { alive(s(it, "url")!!, c.ua) }
+            if (h == null && l == null) continue
+            val m = MusicSrc(h, l, c.ua)
+            musicCache[videoId] = System.currentTimeMillis() to m
+            ActLog.add("MUSIC", "$videoId · ${c.name} · ${if (h != null) "160" else "-"}/${if (l != null) "128" else "-"} kbps")
+            return@withContext m
+        }
+        ActLog.add("MUSIC", "$videoId · no audio")
+        null
+    }
+
+    /** One client's playable choices, best first: video + default-language audio, one muxed file, HLS. */
+    private fun ask(c: Client, videoId: String, key: String?, visitor: String?): List<Src> {
+        val sd = streamingData(c, videoId, key, visitor) ?: return emptyList()
+        val out = mutableListOf<Src>()
         fun s(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.contentOrNull
         fun i(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.intOrNull ?: 0
         fun l(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.longOrNull ?: 0L
         // The original soundtrack, not a dubbed one (formats without track info count as the original).
         fun isDefault(o: JsonObject) = ((o["audioTrack"] as? JsonObject)?.get("audioIsDefault") as? JsonPrimitive)?.contentOrNull != "false"
-        val out = mutableListOf<Src>()
         val adaptive = ((sd["adaptiveFormats"] as? JsonArray) ?: JsonArray(emptyList())).mapNotNull { it as? JsonObject }.filter { s(it, "url") != null }
         val video = adaptive.filter { s(it, "mimeType")?.startsWith("video/mp4") == true && s(it, "mimeType")?.contains("avc1") == true && i(it, "height") in 1..maxHeight }
             .maxWithOrNull(compareBy({ i(it, "height") }, { l(it, "bitrate") }))
-        val audio = adaptive.filter { s(it, "mimeType")?.startsWith("audio/mp4") == true }
-            .maxWithOrNull(compareBy({ isDefault(it) }, { l(it, "bitrate") }))
-        if (video != null && audio != null) out += Src(s(video, "url")!!, s(audio, "url")!!, false, c.ua, i(video, "height"))
+        fun track(o: JsonObject) = o["audioTrack"] as? JsonObject
+        fun lang(o: JsonObject) = track(o)?.let { s(it, "id") }?.substringBefore('.')?.substringBefore('-')?.lowercase()
+        // Your language first (a dubbed track), then the original soundtrack.
+        val prefs = prefLangs
+        fun prefScore(o: JsonObject): Int { val i = lang(o)?.let { prefs.indexOf(it) } ?: -1; return if (i < 0) 0 else 100 - i }
+        val audios = adaptive.filter { s(it, "mimeType")?.startsWith("audio/mp4") == true }
+        val audio = audios.maxWithOrNull(compareBy({ prefScore(it) }, { isDefault(it) }, { l(it, "bitrate") }))
+        val tracks = audios.filter { track(it) != null }.groupBy { lang(it) ?: "" }.mapNotNull { (_, g) ->
+            val best = g.maxByOrNull { l(it, "bitrate") } ?: return@mapNotNull null
+            (track(best)?.let { s(it, "displayName") } ?: "Audio") to s(best, "url")!!
+        }
+        if (video != null && audio != null) out += Src(s(video, "url")!!, s(audio, "url")!!, false, c.ua, i(video, "height"),
+            tracks = if (tracks.size > 1) tracks else emptyList(), audioName = track(audio)?.let { s(it, "displayName") })
         // One file with both (usually 360p), then the HLS playlist (iPhone / visionOS clients).
         val muxed = ((sd["formats"] as? JsonArray) ?: JsonArray(emptyList())).mapNotNull { it as? JsonObject }.filter { s(it, "url") != null }.maxByOrNull { i(it, "height") }
         s(sd, "hlsManifestUrl")?.let { out += Src(it, null, true, c.ua, 0) }
@@ -267,7 +328,7 @@ object YtDirect {
  * cut). Other links pass straight through.
  */
 @OptIn(UnstableApi::class)
-private class YtChunked(private val up: androidx.media3.datasource.DataSource) : androidx.media3.datasource.DataSource {
+internal class YtChunked(private val up: androidx.media3.datasource.DataSource) : androidx.media3.datasource.DataSource {
     private val chunk = 10L * 1024 * 1024
     private var yt = false
     private var spec: androidx.media3.datasource.DataSpec? = null

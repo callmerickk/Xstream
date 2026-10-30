@@ -85,9 +85,8 @@ internal fun LiveServerPage(vm: AppViewModel, onBack: () -> Unit) {
         SectionLabel("Streams")
         SettingsCard {
             ToggleRow("Live server", "Runs on this phone while Xstream is open and finds streams for every title.", on) { on = it; LiveServer.setEnabled(ctx, it) }
-            RowDivider(20.dp)
-            ToggleRow("Also in Turbo and Classic", "Live server links join your other streams (Quick Play and instant start use them too). Off: only in Live mode.",
-                isOn(texts["liveWithOthers"] ?: "yes")) { vm.setText("liveWithOthers", if (it) "yes" else "no"); forgetAllStreams() }
+            Text("Live server links are only used in Live mode (Settings › How you watch). Turbo and Classic keep their own sources.",
+                Modifier.padding(horizontal = 20.dp, vertical = 12.dp), fontSize = 13.sp, color = Muted)
         }
         SectionLabel("Server")
         SettingsCard {
@@ -116,7 +115,13 @@ private fun LiveWebDialog(url: String, onClose: () -> Unit) {
             AndroidView(factory = { c ->
                 WebView(c).apply {
                     settings.javaScriptEnabled = true; settings.domStorageEnabled = true
-                    webViewClient = WebViewClient()
+                    // The server's own "Update v…" pill (it points at a different app; Xstream brings server updates
+                    // itself) and the Tunnel tab (Android does not let apps run the program it downloads) are hidden.
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, u: String?) {
+                            view?.evaluateJavascript(HIDE_JS, null)
+                        }
+                    }
                     loadUrl(url)
                 }
             }, modifier = Modifier.fillMaxSize(), onRelease = { it.destroy() })
@@ -140,3 +145,7 @@ private fun LiveLogDialog(onClose: () -> Unit) {
         }
     }
 }
+
+private const val HIDE_JS = """(function(){var css=document.createElement('style');
+css.textContent='#dashUpdatePill,[data-section="tunnel"],#tab-tunnel,#addonTunnelField{display:none!important}';
+document.head.appendChild(css);})();"""

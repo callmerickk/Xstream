@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -257,7 +258,7 @@ fun LibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit,
     XLibraryPage(vm, onBack, onOpen, onPlayRoom = { st ->
         val expected = st.pos + if (st.playing) (System.currentTimeMillis() - st.receivedAt + 300) else 0L
         onPlay(Screen.Player(st.title, st.url, emptyList(), key = st.key, image = st.image, resumeMs = expected, type = st.type))
-    })
+    }, onPlay = onPlay)
 
 @Suppress("unused")
 @Composable
@@ -523,15 +524,28 @@ private fun MonthGrid(month: Long, sel: Long, today: Long, events: List<CalEvent
 
 // ───────────── Notifications ─────────────
 
-/** New-episode alerts (and a link to Watch together when someone is waiting for your answer). */
+/** New-episode alerts (and a link to Watch together when someone is waiting for your answer). Tap one to open the
+ * show; swipe it left to remove it (the bell forgets it too). */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun NotificationsPage(onBack: () -> Unit, onTogether: () -> Unit, embedded: Boolean = false) {
+fun NotificationsPage(onBack: () -> Unit, onTogether: () -> Unit, embedded: Boolean = false, onOpen: (Meta) -> Unit = {}) {
     val ctx = LocalContext.current
-    var alerts by remember { mutableStateOf(EpisodeAlerts.inbox(ctx)) }
+    val alertsAll = remember { EpisodeAlerts.inbox(ctx) }
     val pending by Social.pending.collectAsStateWithLifecycle()
+    val texts = Public.vm?.texts?.collectAsStateWithLifecycle()?.value.orEmpty()
+    val clearedAt = texts["bellCleared"]?.toLongOrNull() ?: 0L
+    val gone = remember(texts["bellGone"]) { texts["bellGone"].orEmpty().split("|").filter { it.isNotBlank() }.toSet() }
+    fun idOf(a: AlertItem) = "${a.at}:${a.show.hashCode()}"
+    var localGone by remember { mutableStateOf(setOf<String>()) }
+    val alerts = alertsAll.filter { it.at > clearedAt && idOf(it) !in gone && idOf(it) !in localGone }
+    fun dismiss(a: AlertItem) {
+        localGone = localGone + idOf(a)
+        Public.vm?.setText("bellGone", (gone + idOf(a)).toList().takeLast(120).joinToString("|"))
+    }
     if (!embedded) BackHandler { onBack() }
     LazyColumn(Modifier.fillMaxSize().background(Bg), contentPadding = PaddingValues(bottom = 120.dp)) {
         if (!embedded) item { PageHead("Notifications", onBack) }
+        if (alerts.isNotEmpty()) item { Text("Tap to open · swipe left to remove", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), fontSize = 12.sp, color = HubMuted) }
         if (pending.isNotEmpty()) item {
             Row(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF3A0B12)).clickable(onClick = onTogether).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Groups, null)
@@ -540,13 +554,25 @@ fun NotificationsPage(onBack: () -> Unit, onTogether: () -> Unit, embedded: Bool
             }
         }
         if (alerts.isEmpty()) item { Text("No notifications yet. New episodes of shows you follow show up here.", Modifier.padding(16.dp), fontSize = 13.sp, color = HubMuted) }
-        items(alerts) { a ->
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(HubCard).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                AsyncImage(a.poster, null, Modifier.size(38.dp, 56.dp).clip(RoundedCornerShape(7.dp)), contentScale = ContentScale.Crop)
-                Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                    Text(a.show, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                    Text(a.text, fontSize = 12.sp, color = HubMuted, maxLines = 2)
-                    Text(SimpleDateFormat("d MMM · h:mm a", Locale.getDefault()).format(java.util.Date(a.at)), fontSize = 10.5.sp, color = HubMuted)
+        items(alerts, key = { idOf(it) }) { a ->
+            val dx = remember { androidx.compose.animation.core.Animatable(0f) }
+            val scope = rememberCoroutineScope()
+            Box(Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().animateItem().clip(RoundedCornerShape(14.dp)).background(Color(0xFF7A1218))) {
+                Text("Remove", Modifier.align(Alignment.CenterEnd).padding(end = 18.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth().offset { androidx.compose.ui.unit.IntOffset(dx.value.toInt(), 0) }.background(HubCard)
+                    .pointerInput(a) {
+                        androidx.compose.foundation.gestures.detectHorizontalDragGestures(
+                            onDragEnd = { scope.launch { if (dx.value < -size.width * 0.3f) { dx.animateTo(-size.width.toFloat(), androidx.compose.animation.core.tween(160)); dismiss(a) } else dx.animateTo(0f) } },
+                            onDragCancel = { scope.launch { dx.animateTo(0f) } },
+                        ) { ch, d -> ch.consume(); scope.launch { dx.snapTo((dx.value + d).coerceAtMost(0f)) } }
+                    }
+                    .clickable { onOpen(Meta(a.showId, "series", a.show, a.poster)) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AsyncImage(a.poster, null, Modifier.size(38.dp, 56.dp).clip(RoundedCornerShape(7.dp)), contentScale = ContentScale.Crop)
+                    Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                        Text(a.show, fontSize = 13.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text(a.text, fontSize = 12.sp, color = HubMuted, maxLines = 2)
+                        Text(SimpleDateFormat("d MMM · h:mm a", Locale.getDefault()).format(java.util.Date(a.at)), fontSize = 10.5.sp, color = HubMuted)
+                    }
                 }
             }
         }

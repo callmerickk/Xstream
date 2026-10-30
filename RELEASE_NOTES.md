@@ -1,3 +1,15 @@
+Xstream 0.7.2
+
+• Top cards: StreamX's size and shape, centred, with the deck stacked on both sides. Trailers play inside the card.
+• Home starts with the cards right after the logo.
+• Title page: the trailer fills the picture; the Trailer button plays in Xstream's player, in your language first.
+• Xstream Music: YouTube Music songs, albums and videos, automatic quality, home-screen shortcut and widget.
+• Library: Music, Watch Together, Watchlist and Downloads. Hold to remove shared titles or friends.
+• Live server: faster, smarter file choice, stays on Live while it loads. Live, Turbo and Classic never mix.
+• Elegant theme, any colour code accepted, notifications open and swipe away.
+
+---
+
 Xstream 0.7.1
 
 • Live server streams now play (the player waits for the server instead of skipping).

@@ -123,7 +123,7 @@ fun AppViewModel.qsCs(): Set<String> = if (BuildConfig.IS_TV) emptySet() else qs
 /** Saved one per line (plugin keys contain "|" themselves, so "|" can't separate them). */
 fun qsCsParse(raw: String?): Set<String> = (raw ?: "").split("\n").filter { it.isNotBlank() }.toSet()
 fun csProviderKey(pluginKey: String, provider: String) = "$pluginKey#$provider"
-fun AppViewModel.qsActive(): Boolean = isOn(texts.value["qsOn"] ?: "yes") && (qsAddons().isNotEmpty() || LiveServer.enabled(appContext))
+fun AppViewModel.qsActive(): Boolean = isOn(texts.value["qsOn"] ?: "yes") && (qsAddons().isNotEmpty() || liveMode())
 fun AppViewModel.qsLangs(): List<String> = (texts.value["qsLangs"] ?: "hindi,english,original").split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
 /** Does this stream come from a Quick Start addon? */

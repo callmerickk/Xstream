@@ -118,11 +118,14 @@ object LiveServer {
         val root = File(ctx.filesDir, "live").apply { mkdirs() }
         val tmp = File(ctx.cacheDir, "live-tmp").apply { mkdirs() }
         state.value = State("Starting", false, port)
+        // Speed: 8 Telegram connections × 32 parts in flight and 32 one-MB windows ahead per stream (the server's
+        // defaults are 4 × 8 and 16; its own measurements: 8 × 32 is about twice as fast on phones).
         val pb = ProcessBuilder(binary(ctx).absolutePath, "--port", "$port", "--host", "127.0.0.1", "--no-open",
+            "--workers", "8", "--inflight", "32",
             "--app-version", BuildConfig.VERSION_NAME).directory(root).redirectErrorStream(true)
         pb.environment().apply {
             put("PM_APP_ROOT", root.absolutePath); put("HOME", root.absolutePath); put("TMPDIR", tmp.absolutePath)
-            put("PM_NO_TRAY", "1")
+            put("PM_NO_TRAY", "1"); put("PM_PIPELINE", "32")
         }
         val p = runCatching { pb.start() }.getOrElse { e ->
             state.value = State("Could not start", note = e.message ?: ""); note("Could not start: ${e.message}"); return
