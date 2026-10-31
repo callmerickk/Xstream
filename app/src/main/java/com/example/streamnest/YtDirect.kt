@@ -112,6 +112,12 @@ object YtDirect {
         return key to visitor
     }
 
+    /** Visitor identity used by YouTube Music requests; load it once from the existing watch-page config. */
+    suspend fun visitorData(): String? = withContext(Dispatchers.IO) { watchConfig("dQw4w9WgXcQ").second }
+
+    /** Non-blocking accessor after visitorData() or music resolution populated the watch config. */
+    fun cachedVisitorData(): String? = watchCfg?.third
+
     /** The trailer's addresses, or null when YouTube offers nothing playable. Remembered for 3 hours. */
     suspend fun resolve(videoId: String): Src? = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
@@ -287,6 +293,66 @@ object YtDirect {
             return@withContext m
         }
         ActLog.add("MUSIC", "$videoId · no audio")
+        null
+    }
+
+    data class Format(
+        val itag: Int, val url: String, val mime: String, val codecs: String, val bitrate: Int,
+        val width: Int, val height: Int, val fps: Int, val initRange: LongRange?,
+        val indexRange: LongRange?, val contentLength: Long,
+    )
+    data class MusicStreams(
+        val audioHi: Format?, val audioLo: Format?, val videos: List<Format>,
+        val ua: String, val durationMs: Long,
+    )
+    private val musicStreamsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, MusicStreams?>>()
+
+    /** Audio and adaptive video formats for the same YouTube item, cached for three hours. */
+    suspend fun musicStreams(videoId: String): MusicStreams? = withContext(Dispatchers.IO) {
+        musicStreamsCache[videoId]?.let { (at, value) ->
+            if (System.currentTimeMillis() - at < 3 * 3600_000L) return@withContext value
+        }
+        val (key, visitor) = watchConfig(videoId)
+        val got = coroutineScope {
+            clients.map { client -> async { client to runCatching { streamingData(client, videoId, key, visitor) }.getOrNull() } }.awaitAll()
+        }
+        for ((client, data) in got) {
+            data ?: continue
+            fun str(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.contentOrNull
+            fun num(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.longOrNull ?: 0L
+            fun rng(o: JsonObject, k: String): LongRange? {
+                val r = o[k] as? JsonObject ?: return null
+                val start = num(r, "start"); val end = num(r, "end")
+                return if (end >= start && end > 0) start..end else null
+            }
+            fun fmt(o: JsonObject): Format? {
+                val url = str(o, "url") ?: return null
+                val mime = str(o, "mimeType").orEmpty()
+                val codecs = Regex("codecs=\\?\"([^\"]+)").find(mime)?.groupValues?.getOrNull(1)
+                    ?: str(o, "codecs").orEmpty()
+                return Format(num(o, "itag").toInt(), url, mime, codecs, num(o, "bitrate").toInt(),
+                    num(o, "width").toInt(), num(o, "height").toInt(), num(o, "fps").toInt(),
+                    rng(o, "initRange"), rng(o, "indexRange"), num(o, "contentLength"))
+            }
+            val adaptive = ((data["adaptiveFormats"] as? JsonArray) ?: JsonArray(emptyList())).mapNotNull { it as? JsonObject }
+            val audio = adaptive.mapNotNull(::fmt).filter { it.mime.startsWith("audio/") }
+            val hiRaw = audio.firstOrNull { it.itag == 251 } ?: audio.filter { it.codecs.contains("opus", true) }.maxByOrNull { it.bitrate }
+            val loRaw = audio.firstOrNull { it.itag == 140 } ?: audio.filter { it.mime.startsWith("audio/mp4") }.maxByOrNull { it.bitrate }
+            val videoAll = adaptive.mapNotNull(::fmt).filter { it.mime.startsWith("video/") && it.height > 0 }
+            val avc = videoAll.filter { it.codecs.contains("avc1", true) }
+            val chosen = (if (avc.isNotEmpty()) avc else videoAll.filter { it.codecs.contains("vp9", true) })
+                .distinctBy { it.itag }.sortedBy { it.height }
+            val hi = hiRaw?.let { raw -> alive(raw.url, client.ua)?.let { raw.copy(url = it) } }
+            val lo = loRaw?.let { raw -> alive(raw.url, client.ua)?.let { raw.copy(url = it) } }
+            val liveVideos = coroutineScope { chosen.map { raw -> async { alive(raw.url, client.ua)?.let { raw.copy(url = it) } } }.awaitAll().filterNotNull() }
+            if (hi == null && lo == null && liveVideos.isEmpty()) continue
+            val durationMs = num(data, "approxDurationMs")
+            val out = MusicStreams(hi, lo, liveVideos, client.ua, durationMs)
+            musicStreamsCache[videoId] = System.currentTimeMillis() to out
+            ActLog.add("MUSIC", videoId + " · adaptive video formats " + liveVideos.size)
+            return@withContext out
+        }
+        musicStreamsCache[videoId] = System.currentTimeMillis() to null
         null
     }
 

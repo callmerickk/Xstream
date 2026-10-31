@@ -8,6 +8,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -403,7 +405,9 @@ fun MusicMiniBar(modifier: Modifier = Modifier) {
     AnimatedVisibility(now.track != null, modifier, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
         val t = now.track ?: return@AnimatedVisibility
         Column(Modifier.padding(horizontal = 12.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xF21C1D25))
-            .border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(16.dp)).clickable { MusicPlayer.openNow.value = true }) {
+            .border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(16.dp))
+            .pointerInput(t.id) { var total = 0f; detectVerticalDragGestures(onVerticalDrag = { _, dy -> total += dy }, onDragEnd = { if (total < -32f) MusicPlayer.openNow.value = true else if (total > 32f) MusicPlayer.stop(); total = 0f }) }
+            .clickable { MusicPlayer.openNow.value = true }) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Art(t.artworkURL, 44.dp)
                 Column(Modifier.weight(1f).padding(start = 10.dp)) {
@@ -493,15 +497,20 @@ fun MusicNowPlaying(onClose: () -> Unit) {
     }
 }
 
-/** Mounted once in the app: opens Music / Now playing when asked (Home chip, mini bar, notification). */
+/** Full-screen music surface hosted over Xstream when opened from its library or mini player. */
 @Composable
-fun MusicHost() {
+fun MusicHost(vm: AppViewModel, profileId: String, profileName: String) {
     val lib by MusicPlayer.openLibrary.collectAsStateWithLifecycle()
     val nowOpen by MusicPlayer.openNow.collectAsStateWithLifecycle()
     val splash by MusicPlayer.splash.collectAsStateWithLifecycle()
     if (splash) MusicSplash { MusicPlayer.splash.value = false; MusicPlayer.openLibrary.value = true }
-    if (lib) MusicLibrary { MusicPlayer.openLibrary.value = false }
-    if (nowOpen) MusicNowPlaying { MusicPlayer.openNow.value = false }
+    if (BuildConfig.HAS_LIVE && (lib || nowOpen)) MusicApp(profileId, profileName, profileVm = vm, initiallyNowPlaying = nowOpen) {
+        MusicPlayer.openLibrary.value = false
+        MusicPlayer.openNow.value = false
+    } else if (!BuildConfig.HAS_LIVE) {
+        if (lib) MusicLibrary { MusicPlayer.openLibrary.value = false }
+        if (nowOpen) MusicNowPlaying { MusicPlayer.openNow.value = false }
+    }
 }
 
 

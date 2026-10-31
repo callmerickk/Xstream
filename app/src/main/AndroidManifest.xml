@@ -102,6 +102,7 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_music_info" />
         </receiver>
+        <receiver android:name=".MusicWidgetControl" android:exported="false" />
         <!-- In-app updates (Updates.kt): shares the downloaded APK with the installer. -->
         <provider
             android:name="androidx.core.content.FileProvider"

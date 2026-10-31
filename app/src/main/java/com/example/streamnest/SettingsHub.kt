@@ -939,6 +939,7 @@ private fun LicensesPage(onBack: () -> Unit) {
         "Stremio addon protocol" to "Catalogs, streams and subtitles come from the addons you install.",
         "AndroidX Media3 / ExoPlayer" to "Video playback. Apache License 2.0.",
         "PencariMovie Server" to "The Live server in the 64-bit app, unchanged (github.com/aiskendi/pencarimovie-server). MIT License, Copyright (c) 2026 PencariMovie Downloader contributors. Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files, to deal in the Software without restriction, subject to including this notice. THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND.",
+        "Legal notice" to XSTREAM_LEGAL_NOTICE,
         "Jetpack Compose & Material 3" to "User interface. Apache License 2.0.",
         "Coil" to "Image, GIF and video-frame loading. Apache License 2.0.",
         "OkHttp" to "Networking. Apache License 2.0.",

@@ -130,7 +130,8 @@ fun App(vm: AppViewModel = viewModel()) {
     val profile by vm.current.collectAsStateWithLifecycle()
     val texts by vm.texts.collectAsStateWithLifecycle()
     // Music (Live server): its pages open from the Home chip, the mini bar and the notification.
-    if (!BuildConfig.IS_TV && profile != null) MusicHost()
+    // Account-level terms must be accepted before the rest of the app can be used.
+    LegalNoticeGate(vm)
     // Activity log: which screen is open.
     LaunchedEffect(stack.lastOrNull(), tab, profile?.id) {
         val top = stack.lastOrNull()
@@ -490,6 +491,7 @@ fun App(vm: AppViewModel = viewModel()) {
         val rmWl by WatchlistAsk.removing.collectAsState()
         rmWl?.let { (m, r) -> RemoveFriendPickSheet(vm, m, r) { WatchlistAsk.removing.value = null } }
         if (showSplash) StartupSplash { showSplash = false }
+        if (!BuildConfig.IS_TV && profile != null) MusicHost(vm, profile.id, profile.name)
         SnackHost()
     }
 }

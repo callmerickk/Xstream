@@ -57,6 +57,7 @@ object SimpMusic {
         Regex("\"?videoId\"?\\s*[:=]\\s*\"?([A-Za-z0-9_-]{11})").find(s)?.let { return it.groupValues[1] }
         Regex("[?&]v=([A-Za-z0-9_-]{11})").find(s)?.let { return it.groupValues[1] }
         Regex("youtu\\.be/([A-Za-z0-9_-]{11})").find(s)?.let { return it.groupValues[1] }
+        Regex("\\|([A-Za-z0-9_-]{11})$").find(s)?.let { return it.groupValues[1] }
         return s.trim().takeIf { Regex("[A-Za-z0-9_-]{11}").matches(it) }
     }
 
@@ -76,6 +77,15 @@ object SimpMusic {
     /** YouTube Music's home shelves (Quick picks, new releases, charts, moods…). */
     suspend fun loadHome(): List<Shelf> {
         home?.let { return it }
+        val direct = runCatching { YtMusic.home() }.getOrNull()?.shelves.orEmpty().map { shelf ->
+            Shelf(shelf.title, shelf.items.map { item ->
+                val song = item.kind == YtmKind.SONG || item.kind == YtmKind.VIDEO
+                Item(item.title, item.subtitle, item.thumb,
+                    if (song) "https://music.youtube.com/watch?v=" + item.id else "https://music.youtube.com/browse/" + item.id,
+                    item.id.takeIf { song }, item.kind == YtmKind.VIDEO)
+            }, shelf.style == YtmStyle.WIDE_VIDEO_CAROUSEL)
+        }.filter { it.items.isNotEmpty() }
+        if (direct.isNotEmpty()) { home = direct; return direct }
         val a = api() ?: return emptyList()
         val shelves = coroutineScope {
             a.mainPage.map { mp ->
@@ -90,6 +100,13 @@ object SimpMusic {
     }
 
     suspend fun search(q: String): List<Item> = withContext(Dispatchers.IO) {
+        val direct = runCatching { YtMusic.search(q).items }.getOrDefault(emptyList())
+        if (direct.isNotEmpty()) return@withContext direct.map { result ->
+            val song = result.kind == YtmKind.SONG || result.kind == YtmKind.VIDEO
+            Item(result.title, result.subtitle, result.thumb,
+                if (song) "https://music.youtube.com/watch?v=" + result.id else "https://music.youtube.com/browse/" + result.id,
+                result.id.takeIf { song }, result.kind == YtmKind.VIDEO)
+        }
         val a = api() ?: return@withContext emptyList()
         runCatching { a.search(q).orEmpty().map { item(it, false) } }.getOrDefault(emptyList())
     }
@@ -97,12 +114,24 @@ object SimpMusic {
     /** The songs of an album / playlist / artist (or the one song). */
     suspend fun songs(it: Item): List<LiveServer.Track> = withContext(Dispatchers.IO) {
         if (it.isSong) return@withContext listOf(it.track())
+        val directId = it.url.substringAfter("music.youtube.com/browse/", "").takeIf { id -> id.isNotBlank() }
+        if (directId != null) {
+            val direct = runCatching { YtMusic.browse(directId).items }.getOrDefault(emptyList())
+                .filter { result -> result.kind == YtmKind.SONG || result.kind == YtmKind.VIDEO }
+                .map { result -> LiveServer.Track(id = "yt:" + result.id, title = result.title, artist = result.subtitle,
+                    album = it.title, durationMs = result.durationMs, format = "yt", artworkURL = result.thumb) }
+            if (direct.isNotEmpty()) return@withContext direct
+        }
         val a = api() ?: return@withContext emptyList()
         when (val r = runCatching { a.load(it.url) }.getOrNull()) {
-            is TvSeriesLoadResponse -> r.episodes.mapNotNull { e ->
+            is TvSeriesLoadResponse -> {
+                var loggedRaw = false
+                r.episodes.mapNotNull { e ->
+                if (!loggedRaw) { ActLog.add("MUSIC", "playlist first episode data=" + e.data.take(500)); loggedRaw = true }
                 val id = videoIdOf(e.data) ?: return@mapNotNull null
                 LiveServer.Track(id = "yt:$id", title = e.name ?: "Song", artist = e.description?.lineSequence()?.firstOrNull().orEmpty().take(60).ifBlank { r.name },
                     album = r.name, durationMs = (e.runTime ?: 0) * 1000L, format = "yt", artworkURL = e.posterUrl ?: r.posterUrl)
+                }
             }
             is MovieLoadResponse -> listOfNotNull(videoIdOf(r.dataUrl)?.let { id ->
                 LiveServer.Track(id = "yt:$id", title = r.name, artist = it.subtitle, format = "yt", artworkURL = r.posterUrl)

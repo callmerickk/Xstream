@@ -74,6 +74,19 @@ class MusicService : MediaSessionService() {
         // Auto quality: a song that stops to load for more than 1.5 s drops to 128 kbps at the same second; after a
         // minute of smooth play the next songs go back to 160 kbps.
         MusicQuality.start(ctx)
+        // Home-screen widget: play state and progress every 3 s while playing; title and cover on each new song.
+        val widgetTick = object : Runnable {
+            override fun run() {
+                MusicWidget.push(ctx, player.isPlaying, player.currentPosition, player.duration)
+                if (player.isPlaying) android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(this, 3_000)
+            }
+        }
+        player.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) { widgetTick.run() }
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                mediaItem?.mediaMetadata?.let { m -> MusicWidget.update(ctx, m.title?.toString(), m.artist?.toString(), m.artworkUri?.toString()) }
+            }
+        })
         val main = android.os.Handler(android.os.Looper.getMainLooper())
         var stallCheck: Runnable? = null
         player.addListener(object : Player.Listener {
@@ -192,7 +205,7 @@ object MusicPlayer {
         now.value = Now(t, mc.isPlaying, mc.playbackState == Player.STATE_BUFFERING, mc.currentPosition.coerceAtLeast(0),
             mc.duration.takeIf { it > 0 } ?: (t?.durationMs ?: 0), i, mc.shuffleModeEnabled, mc.repeatMode,
             if (t?.id == prev) now.value.error else null)
-        if (t != null && t.id != prev) { remember(t); appCtx?.let { MusicWidget.update(it, t.title, t.artist) } }
+        if (t != null && t.id != prev) { remember(t); appCtx?.let { MusicWidget.update(it, t.title, t.artist, t.artworkURL) } }
     }
 
     /** Plays [list] from [index] (the list becomes the queue). */
@@ -205,6 +218,27 @@ object MusicPlayer {
             publish()
         }
     }
+
+    /** Add radio results behind the current item without interrupting playback. */
+    fun appendRadio(ctx: Context, tracks: List<LiveServer.Track>) = withController(ctx) { mc ->
+        val seen = (queue.value.map { it.id } + listOfNotNull(mc.currentMediaItem?.mediaId)).toMutableSet()
+        val add = tracks.filter { seen.add(it.id) }
+        if (add.isEmpty()) return@withController
+        mc.addMediaItems(mc.mediaItemCount, add.map(::item))
+        queue.value = (queue.value + add).ifEmpty { add }
+    }
+
+    /** Replace future radio items; the song already playing and its position remain intact. */
+    fun replaceRadio(ctx: Context, tracks: List<LiveServer.Track>) = withController(ctx) { mc ->
+        val at = mc.currentMediaItemIndex.coerceAtLeast(0)
+        if (mc.mediaItemCount > at + 1) mc.removeMediaItems(at + 1, mc.mediaItemCount)
+        val cur = queue.value.getOrNull(at) ?: now.value.track
+        val future = tracks.filterNot { it.id == cur?.id }
+        if (future.isNotEmpty()) mc.addMediaItems(mc.mediaItemCount, future.map(::item))
+        queue.value = listOfNotNull(cur) + future
+    }
+
+    val radioLabel = MutableStateFlow("")
 
     /** Adds a song to play right after the current one. */
     fun playNext(ctx: Context, t: LiveServer.Track) = withController(ctx) { mc ->
@@ -225,6 +259,22 @@ object MusicPlayer {
     }
     fun stop() { controller?.let { it.stop(); it.clearMediaItems() }; queue.value = emptyList(); now.value = Now() }
     /** A movie starts: music pauses (audio focus does it too; this also covers players that don't ask for it). */
+    /** Widget buttons: "prev", "toggle", "next" ([done] is called once it's sent). */
+    fun control(ctx: Context, action: String, done: () -> Unit) {
+        val timeout = android.os.Handler(android.os.Looper.getMainLooper())
+        timeout.postDelayed({ done() }, 8_000)
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            withController(ctx) { mc ->
+                when (action) {
+                    "prev" -> if (mc.currentPosition > 4_000) mc.seekTo(0) else mc.seekToPreviousMediaItem()
+                    "next" -> mc.seekToNextMediaItem()
+                    else -> if (mc.isPlaying) mc.pause() else { if (mc.playbackState == Player.STATE_IDLE) mc.prepare(); mc.play() }
+                }
+                timeout.removeCallbacksAndMessages(null); done()
+            }
+        }
+    }
+
     fun pauseForVideo() { controller?.takeIf { it.isPlaying }?.pause() }
     /** Position of the song playing now (for "Video": the music video starts at the same second). */
     fun positionMs(): Long = controller?.currentPosition ?: 0L

@@ -1386,7 +1386,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             "appName", "showBrand", "forYou", "badge", "newOn", "watchNow", "continueWatching", "recommendedFor", "myList",
             "pillLeft", "pillRight", "pillSports", "navHome", "navMySpace", "pillLive", "helpSettings", "whoWatching",
             "navSearch", "navLive", "navLibrary", "navProfile", "searchHint", "playBtn", "chooseSource", "noStreams",
-            "emptyMsg", "addonsTitle", "addonsHint", "addonUrlHint", "installBtn", "aiLogoUrl",
+            "emptyMsg", "addonsTitle", "addonsHint", "addonUrlHint", "installBtn", "aiLogoUrl", "legalAcceptedAt", "legalVersion", "legalAcceptedUid",
         )
     }
     private fun isAppKey(k: String) = k in AppLocalKeys || k in AppSyncKeys
