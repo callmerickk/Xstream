@@ -1,7 +1,10 @@
 Xstream 0.7.3
 
 • Xstream Music opens as its own app: new logo, opening animation, then pick your profile.
-• Music comes straight from YouTube Music; tapping a song starts its radio.
+• Music looks and works like YouTube Music: Home, Samples, Explore, Library, search with Songs and Videos.
+• Tapping a song starts its radio; Up next, synced lyrics and Related under the player.
+• Song or Video in the same player without stopping; full-screen video with zoom, brightness, volume and quality.
+• The player takes its colour from each song's cover.
 • New Xstream Music widget: cover, progress, previous, play/pause and next.
 • One-time notice for new accounts: Xstream does not host any content.
 
