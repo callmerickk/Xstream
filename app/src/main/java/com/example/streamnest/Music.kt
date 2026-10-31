@@ -25,6 +25,7 @@ import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionToken
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.serialization.builtins.ListSerializer
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
@@ -53,6 +54,9 @@ class MusicService : MediaSessionService() {
                 val url = (if (MusicQuality.hi) m.hi ?: m.lo else m.lo ?: m.hi) ?: throw IOException("This song isn't available right now")
                 return@Factory spec.withUri(Uri.parse(url)).withRequestHeaders(mapOf("User-Agent" to m.ua))
             }
+            // DASH pieces of a music video: the client's user agent.
+            if (uri.host?.contains("googlevideo") == true && spec.httpRequestHeaders["User-Agent"] == null)
+                return@Factory spec.withAdditionalHeaders(mapOf("User-Agent" to YtDirect.musicUa))
             if (uri.scheme != "xlive") return@Factory spec
             val id = uri.lastPathSegment.orEmpty()
             val url = MusicPlayer.resolved[id] ?: runBlocking { LiveServer.trackUrl(ctx, LiveServer.Track(id = id)) }
@@ -63,7 +67,8 @@ class MusicService : MediaSessionService() {
         val renderers = io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory(ctx)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
         val player = ExoPlayer.Builder(ctx, renderers)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(resolving))
+            // "ytmpd://track/<id>": a song with a video, as one DASH manifest made on the spot (see YtDirect.dashManifest).
+            .setMediaSourceFactory(DefaultMediaSourceFactory(androidx.media3.datasource.DataSource.Factory { MpdOrUpstream(resolving.createDataSource()) }))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -148,7 +153,12 @@ object MusicPlayer {
     private var appCtx: Context? = null
 
     private fun item(t: LiveServer.Track): MediaItem = MediaItem.Builder().setMediaId(t.id)
-        .setUri(if (t.id.startsWith("yt:")) "ytm://track/${t.id.removePrefix("yt:")}" else "xlive://track/${t.id}")
+        .setUri(when {
+            t.id.startsWith("yt:") && t.format == "ytv" -> "ytmpd://track/${t.id.removePrefix("yt:")}"
+            t.id.startsWith("yt:") -> "ytm://track/${t.id.removePrefix("yt:")}"
+            else -> "xlive://track/${t.id}"
+        })
+        .apply { if (t.format == "ytv") setMimeType(androidx.media3.common.MimeTypes.APPLICATION_MPD) }
         .setMediaMetadata(MediaMetadata.Builder().setTitle(t.title).setArtist(t.artist).setAlbumTitle(t.album)
             .setArtworkUri(t.artworkURL?.let(Uri::parse)).setIsPlayable(true).setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC).build()).build()
 
@@ -205,7 +215,10 @@ object MusicPlayer {
         now.value = Now(t, mc.isPlaying, mc.playbackState == Player.STATE_BUFFERING, mc.currentPosition.coerceAtLeast(0),
             mc.duration.takeIf { it > 0 } ?: (t?.durationMs ?: 0), i, mc.shuffleModeEnabled, mc.repeatMode,
             if (t?.id == prev) now.value.error else null)
-        if (t != null && t.id != prev) { remember(t); appCtx?.let { MusicWidget.update(it, t.title, t.artist, t.artworkURL) } }
+        if (t != null && t.id != prev) {
+            remember(t); appCtx?.let { MusicWidget.update(it, t.title, t.artist, t.artworkURL); ensureMoreRadio(it) }
+            if (t.id.startsWith("yt:")) videoMode.value = t.format == "ytv"
+        }
     }
 
     /** Plays [list] from [index] (the list becomes the queue). */
@@ -239,6 +252,90 @@ object MusicPlayer {
     }
 
     val radioLabel = MutableStateFlow("")
+
+    // ───── Xstream Music: radio, Song ↔ Video ─────
+    /** song id ↔ its other version (from YouTube Music's queue): a Song with a music video, or the reverse. */
+    val counterparts = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /** The Now playing page shows the picture (Video) or the cover (Song). */
+    val videoMode = MutableStateFlow(false)
+    private var radioJob: kotlinx.coroutines.Job? = null
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
+
+    fun ytTrack(i: YtmItem, from: String? = null) = LiveServer.Track(id = "yt:" + i.id, title = i.title, artist = i.subtitle.substringAfter("Song • ").substringAfter("Video • ").substringBefore(" • "),
+        album = from, durationMs = i.durationMs, format = if (i.kind == YtmKind.VIDEO) "ytv" else "yt", artworkURL = i.thumb)
+
+    /** Plays [i] and fills the queue with its YouTube Music radio (like tapping a song in YouTube Music). */
+    fun startRadio(ctx: Context, i: YtmItem) {
+        videoMode.value = i.kind == YtmKind.VIDEO
+        play(ctx, listOf(ytTrack(i)), 0)
+        radioLabel.value = i.title + " mix"
+        radioJob?.cancel()
+        radioJob = scope.launch {
+            val n = runCatching { YtMusic.next(i.id, "RDAMVM" + i.id) }.getOrNull() ?: return@launch
+            counterparts.putAll(n.counterparts)
+            n.title?.let { radioLabel.value = it }
+            replaceRadio(ctx, n.queue.filter { it.id != i.id }.map { ytTrack(it) })
+        }
+    }
+
+    /** Plays an album / playlist as it is (Play all / Shuffle / a song in it). */
+    fun playList(ctx: Context, list: List<YtmItem>, index: Int, label: String) {
+        val songs = list.filter { it.kind == YtmKind.SONG || it.kind == YtmKind.VIDEO }
+        if (songs.isEmpty()) return
+        val at = songs.indexOf(list.getOrNull(index)).coerceAtLeast(0)
+        videoMode.value = false
+        radioLabel.value = label
+        play(ctx, songs.map { ytTrack(it, label) }, at)
+    }
+
+    /** Adds the radio's next songs when the queue is about to end. */
+    fun ensureMoreRadio(ctx: Context) {
+        val mc = controller ?: return
+        if (mc.mediaItemCount - mc.currentMediaItemIndex > 3 || radioJob?.isActive == true) return
+        val last = queue.value.lastOrNull()?.id?.removePrefix("yt:") ?: return
+        radioJob = scope.launch {
+            val n = runCatching { YtMusic.next(last, "RDAMVM$last") }.getOrNull() ?: return@launch
+            counterparts.putAll(n.counterparts)
+            appendRadio(ctx, n.queue.map { ytTrack(it) })
+        }
+    }
+
+    fun addNext(ctx: Context, i: YtmItem) = playNext(ctx, ytTrack(i))
+    fun addToQueue(ctx: Context, i: YtmItem) = withController(ctx) { mc ->
+        val t = ytTrack(i); mc.addMediaItem(item(t)); queue.value = queue.value + t
+    }
+    fun removeAt(i: Int) { controller?.let { if (i in 0 until it.mediaItemCount && i != it.currentMediaItemIndex) { it.removeMediaItem(i); queue.value = queue.value.toMutableList().apply { if (i < size) removeAt(i) } } } }
+    fun dismissQueue() { controller?.let { mc -> val at = mc.currentMediaItemIndex; if (mc.mediaItemCount > at + 1) mc.removeMediaItems(at + 1, mc.mediaItemCount); queue.value = queue.value.take(at + 1) } }
+
+    /**
+     * The picture: on (inline: at most [maxHeight] px tall; full screen: any size the connection carries) or off (Song:
+     * only the sound is downloaded). Track selection only: the song never stops.
+     */
+    fun setVideo(on: Boolean, maxHeight: Int = Int.MAX_VALUE) {
+        val mc = controller ?: return
+        mc.trackSelectionParameters = mc.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, !on)
+            .apply { if (maxHeight == Int.MAX_VALUE) clearVideoSizeConstraints() else setMaxVideoSize(Int.MAX_VALUE, maxHeight) }
+            .build()
+    }
+
+    /** Switches the song playing to its other version (Song → its music video, Video → the song) at the same second. */
+    fun swapVersion(ctx: Context, toId: String, asVideo: Boolean) = withController(ctx) { mc ->
+        val i = mc.currentMediaItemIndex; val pos = mc.currentPosition
+        val cur = queue.value.getOrNull(i) ?: return@withController
+        val t = cur.copy(id = "yt:$toId", format = if (asVideo) "ytv" else "yt")
+        mc.replaceMediaItem(i, item(t)); mc.seekTo(i, pos); mc.play()
+        queue.value = queue.value.toMutableList().apply { set(i, t) }
+        publish()
+    }
+
+    private val sleepHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    /** Sleep timer: music pauses after [ms]. */
+    fun sleepIn(ms: Long) { sleepHandler.removeCallbacksAndMessages(null); sleepHandler.postDelayed({ controller?.pause() }, ms) }
+
+    fun attachVideo(tv: android.view.TextureView?) { controller?.let { if (tv != null) it.setVideoTextureView(tv) else it.clearVideoSurface() } }
+    fun videoSize(): androidx.media3.common.VideoSize = controller?.videoSize ?: androidx.media3.common.VideoSize.UNKNOWN
+    fun hasVideoTrack(): Boolean = controller?.currentTracks?.groups?.any { it.type == androidx.media3.common.C.TRACK_TYPE_VIDEO } == true
 
     /** Adds a song to play right after the current one. */
     fun playNext(ctx: Context, t: LiveServer.Track) = withController(ctx) { mc ->
@@ -278,4 +375,25 @@ object MusicPlayer {
     fun pauseForVideo() { controller?.takeIf { it.isPlaying }?.pause() }
     /** Position of the song playing now (for "Video": the music video starts at the same second). */
     fun positionMs(): Long = controller?.currentPosition ?: 0L
+}
+
+
+/** Serves "ytmpd://track/<id>" (the DASH manifest made by [YtDirect.dashManifest]); everything else goes upstream. */
+@OptIn(UnstableApi::class)
+private class MpdOrUpstream(private val up: androidx.media3.datasource.DataSource) : androidx.media3.datasource.DataSource {
+    private var mem: androidx.media3.datasource.ByteArrayDataSource? = null
+    override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) = up.addTransferListener(transferListener)
+    override fun open(dataSpec: androidx.media3.datasource.DataSpec): Long {
+        if (dataSpec.uri.scheme == "ytmpd") {
+            val id = dataSpec.uri.lastPathSegment.orEmpty()
+            val xml = runBlocking { YtDirect.dashManifest(id, MusicQuality.hi) } ?: throw IOException("This video isn't available right now")
+            return androidx.media3.datasource.ByteArrayDataSource(xml.toByteArray()).also { mem = it }.open(dataSpec)
+        }
+        mem = null
+        return up.open(dataSpec)
+    }
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int = mem?.read(buffer, offset, length) ?: up.read(buffer, offset, length)
+    override fun getUri(): Uri? = mem?.uri ?: up.uri
+    override fun getResponseHeaders(): Map<String, List<String>> = if (mem != null) emptyMap() else up.responseHeaders
+    override fun close() { mem?.close(); mem = null; up.close() }
 }

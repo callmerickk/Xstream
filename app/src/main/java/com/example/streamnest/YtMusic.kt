@@ -19,8 +19,10 @@ enum class YtmStyle { SPEED_DIAL_GRID, QUICK_PICKS, SQUARE_CAROUSEL, WIDE_VIDEO_
     val explicit: Boolean = false, val hasVideo: Boolean = false, val counterpartId: String? = null,
 )
 data class YtmShelf(val title: String, val strapline: String?, val style: YtmStyle, val items: List<YtmItem>, val moreBrowseId: String?)
-data class YtmPage(val shelves: List<YtmShelf>, val items: List<YtmItem> = emptyList(), val continuation: String? = null, val title: String? = null)
-data class YtmNext(val queue: List<YtmItem>, val continuation: String?, val lyricsBrowseId: String?, val relatedBrowseId: String?, val chips: List<Pair<String, String>>)
+data class YtmPage(val shelves: List<YtmShelf>, val items: List<YtmItem> = emptyList(), val continuation: String? = null, val title: String? = null,
+    /** Mood chips (label, browse params) on Home. */ val chips: List<Pair<String, String>> = emptyList(), val header: YtmItem? = null)
+data class YtmNext(val queue: List<YtmItem>, val continuation: String?, val lyricsBrowseId: String?, val relatedBrowseId: String?, val chips: List<Pair<String, String>>,
+    /** song id → its other version (Song ↔ Video). */ val counterparts: Map<String, String> = emptyMap(), val title: String? = null)
 
 object YtMusic {
     const val CLIENT_VERSION = "1.20241023.01.00"
@@ -135,39 +137,65 @@ object YtMusic {
         return out.distinct()
     }
 
+    private fun videoType(o: JsonObject): String {
+        var t = ""
+        walk(o) { x -> if (t.isEmpty()) x.str("musicVideoType")?.let { t = it } }
+        return t
+    }
+
     private fun item(o: JsonObject): YtmItem? {
-        val video = videoId(o); val browse = browseId(o)
+        // The item's own target: its navigationEndpoint first (an album card also holds a play button for its songs).
+        val nav = o.obj("navigationEndpoint")
+            ?: o.arr("flexColumns")?.firstNotNullOfOrNull { c -> var e: JsonObject? = null; walk(c) { x -> if (e == null) e = x.obj("navigationEndpoint") }; e }
+        val navBrowse = nav?.obj("browseEndpoint")?.str("browseId")
+        val navVideo = nav?.obj("watchEndpoint")?.str("videoId")
+        val video = navVideo ?: if (navBrowse == null) (o.str("videoId") ?: o.obj("playlistItemData")?.str("videoId") ?: videoId(o)) else null
+        val browse = navBrowse ?: if (video == null) browseId(o) else null
         val title = o.obj("title")?.let(::textOf)
             ?: o.arr("flexColumns")?.firstOrNull()?.let(::textOf)
             ?: strings(o).firstOrNull()?.takeIf { it.length in 1..180 } ?: return null
         val subtitle = o.obj("subtitle")?.let(::textOf)
-            ?: o.arr("flexColumns")?.drop(1)?.firstOrNull()?.let(::textOf)
-            ?: strings(o).drop(1).take(3).joinToString(" • ")
-        val videoType = strings(o).firstOrNull { it.startsWith("MUSIC_VIDEO_TYPE_") }.orEmpty()
+            ?: o.obj("longBylineText")?.let(::textOf)
+            ?: o.arr("flexColumns")?.drop(1)?.mapNotNull { textOf(it) }?.filter { it.isNotBlank() }?.joinToString(" • ")
+            ?: ""
+        val vt = videoType(o)
         val kind = when {
-            videoType.contains("OMV") || videoType.contains("UGC") -> YtmKind.VIDEO
+            video != null && (vt.contains("OMV") || vt.contains("UGC") || subtitle.startsWith("Video")) -> YtmKind.VIDEO
             video != null -> YtmKind.SONG
             browse?.startsWith("UC") == true -> YtmKind.ARTIST
-            browse?.startsWith("MPRE") == true -> YtmKind.ALBUM
-            browse?.startsWith("MPSP") == true -> YtmKind.SINGLE
-            strings(o).any { it.contains("podcast", true) } -> YtmKind.PODCAST
+            browse?.startsWith("MPRE") == true -> if (subtitle.startsWith("Single")) YtmKind.SINGLE else YtmKind.ALBUM
+            browse?.startsWith("MPSP") == true -> YtmKind.PODCAST
             else -> YtmKind.PLAYLIST
         }
         val length = o.obj("lengthText")?.let(::textOf) ?: o.obj("duration")?.let(::textOf)
+            ?: o.arr("fixedColumns")?.firstOrNull()?.let(::textOf)
         val id = video ?: browse ?: return null
         return YtmItem(kind, id, title, subtitle, thumb(o, kind == YtmKind.VIDEO), playlistId(o), params(o),
-            duration(length), strings(o).any { it.equals("E", true) || it.contains("explicit", true) },
-            videoType.contains("OMV") || videoType.contains("UGC"))
+            duration(length), false, kind == YtmKind.VIDEO)
     }
 
+    private val renderers = listOf("musicResponsiveListItemRenderer", "musicTwoRowItemRenderer", "musicVideoRenderer",
+        "playlistPanelVideoRenderer", "musicMultiRowListItemRenderer", "musicNavigationButtonRenderer")
+
+    /** Only real item cards (never their parent sections, which used to come out with the wrong titles). */
     private fun extractItems(root: JsonObject): List<YtmItem> {
         val out = LinkedHashMap<String, YtmItem>()
         walk(root) { o ->
-            val key = listOf("musicResponsiveListItemRenderer", "musicTwoRowItemRenderer", "musicVideoRenderer")
-                .firstOrNull { o[it]?.obj() != null }
-            item(key?.let { o.obj(it) } ?: o)?.let { out.putIfAbsent(it.kind.name + ":" + it.id, it) }
+            renderers.forEach { k -> o.obj(k)?.let { r -> item(r)?.let { out.putIfAbsent(it.kind.name + ":" + it.id, it) } } }
         }
         return out.values.toList()
+    }
+
+    private fun chips(root: JsonObject): List<Pair<String, String>> {
+        val out = mutableListOf<Pair<String, String>>()
+        walk(root) { o ->
+            o.obj("chipCloudChipRenderer")?.let { c ->
+                val label = c.obj("text")?.let(::textOf) ?: return@let
+                val params = c.obj("navigationEndpoint")?.obj("browseEndpoint")?.str("params") ?: return@let
+                out += label to params
+            }
+        }
+        return out.distinctBy { it.first }
     }
 
     private fun extractShelves(root: JsonObject): List<YtmShelf> {
@@ -209,11 +237,11 @@ object YtMusic {
         return page
     }
 
-    suspend fun home(continuation: String? = null): YtmPage = cached("home:" + continuation.orEmpty()) {
+    suspend fun home(continuation: String? = null, params: String? = null): YtmPage = cached("home:" + continuation.orEmpty() + ":" + params.orEmpty()) {
         val r = withContext(Dispatchers.IO) { endpoint("browse", buildJsonObject {
-            put("browseId", "FEmusic_home"); if (continuation != null) put("continuation", continuation)
+            put("browseId", "FEmusic_home"); if (continuation != null) put("continuation", continuation); if (params != null) put("params", params)
         }) } ?: return@cached YtmPage(emptyList())
-        YtmPage(extractShelves(r), extractItems(r), continuation(r))
+        YtmPage(extractShelves(r), extractItems(r), continuation(r), chips = chips(r))
     }
     suspend fun explore(): YtmPage = browsePage("FEmusic_explore", "explore")
     suspend fun newReleases(): YtmPage = browsePage("FEmusic_new_releases", "new")
@@ -248,7 +276,16 @@ object YtMusic {
     }
     suspend fun browse(browseId: String): YtmPage = cached("browse:" + browseId) {
         val r = withContext(Dispatchers.IO) { endpoint("browse", context(browseId)) } ?: return@cached YtmPage(emptyList())
-        YtmPage(extractShelves(r), extractItems(r), continuation(r), browseId)
+        var head: YtmItem? = null
+        walk(r) { o ->
+            if (head == null) listOf("musicImmersiveHeaderRenderer", "musicVisualHeaderRenderer", "musicDetailHeaderRenderer", "musicResponsiveHeaderRenderer")
+                .firstNotNullOfOrNull { o.obj(it) }?.let { h ->
+                    head = YtmItem(if (browseId.startsWith("UC")) YtmKind.ARTIST else YtmKind.ALBUM, browseId,
+                        h.obj("title")?.let(::textOf) ?: "", listOfNotNull(h.obj("subtitle")?.let(::textOf), h.obj("secondSubtitle")?.let(::textOf)).joinToString(" • "),
+                        thumb(h, browseId.startsWith("UC")))
+                }
+        }
+        YtmPage(extractShelves(r), extractItems(r), continuation(r), head?.title ?: browseId, header = head)
     }
 
     suspend fun next(videoId: String, playlistId: String? = null, params: String? = null): YtmNext = withContext(Dispatchers.IO) {
@@ -262,11 +299,28 @@ object YtMusic {
             if (id?.startsWith("MPLY") == true) lyrics = id
             if (id?.startsWith("MPTR") == true) related = id
         }
-        YtmNext(extractItems(r), continuation(r), lyrics, related, emptyList())
+        val counterparts = HashMap<String, String>()
+        walk(r) { o ->
+            o.obj("playlistPanelVideoWrapperRenderer")?.let { w ->
+                val a = w.obj("primaryRenderer")?.obj("playlistPanelVideoRenderer")?.str("videoId")
+                val b = w.arr("counterpart")?.firstOrNull()?.obj()?.obj("counterpartRenderer")?.obj("playlistPanelVideoRenderer")?.str("videoId")
+                if (a != null && b != null) { counterparts[a] = b; counterparts[b] = a }
+            }
+        }
+        var title: String? = null
+        walk(r) { o -> if (title == null) o.obj("playlistPanelRenderer")?.obj("title")?.let { title = textOf(it) } }
+        val queue = LinkedHashMap<String, YtmItem>()
+        walk(r) { o -> o.obj("playlistPanelVideoRenderer")?.let { p -> item(p)?.let { queue.putIfAbsent(it.id, it) } } }
+        YtmNext(queue.values.toList(), continuation(r), lyrics, related, emptyList(), counterparts, title)
     }
     suspend fun lyrics(browseId: String): String = withContext(Dispatchers.IO) {
         val r = endpoint("browse", context(browseId)) ?: return@withContext ""
         strings(r).filter { it.isNotBlank() }.distinct().joinToString("\n")
+    }
+    /** A browse page that needs params too (a mood or genre). */
+    suspend fun browseWith(browseId: String, params: String): YtmPage = cached("browse:$browseId:$params") {
+        val r = withContext(Dispatchers.IO) { endpoint("browse", context(browseId, params = params)) } ?: return@cached YtmPage(emptyList())
+        YtmPage(extractShelves(r), extractItems(r), continuation(r))
     }
     suspend fun related(browseId: String): YtmPage = browsePage(browseId, "related:" + browseId)
 }

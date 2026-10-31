@@ -301,6 +301,8 @@ object YtDirect {
         val width: Int, val height: Int, val fps: Int, val initRange: LongRange?,
         val indexRange: LongRange?, val contentLength: Long,
     )
+    /** User agent the DASH pieces are fetched with (the client that answered). */
+    @Volatile var musicUa: String = "Mozilla/5.0"
     data class MusicStreams(
         val audioHi: Format?, val audioLo: Format?, val videos: List<Format>,
         val ua: String, val durationMs: Long,
@@ -328,7 +330,7 @@ object YtDirect {
             fun fmt(o: JsonObject): Format? {
                 val url = str(o, "url") ?: return null
                 val mime = str(o, "mimeType").orEmpty()
-                val codecs = Regex("codecs=\\?\"([^\"]+)").find(mime)?.groupValues?.getOrNull(1)
+                val codecs = Regex("codecs=\"([^\"]+)\"").find(mime)?.groupValues?.getOrNull(1)
                     ?: str(o, "codecs").orEmpty()
                 return Format(num(o, "itag").toInt(), url, mime, codecs, num(o, "bitrate").toInt(),
                     num(o, "width").toInt(), num(o, "height").toInt(), num(o, "fps").toInt(),
@@ -346,14 +348,43 @@ object YtDirect {
             val lo = loRaw?.let { raw -> alive(raw.url, client.ua)?.let { raw.copy(url = it) } }
             val liveVideos = coroutineScope { chosen.map { raw -> async { alive(raw.url, client.ua)?.let { raw.copy(url = it) } } }.awaitAll().filterNotNull() }
             if (hi == null && lo == null && liveVideos.isEmpty()) continue
-            val durationMs = num(data, "approxDurationMs")
+            val durationMs = adaptive.mapNotNull { (it["approxDurationMs"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull() }.maxOrNull() ?: 0L
             val out = MusicStreams(hi, lo, liveVideos, client.ua, durationMs)
+            musicUa = client.ua
             musicStreamsCache[videoId] = System.currentTimeMillis() to out
             ActLog.add("MUSIC", videoId + " · adaptive video formats " + liveVideos.size)
             return@withContext out
         }
         musicStreamsCache[videoId] = System.currentTimeMillis() to null
         null
+    }
+
+    /**
+     * One DASH manifest (in memory) with the song's audio and every picture size of its video, so the player can turn the
+     * picture on / off and change its size at the same second without reloading (Song ↔ Video, portrait ↔ full screen).
+     */
+    suspend fun dashManifest(videoId: String, hiAudio: Boolean): String? {
+        val m = musicStreams(videoId) ?: return null
+        val audio = (if (hiAudio) m.audioHi ?: m.audioLo else m.audioLo ?: m.audioHi)?.takeIf { it.initRange != null && it.indexRange != null } ?: return null
+        val videos = m.videos.filter { it.initRange != null && it.indexRange != null }
+        fun esc(u: String) = u.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;")
+        fun rep(f: Format, video: Boolean) = buildString {
+            append("<Representation id=\"${f.itag}\" codecs=\"${f.codecs}\" bandwidth=\"${f.bitrate.coerceAtLeast(1)}\"")
+            if (video) append(" width=\"${f.width}\" height=\"${f.height}\" frameRate=\"${f.fps.coerceAtLeast(1)}\"") else append(" audioSamplingRate=\"48000\"")
+            append("><BaseURL>").append(esc(f.url)).append("</BaseURL>")
+            append("<SegmentBase indexRange=\"${f.indexRange!!.first}-${f.indexRange.last}\"><Initialization range=\"${f.initRange!!.first}-${f.initRange.last}\"/></SegmentBase></Representation>")
+        }
+        val secs = (m.durationMs.coerceAtLeast(1000)) / 1000.0
+        return buildString {
+            append("<?xml version=\"1.0\" encoding=\"UTF-8\"?><MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" profiles=\"urn:mpeg:dash:profile:isoff-on-demand:2011\" type=\"static\" minBufferTime=\"PT1.5S\" mediaPresentationDuration=\"PT${secs}S\"><Period>")
+            append("<AdaptationSet id=\"0\" contentType=\"audio\" mimeType=\"${audio.mime.substringBefore(';')}\" subsegmentAlignment=\"true\">").append(rep(audio, false)).append("</AdaptationSet>")
+            if (videos.isNotEmpty()) {
+                append("<AdaptationSet id=\"1\" contentType=\"video\" mimeType=\"${videos.first().mime.substringBefore(';')}\" subsegmentAlignment=\"true\">")
+                videos.forEach { append(rep(it, true)) }
+                append("</AdaptationSet>")
+            }
+            append("</Period></MPD>")
+        }
     }
 
     /** One client's playable choices, best first: video + default-language audio, one muxed file, HLS. */
