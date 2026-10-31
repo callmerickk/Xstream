@@ -1166,6 +1166,7 @@ private fun MenuRow(icon: ImageVector, label: String, onClick: () -> Unit) {
  * Full screen (landscape), Xstream player style: pinch to zoom, slide the left side for brightness and the right side
  * for volume, double-tap to skip 10 s, quality, lock, and Up next on the side. Same player: nothing reloads.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FullVideo(onExit: () -> Unit) {
     val ctx = LocalContext.current
