@@ -1,3 +1,12 @@
+Xstream 0.7.3
+
+• Xstream Music opens as its own app: new logo, opening animation, then pick your profile.
+• Music comes straight from YouTube Music; tapping a song starts its radio.
+• New Xstream Music widget: cover, progress, previous, play/pause and next.
+• One-time notice for new accounts: Xstream does not host any content.
+
+---
+
 Xstream 0.7.2
 
 • Top cards: StreamX's size and shape, centred, with the deck stacked on both sides. Trailers play inside the card.
