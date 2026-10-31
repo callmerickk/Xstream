@@ -138,7 +138,7 @@ fun MusicApp(
                     Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(onClick = { page = "Search" }) { Text("Search") }
                         OutlinedButton(onClick = { page = "Library" }) { Text("Your Library") }
-                        OutlinedButton(onClick = loadHome) { Text("Refresh") }
+                        OutlinedButton(onClick = { loadHome() }) { Text("Refresh") }
                     }
                 }
                 if (loading && shelves.isEmpty()) item { LinearProgressIndicator(Modifier.fillMaxWidth(), color = MusicAccentColor) }

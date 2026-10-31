@@ -491,7 +491,7 @@ fun App(vm: AppViewModel = viewModel()) {
         val rmWl by WatchlistAsk.removing.collectAsState()
         rmWl?.let { (m, r) -> RemoveFriendPickSheet(vm, m, r) { WatchlistAsk.removing.value = null } }
         if (showSplash) StartupSplash { showSplash = false }
-        if (!BuildConfig.IS_TV && profile != null) MusicHost(vm, profile.id, profile.name)
+        if (!BuildConfig.IS_TV) profile?.let { p -> MusicHost(vm, p.id, p.name) }
         SnackHost()
     }
 }
