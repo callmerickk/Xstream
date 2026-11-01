@@ -1,3 +1,7 @@
+Live server updated to 3.0.6.
+
+---
+
 Xstream 0.7.3
 
 • Xstream Music opens as its own app: new logo, opening animation, then pick your profile.
