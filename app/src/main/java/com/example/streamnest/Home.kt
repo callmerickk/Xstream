@@ -159,7 +159,11 @@ fun HomeScreen(
     onManual: (Meta, String) -> Unit = { _, _ -> },
     onOpenCollection: (NCollection, NFolder) -> Unit = { _, _ -> },
 ) {
-    val allShelves by vm.shelves.collectAsStateWithLifecycle()
+    val liveShelves by vm.shelves.collectAsStateWithLifecycle()
+    val profileNow by vm.current.collectAsStateWithLifecycle()
+    // 0.8: Home is fixed for the session once you see it (no posters swapping in front of you). A new addon or another
+    // profile builds it again; fresh catalogue data is used the next time the app opens.
+    val allShelves = remember(liveShelves, profileNow?.id) { HomeFreeze.shelves(liveShelves, profileNow?.id) }
     // At app open, in the background: Discover's titles and the Hindi titles for both Trending rows, so neither changes
     // in front of you.
     LaunchedEffect(allShelves.isNotEmpty()) {
@@ -179,7 +183,8 @@ fun HomeScreen(
     }
     val myList by vm.myList.collectAsStateWithLifecycle()
     val profile by vm.current.collectAsStateWithLifecycle()
-    val recs by vm.recommended.collectAsStateWithLifecycle()
+    val liveRecs by vm.recommended.collectAsStateWithLifecycle()
+    val recs = remember(liveRecs) { HomeFreeze.recs(liveRecs).filter { it.id.substringBefore(":") !in CinemaOnly.hidden.value } }
     var actionsFor by remember { mutableStateOf<Progress?>(null) }
     // Xstream: long-press on any poster lifts it out with its trailer.
     var holdFor by remember { mutableStateOf<Pair<Meta, androidx.compose.ui.geometry.Rect>?>(null) }
@@ -191,7 +196,8 @@ fun HomeScreen(
     val homeBlur by androidx.compose.animation.core.animateDpAsState(if (lifted != null && !BuildConfig.IS_TV) 14.dp else 0.dp,
         androidx.compose.animation.core.tween(320), label = "cwBlur")
     val showRecs = isOn(t("showRecs"))
-    val recsFirst = isOn(t("recsAfterCw"))
+    // 0.8: StreamX's order — Pick up where you left off → Trending → AIDEN picked for you → the rest.
+    val recsFirst = false
     // Old default names (kept by phones that saved them) give way to the new ones.
     val recTitle = t("recommendedFor").let { if (it == "Recommended for {name}") "{ai} picked for {name}" else it }
         .replace("{ai}", aiName().lowercase().replaceFirstChar { it.uppercase() }).replace("{name}", profile?.name?.takeIf { it.isNotBlank() && it != "Me" } ?: "you")
@@ -206,13 +212,13 @@ fun HomeScreen(
     // Films only in cinemas so far (no web / Blu-ray release) stay off Home; search still finds them.
     val cinemaHidden by CinemaOnly.hidden.collectAsState()
     LaunchedEffect(Unit) { if (!BuildConfig.IS_TV) CinemaOnly.load(vm.appContext) }
-    LaunchedEffect(allShelves.size) { if (!BuildConfig.IS_TV && allShelves.isNotEmpty()) { delay(6_000); runCatching { CinemaOnly.check(vm, allShelves.flatMap { it.items }) } } }
-    val arranged = remember(allShelves, rowsOrder, rowsHidden, shuffleOn, cinemaHidden) {
+    val cinemaFrozen = remember(allShelves) { HomeFreeze.hidden(cinemaHidden) }
+    val arranged = remember(allShelves, rowsOrder, rowsHidden, shuffleOn, cinemaFrozen) {
         val hidden = rowsHidden.split("|").toSet()
         // Fresh every time the app starts (same order while it stays open): each row is shuffled once per launch.
         // A catalogue can list the same title twice; a row with two equal cards crashed Home (0.9.55), so repeats go first.
         arrangeShelves(allShelves, rowsOrder).filter { it.pinned || it.title !in hidden }
-            .map { sh -> sh.copy(items = sh.items.distinctBy { it.type + it.id }.filter { it.id.substringBefore(":") !in cinemaHidden }) }.filter { it.items.isNotEmpty() }
+            .map { sh -> sh.copy(items = sh.items.distinctBy { it.type + it.id }.filter { it.id.substringBefore(":") !in cinemaFrozen }) }.filter { it.items.isNotEmpty() }
             .map { sh -> if (shuffleOn) sh.copy(items = sh.items.shuffled(java.util.Random(HomeShuffle.seed xor sh.title.hashCode().toLong()))) else sh }
     }
     val shelves = remember(arranged, filter) {
@@ -254,11 +260,9 @@ fun HomeScreen(
     }
 
     val tasteKey = t("tasteLangs") + "|" + t("tasteTypes")
-    var newForYou by remember { mutableStateOf<List<Meta>>(emptyList()) }
     var tasteExtras by remember { mutableStateOf<List<Shelf>>(emptyList()) }
     LaunchedEffect(tasteKey, profile?.id) {
         if (BuildConfig.IS_TV) return@LaunchedEffect
-        newForYou = runCatching { TasteRows.newForYou(vm) }.getOrDefault(emptyList())
         tasteExtras = runCatching { TasteRows.extras(vm) }.getOrDefault(emptyList())
     }
     val autoSlide = t("autoSlide").trim().lowercase() != "no"
@@ -406,10 +410,6 @@ fun HomeScreen(
                 item(key = "recRow", contentType = "row") { AidenRow(recs, onOpen) }
             }
             // Personal: the newest titles in all your languages, mixed; Anime / K-Drama when you picked them.
-            if (filter == null && newForYou.isNotEmpty()) {
-                item(key = "newForYouTitle", contentType = "title") { SectionTitle("New for you · " + vm.tasteLangs().take(3).joinToString(" · ") { c -> TasteLangs.firstOrNull { it.code == c }?.name ?: c }) }
-                item(key = "newForYouRow", contentType = "row") { PortraitRow(newForYou, onOpen) }
-            }
             if (filter == null) itemsIndexed(tasteExtras, key = { i, s -> "taste:$i:${s.title}" }, contentType = { _, _ -> "shelf" }) { _, sh ->
                 SectionTitle(sh.title); PortraitRow(sh.items, onOpen)
             }
@@ -821,6 +821,9 @@ private fun Deck(
     LaunchedEffect(Unit) { YtDirect.prefLangs = vm.qsLangs().mapNotNull { YtDirect.langCode(it) } }
     val tid = trailerId
     val glowColor = Accent
+    // Settings › Layout › Card border (off by default): white edge + soft glow on the front card.
+    val texts by vm.texts.collectAsStateWithLifecycle()
+    val border = texts["deckBorder"] == "on"
     Box(Modifier.fillMaxWidth()) {
         modeBanner?.let { (on, at) ->
             key(at) { TrailerModeBanner(on, Modifier.align(Alignment.TopCenter).padding(top = 12.dp).zIndex(10f)) { if (modeBanner?.second == at) modeBanner = null } }
@@ -843,10 +846,12 @@ private fun Deck(
                             val o = off(); val a = abs(o); val w = size.width
                             // Pulled in behind the front card: the first card behind peeks ~3.5 % of a card past
                             // its edge, the second ~6.5 %; both smaller.
+                            // The two cards behind fill the space to the screen edge (no empty strip left or right):
+                            // the second one runs just past the edge.
                             val target = when {
-                                a <= 1f -> 0.075f * a
-                                a <= 2f -> 0.075f + 0.07f * (a - 1f)
-                                else -> 0.145f + 0.03f * (a - 2f)
+                                a <= 1f -> 0.11f * a
+                                a <= 2f -> 0.11f + 0.09f * (a - 1f)
+                                else -> 0.20f + 0.03f * (a - 2f)
                             } * w
                             translationX = sign(o) * target
                             val sc = when {
@@ -863,7 +868,7 @@ private fun Deck(
                             val a = abs(off()).coerceAtMost(1f)
                             val cr = Palette.corner.dp.toPx()
                             val k = 1f - a
-                            if (k > 0.01f) for (i in 1..3) {
+                            if (border && k > 0.01f) for (i in 1..3) {
                                 val g = (i * 3).dp.toPx()
                                 drawRoundRect(glowColor.copy(alpha = 0.10f * k / i), topLeft = Offset(-g, -g), size = Size(size.width + 2 * g, size.height + 2 * g),
                                     cornerRadius = CornerRadius(cr + g, cr + g))
@@ -874,8 +879,10 @@ private fun Deck(
                             val a = abs(off()).coerceAtMost(2f)
                             val cr = Palette.corner.dp.toPx()
                             if (a > 0.01f) drawRoundRect(Color.Black, alpha = (0.4f * a).coerceAtMost(0.62f), cornerRadius = CornerRadius(cr, cr))
-                            val edge = (0.85f - 0.62f * a.coerceAtMost(1f))
-                            drawRoundRect(Color.White.copy(alpha = edge), cornerRadius = CornerRadius(cr, cr), style = Stroke(width = 1.5.dp.toPx()))
+                            if (border) {
+                                val edge = (0.85f - 0.62f * a.coerceAtMost(1f))
+                                drawRoundRect(Color.White.copy(alpha = edge), cornerRadius = CornerRadius(cr, cr), style = Stroke(width = 1.5.dp.toPx()))
+                            }
                         },
                 )
             }
@@ -1003,7 +1010,12 @@ private fun TrailerModeBanner(on: Boolean, modifier: Modifier = Modifier, onDone
 }
 
 /** Hero card trailer sound and on / off, kept while the app is open (across cards and screens). */
-object HeroSound { var muted = false; var trailers = true }
+object HeroSound {
+    /** Trailers start muted (Netflix style); tapping the speaker turns sound on for the next ones too, until muted again. */
+    var muted = true; var trailers = true
+    /** Titles whose title-page trailer already played while the app is open (it plays once). */
+    val played: MutableSet<String> = java.util.Collections.synchronizedSet(HashSet())
+}
 
 /** Layout coordinates of the deck box (not state: only read from layout callbacks). */
 
@@ -1340,4 +1352,21 @@ fun isDesignedPoster(url: String?): Boolean {
     if (!u.startsWith("http")) return false
     val plain = listOf("image.tmdb.org", "images.metahub.space", "live.metahub.space", "m.media-amazon.com", "artworks.thetvdb.com", "assets.fanart.tv", "img.youtube.com")
     return plain.none { it in u }
+}
+
+
+/** Home's rows and AIDEN's picks, fixed for the session once shown (per profile and set of catalogues). */
+object HomeFreeze {
+    private var key: String? = null
+    private var snap: List<Shelf> = emptyList()
+    private var hid: Set<String>? = null
+    private var recSnap: List<Meta> = emptyList()
+    fun shelves(live: List<Shelf>, profile: String?): List<Shelf> {
+        if (live.isEmpty()) return snap.takeIf { key?.startsWith("$profile|") == true }.orEmpty()
+        val k = "$profile|" + live.mapNotNull { it.src ?: it.title }.sorted().joinToString(",")
+        if (k != key) { key = k; snap = live; hid = null; recSnap = emptyList() }
+        return snap
+    }
+    fun hidden(now: Set<String>): Set<String> = hid ?: now.also { hid = it }
+    fun recs(live: List<Meta>): List<Meta> { if (recSnap.isEmpty() && live.isNotEmpty()) recSnap = live; return recSnap }
 }

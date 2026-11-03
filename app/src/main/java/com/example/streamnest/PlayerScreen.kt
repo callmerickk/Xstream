@@ -30,6 +30,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -269,7 +270,10 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
         // Asynchronous decoder feeding is left off on phones where it made the video decoder refuse files (vivo / iQOO,
         // and any phone after its decoder once failed): the normal feeding plays everything there.
         .apply { if (!DecoderSafe.on(vm)) forceEnableMediaCodecAsynchronousQueueing() }
-    return ExoPlayer.Builder(ctx, renderers).setLoadControl(load).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
+    // Adaptive streams step up after 3 s of good speed (default 10 s): a lower first quality is replaced quickly.
+    val selector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(ctx,
+        androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection.Factory(3_000, 25_000, 6_000, 0.7f))
+    return ExoPlayer.Builder(ctx, renderers).setLoadControl(load).setTrackSelector(selector).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
         // Seeking may land up to 0.3 s off the exact spot: much faster jumps on big files (as CloudStream does).
         .setSeekParameters(androidx.media3.exoplayer.SeekParameters(300_000L, 300_000L))
         .build().apply {
@@ -474,6 +478,8 @@ fun PlayerScreen(
     var upgradedUrl by remember { mutableStateOf<String?>(null) }
     // Plugin mode's quiet swap: the second player shown above the main picture (it fades in, then stays as the screen).
     var shadow by remember { mutableStateOf<ExoPlayer?>(null) }
+    /** "Getting 4K ready" while an accepted upgrade opens in the background. */
+    var upPrep by remember { mutableStateOf<String?>(null) }
     var shadowAlpha by remember { mutableFloatStateOf(0f) }
     var ottSwapping by remember { mutableStateOf(false) }
     /** When the viewer last jumped: a 4K file loading after a jump gets a full minute before any fallback. */
@@ -489,6 +495,7 @@ fun PlayerScreen(
     var firstFrame by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(if (p.url.isBlank() && pre == null) "Finding stream source" else "Buffering…") }
     var failure by remember { mutableStateOf<String?>(null) }
+    DisposableEffect(Unit) { TrailerHold.on.value = true; onDispose { TrailerHold.on.value = false } }
     // Developer report when this title ends with no picture (what each plugin answered, from which phone).
     LaunchedEffect(failure) {
         val f = failure ?: return@LaunchedEffect
@@ -1231,6 +1238,9 @@ fun PlayerScreen(
             // The paused player was made when the title page opened; if you watched on since (a jump, another device),
             // it starts from where you really are now.
             if (p.resumeMs > 0 && kotlin.math.abs(player.currentPosition - p.resumeMs) > 5_000) player.seekTo(p.resumeMs)
+            // Prepared at the lowest quality (instant first picture): now up to the best the connection allows.
+            if (player.trackSelectionParameters.forceLowestBitrate)
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setForceLowestBitrate(false).build()
             player.playWhenReady = true
         } else now?.let { load(it, p.resumeMs) }
     }
@@ -2418,13 +2428,24 @@ fun PlayerScreen(
     var ottSwapStarted by remember(p.key) { mutableStateOf(false) }
     /** A stream you picked yourself (Play manually / Sources): it is never swapped for another one. */
     var byHand by remember(p.key) { mutableStateOf(p.manual) }
-    suspend fun ottSwapTo(c: StreamItem): Boolean {
+    /**
+     * Opens [c] quietly and fades it in at the same frame. [asked]: you tapped "Upgrade" — a copy of another length is
+     * not faded (returns false, the caller then switches the usual way). The audio language you are hearing is kept.
+     * Heavy files (60 fps, 4K): "freeze fade" — the old picture stops on its frame and the new one fades in over it,
+     * so only one video is decoded at a time (no stutter).
+     */
+    suspend fun ottSwapTo(c: StreamItem, asked: Boolean = false): Boolean {
         val url = c.stream.url ?: return false
         val name = Public.streamName(c)
+        val startUrl = now?.url
         val hold = HeaderHold(StreamHeaders.forUrl(url))
         val sp = buildPlayer(ctx, vm, true, hold = hold)
         sp.setSeekParameters(androidx.media3.exoplayer.SeekParameters.EXACT)
         sp.volume = 0f
+        // Same audio language as now (it used to start in the file's first language, e.g. Hindi).
+        val audioLang = runCatching { if (usingVlc) null else player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
+            ?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it).language } } }.getOrNull()
+        if (audioLang != null) sp.trackSelectionParameters = sp.trackSelectionParameters.buildUpon().setPreferredAudioLanguage(audioLang).build()
         var failed = false
         sp.addListener(object : Player.Listener { override fun onPlayerError(error: PlaybackException) { failed = true } })
         val mime = StreamType.mimeFor(url, c.fileName())
@@ -2445,16 +2466,27 @@ fun PlayerScreen(
         if (!ready(25_000)) { PlayTiming.late("swap: $name didn't open in time"); drop(); return false }
         val dMain = curDur(); val dSh = sp.duration
         if (dMain <= 0 || dSh <= 0 || kotlin.math.abs(dMain - dSh) > 1_500) {
-            PlayTiming.late("swap: lengths differ (${fmtTime(dMain)} vs ${fmtTime(dSh)}) — Upgrade quality offered instead")
+            PlayTiming.late("swap: lengths differ (${fmtTime(dMain)} vs ${fmtTime(dSh)})" + if (asked) " — switching the usual way" else " — Upgrade quality offered instead")
             drop()
+            if (asked) return false
             if (upgrade == null) { upgrade = UpgradeOffer(c, false); upLeft = 30 }
             return true
         }
+        // The language must be there too: a copy without it is never faded in.
+        if (audioLang != null) {
+            val langs = sp.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { g -> (0 until g.length).mapNotNull { g.getTrackFormat(it).language } }
+            if (langs.isNotEmpty() && langs.none { it.take(2).equals(audioLang.take(2), true) }) {
+                PlayTiming.late("swap: $name has no ${audioLang} audio — not switched"); drop(); return false
+            }
+        }
+        val vf = sp.videoFormat
+        val heavy = (vf?.frameRate ?: 0f) >= 48f || (vf?.height ?: 0) >= 2000
+        if (heavy) PlayTiming.late("swap: ${vf?.height}p ${vf?.frameRate?.toInt()} fps — freeze fade")
         // Wait for the picture to reach the second player's frame; aim again if you jumped or paused for long.
         while (true) {
             if (failed) { drop(); return false }
             val n = now ?: run { drop(); return true }
-            if (usingVlc || itemFor(n.url)?.isOtt() == true) { drop(); return true }
+            if (usingVlc || n.url != startUrl) { drop(); return true }
             val pos = curPos()
             if (pos > target - 40 && pos < target + 250 && isPlayingNow()) break
             if (pos >= target + 250 || pos < target - 90_000) {
@@ -2466,9 +2498,17 @@ fun PlayerScreen(
             delay(((target - 40 - pos) / 2).coerceIn(5, 100))
         }
         // Go: the second player starts and fades in, the sound crossfades, then it IS the player.
-        sp.play()
         val old = player
-        repeat(10) { i -> val f = (i + 1) / 10f; shadowAlpha = f; sp.volume = f; runCatching { old.volume = 1f - f }; delay(30) }
+        if (heavy) {
+            // Freeze fade: the old picture stops on this frame, the new one starts under it and fades in.
+            repeat(4) { i -> runCatching { old.volume = 1f - (i + 1) / 4f }; delay(25) }
+            runCatching { old.pause() }
+            sp.play()
+            repeat(12) { i -> val f = (i + 1) / 12f; shadowAlpha = f; sp.volume = f; delay(30) }
+        } else {
+            sp.play()
+            repeat(10) { i -> val f = (i + 1) / 10f; shadowAlpha = f; sp.volume = f; runCatching { old.volume = 1f - f }; delay(30) }
+        }
         PlayTiming.late("swap: now playing $name (frame-matched, ${kotlin.math.abs(curPos() - (sp.currentPosition))} ms apart)")
         hold.map = null
         StreamHeaders.active = StreamHeaders.forUrl(url)
@@ -2551,9 +2591,10 @@ fun PlayerScreen(
                 while (SystemClock.elapsedRealtime() - t0 < 120_000 && triedUp.size < 3) {
                     val playingNow = now?.url?.let { itemFor(it) } ?: break
                     if (!playingNow.isOtt() || byHand || usingVlc) break
+                    // Only the ranked 1080p groups: VegaMovies, RogMovies, 4KHDHub, HDHub4U (seekable files only).
                     val c = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false)
-                        .filter { it.stream.url !in triedUp && vm.langRank(it) <= vm.langRank(playingNow) && !it.unplayableHere() && !Ranker.knownUnseekable(it) }
-                        .sortedBy { if (it.isVega()) 0 else if (it.isMovieBox()) 1 else 2 }.firstOrNull()
+                        .filter { it.stream.url !in triedUp && vm.langRank(it) <= vm.langRank(playingNow) && !it.unplayableHere() && !Ranker.knownUnseekable(it) &&
+                            (it.isVega() || it.addonName.contains("hdhub", true) || it.addonName.contains("4khd", true)) }.firstOrNull()
                     if (c == null) { delay(2_000); continue }
                     triedUp += c.stream.url!!
                     PlayTiming.late("OTT 1080p: trying ${Public.streamName(c)}")
@@ -3368,6 +3409,7 @@ fun PlayerScreen(
             // Watch together: reactions from everyone float up the right side.
             val roomCode by Together.code.collectAsState()
             if (roomCode != null) ReactionsOverlay(Modifier.fillMaxSize())
+            if (roomCode != null && !inPip && !BuildConfig.IS_TV && firstFrame) QuickReactBar(Modifier.align(Alignment.BottomStart).padding(start = side, bottom = if (controls) 150.dp else 28.dp))
             if (roomCode != null && !inPip) ChatToasts(Modifier.align(Alignment.CenterEnd).padding(end = side, top = 40.dp))
             // Friends' camera / voice bubbles (tap one = Watch together), and "Waiting for …" while someone buffers.
             if (roomCode != null && !inPip) CallBubbles(Modifier.fillMaxSize()) { panel = "together"; controls = true; poke++ }
@@ -3508,8 +3550,15 @@ fun PlayerScreen(
                 AnimatedVisibility(inIntro || inRecap,
                     enter = fadeIn(tween(220)) + slideInHorizontally(tween(320)) { it / 3 },
                     exit = fadeOut(tween(180))) {
-                    PillButton(if (inIntro) "Skip Intro" else "Skip Recap", Icons.Default.FastForward) {
-                        seekAbs(if (inIntro) s!!.intro!!.end_ms else s!!.recap!!.end_ms); poke++
+                    val landMs = if (inIntro) s?.intro?.end_ms else s?.recap?.end_ms
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // A small picture of where Skip lands (from the seek previews), Netflix style.
+                        val frame = landMs?.let { thumbs?.nearest(it, 60_000L) }
+                        if (frame != null) Image(frame, null, Modifier.padding(end = 8.dp).width(80.dp).height(45.dp).clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                        PillButton(if (inIntro) "Skip Intro" else "Skip Recap", Icons.Default.FastForward) {
+                            seekAbs(if (inIntro) s!!.intro!!.end_ms else s!!.recap!!.end_ms); poke++
+                        }
                     }
                 }
                 // Quick start + upgrade: the better file is saved ahead — the ring counts down the seconds still saved.
@@ -3534,7 +3583,17 @@ fun PlayerScreen(
                         }) {
                         UpgradePill(u.is4k, upLeft) {
                             upgradedFrom = now?.url?.let { itemFor(it) }; upgradedUrl = u.item.stream.url
-                            upgrade = null; poke++; switchTo(u.item, if (u.is4k) "4K" else "Better quality")
+                            upgrade = null; poke++
+                            // Gets the better file ready in the background, then fades it in at the same frame (no
+                            // "Resuming" screen). Only when that can't be done does it switch the usual way.
+                            if (usingVlc) switchTo(u.item, if (u.is4k) "4K" else "Better quality")
+                            else scope.launch {
+                                upPrep = if (u.is4k) "Getting 4K ready" else "Getting better quality ready"
+                                val ok = runCatching { ottSwapTo(u.item, asked = true) }.getOrDefault(false)
+                                upPrep = null
+                                if (!ok) switchTo(u.item, if (u.is4k) "4K" else "Better quality")
+                                else Snack.show(if (u.is4k) "Now in 4K" else "Better quality on")
+                            }
                         }
                     }
                 }
@@ -3542,7 +3601,12 @@ fun PlayerScreen(
                     enter = fadeIn(tween(260)) + slideInHorizontally(tween(360)) { it / 3 },
                     exit = fadeOut(tween(200))) {
                     val windowStart = s?.outro?.start_ms ?: (dur - 120_000)
-                    NextEpisodePill(left = (dur - pos).coerceAtLeast(0L), window = (dur - windowStart).coerceAtLeast(1L)) { playNext() }
+                    // The next episode's picture and name with the countdown (Netflix style).
+                    val cur = episodes.indexOfFirst { it.id == p.key }
+                    val nextEp = episodes.getOrNull(cur + 1)
+                    NextEpisodePill(left = (dur - pos).coerceAtLeast(0L), window = (dur - windowStart).coerceAtLeast(1L),
+                        poster = nextEp?.thumbnail ?: meta?.background ?: p.image,
+                        label = nextEp?.let { "S${it.season} E${it.episode}" + ((it.title ?: it.name)?.let { n -> " · $n" } ?: "") }) { playNext() }
                 }
             }
 
@@ -4523,10 +4587,30 @@ private fun PillButton(text: String, icon: ImageVector, onClick: () -> Unit) {
  * itself at the end, as before). Tap to start it now.
  */
 @Composable
-private fun NextEpisodePill(left: Long, window: Long, onClick: () -> Unit) {
+private fun NextEpisodePill(left: Long, window: Long, poster: String? = null, label: String? = null, onClick: () -> Unit) {
     val shape = RoundedCornerShape(26.dp)
     val frac = (1f - left.toFloat() / window).coerceIn(0f, 1f)
     val ring by androidx.compose.animation.core.animateFloatAsState(frac, tween(900), label = "nextRing")
+    // Phones: a card with the next episode's picture, its name and the countdown ring over the picture.
+    if (!BuildConfig.IS_TV && poster != null) {
+        val cs = RoundedCornerShape(14.dp)
+        Column(Modifier.padding(top = 10.dp).width(236.dp).softHalo(14.dp, spread = 8.dp, strength = 0.4f).clip(cs).background(Color(0xF014151B))
+            .border(1.dp, Color(0x26FFFFFF), cs).clickable(onClick = onClick)) {
+            Box(Modifier.fillMaxWidth().height(110.dp)) {
+                AsyncImage(poster, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color(0xAA000000))))
+                Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(34.dp).clip(CircleShape).background(Color(0x99000000)), Alignment.Center) {
+                    CircularProgressIndicator(progress = { ring }, modifier = Modifier.fillMaxSize(), color = Color.White, strokeWidth = 2.5.dp, trackColor = Color(0x33FFFFFF))
+                    Icon(Icons.Default.SkipNext, null, Modifier.size(16.dp), tint = Color.White)
+                }
+            }
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Text("Next episode" + if (left in 1L..60_000L) " in ${(left + 999) / 1000} s" else "", fontSize = 12.sp, color = Color(0xFFB8BECB), fontWeight = FontWeight.SemiBold)
+                if (label != null) Text(label, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        return
+    }
     Row(
         Modifier.padding(top = 10.dp).softHalo(26.dp, spread = 8.dp, strength = 0.35f).clip(shape).background(Color(0xF2FFFFFF))
             .focusRing(shape, 3.dp, Accent).clickable(enabled = !BuildConfig.IS_TV, onClick = onClick).padding(start = 8.dp, end = 18.dp, top = 7.dp, bottom = 7.dp),

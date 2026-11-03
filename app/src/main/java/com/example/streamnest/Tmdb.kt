@@ -314,6 +314,8 @@ object CinemaOnly {
             val pr = p(vm.appContext)
             val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
             val now = System.currentTimeMillis()
+            metas.filter { it.type == "movie" && (it.releaseInfo?.take(4)?.toIntOrNull() ?: 0) > year }.map { it.id.substringBefore(":") }
+                .takeIf { it.isNotEmpty() }?.let { f -> hidden.value = hidden.value + f }
             val todo = metas.asSequence().filter { it.type == "movie" && it.id.startsWith("tt") }
                 .filter { m -> (m.releaseInfo?.take(4)?.toIntOrNull() ?: year) >= year - 1 }
                 .map { it.id.substringBefore(":") }.distinct()
@@ -338,8 +340,14 @@ object CinemaOnly {
         val dates = rd.arr("results").flatMap { it.arr("release_dates") }.mapNotNull { d ->
             val t = (d["type"] as? JsonPrimitive)?.intOrNull ?: return@mapNotNull null
             t to (d.str("release_date")?.take(10) ?: return@mapNotNull null)
-        }.filter { it.second <= today }
-        if (dates.isEmpty()) return null
+        }
+        // Not released anywhere yet (every date is in the future): not on Home.
+        if (dates.isNotEmpty() && dates.none { it.second <= today }) return false
+        val past = dates.filter { it.second <= today }
+        if (past.isEmpty()) return null
+        return checkPast(past)
+    }
+    private fun checkPast(dates: List<Pair<Int, String>>): Boolean {
         if (dates.any { it.first >= 4 }) return true
         return !dates.any { it.first == 2 || it.first == 3 }
     }

@@ -19,6 +19,8 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.SentimentVerySatisfied
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -446,10 +448,17 @@ fun ReactionsOverlay(modifier: Modifier = Modifier) {
                 val y = remember { Animatable(0f) }
                 val x = remember { (id * 37 % 60).toFloat() }
                 LaunchedEffect(Unit) { y.animateTo(1f, tween(2000)) }
-                val (icon, tint) = ReactIcons[r.k] ?: (Icons.Default.Favorite to Color.White)
-                Icon(icon, null, Modifier.align(Alignment.BottomEnd).padding(end = (24 + x).dp, bottom = 40.dp).size(34.dp)
-                    .graphicsLayer { translationY = -y.value * 260.dp.toPx(); alpha = 1f - y.value * y.value; val s = 0.7f + 0.5f * minOf(1f, y.value * 4); scaleX = s; scaleY = s },
-                    tint = tint)
+                val mod = Modifier.align(Alignment.BottomEnd).padding(end = (24 + x).dp, bottom = 40.dp)
+                    .graphicsLayer { translationY = -y.value * 260.dp.toPx(); alpha = 1f - y.value * y.value; val s = 0.7f + 0.5f * minOf(1f, y.value * 4); scaleX = s; scaleY = s }
+                val icon = ReactIcons[r.k]
+                if (icon != null) Icon(icon.first, null, mod.size(34.dp), tint = icon.second)
+                else Column(mod, horizontalAlignment = Alignment.CenterHorizontally) {
+                    // Emoji reactions (0.8) with who sent them.
+                    Text(r.k, fontSize = 32.sp)
+                    val who = if (r.by == Together.me) "You" else Together.members.value[r.by]?.name?.ifBlank { null } ?: ""
+                    if (who.isNotEmpty()) Text(who, Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0x99000000)).padding(horizontal = 6.dp, vertical = 1.dp),
+                        fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
             }
         }
     }
@@ -923,5 +932,26 @@ fun TogetherInvite(code: String?, title: String, ensureRoom: suspend () -> Strin
             }
         }
         msg?.let { Text(it, Modifier.padding(top = 6.dp), fontSize = 12.sp, color = Color(0xFFB6BDCC)) }
+    }
+}
+
+
+/** Quick reactions in the player while watching together: a smile button that opens six emoji. */
+val QuickEmoji = listOf("😂", "😮", "🔥", "❤️", "😢", "👏")
+@Composable
+fun QuickReactBar(modifier: Modifier = Modifier) {
+    var open by remember { mutableStateOf(false) }
+    Row(modifier.clip(RoundedCornerShape(26.dp)).background(Color(0xCC14151B)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(26.dp)).padding(4.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(40.dp).clip(CircleShape).clickable { open = !open }, Alignment.Center) {
+            Icon(if (open) Icons.Default.Close else Icons.Default.EmojiEmotions, "React", Modifier.size(22.dp), tint = Color(0xFFFFD0CC))
+        }
+        if (open) {
+            Row {
+                QuickEmoji.forEach { e ->
+                    Box(Modifier.size(40.dp).clip(CircleShape).clickable { Together.react(e) }, Alignment.Center) { Text(e, fontSize = 22.sp) }
+                }
+            }
+        }
     }
 }

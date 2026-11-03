@@ -446,8 +446,10 @@ fun DetailScreen(
                     val heroId = remember(videos, trailer) { videos.filter { it.type == "Trailer" }.sortedBy { langOrder(it) }.firstOrNull()?.key ?: trailer }
                     var tArm by remember(meta.id) { mutableStateOf(false) }
                     var tPlay by remember(meta.id) { mutableStateOf(false) }
-                    var tStop by remember(meta.id) { mutableStateOf(false) }
-                    var tMuted by remember { mutableStateOf(HeroSound.muted) }
+                    // 0.8: the trailer plays once per title while the app is open; coming back shows the picture
+                    // (with a small Replay button). Trailers start muted (tap the speaker for sound).
+                    var tStop by remember(meta.id) { mutableStateOf(meta.id in HeroSound.played) }
+                    var tMuted by remember { mutableStateOf(true) }
                     LaunchedEffect(heroId) { tArm = false; if (heroId != null) { delay(1_800); tArm = true } }
                     val grow by animateFloatAsState(if (tPlay && !tStop) 1f else 0f, tween(650, easing = FastOutSlowInEasing), label = "trailerMode")
                     val extra = 170f * grow
@@ -456,9 +458,17 @@ fun DetailScreen(
                             alignment = BiasAlignment(0f, -0.4f), contentScale = ContentScale.Crop)
                         if (heroId != null && tArm && !tStop && isOn(texts["cardTrailers"] ?: "yes")) {
                             TrailerVideo(heroId, tMuted, Modifier.fillMaxWidth().height((300f + extra).dp), fitWhole = false, backdrop = backdrop,
-                                onPlaying = { tPlay = true }, onEnded = { tStop = true; tPlay = false }, onError = { tStop = true; tPlay = false })
+                                onPlaying = { tPlay = true; HeroSound.played += meta.id }, onEnded = { tStop = true; tPlay = false }, onError = { tStop = true; tPlay = false })
                         }
                         Box(Modifier.padding(top = (150f + extra).dp).fillMaxWidth().height(160.dp).background(Brush.verticalGradient(listOf(Color.Transparent, TitleCardBg))))
+                        if (tStop && heroId != null && isOn(texts["cardTrailers"] ?: "yes")) Row(
+                            Modifier.align(Alignment.TopEnd).padding(12.dp).clip(RoundedCornerShape(50)).background(Color(0x88000000))
+                                .clickable { tStop = false; tPlay = false; tArm = true }.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Default.Replay, null, Modifier.size(16.dp), tint = Color.White)
+                            Text("Trailer", Modifier.padding(start = 6.dp), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
                         if (tPlay && !tStop) Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Box(Modifier.size(38.dp).clip(CircleShape).background(Color(0x88000000)).clickable { tMuted = !tMuted; HeroSound.muted = tMuted }, Alignment.Center) {
                                 Icon(if (tMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp, if (tMuted) "Unmute" else "Mute", Modifier.size(20.dp), tint = Color.White)
@@ -505,7 +515,9 @@ fun DetailScreen(
                             }
                             // Status light on the Play button's corner (long-press it for the details).
                             val st = prep
-                            if (instantOn && st != null && st.key == playTarget.target.videoId)
+                            // Only on the title page: never while the player is open on top.
+                            val playerUp by TrailerHold.on.collectAsStateWithLifecycle()
+                            if (instantOn && !playerUp && st != null && st.key == playTarget.target.videoId)
                                 PrepDot(st, Modifier.align(Alignment.TopEnd).offset(x = (-4).dp, y = (-10).dp).tourTarget("light")) { showPrepInfo = !showPrepInfo }
                         }
                         // Play · Watchlist · Download · Trailers (long-press Play: play manually, share, friends & plans)

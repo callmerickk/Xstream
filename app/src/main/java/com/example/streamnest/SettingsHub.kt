@@ -274,6 +274,10 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
                 RowDivider(20.dp)
                 val bar = texts["navBar"] ?: "streamx"
                 SettingRow(null, "Bottom bar", if (bar == "streamx") "StreamX bar" else "Capsule") { vm.setText("navBar", if (bar == "streamx") "capsule" else "streamx") }
+                RowDivider(20.dp)
+                ToggleRow("Card border", "White edge and glow around the top cards on Home.", texts["deckBorder"] == "on") { vm.setText("deckBorder", if (it) "on" else "off") }
+                RowDivider(20.dp)
+                ToggleRow("Adult content", "Show 18+ titles and collections in search.", texts["adultOn"] != "no") { vm.setText("adultOn", if (it) "yes" else "no") }
             }
         }
         if (!BuildConfig.IS_TV) {

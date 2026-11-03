@@ -420,6 +420,10 @@ object Prepare {
             buildPlayer(ctx, vm, true).apply {
                 setMediaItem(androidx.media3.common.MediaItem.Builder().setUri(url).apply { if (mime != null) setMimeType(mime) }
                     .setSubtitleConfigurations(subtitleConfigs(subs)).build(), resumeMs)
+                // Streaming playlists (Netflix / Prime / Hotstar / MPlayer): the lowest quality first, so its first picture
+                // is ready almost at once and the light turns green sooner; Play then moves straight up to the best.
+                if (mime == androidx.media3.common.MimeTypes.APPLICATION_M3U8 || s.isOtt())
+                    trackSelectionParameters = trackSelectionParameters.buildUpon().setForceLowestBitrate(true).build()
                 playWhenReady = false
                 addListener(object : androidx.media3.common.Player.Listener {
                     override fun onRenderedFirstFrame() { ready.complete(true) }

@@ -787,9 +787,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 }.getOrNull() }
             }.awaitAll().filterNotNull()
             val pushedSrc = pushed.mapNotNull { it.src }.toSet()
-            shelves.value = (pushed + result.filterNotNull().filter { it.src == null || it.src !in pushedSrc })
+            // 0.8: Home is managed by the developer. When a layout is published, every other account shows only those rows
+            // (its own catalogue addons no longer add rows); the developer still sees everything.
+            val own = if (pushed.isNotEmpty() && !Public.dev) emptyList() else result.filterNotNull()
+            shelves.value = (pushed + own.filter { it.src == null || it.src !in pushedSrc })
                 .filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.filter { !isErrorCard(it) }.map { posterFromPattern(it) }.distinctBy { it.type + it.id }) }
             loading.value = false
+            // Films only in cinemas / not out yet: checked right away (while "Who's watching?" is up), so Home never
+            // shows them and never removes them in front of you.
+            if (!BuildConfig.IS_TV) launch(Dispatchers.IO) { runCatching { CinemaOnly.load(appContext); CinemaOnly.check(this@AppViewModel, shelves.value.flatMap { it.items } + recommended.value) } }
             if (!BuildConfig.IS_TV) runCatching { Posters.warm(appContext, shelves.value.take(12).flatMap { s -> s.items.take(8).map { it.poster } }) }
             // Remembered for the next start, so Home shows its cards at once (then refreshes).
             val pid = dataPid

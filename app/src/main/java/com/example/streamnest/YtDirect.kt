@@ -4,6 +4,7 @@ import android.graphics.Matrix
 import android.view.TextureView
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -507,6 +508,10 @@ fun DirectTrailer(
         }
     }
     LaunchedEffect(muted) { player.volume = if (muted) 0f else 1f }
+    // The movie is starting (player opened): the trailer stops downloading at once and keeps its last frame on screen,
+    // so the internet is free for the movie.
+    val hold by TrailerHold.on.collectAsState()
+    LaunchedEffect(hold) { if (hold) { player.playWhenReady = false; player.stop() } }
     // Invisible over the backdrop until the first picture, then a 420 ms fade in (never a black box).
     val shown = remember(src) { androidx.compose.animation.core.Animatable(0f) }
     var first by remember(src) { androidx.compose.runtime.mutableStateOf(false) }
@@ -543,3 +548,7 @@ fun DirectTrailer(
         modifier = modifier.graphicsLayer { scaleX = zoom; scaleY = zoom; alpha = shown.value },
     )
 }
+
+
+/** True while the video player is open: every trailer stops (and stops downloading), keeping its frame. */
+object TrailerHold { val on = kotlinx.coroutines.flow.MutableStateFlow(false) }
