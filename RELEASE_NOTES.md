@@ -1,3 +1,21 @@
+Xstream 0.8.0
+
+• Xstream now works on every phone (64-bit and 32-bit). The Live server will come back later as its own app, Xstream Live.
+• Plugins are never switched off any more, and they search with several spellings, so titles like Agents of S.H.I.E.L.D. are found.
+• Home follows StreamX's order: Pick up where you left off, Trending, AIDEN picked for you, then the rest. It stays the same while you look at it.
+• Top cards fill the screen edges. Card border is off by default (Settings › Layout).
+• Titles that are not out yet or only in cinemas are kept off Home.
+• Trailers start muted (tap for sound) and play once per title. Pressing Play stops the trailer at once.
+• Better quality (4K, 1080p, 60 fps) fades in without a loading screen and keeps your audio language.
+• Next episode card shows the episode's picture; Skip intro shows where it lands.
+• Watch together: send emoji reactions; everyone sees who sent them.
+• Faster search, voice search fixed, and an option for 18+ titles (Settings › Layout).
+• Watch plans: choose how early you get a reminder.
+• Your week: a recap card in My Space you can share.
+• Xstream Music: new logo and opening, new profile slider, artist names everywhere, heartbeat progress bar, lyrics in English, Up next chips (Familiar, Popular, Discover…), sharper covers, playlists shown with their songs' covers, the next song starts right away, 160 kbps on Wi-Fi the whole time, no restart when turning the phone, and AIDEN stays quiet in Music.
+
+---
+
 Live server updated to 3.0.8.
 
 ---

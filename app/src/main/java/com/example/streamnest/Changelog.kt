@@ -13,6 +13,21 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.0", "3 Nov 2026", "One app for every phone, smarter plugins, Xstream Music like YouTube Music", listOf(
+        "Xstream now works on every phone (64-bit and 32-bit). The Live server moves to a separate app later",
+        "Plugins are never switched off and search with several spellings, so titles like Agents of S.H.I.E.L.D. are found",
+        "Home keeps StreamX's order, fills the edges of the top cards, and stays the same while you look at it",
+        "Card border is off by default (Settings › Layout)",
+        "Titles not released yet or only in cinemas are kept off Home",
+        "Trailers start muted and play once per title; the movie's loading screen has no trailer",
+        "Better quality fades in without a loading screen, keeps your language, and stays smooth with 60 fps",
+        "Next episode card with its picture, and Skip intro shows where it lands",
+        "Watch together: emoji reactions with names",
+        "Faster search, working voice search, and an option for 18+ titles",
+        "Watch plans: choose a reminder before the time",
+        "Your week: a recap card in My Space",
+        "Xstream Music: new logo and opening, profile slider, artist names, heartbeat progress bar, lyrics in English, Up next chips, sharper covers, songs start right away",
+    )),
     Release("0.7.2", "30 Oct 2026", "StreamX-size stacked cards, Xstream Music, trailers in your language", listOf(
         "Top cards: StreamX's size and shape, centred, with the deck stacked behind on both sides; trailers play inside the card",
         "Home starts with the cards right after the logo; posters only from catalogue addons (no streaming-addon error cards)",
@@ -410,6 +425,23 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.0", "3 Nov 2026", "Universal, plugin search, home freeze, fade upgrades, music", listOf(
+        "Phone flavor: HAS_LIVE false, HAS_MUSIC true, arm64 + armv7; build/smoke without the Live server; plan in docs/XSTREAM-LIVE.md",
+        "PluginSources: never bench (dead() false), query variants (dots/possessive/colon/&), bare() matching, 5 load candidates, musicOnly providers skipped, NoStream notes",
+        "cloudstream3: SeasonData + addSeasonNames; LoggingMapper also logs CSJSON to ActLog",
+        "NoStream: NOSTREAM report on player failure / empty sources page; PLAYFAIL reason; SourceHealth (answered/played/failed) + developer page",
+        "Home: deck side offsets 0.11/0.20 w, deckBorder (default off), recsFirst=false, New for you row removed, HomeFreeze per session, CinemaOnly in AppViewModel + future-only = hidden",
+        "Developer layout: published rows replace other accounts' catalogue rows",
+        "Detail: trailer once per session (HeroSound.played), muted default, Replay chip; TrailerHold stops trailers while the player is open; PrepDot hidden then",
+        "Player: ottSwapTo(asked) keeps audio language, freeze fade for >=48 fps / >=2000p, startUrl check (fixes OTT->1080p never swapping), 720p OTT -> Vega/Rog/4KHDHub/HDHub4U only, Upgrade pill fades instead of reload",
+        "Prepared HLS at lowest bitrate, released on Play; AdaptiveTrackSelection 3 s up / 6 s retain",
+        "NextEpisodePill with episode picture; Skip intro preview frame; QuickReactBar + emoji reactions with names",
+        "Api: fixAddonUrl + manifest cache on phones (bingecat ?config addons answered the manifest for every request)",
+        "Voice search: MicHold stops WakeWord, delayed start + retry; AIDEN off in Music / while songs play",
+        "Plans: PlanAlarm early reminder (default before, chips in PlanFlow); WeeklyRecap in My Space",
+        "Music: XMusicMark/opening (logo + Xstream, X zoom), MusicProfilePicker (#0F1014, Add left, last centre), INFO category on MainActivity, MusicActivity configChanges, mini bar only in Music",
+        "Music: textOf flex-column fix (artist lines), ytHd (hq720), HeartbeatBar, quality chip, LyricsTr translate + share, next() chips + pickChip, PlaylistMosaic, MusicPrefetch at 85 %, musicFailed 40 s skip, Wi-Fi keeps 160 kbps",
+    )),
     Release("0.7.2", "30 Oct 2026", "Deck stack layer, SimpMusic music, trailer languages, Live speed/separation", listOf(
         "Home: Deck draws DeckArt stack itself (sorted by distance) under a transparent-UI HorizontalPager; StreamX cardW 0.83w; TrailerVideo inside the front DeckArt",
         "AppViewModel.refresh: home rows only from addons without a stream resource (fallback: all); aiostreamserror/[❌] items dropped",

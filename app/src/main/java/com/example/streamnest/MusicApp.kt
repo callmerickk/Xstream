@@ -199,6 +199,8 @@ fun MusicApp(
             if (now.track != null && showMini) MiniPlayer(onOpen = { nowOpen = true })
             MusicBottomBar(tab) { stack.clear(); tab = it }
         }
+        // A dark band behind the clock and status icons, so lists never run under them unreadably.
+        Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).background(Brush.verticalGradient(listOf(Color(0xF2000000), Color(0xB3000000)))))
         AnimatedVisibility(nowOpen, enter = slideInVertically(tween(320)) { it } + fadeIn(), exit = slideOutVertically(tween(280)) { it } + fadeOut()) {
             NowPlaying(nav, onClose = { nowOpen = false }, onFull = { fullVideo = true }, onArtist = { name ->
                 nowOpen = false
