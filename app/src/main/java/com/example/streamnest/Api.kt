@@ -141,7 +141,8 @@ object Api {
     /** GET; cancelling the caller (a time limit, a newer search) also stops the request on the network. */
     suspend fun get(url0: String): String {
         val url = fixAddonUrl(url0)
-        if (!BuildConfig.IS_TV || !url.substringBefore('?').endsWith("/manifest.json")) return getNet(url)
+        // Phones too (0.8): a search used to ask an addon for its manifest again for every letter typed.
+        if (!url.substringBefore('?').endsWith("/manifest.json")) return getNet(url)
         manifestCache[url]?.let { (at, body) -> if (System.currentTimeMillis() - at < 600_000L) return body }
         val lock = manifestLocks.getOrPut(url) { kotlinx.coroutines.sync.Mutex() }
         return lock.withLock {
@@ -185,7 +186,8 @@ object Api {
      * The request goes to "…/catalog/movie/top.json?config=…" instead.
      */
     fun fixAddonUrl(url: String): String {
-        if (!BuildConfig.IS_TV) return url
+        // Phones had the same problem (0.8): an addon link with its settings after manifest.json made every catalog,
+        // search and stream request come back as the manifest.
         val m = Regex("^(.*?)/manifest\\.json(\\?.*?)(/(?:catalog|meta|stream|subtitles)/[^?]*)$").find(url) ?: return url
         return m.groupValues[1] + m.groupValues[3] + m.groupValues[2]
     }

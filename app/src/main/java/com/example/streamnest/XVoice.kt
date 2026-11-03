@@ -67,6 +67,8 @@ fun VoiceSearchSheet(onSearch: (String) -> Unit, onAsk: (String) -> Unit, onClos
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> granted = ok; if (!ok) state = "error" }
     var attempt by remember { mutableIntStateOf(0) }
 
+    // The wake word lets go of the microphone first (two listeners at once made voice search hear nothing).
+    DisposableEffect(Unit) { MicHold.n.value += 1; WakeWord.stop(); onDispose { MicHold.n.value -= 1 } }
     LaunchedEffect(Unit) { if (!granted) ask.launch(Manifest.permission.RECORD_AUDIO) }
     DisposableEffect(granted, attempt) {
         if (!granted) return@DisposableEffect onDispose {}
@@ -78,7 +80,11 @@ fun VoiceSearchSheet(onSearch: (String) -> Unit, onAsk: (String) -> Unit, onClos
             override fun onRmsChanged(rms: Float) { level = ((rms + 2f) / 12f).coerceIn(0f, 1f) }
             override fun onBufferReceived(b: ByteArray?) {}
             override fun onEndOfSpeech() { state = "thinking"; level = 0f }
-            override fun onError(e: Int) { if (final == null) state = if (heard.isNotBlank()) "done" else "error"; if (heard.isNotBlank() && final == null) final = heard }
+            override fun onError(e: Int) {
+                // Microphone still busy (the wake word was letting go): try once more.
+                if (heard.isBlank() && attempt < 2 && (e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || e == SpeechRecognizer.ERROR_AUDIO || e == SpeechRecognizer.ERROR_CLIENT)) { attempt++; return }
+                if (final == null) state = if (heard.isNotBlank()) "done" else "error"; if (heard.isNotBlank() && final == null) final = heard
+            }
             override fun onResults(r: Bundle?) {
                 val t = r?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
                 if (t.isNotEmpty()) { heard = t; final = t; state = "done" } else state = "error"
@@ -90,8 +96,10 @@ fun VoiceSearchSheet(onSearch: (String) -> Unit, onAsk: (String) -> Unit, onClos
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        runCatching { rec.startListening(i) }.onFailure { state = "error" }
-        onDispose { runCatching { rec.cancel(); rec.destroy() } }
+        val h = android.os.Handler(android.os.Looper.getMainLooper())
+        val go = Runnable { runCatching { rec.startListening(i) }.onFailure { state = "error" } }
+        h.postDelayed(go, if (attempt == 0) 450L else 700L)
+        onDispose { h.removeCallbacks(go); runCatching { rec.cancel(); rec.destroy() } }
     }
     // What you said: a title → search; a request → the AI (after a short look at the words).
     LaunchedEffect(final) {

@@ -49,6 +49,12 @@
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize">
+            <!-- "Open" after installing / updating always opens Xstream itself (not Xstream Music): Android asks for this
+                 category first. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.INFO" />
+            </intent-filter>
             <!-- Watch together invite links: streamx://join/CODE -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

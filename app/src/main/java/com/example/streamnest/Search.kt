@@ -207,7 +207,7 @@ private class TmdbSeen {
 }
 
 private suspend fun tmdbSearch(key: String, q: String, seen: TmdbSeen? = null, onFirst: suspend (List<SearchHit>) -> Unit = {}): List<SearchHit> = coroutineScope {
-    val body = Api.get("https://api.themoviedb.org/3/search/multi?api_key=$key&query=${Uri.encode(q)}&include_adult=false&page=1")
+    val body = Api.get("https://api.themoviedb.org/3/search/multi?api_key=$key&query=${Uri.encode(q)}&include_adult=${SearchAdult.on}&page=1")
     val results = withContext(Dispatchers.Default) { Api.json.parseToJsonElement(body).jsonObject.sArr("results") }
         .filter { val mt = it.sStr("media_type"); mt == "movie" || mt == "tv" }
         .take(16)
@@ -379,7 +379,7 @@ private suspend fun searchGroups(key: String, q: String): List<SearchGroup> = co
     val clean = words.joinToString(" ")
     val col = async {
         runCatching {
-            val res = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/search/collection?api_key=$key&query=${Uri.encode(clean)}&page=1")).jsonObject.sArr("results")
+            val res = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/search/collection?api_key=$key&query=${Uri.encode(clean)}&include_adult=${SearchAdult.on}&page=1")).jsonObject.sArr("results")
             res.filter { r -> val n = r.sStr("name").orEmpty().lowercase(); words.all { n.contains(it) } }.take(2).mapNotNull { r ->
                 val id = r.sStr("id") ?: return@mapNotNull null
                 val d = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/collection/$id?api_key=$key")).jsonObject
@@ -544,6 +544,8 @@ private val ChipText = Color(0xFFB6BDCC)
 @Composable
 fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
     var q by rememberSaveable(initial) { mutableStateOf(initial) }
+    val adultPref = vm.texts.collectAsStateWithLifecycle().value["adultOn"]
+    SearchAdult.on = adultPref != "no"
     val hits by SearchState.hits.collectAsStateWithLifecycle()
     val loading by SearchState.loading.collectAsStateWithLifecycle()
     val suggestions by SearchState.suggestions.collectAsStateWithLifecycle()
@@ -942,3 +944,7 @@ private fun GroupPage(g: SearchGroup, onClose: () -> Unit, onOpen: (Meta) -> Uni
         }
     }
 }
+
+
+/** Settings › Layout › Adult content (on by default): 18+ titles and collections in search. */
+object SearchAdult { @Volatile var on: Boolean = true }

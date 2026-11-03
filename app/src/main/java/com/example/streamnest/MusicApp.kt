@@ -23,6 +23,14 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -185,7 +193,10 @@ fun MusicApp(
                     }
                 }
             }
-            if (now.track != null) MiniPlayer(onOpen = { nowOpen = true })
+            // Shown while music plays (opening Music with a paused song keeps it hidden until something plays).
+            var showMini by remember { mutableStateOf(now.playing) }
+            LaunchedEffect(now.playing) { if (now.playing) showMini = true }
+            if (now.track != null && showMini) MiniPlayer(onOpen = { nowOpen = true })
             MusicBottomBar(tab) { stack.clear(); tab = it }
         }
         AnimatedVisibility(nowOpen, enter = slideInVertically(tween(320)) { it } + fadeIn(), exit = slideOutVertically(tween(280)) { it } + fadeOut()) {
@@ -263,7 +274,10 @@ private fun Shelf(shelf: YtmShelf, nav: MusicNav, currentId: String?) {
                 val ch = when { big -> 280.dp; wide -> 146.dp; else -> 150.dp }
                 Column(Modifier.width(cw).combinedClickableCompat({ nav.open(it, shelf.items, null) }, { nav.menu(it) })) {
                     Box(Modifier.width(cw).height(ch).clip(if (it.kind == YtmKind.ARTIST) CircleShape else RoundedCornerShape(if (big) 14.dp else 6.dp)).background(MCard)) {
-                        if (it.thumb != null) AsyncImage(it.thumb, it.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        // Community / user playlists: a mosaic of four of their songs' covers (YouTube Music style),
+                        // never the uploader's photo.
+                        if (it.kind == YtmKind.PLAYLIST && (big || it.id.startsWith("VLPL") || it.id.startsWith("PL"))) PlaylistMosaic(it, Modifier.fillMaxSize())
+                        else if (it.thumb != null) AsyncImage(it.thumb, it.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                         if (big) Box(Modifier.align(Alignment.BottomEnd).padding(12.dp).size(44.dp).clip(CircleShape).background(Color(0xCCFFFFFF)), Alignment.Center) {
                             Icon(Icons.Default.PlayArrow, "Play", tint = Color.Black)
                         }
@@ -296,8 +310,10 @@ private fun TopBar(title: String?, onBack: (() -> Unit)?, nav: MusicNav, avatar:
     Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = if (onBack != null) 4.dp else 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         if (onBack != null) IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
         if (title == null) {
-            Box(Modifier.size(26.dp).clip(CircleShape).background(Color(0xFFFF0000)), Alignment.Center) { Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp), tint = Color.White) }
-            Text("Music", Modifier.padding(start = 6.dp), fontSize = 21.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
+            XMusicMark(30.dp)
+            Text("Xstream", Modifier.padding(start = 4.dp), fontSize = 21.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
+            androidx.compose.material3.Text("Music", Modifier.padding(start = 4.dp), color = Color(0xFFFF8A80), fontSize = 21.sp,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Serif, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
         } else Text(title, Modifier.padding(start = 4.dp), fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.weight(1f))
         IconButton({ nav.push(MPage.Search) }) { Icon(Icons.Default.Search, "Search", tint = Color.White) }
@@ -896,6 +912,12 @@ private fun NowPlaying(nav: MusicNav, onClose: () -> Unit, onFull: () -> Unit, o
             }
             Text(t?.title ?: "Nothing playing", Modifier.padding(top = 18.dp).basicMarquee(), fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             Text(t?.artist.orEmpty(), Modifier.clickable { t?.artist?.let(onArtist) }, fontSize = 15.sp, color = Color(0xFFDDDDDD), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // Sound quality: 160 kbps on Wi-Fi (kept the whole song), auto on mobile data.
+            if (t != null) Row(Modifier.padding(top = 6.dp).clip(RoundedCornerShape(50)).background(Color(0x33000000)).padding(horizontal = 9.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Icon(if (wifi) Icons.Default.Wifi else Icons.Default.SignalCellularAlt, null, Modifier.size(12.dp), tint = Color(0xFFEEDDDD))
+                Text(if (wifi || MusicQuality.hi) " 160 kbps" + (if (wifi) " · Wi-Fi" else " · auto") else " 128 kbps · auto", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFEEDDDD))
+            }
             LazyRow(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { Pill(if (liked) Icons.Default.ThumbUp else Icons.Default.ThumbUpOffAlt, if (liked) "Liked" else "Like") {
                     item?.let { i -> kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch { liked = MusicLibraryStore.toggleLiked(ctx, i) } }
@@ -906,9 +928,8 @@ private fun NowPlaying(nav: MusicNav, onClose: () -> Unit, onFull: () -> Unit, o
                 item { Pill(Icons.Default.Radio, "Mix") { item?.let { MusicPlayer.startRadio(ctx, it) } } }
             }
             val dur = now.durMs.coerceAtLeast(1)
-            Slider(drag ?: (now.posMs.toFloat() / dur).coerceIn(0f, 1f), { drag = it }, Modifier.padding(top = 8.dp),
-                onValueChangeFinished = { drag?.let { MusicPlayer.seekTo((it * dur).toLong()) }; drag = null },
-                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color(0x44FFFFFF)))
+            HeartbeatBar(drag ?: (now.posMs.toFloat() / dur).coerceIn(0f, 1f), now.playing, Modifier.padding(top = 14.dp),
+                onDrag = { drag = it }, onDone = { drag?.let { MusicPlayer.seekTo((it * dur).toLong()) }; drag = null })
             Row(Modifier.fillMaxWidth()) {
                 Text(clock(drag?.let { (it * dur).toLong() } ?: now.posMs), fontSize = 12.sp, color = Color(0xFFCCCCCC))
                 Spacer(Modifier.weight(1f)); Text(clock(now.durMs), fontSize = 12.sp, color = Color(0xFFCCCCCC))
@@ -936,6 +957,41 @@ private fun NowPlaying(nav: MusicNav, onClose: () -> Unit, onFull: () -> Unit, o
         AnimatedVisibility(sheet != null, enter = slideInVertically(tween(300)) { it }, exit = slideOutVertically(tween(260)) { it }) {
             NowSheet(sheet ?: 0, vid, t, color, nav, onTab = { sheet = it }, onClose = { sheet = null })
         }
+    }
+}
+
+/**
+ * Xstream Music's progress bar: the part already played is a heartbeat line (it beats while the song plays), the rest a
+ * thin line, and the small dot moves forward. Drag anywhere to seek.
+ */
+@Composable
+private fun HeartbeatBar(value: Float, playing: Boolean, modifier: Modifier = Modifier, onDrag: (Float) -> Unit, onDone: () -> Unit) {
+    val inf = rememberInfiniteTransition(label = "beat")
+    val beat by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "beat")
+    // One beat a second: a quick swell, then rest.
+    val amp = if (!playing) 0.35f else (if (beat < 0.25f) 0.6f + 1.6f * beat else 1f - 0.4f * ((beat - 0.25f) / 0.75f)).coerceIn(0.35f, 1f)
+    val cur by rememberUpdatedState(onDrag)
+    Canvas(modifier.fillMaxWidth().height(34.dp).pointerInput(Unit) {
+        detectHorizontalDragGestures(onDragEnd = onDone, onDragCancel = onDone) { ch, _ -> ch.consume(); cur((ch.position.x / size.width).coerceIn(0f, 1f)) }
+    }.pointerInput(Unit) { detectTapGestures { o -> cur((o.x / size.width).coerceIn(0f, 1f)); onDone() } }) {
+        val w = size.width; val mid = size.height / 2f
+        val x = (w * value).coerceIn(0f, w)
+        drawLine(Color(0x44FFFFFF), androidx.compose.ui.geometry.Offset(x, mid), androidx.compose.ui.geometry.Offset(w, mid), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+        val step = 34.dp.toPx(); val h = 11.dp.toPx() * amp
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(0f, mid)
+            var s = 0f
+            while (s < x) {
+                // flat · small bump · spike up · spike down · back to the line
+                fun to(fx: Float, fy: Float) { val px = (s + fx * step).coerceAtMost(x); lineTo(px, mid + fy) }
+                to(0.30f, 0f); to(0.38f, -h * 0.25f); to(0.44f, 0f); to(0.52f, -h); to(0.60f, h * 0.7f); to(0.66f, 0f); to(1f, 0f)
+                s += step
+            }
+            lineTo(x, mid)
+        }
+        drawPath(path, Color.White, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+        drawCircle(Color.White.copy(alpha = 0.25f * amp), 10.dp.toPx(), androidx.compose.ui.geometry.Offset(x, mid))
+        drawCircle(Color.White, 6.dp.toPx(), androidx.compose.ui.geometry.Offset(x, mid))
     }
 }
 
@@ -1003,6 +1059,9 @@ private fun UpNext(nav: MusicNav) {
     val now by MusicPlayer.now.collectAsStateWithLifecycle()
     val queue by MusicPlayer.queue.collectAsStateWithLifecycle()
     val label by MusicPlayer.radioLabel.collectAsStateWithLifecycle()
+    val chips by MusicPlayer.radioChips.collectAsStateWithLifecycle()
+    val chip by MusicPlayer.radioChip.collectAsStateWithLifecycle()
+    val ctx = LocalContext.current
     val list = rememberLazyListState()
     LaunchedEffect(Unit) { list.scrollToItem((now.index).coerceAtLeast(0)) }
     LazyColumn(Modifier.fillMaxSize(), state = list) {
@@ -1010,6 +1069,17 @@ private fun UpNext(nav: MusicNav) {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
                 Text("Playing from", fontSize = 12.sp, color = MSub)
                 Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        // All · Familiar · Popular · Discover · Deep cuts (the radio's own chips).
+        if (chips.isNotEmpty()) item {
+            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                itemsIndexed(chips) { _, (l, _) ->
+                    val on = l == chip
+                    Text(l, Modifier.clip(RoundedCornerShape(10.dp)).background(if (on) Color.White else Color(0x22FFFFFF))
+                        .clickable { if (!on) MusicPlayer.pickChip(ctx, l) }.padding(horizontal = 14.dp, vertical = 8.dp),
+                        fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = if (on) Color.Black else Color.White)
+                }
             }
         }
         itemsIndexed(queue, key = { i, q -> "q$i${q.id}" }) { i, q ->
@@ -1042,21 +1112,84 @@ private fun Lyrics(vid: String?, t: LiveServer.Track?) {
         if (vid != null) plain = runCatching { YtMusic.next(vid).lyricsBrowseId?.let { YtMusic.lyrics(it) } }.getOrNull()
     }
     val l = lines
-    when {
-        l == null -> Loading()
-        l.isNotEmpty() -> {
-            val cur = l.indexOfLast { it.first <= now.posMs }.coerceAtLeast(0)
-            val list = rememberLazyListState()
-            LaunchedEffect(cur) { list.animateScrollToItem((cur - 2).coerceAtLeast(0)) }
-            LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = list, contentPadding = PaddingValues(vertical = 20.dp)) {
-                itemsIndexed(l) { i, (at, text) ->
-                    Text(text.ifBlank { "♪" }, Modifier.fillMaxWidth().clickable { MusicPlayer.seekTo(at) }.padding(vertical = 9.dp), fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold, color = if (i == cur) Color.White else Color(0x66FFFFFF))
+    val ctx = LocalContext.current
+    // Translate: English under every line (Google's free translation), remembered while the app is open.
+    var tr by remember { mutableStateOf(LyricsTr.on) }
+    val texts = l?.map { it.second }?.takeIf { it.isNotEmpty() } ?: plain?.lines()
+    val english by produceState<List<String>?>(null, tr, vid, texts?.size) {
+        value = if (tr && !texts.isNullOrEmpty()) withContext(Dispatchers.IO) { LyricsTr.english(vid ?: "", texts) } else null
+    }
+    fun under(i: Int, orig: String): String? = english?.getOrNull(i)?.takeIf { it.isNotBlank() && !it.equals(orig.trim(), true) }
+    Box(Modifier.fillMaxSize()) {
+        when {
+            l == null -> Loading()
+            l.isNotEmpty() -> {
+                val cur = l.indexOfLast { it.first <= now.posMs }.coerceAtLeast(0)
+                val list = rememberLazyListState()
+                LaunchedEffect(cur) { list.animateScrollToItem((cur - 2).coerceAtLeast(0)) }
+                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = list, contentPadding = PaddingValues(top = 20.dp, bottom = 96.dp)) {
+                    itemsIndexed(l) { i, (at, text) ->
+                        Column(Modifier.fillMaxWidth().clickable { MusicPlayer.seekTo(at) }.padding(vertical = 9.dp)) {
+                            Text(text.ifBlank { "♪" }, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = if (i == cur) Color.White else Color(0x66FFFFFF))
+                            under(i, text)?.let { e -> Text(e, Modifier.padding(top = 3.dp), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = if (i == cur) Color(0xFFFFE0D8) else Color(0x55FFFFFF)) }
+                        }
+                    }
                 }
             }
+            !plain.isNullOrBlank() -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 20.dp, bottom = 96.dp)) {
+                itemsIndexed(plain!!.lines()) { i, line ->
+                    Column(Modifier.padding(vertical = 3.dp)) {
+                        Text(line, fontSize = 18.sp, color = Color(0xFFDDDDDD))
+                        under(i, line)?.let { e -> Text(e, fontSize = 15.sp, color = Color(0x99FFE0D8)) }
+                    }
+                }
+            }
+            else -> Text("Lyrics aren't available for this song.", Modifier.padding(24.dp), color = MSub)
         }
-        !plain.isNullOrBlank() -> LazyColumn(Modifier.fillMaxSize().padding(20.dp)) { item { Text(plain!!, fontSize = 18.sp, color = Color(0xFFDDDDDD)) } }
-        else -> Text("Lyrics aren't available for this song.", Modifier.padding(24.dp), color = MSub)
+        if (!l.isNullOrEmpty() || !plain.isNullOrBlank()) Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.clip(RoundedCornerShape(50)).background(Color(0x33FFFFFF)).clickable {
+                val body = (l?.joinToString("\n") { it.second } ?: plain.orEmpty()).take(1500)
+                runCatching { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "${t?.title} · ${t?.artist}\n\n$body"), "Share lyrics").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            }.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Share, null, Modifier.size(18.dp), tint = Color.White); Text("Share", Modifier.padding(start = 8.dp), fontWeight = FontWeight.SemiBold)
+            }
+            Row(Modifier.clip(RoundedCornerShape(50)).background(if (tr) Color.White else Color(0x33FFFFFF)).clickable { tr = !tr; LyricsTr.on = tr }
+                .padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Translate, null, Modifier.size(18.dp), tint = if (tr) Color.Black else Color.White)
+                Text(if (tr && english == null) "Translating…" else "Translate", Modifier.padding(start = 8.dp), fontWeight = FontWeight.SemiBold, color = if (tr) Color.Black else Color.White)
+            }
+        }
+    }
+}
+
+/** Lyrics in English, line by line (Google's free translation), cached per song. */
+private object LyricsTr {
+    @Volatile var on = false
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+    fun english(key: String, lines: List<String>): List<String>? {
+        cache[key]?.let { if (it.size == lines.size) return it }
+        val out = ArrayList<String>()
+        // In chunks (the service takes ~4,000 characters a request); one line per row so the lines stay matched.
+        var chunk = ArrayList<String>()
+        fun flush(): Boolean {
+            if (chunk.isEmpty()) return true
+            val q = chunk.joinToString("\n")
+            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=" + java.net.URLEncoder.encode(q, "UTF-8")
+            val body = runCatching { Api.http.newCall(okhttp3.Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()).execute().use { it.body?.string() } }.getOrNull() ?: return false
+            val arr = runCatching { (Api.json.parseToJsonElement(body) as JsonArray)[0] as JsonArray }.getOrNull() ?: return false
+            val joined = arr.joinToString("") { seg -> ((seg as? JsonArray)?.getOrNull(0) as? JsonPrimitive)?.contentOrNull.orEmpty() }
+            val parts = joined.split("\n")
+            for (i in chunk.indices) out += parts.getOrNull(i)?.trim().orEmpty()
+            chunk = ArrayList(); return true
+        }
+        var len = 0
+        for (line in lines) {
+            if (len + line.length > 3500) { if (!flush()) return null; len = 0 }
+            chunk += line.ifBlank { "·" }; len += line.length + 1
+        }
+        if (!flush()) return null
+        cache[key] = out
+        return out
     }
 }
 
@@ -1273,6 +1406,27 @@ private fun FullVideo(onExit: () -> Unit) {
             Column {
                 Text("Up next", Modifier.padding(16.dp), fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 UpNext(MusicNav({ _, _, _ -> }, {}, {}))
+            }
+        }
+    }
+}
+
+
+/** Four covers of a playlist's first songs in a 2 × 2 grid (the playlist's own picture until they arrive). */
+private val mosaicCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+@Composable
+private fun PlaylistMosaic(item: YtmItem, modifier: Modifier) {
+    val covers by produceState(mosaicCache[item.id].orEmpty(), item.id) {
+        if (value.size >= 4) return@produceState
+        val got = runCatching { YtMusic.browse(item.id).let { p -> (p.items + p.shelves.flatMap { it.items }) } }.getOrDefault(emptyList())
+            .filter { it.kind == YtmKind.SONG || it.kind == YtmKind.VIDEO }.mapNotNull { it.thumb }.distinct().take(4)
+        if (got.size >= 4) { mosaicCache[item.id] = got; value = got }
+    }
+    Box(modifier.background(MCard)) {
+        if (covers.size < 4) { if (item.thumb != null) AsyncImage(item.thumb, item.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        else Column(Modifier.fillMaxSize()) {
+            for (r in 0..1) Row(Modifier.weight(1f)) {
+                for (c in 0..1) AsyncImage(covers[r * 2 + c], null, Modifier.weight(1f).fillMaxHeight(), contentScale = ContentScale.Crop)
             }
         }
     }

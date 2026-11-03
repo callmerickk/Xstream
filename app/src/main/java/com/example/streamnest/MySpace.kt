@@ -152,6 +152,7 @@ fun MySpaceScreen(
             }
             // Xstream: Library, Watch together, Watchlist, Notifications and Clear Continue Watching live in Library now;
             // My Space shows your charts instead.
+            if (!BuildConfig.IS_TV) item { WeeklyRecap() }
             item { LaunchedEffect(profile?.id) { WatchLog.load(ctx, profile?.id) } ; WatchCharts { k -> progress.firstOrNull { it.key == k }?.let { onOpen(it.toMeta()) } ?: onOpen(Meta(id = k.substringBefore(":"), type = if (k.contains(":")) "series" else "movie", name = "")) } }
             if (!BuildConfig.IS_TV) item { DownloadsSection(onPlay) }
             if (!BuildConfig.IS_TV) item {

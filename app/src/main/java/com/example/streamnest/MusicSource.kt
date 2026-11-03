@@ -148,6 +148,11 @@ object SimpMusic {
 object MusicQuality {
     @Volatile var hi = true
     @Volatile var smoothSince = 0L
+    /** On Wi-Fi the songs stay at 160 kbps the whole time (no step down to 128). */
+    fun wifi(ctx: Context): Boolean = runCatching {
+        val cm = ctx.getSystemService(ConnectivityManager::class.java)
+        cm.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+    }.getOrDefault(false)
 
     fun start(ctx: Context) {
         hi = runCatching {

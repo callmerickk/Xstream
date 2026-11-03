@@ -399,6 +399,12 @@ fun PlanFlow(meta: Meta, item: SharedItem?, friends: List<Person>, startAt: Long
         null -> PremiumAlert(onDismissRequest = onDone, title = { Text("Who's watching?") }, text = {
             Column {
                 Text("${meta.name} · ${Social.planTime(time)}", fontSize = 13.sp, color = WtMuted)
+                // 0.8: a reminder before the time (your choice; remembered for the next plans).
+                var rem by remember { mutableIntStateOf(PlanAlarm.defaultBefore(ctx)) }
+                Text("Remind me before", Modifier.padding(top = 12.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    PlanAlarm.Choices.forEach { (m, l) -> WtButton(l, primary = rem == m) { rem = m; PlanAlarm.setDefaultBefore(ctx, m) } }
+                }
                 Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     WtButton("Only me") { who = "me"; save(emptyList()) }
                     WtButton("With friends", primary = true) { who = "friends" }

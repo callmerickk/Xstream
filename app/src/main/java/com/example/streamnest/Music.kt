@@ -83,6 +83,11 @@ class MusicService : MediaSessionService() {
         val widgetTick = object : Runnable {
             override fun run() {
                 MusicWidget.push(ctx, player.isPlaying, player.currentPosition, player.duration)
+                // At 90 % of a song the next one's address is fetched, so it starts the moment this one ends.
+                val d = player.duration
+                if (d > 0 && player.currentPosition > d * 0.85 && player.hasNextMediaItem()) {
+                    player.getMediaItemAt(player.nextMediaItemIndex).localConfiguration?.uri?.let { u -> MusicPrefetch.ahead(u) }
+                }
                 if (player.isPlaying) android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(this, 3_000)
             }
         }
@@ -97,7 +102,7 @@ class MusicService : MediaSessionService() {
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 stallCheck?.let(main::removeCallbacks); stallCheck = null
-                if (state == Player.STATE_BUFFERING && player.playWhenReady && player.currentPosition > 1_000 && MusicQuality.hi &&
+                if (state == Player.STATE_BUFFERING && player.playWhenReady && player.currentPosition > 1_000 && MusicQuality.hi && !MusicQuality.wifi(ctx) &&
                     player.currentMediaItem?.localConfiguration?.uri?.scheme == "ytm") {
                     stallCheck = Runnable {
                         if (player.playbackState != Player.STATE_BUFFERING) return@Runnable
@@ -262,7 +267,7 @@ object MusicPlayer {
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
 
     fun ytTrack(i: YtmItem, from: String? = null) = LiveServer.Track(id = "yt:" + i.id, title = i.title, artist = i.subtitle.substringAfter("Song • ").substringAfter("Video • ").substringBefore(" • "),
-        album = from, durationMs = i.durationMs, format = if (i.kind == YtmKind.VIDEO) "ytv" else "yt", artworkURL = i.thumb)
+        album = from, durationMs = i.durationMs, format = if (i.kind == YtmKind.VIDEO) "ytv" else "yt", artworkURL = ytHd(i.thumb))
 
     /** Plays [i] and fills the queue with its YouTube Music radio (like tapping a song in YouTube Music). */
     fun startRadio(ctx: Context, i: YtmItem) {
@@ -273,8 +278,26 @@ object MusicPlayer {
         radioJob = scope.launch {
             val n = runCatching { YtMusic.next(i.id, "RDAMVM" + i.id) }.getOrNull() ?: return@launch
             counterparts.putAll(n.counterparts)
+            radioChips.value = n.chips; radioChip.value = n.chips.firstOrNull()?.first
             n.title?.let { radioLabel.value = it }
             replaceRadio(ctx, n.queue.filter { it.id != i.id }.map { ytTrack(it) })
+        }
+    }
+
+    /** Up next chips of the radio playing (label → "playlistId|params") and the one picked. */
+    val radioChips = kotlinx.coroutines.flow.MutableStateFlow<List<Pair<String, String>>>(emptyList())
+    val radioChip = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    /** A chip tapped: the songs after this one become that version of the radio. */
+    fun pickChip(ctx: Context, label: String) {
+        val v = radioChips.value.firstOrNull { it.first == label }?.second ?: return
+        val cur = now.value.track?.id?.removePrefix("yt:") ?: return
+        radioChip.value = label
+        radioJob?.cancel()
+        radioJob = scope.launch {
+            val n = runCatching { YtMusic.next(cur, v.substringBefore('|'), v.substringAfter('|').ifBlank { null }) }.getOrNull() ?: return@launch
+            counterparts.putAll(n.counterparts)
+            dismissQueue()
+            appendRadio(ctx, n.queue.filter { it.id != cur }.map { ytTrack(it) })
         }
     }
 
@@ -396,4 +419,22 @@ private class MpdOrUpstream(private val up: androidx.media3.datasource.DataSourc
     override fun getUri(): Uri? = mem?.uri ?: up.uri
     override fun getResponseHeaders(): Map<String, List<String>> = if (mem != null) emptyMap() else up.responseHeaders
     override fun close() { mem?.close(); mem = null; up.close() }
+}
+
+
+/** The next song's stream address, fetched ahead (no wait between songs). */
+object MusicPrefetch {
+    private val done = java.util.Collections.synchronizedSet(HashSet<String>())
+    private val io = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    fun ahead(u: android.net.Uri) {
+        val id = u.lastPathSegment ?: return
+        if (!done.add(u.scheme + id)) return
+        io.launch {
+            when (u.scheme) {
+                "ytm" -> runCatching { YtDirect.music(id) }
+                "ytmpd" -> runCatching { YtDirect.musicStreams(id) }
+            }
+        }
+        if (done.size > 300) done.clear()
+    }
 }

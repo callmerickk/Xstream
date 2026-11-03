@@ -493,9 +493,13 @@ fun PlayerScreen(
     /** After a fallback to MovieBox, the next upgrade offer waits until then. */
     var upCooldownUntil by remember { mutableLongStateOf(0L) }
     var firstFrame by remember { mutableStateOf(false) }
+    // Source health: which source is playing (a failure is counted against it) and that it played.
+    LaunchedEffect(now?.addon) { PlayFailNote.addon = now?.addon }
+    LaunchedEffect(firstFrame) { if (firstFrame) now?.addon?.let { SourceHealth.played(it) } }
     var status by remember { mutableStateOf(if (p.url.isBlank() && pre == null) "Finding stream source" else "Buffering…") }
     var failure by remember { mutableStateOf<String?>(null) }
     DisposableEffect(Unit) { TrailerHold.on.value = true; onDispose { TrailerHold.on.value = false } }
+    LaunchedEffect(Unit) { SourceHealth.init(ctx) }
     // Developer report when this title ends with no picture (what each plugin answered, from which phone).
     LaunchedEffect(failure) {
         val f = failure ?: return@LaunchedEffect
@@ -6379,7 +6383,9 @@ object DecoderSafe {
         val chain = generateSequence(e as Throwable) { it.cause }.take(4).joinToString(" ← ") { "${it.javaClass.simpleName}: ${it.message?.take(120)}" }
         val b = android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL + " · Android " + android.os.Build.VERSION.RELEASE + " · " + (if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MODEL else android.os.Build.HARDWARE)
         val http = generateSequence(e as Throwable) { it.cause }.filterIsInstance<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>().firstOrNull()
-        ActLog.add("PLAYFAIL", "why: " + NoStream.reason(code, http?.responseCode, http?.headerFields?.get("Content-Type")?.firstOrNull()))
+        val why = NoStream.reason(code, http?.responseCode, http?.headerFields?.get("Content-Type")?.firstOrNull())
+        ActLog.add("PLAYFAIL", "why: $why")
+        PlayFailNote.addon?.let { SourceHealth.failed(it, why) }
         ActLog.add("ERROR", "player $code on $b · async feeding ${if (on(vm)) "off" else "on"} · tracks: ${formats.ifEmpty { "none yet" }} · $chain".take(900))
         if (decoder && vm.store("safeDecoders") != "yes") {
             vm.storePut("safeDecoders", "yes")
@@ -6405,3 +6411,7 @@ fun stackCues(cs: List<Cue>): List<Cue> {
     if (texts.isEmpty()) return cs
     return listOf(Cue.Builder().setText(texts.joinToString("\n")).build())
 }
+
+
+/** The source of the link that is playing (for Source health when it fails). */
+object PlayFailNote { @Volatile var addon: String? = null }

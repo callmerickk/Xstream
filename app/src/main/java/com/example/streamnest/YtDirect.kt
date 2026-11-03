@@ -271,8 +271,11 @@ object YtDirect {
     private val musicCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, MusicSrc>>()
 
     /** The song's two audio qualities (first client that answers with a working link). Remembered for 3 hours. */
+    /** Songs that just failed: asked again only after 40 s, so the player skips them at once instead of retrying ~85 s. */
+    private val musicFailed = java.util.concurrent.ConcurrentHashMap<String, Long>()
     suspend fun music(videoId: String): MusicSrc? = withContext(Dispatchers.IO) {
         musicCache[videoId]?.let { (at, m) -> if (System.currentTimeMillis() - at < 3 * 3600_000L) return@withContext m }
+        musicFailed[videoId]?.let { if (System.currentTimeMillis() - it < 40_000L) return@withContext null }
         val (key, visitor) = watchConfig(videoId)
         val got = coroutineScope { clients.map { c -> async { c to runCatching { streamingData(c, videoId, key, visitor) }.getOrNull() } }.awaitAll() }
         for ((c, sd) in got) {
@@ -294,6 +297,7 @@ object YtDirect {
             return@withContext m
         }
         ActLog.add("MUSIC", "$videoId · no audio")
+        musicFailed[videoId] = System.currentTimeMillis()
         null
     }
 

@@ -463,13 +463,29 @@ object PlanAlarm {
         val i = android.content.Intent(ctx, PlanAlarmReceiver::class.java)
         val pi = android.app.PendingIntent.getBroadcast(ctx, (item + plan).hashCode(), i, android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_NO_CREATE)
         if (pi != null) runCatching { am.cancel(pi); pi.cancel() }
+        val ep = android.app.PendingIntent.getBroadcast(ctx, (item + plan + "early").hashCode(), i, android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_NO_CREATE)
+        if (ep != null) runCatching { am.cancel(ep); ep.cancel() }
     }
+    /** "Remind me before" choices (minutes; 0 = no early reminder). */
+    val Choices = listOf(0 to "Off", 5 to "5 min", 15 to "15 min", 30 to "30 min", 60 to "1 hour", 120 to "2 hours", 1440 to "1 day")
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("plans", Context.MODE_PRIVATE)
+    fun defaultBefore(ctx: Context) = prefs(ctx).getInt("before", 30)
+    fun setDefaultBefore(ctx: Context, m: Int) { prefs(ctx).edit().putInt("before", m).apply() }
     fun schedule(ctx: Context, item: String, plan: String, at: Long, title: String) {
         if (at <= System.currentTimeMillis()) return
         val am = ctx.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
         val i = android.content.Intent(ctx, PlanAlarmReceiver::class.java).putExtra("item", item).putExtra("plan", plan).putExtra("title", title)
         val pi = android.app.PendingIntent.getBroadcast(ctx, (item + plan).hashCode(), i, android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
         runCatching { am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, at, pi) }
+        // The early reminder ("Dune at 6:00 PM · in 30 min").
+        val before = defaultBefore(ctx)
+        val early = at - before * 60_000L
+        if (before > 0 && early > System.currentTimeMillis()) {
+            val e = android.content.Intent(ctx, PlanAlarmReceiver::class.java).putExtra("item", item).putExtra("plan", plan).putExtra("title", title)
+                .putExtra("early", before).putExtra("at", at)
+            val ep = android.app.PendingIntent.getBroadcast(ctx, (item + plan + "early").hashCode(), e, android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT)
+            runCatching { am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, early, ep) }
+        }
     }
 }
 
@@ -478,6 +494,14 @@ class PlanAlarmReceiver : android.content.BroadcastReceiver() {
         val item = intent.getStringExtra("item") ?: return
         val plan = intent.getStringExtra("plan") ?: return
         val title = intent.getStringExtra("title") ?: "your plan"
+        val early = intent.getIntExtra("early", 0)
+        if (early > 0) {
+            val at = intent.getLongExtra("at", 0L)
+            val left = if (early >= 1440) "tomorrow" else if (early >= 60) "in ${early / 60} h" else "in $early min"
+            val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date(at))
+            SocialNotes.post(ctx, "$title at $time", "Your watch plan starts $left.", "planpre_$item$plan", item = item, plan = plan)
+            return
+        }
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             runCatching {

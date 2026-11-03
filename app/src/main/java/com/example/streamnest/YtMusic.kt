@@ -47,6 +47,9 @@ object YtMusic {
             o.str("simpleText")?.let { return it }
             o.arr("runs")?.mapNotNull { it.obj()?.str("text") }?.joinToString("")?.takeIf { it.isNotBlank() }?.let { return it }
             o.obj("text")?.let { return textOf(it) }
+            // A column wrapper ({"musicResponsiveListItemFlexColumnRenderer": {"text": …}}): the artist line of Quick picks.
+            o.obj("musicResponsiveListItemFlexColumnRenderer")?.let { return textOf(it) }
+            o.obj("musicResponsiveListItemFixedColumnRenderer")?.let { return textOf(it) }
         }
         return el.str()
     }
@@ -96,7 +99,8 @@ object YtMusic {
 
     private fun hd(url: String?, wide: Boolean = false): String? {
         if (url.isNullOrBlank()) return null
-        if (url.contains("i.ytimg.com/vi/")) return url.substringBefore("=") + "/maxresdefault.jpg"
+        // Video frames: the 1280×720 picture (was a broken link: the old code kept "?sqp" in the path).
+        if (url.contains("ytimg.com/vi/")) { val id = url.substringAfter("/vi/").substringBefore('/'); return "https://i.ytimg.com/vi/$id/hq720.jpg" }
         if (url.contains("lh3.googleusercontent.com") || url.contains("yt3.ggpht.com"))
             return url.substringBefore("=") + if (wide) "=w1280-h720" else "=w1080-h1080-l90-rj"
         return url
@@ -311,7 +315,17 @@ object YtMusic {
         walk(r) { o -> if (title == null) o.obj("playlistPanelRenderer")?.obj("title")?.let { title = textOf(it) } }
         val queue = LinkedHashMap<String, YtmItem>()
         walk(r) { o -> o.obj("playlistPanelVideoRenderer")?.let { p -> item(p)?.let { queue.putIfAbsent(it.id, it) } } }
-        YtmNext(queue.values.toList(), continuation(r), lyrics, related, emptyList(), counterparts, title)
+        // Up next chips (All · Familiar · Popular · Discover · Deep cuts): each is the same radio asked again with its params.
+        val qchips = mutableListOf<Pair<String, String>>()
+        walk(r) { o ->
+            o.obj("chipCloudChipRenderer")?.let { c ->
+                val label = c.obj("text")?.let(::textOf) ?: return@let
+                var pl: String? = null; var pr: String? = null
+                walk(c) { x -> (x.obj("watchEndpoint") ?: x.obj("watchPlaylistEndpoint"))?.let { w -> if (pl == null) { pl = w.str("playlistId"); pr = w.str("params") } } }
+                if (pl != null) qchips += label to "${pl}|${pr.orEmpty()}"
+            }
+        }
+        YtmNext(queue.values.toList(), continuation(r), lyrics, related, qchips.distinctBy { it.first }, counterparts, title)
     }
     suspend fun lyrics(browseId: String): String = withContext(Dispatchers.IO) {
         val r = endpoint("browse", context(browseId)) ?: return@withContext ""
@@ -323,4 +337,13 @@ object YtMusic {
         YtmPage(extractShelves(r), extractItems(r), continuation(r))
     }
     suspend fun related(browseId: String): YtmPage = browsePage(browseId, "related:" + browseId)
+}
+
+
+/** Any YouTube / YouTube Music picture at its sharp size (the first song of a radio used the small one). */
+fun ytHd(url: String?, wide: Boolean = false): String? {
+    if (url.isNullOrBlank()) return url
+    if (url.contains("ytimg.com/vi/")) { val id = url.substringAfter("/vi/").substringBefore('/'); return "https://i.ytimg.com/vi/$id/hq720.jpg" }
+    if (url.contains("lh3.googleusercontent.com") || url.contains("yt3.ggpht.com")) return url.substringBefore("=") + if (wide) "=w1280-h720" else "=w1080-h1080-l90-rj"
+    return url
 }

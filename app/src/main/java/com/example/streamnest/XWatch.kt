@@ -172,3 +172,64 @@ private fun Legend(c: Color, label: String) {
         Text(label, fontSize = 11.5.sp, color = Color(0xFFD5D9E2))
     }
 }
+
+/**
+ * Weekly recap (0.8): the last 7 days as one card — hours watched, a bar per day, top genre-free facts (most watched,
+ * episodes, films, late nights), with Share.
+ */
+@Composable
+fun WeeklyRecap() {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val all by WatchLog.entries.collectAsStateWithLifecycle()
+    val fmt = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
+    val days = remember { (6 downTo 0).map { fmt.format(Date(System.currentTimeMillis() - it * 86_400_000L)) } }
+    val week = remember(all) { all.filter { it.d in days } }
+    if (week.isEmpty()) return
+    val total = week.sumOf { it.ms }
+    if (total < 60_000L) return
+    val perDay = days.map { d -> week.filter { it.d == d }.sumOf { it.ms } }
+    val maxDay = perDay.maxOrNull()?.coerceAtLeast(1L) ?: 1L
+    val top = week.groupBy { it.k.substringBefore(":") }.maxByOrNull { e -> e.value.sumOf { it.ms } }?.value?.firstOrNull()
+    val eps = week.filter { it.k.contains(":") }.map { it.k }.distinct().size
+    val films = week.filter { !it.k.contains(":") }.map { it.k }.distinct().size
+    val night = week.sumOf { w -> w.hours.filterKeys { it < 5 || it >= 23 }.values.sum() }
+    fun hm(ms: Long): String { val m = ms / 60_000; return if (m >= 60) "${m / 60} h ${m % 60} m" else "$m min" }
+    val shape = RoundedCornerShape(26.dp)
+    Column(
+        Modifier.padding(horizontal = 16.dp, vertical = 10.dp).fillMaxWidth().clip(shape)
+            .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF3A0A10), Color(0xFF121319), Color(0xFF1C1440))))
+            .border(1.dp, Color(0x22FFFFFF), shape).padding(20.dp),
+    ) {
+        val from = SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(System.currentTimeMillis() - 6 * 86_400_000L))
+        Text("YOUR WEEK · $from – today", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.4.sp, color = Color(0xFFFFB3AD))
+        Text(hm(total), Modifier.padding(top = 6.dp), fontSize = 44.sp, fontWeight = FontWeight.Bold)
+        Text("watched in the last 7 days", fontSize = 13.sp, color = Color(0xFFD6D9E2))
+        Row(Modifier.padding(top = 14.dp).fillMaxWidth().height(70.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
+            perDay.forEachIndexed { i, v ->
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.fillMaxWidth().height((4 + 50f * v / maxDay).dp).clip(RoundedCornerShape(6.dp, 6.dp, 3.dp, 3.dp))
+                        .background(if (v == maxDay) Color(0xFFE50914) else Color(0x99FF5A4E)))
+                    val dn = runCatching { SimpleDateFormat("EEEEE", Locale.getDefault()).format(fmt.parse(days[i])!!) }.getOrDefault("")
+                    Text(dn, Modifier.padding(top = 3.dp), fontSize = 10.sp, color = Color(0xFFAEB4C3), fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            RecapStat("Most watched", top?.t ?: "—", Modifier.weight(1f))
+            RecapStat("Episodes · films", "$eps · $films", Modifier.weight(1f))
+        }
+        if (night > 15 * 60_000L) Text("Night owl: ${hm(night)} after 11 PM", Modifier.padding(top = 10.dp), fontSize = 12.5.sp, color = Color(0xFFD6D9E2))
+        Box(Modifier.padding(top = 14.dp).fillMaxWidth().height(44.dp).clip(RoundedCornerShape(22.dp)).background(Color.White).clickable {
+            val txt = "My week on Xstream: ${hm(total)} watched" + (top?.let { " · most watched: ${it.t}" } ?: "") + " · $eps episodes, $films films"
+            runCatching { ctx.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, txt), "Share my week").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }, Alignment.Center) { Text("Share my week", color = Color(0xFF111111), fontWeight = FontWeight.Bold) }
+    }
+}
+
+@Composable
+private fun RecapStat(label: String, value: String, modifier: Modifier) {
+    Column(modifier.clip(RoundedCornerShape(14.dp)).background(Color(0x14FFFFFF)).padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Text(label, fontSize = 11.5.sp, color = Color(0xFFAEB4C3), fontWeight = FontWeight.Bold)
+        Text(value, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}

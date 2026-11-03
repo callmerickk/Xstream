@@ -249,9 +249,15 @@ fun App(vm: AppViewModel = viewModel()) {
         val aiBusy = voiceOpen || VoiceAskBus.pending.collectAsState().value != null
         LaunchedEffect(onPlayer) { WakeWord.strict = onPlayer }
         LaunchedEffect(aiBusy) { if (!aiBusy) WakeWord.quietUntil = System.currentTimeMillis() + 3000 }
-        LaunchedEffect(profile?.id, aiBusy, callMic, appResumed, texts["wakeOn"]) {
+        // 0.8: AIDEN only listens in the video app — not while Xstream Music is open or a song is playing (songs said
+        // its name), and not while voice search has the microphone.
+        val musicLib by MusicPlayer.openLibrary.collectAsState()
+        val musicNow by MusicPlayer.openNow.collectAsState()
+        val songOn = MusicPlayer.now.collectAsState().value.playing
+        val micHeld by MicHold.n.collectAsState()
+        LaunchedEffect(profile?.id, aiBusy, callMic, appResumed, texts["wakeOn"], musicLib, musicNow, songOn, micHeld) {
             WakeWord.onName = { if (!voiceOpen) { AiPlayerBus.duck(); voiceOpen = true } }
-            val on = !BuildConfig.IS_TV && profile != null && !aiBusy && !callMic && appResumed && isOn(texts["wakeOn"] ?: "yes")
+            val on = !BuildConfig.IS_TV && profile != null && !aiBusy && !callMic && appResumed && !musicLib && !musicNow && !songOn && micHeld == 0 && isOn(texts["wakeOn"] ?: "yes")
             if (on) { delay(700); WakeWord.start(buddyCtx) } else WakeWord.stop()
         }
         if (profile == null && gateOpen) CloudGate(onDone = { gateOpen = false })
@@ -341,7 +347,7 @@ fun App(vm: AppViewModel = viewModel()) {
                     else BottomNav(tab, vm, compact = barAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
                 }
                 // Music (Live server): the small player sits just above the dock while songs are queued.
-                if (!BuildConfig.IS_TV && !(navHidden && tab == 3)) MusicMiniBar(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 92.dp))
+                // 0.8: the music mini player lives only inside Xstream Music (not over the video app).
                 val bellTogether by BellNav.together.collectAsState()
                 LaunchedEffect(bellTogether) { if (bellTogether) { BellNav.together.value = false; stack.add(Screen.Together()) } }
                 // Voice search handed a request to the AI.

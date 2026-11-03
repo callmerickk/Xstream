@@ -7,6 +7,8 @@
             android:icon="@mipmap/ic_launcher_music"
             android:roundIcon="@mipmap/ic_launcher_music"
             android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode"
+            android:supportsPictureInPicture="false"
             android:exported="true"
             android:theme="@style/Theme.Xstream">
             <intent-filter>

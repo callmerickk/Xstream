@@ -312,6 +312,7 @@ object PluginSources {
     fun modeStreams(vm: AppViewModel, type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
         val ctx = vm.appContext
         CsPlugins.init(ctx)
+        SourceHealth.init(ctx)
         if (CsPlugins.catalog.value.isEmpty()) runCatching { CsPlugins.refresh() }
         val meta = metaFor(type, id)
         if (meta == null) { send(emptyList<StreamItem>() to true); return@channelFlow }
@@ -345,6 +346,7 @@ object PluginSources {
                     val l = shared(api, id) { linksFrom(api, meta.name, year, series, season, episode) }
                     // Timing of each plugin (Activity log → PLUGIN), to see which one is slow.
                     ActLog.add("PLUGIN", "${api.name}: ${l.size} links in ${System.currentTimeMillis() - t0} ms · $id")
+                    SourceHealth.answered(api.name, l.size, System.currentTimeMillis() - t0)
                     add(l)
                 } }
             } }
