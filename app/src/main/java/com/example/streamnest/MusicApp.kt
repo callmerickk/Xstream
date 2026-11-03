@@ -973,9 +973,10 @@ private fun HeartbeatBar(value: Float, playing: Boolean, modifier: Modifier = Mo
     // One beat a second: a quick swell, then rest.
     val amp = if (!playing) 0.35f else (if (beat < 0.25f) 0.6f + 1.6f * beat else 1f - 0.4f * ((beat - 0.25f) / 0.75f)).coerceIn(0.35f, 1f)
     val cur by rememberUpdatedState(onDrag)
+    val done by rememberUpdatedState(onDone)
     Canvas(modifier.fillMaxWidth().height(34.dp).pointerInput(Unit) {
-        detectHorizontalDragGestures(onDragEnd = onDone, onDragCancel = onDone) { ch, _ -> ch.consume(); cur((ch.position.x / size.width).coerceIn(0f, 1f)) }
-    }.pointerInput(Unit) { detectTapGestures { o -> cur((o.x / size.width).coerceIn(0f, 1f)); onDone() } }) {
+        detectHorizontalDragGestures(onDragEnd = { done() }, onDragCancel = { done() }) { ch, _ -> ch.consume(); cur((ch.position.x / size.width).coerceIn(0f, 1f)) }
+    }.pointerInput(Unit) { detectTapGestures { o -> cur((o.x / size.width).coerceIn(0f, 1f)); done() } }) {
         val w = size.width; val mid = size.height / 2f
         val x = (w * value).coerceIn(0f, w)
         drawLine(Color(0x44FFFFFF), androidx.compose.ui.geometry.Offset(x, mid), androidx.compose.ui.geometry.Offset(w, mid), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
