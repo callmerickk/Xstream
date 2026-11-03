@@ -72,15 +72,23 @@ object Official {
 
     /** Every other account: the published set is applied when a profile opens (the developer's own phone is left alone). */
     suspend fun apply(vm: AppViewModel, ctx: Context) {
-        if (BuildConfig.IS_TV || Public.dev) return
-        val s = fetch() ?: return
-        for (u in s.addons) if (vm.addons.value.none { it.baseUrl == Api.normalize(u) }) runCatching { vm.installAddon(u) }
+        if (BuildConfig.IS_TV) return
         CsPlugins.init(ctx)
+        val pr = CsPlugins.prefsOrNull()
+        // The developer's phone is never overwritten: once it has been seen as the developer's, it stays that way
+        // (early at start-up the account isn't known yet, and the published set used to replace this phone's plugins).
+        if (Public.dev) { pr?.edit()?.putBoolean("devPhone", true)?.apply(); return }
+        if (pr?.getBoolean("devPhone", false) == true) return
+        val s = fetch() ?: return
+        // Applied once per published version, so a phone's own changes aren't undone at every start.
+        val fresh = s.at > (pr?.getLong("officialAt", 0L) ?: 0L)
+        for (u in s.addons) if (vm.addons.value.none { it.baseUrl == Api.normalize(u) }) runCatching { vm.installAddon(u) }
         val missing = s.csRepos.filter { r -> CsPlugins.repos.value.none { it.url == r } }
         missing.forEach { CsPlugins.addRepo(it) }
         if (missing.isNotEmpty() || CsPlugins.catalog.value.isEmpty()) runCatching { CsPlugins.refresh() }
         withContext(Dispatchers.Main) {
-            if (s.csEnabled.isNotEmpty() && s.csEnabled.toSet() != CsPlugins.enabled.value) CsPlugins.setEnabledSet(s.csEnabled.toSet())
+            if (fresh && s.csEnabled.isNotEmpty() && s.csEnabled.toSet() != CsPlugins.enabled.value) CsPlugins.setEnabledSet(s.csEnabled.toSet(), "published set")
+            if (fresh) pr?.edit()?.putLong("officialAt", s.at)?.apply()
             if (s.qsCs.isNotBlank()) vm.setText("qsCs", s.qsCs)
             if (s.qs4k.isNotBlank()) vm.setText("qs4k", s.qs4k)
         }

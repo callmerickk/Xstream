@@ -212,7 +212,9 @@ fun HomeScreen(
     // Films only in cinemas so far (no web / Blu-ray release) stay off Home; search still finds them.
     val cinemaHidden by CinemaOnly.hidden.collectAsState()
     LaunchedEffect(Unit) { if (!BuildConfig.IS_TV) CinemaOnly.load(vm.appContext) }
-    val cinemaFrozen = remember(allShelves) { HomeFreeze.hidden(cinemaHidden) }
+    // Every row Home shows is checked (rows pushed by the developer or from another layout weren't always).
+    LaunchedEffect(allShelves) { if (!BuildConfig.IS_TV && allShelves.isNotEmpty()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CinemaOnly.check(vm, allShelves.flatMap { it.items }) } } }
+    val cinemaFrozen = remember(allShelves, cinemaHidden) { HomeFreeze.hidden(cinemaHidden) }
     val arranged = remember(allShelves, rowsOrder, rowsHidden, shuffleOn, cinemaFrozen) {
         val hidden = rowsHidden.split("|").toSet()
         // Fresh every time the app starts (same order while it stays open): each row is shuffled once per launch.
@@ -1367,6 +1369,7 @@ object HomeFreeze {
         if (k != key) { key = k; snap = live; hid = null; recSnap = emptyList() }
         return snap
     }
-    fun hidden(now: Set<String>): Set<String> = hid ?: now.also { hid = it }
+    /** Films found to be unreleased are taken off (never put back during the session); the rest of Home stays frozen. */
+    fun hidden(now: Set<String>): Set<String> = ((hid ?: emptySet()) + now).also { hid = it }
     fun recs(live: List<Meta>): List<Meta> { if (recSnap.isEmpty() && live.isNotEmpty()) recSnap = live; return recSnap }
 }

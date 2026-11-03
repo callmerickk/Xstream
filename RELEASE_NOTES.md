@@ -1,3 +1,15 @@
+Xstream 0.8.1
+
+• Your switched-on plugins can't disappear any more, and they update themselves every few hours.
+• VegaMovies finds titles again: when its site moves, the plugin picks up the new address by itself.
+• Changing quality from the Quality menu fades in at the same frame, without a loading screen.
+• After a switch the picture plays smoothly again (no dropped frames on 60 fps and 1080p files).
+• No HDR is respected everywhere, including Upgrade to 4K and automatic swaps.
+• After you pick a stream or upgrade, the player never switches back by itself.
+• Upgrade to 4K keeps looking for up to 3 minutes.
+• Films not out yet stay off Home, and no green microphone dot while a video plays.
+• Continue Watching no longer fails after reopening the app.
+
 Xstream 0.8.0
 
 • Xstream now works on every phone (64-bit and 32-bit). The Live server will come back later as its own app, Xstream Live.

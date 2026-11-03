@@ -255,9 +255,10 @@ fun App(vm: AppViewModel = viewModel()) {
         val musicNow by MusicPlayer.openNow.collectAsState()
         val songOn = MusicPlayer.now.collectAsState().value.playing
         val micHeld by MicHold.n.collectAsState()
-        LaunchedEffect(profile?.id, aiBusy, callMic, appResumed, texts["wakeOn"], musicLib, musicNow, songOn, micHeld) {
+        LaunchedEffect(profile?.id, aiBusy, callMic, appResumed, texts["wakeOn"], musicLib, musicNow, songOn, micHeld, onPlayer) {
             WakeWord.onName = { if (!voiceOpen) { AiPlayerBus.duck(); voiceOpen = true } }
-            val on = !BuildConfig.IS_TV && profile != null && !aiBusy && !callMic && appResumed && !musicLib && !musicNow && !songOn && micHeld == 0 && isOn(texts["wakeOn"] ?: "yes")
+            // Not during a video either: the listening microphone showed Android's green privacy dot over the film.
+            val on = !BuildConfig.IS_TV && profile != null && !onPlayer && !aiBusy && !callMic && appResumed && !musicLib && !musicNow && !songOn && micHeld == 0 && isOn(texts["wakeOn"] ?: "yes")
             if (on) { delay(700); WakeWord.start(buddyCtx) } else WakeWord.stop()
         }
         if (profile == null && gateOpen) CloudGate(onDone = { gateOpen = false })
@@ -461,11 +462,13 @@ fun App(vm: AppViewModel = viewModel()) {
         // CloudStream plugins "kept warm" (Source Test › CloudStream): loaded and woken in the background.
         // Plugin mode: every switched-on plugin is loaded and woken at start, so a title page gets its links at once.
         LaunchedEffect(profile?.id) {
-            if (profile == null || !(vm.store("csWarm") == "yes" || vm.pluginMode())) return@LaunchedEffect
+            if (profile == null || BuildConfig.IS_TV) return@LaunchedEffect
             // Warm-up starts a few seconds after Home is up (the app opens smoothly first). A title played before then
-            // starts its own plugins at once, so playing is never slower.
+            // starts its own plugins at once, so playing is never slower. Plugins are checked (repaired, updated) and
+            // woken on every start whenever any are switched on.
             delay(4_000)
-            runCatching { CsPlugins.init(vm.appContext); if (CsPlugins.catalog.value.isEmpty()) CsPlugins.refresh(); CsPlugins.warmAll() }
+            runCatching { CsPlugins.init(vm.appContext); CsPlugins.upkeep(); if (CsPlugins.enabled.value.isNotEmpty()) CsPlugins.warmAll() }
+            if (!(vm.store("csWarm") == "yes" || vm.pluginMode())) return@LaunchedEffect
             // Plugin mode: the first two Continue Watching titles get their Quick Play links fetched now (kept 10 minutes),
             // so tapping them starts at once.
             suspend fun cwAhead() {

@@ -105,14 +105,15 @@ object CsPlugins {
     suspend fun refresh(): String? = withContext(Dispatchers.IO) {
         val out = ArrayList<CsPluginEntry>(); val errors = ArrayList<String>()
         val named = ArrayList<CsRepo>()
+        val failedRepos = HashSet<String>()
         for (r in repos.value) {
             val o = runCatching { Api.json.parseToJsonElement(Api.get(r.url)) as JsonObject }.getOrNull()
-            if (o == null) { errors += "can't read ${r.url.substringAfter("//").take(50)}"; named += r; continue }
+            if (o == null) { errors += "can't read ${r.url.substringAfter("//").take(50)}"; named += r; failedRepos += r.url; continue }
             fun str(k: String) = runCatching { o[k]?.jsonPrimitive?.contentOrNull }.getOrNull()
             named += r.copy(name = str("name") ?: r.name, icon = str("iconUrl"))
             val lists = (o["pluginLists"] as? JsonArray)?.mapNotNull { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }.orEmpty()
             for (l in lists) {
-                val arr = runCatching { Api.json.parseToJsonElement(Api.get(l)) as JsonArray }.getOrNull() ?: run { errors += "can't read a plugin list"; null } ?: continue
+                val arr = runCatching { Api.json.parseToJsonElement(Api.get(l)) as JsonArray }.getOrNull() ?: run { errors += "can't read a plugin list"; failedRepos += r.url; null } ?: continue
                 arr.mapNotNull { it as? JsonObject }.forEach { p ->
                     fun s(k: String) = runCatching { p[k]?.jsonPrimitive?.contentOrNull }.getOrNull()
                     val internal = s("internalName") ?: s("name") ?: return@forEach
@@ -125,7 +126,11 @@ object CsPlugins {
         }
         withContext(Dispatchers.Main) {
             repos.value = named
-            catalog.value = out
+            // A repository that couldn't be read keeps its plugins from last time (they used to vanish from the list).
+            val kept = catalog.value.filter { it.repo in failedRepos && out.none { o -> o.key == it.key } }
+            catalog.value = out + kept
+            prefs?.edit()?.putLong("refreshedAt", System.currentTimeMillis())?.apply()
+            if (kept.isNotEmpty()) ActLog.add("PLUGIN", "kept ${kept.size} plugins from repositories that didn't answer")
             // First time: the plugins you chose are switched on.
             if (prefs?.getBoolean("seeded", false) != true) {
                 enabled.value = enabled.value + out.filter { it.internalName in defaultOn }.map { it.key }
@@ -159,9 +164,52 @@ object CsPlugins {
     }
 
     /** The developer's published plugin set: exactly these switched on (Official.apply). */
-    fun setEnabledSet(keys: Set<String>) { enabled.value = keys; save(); loaded.keys.filter { it !in keys }.forEach { loaded.remove(it) } }
+    fun setEnabledSet(keys: Set<String>, why: String = "") {
+        logChange(enabled.value, keys, why); enabled.value = keys; save(); loaded.keys.filter { it !in keys }.forEach { loaded.remove(it) }
+        prefs?.edit()?.putStringSet("enabledBackup", keys)?.apply()
+    }
 
-    fun setEnabled(key: String, on: Boolean) { enabled.value = if (on) enabled.value + key else enabled.value - key; save(); if (!on) loaded.remove(key) }
+    fun setEnabled(key: String, on: Boolean) {
+        val n = if (on) enabled.value + key else enabled.value - key
+        logChange(enabled.value, n, "you"); enabled.value = n; save(); if (!on) loaded.remove(key)
+        prefs?.edit()?.putStringSet("enabledBackup", n)?.apply()
+    }
+
+    /** Every change to the switched-on plugins goes in the log, with who made it. */
+    private fun logChange(old: Set<String>, new: Set<String>, why: String) {
+        val off = old - new; val on = new - old
+        if (off.isEmpty() && on.isEmpty()) return
+        fun n(k: String) = catalog.value.firstOrNull { it.key == k }?.name ?: k.substringAfterLast('|')
+        ActLog.add("PLUGIN", "plugins changed (${why.ifBlank { "app" }})" + (if (on.isNotEmpty()) " · on: " + on.joinToString { n(it) } else "") + (if (off.isNotEmpty()) " · off: " + off.joinToString { n(it) } else ""))
+    }
+
+    /**
+     * Self-repair: if the switched-on set shrank without you doing it (only one or two left while the last set you
+     * chose had more), the last set is put back. Plugins also update themselves every 6 hours.
+     */
+    suspend fun upkeep() {
+        val p = prefs ?: return
+        val backup = p.getStringSet("enabledBackup", null)?.toSet()
+        if (backup == null) p.edit().putStringSet("enabledBackup", enabled.value).apply()
+        else if (backup.size >= 3 && enabled.value.size < backup.size && (backup - enabled.value).size >= 2) {
+            withContext(Dispatchers.Main) {
+                ActLog.add("PLUGIN", "switched-on plugins dropped from ${backup.size} to ${enabled.value.size} — putting them back")
+                enabled.value = enabled.value + backup; save()
+            }
+        }
+        val stale = System.currentTimeMillis() - p.getLong("refreshedAt", 0L) > 6 * 3600_000L
+        if (catalog.value.isEmpty() || stale) runCatching { refresh() }.getOrNull()?.let { ActLog.add("PLUGIN", "update check: $it") }
+    }
+
+    /** The plugin (catalog key) a provider came from. */
+    fun keyOf(api: com.lagradost.cloudstream3.MainAPI): String? = loaded.entries.firstOrNull { (_, r) -> r.apis.any { it === api } }?.key
+
+    /** Loads a plugin again from scratch: a fresh copy reads its site's current address again. */
+    suspend fun reload(key: String): CsBridge.Registered? {
+        val e = catalog.value.firstOrNull { it.key == key } ?: return null
+        loaded.remove(key)
+        return runCatching { ensureLoaded(e) }.getOrNull()
+    }
 
     private fun fileFor(e: CsPluginEntry): File {
         val dir = File(appCtx.filesDir, "cs/" + Integer.toHexString(e.repo.hashCode())).apply { mkdirs() }
@@ -189,6 +237,10 @@ object CsPlugins {
         val reg = loadOffMain(e, f)
         loaded[e.key] = reg
         setStatus(e.key, readyText(reg))
+        // Which site address each provider ended up with (a dead address is the usual reason a plugin finds nothing).
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+            reg.apis.forEach { a -> runCatching { kotlinx.coroutines.withTimeoutOrNull(20_000) { a.mainUrl } }.getOrNull()?.let { ActLog.add("CSLOAD", "${e.name} v${e.version} · ${a.name} → $it") } }
+        }
         reg
     }
 

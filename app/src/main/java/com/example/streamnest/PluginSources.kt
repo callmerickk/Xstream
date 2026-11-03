@@ -91,14 +91,21 @@ object PluginSources {
             val clean = CsTester.cleanTitle(r.name)
             val bq = bare(q); val bc = bare(clean)
             var sc = if (norm(clean) == norm(q.replace("&", " and ")) || core(clean) == core(q) || (bq.length >= 4 && bc == bq)) 1.0
-            else if (bq.length >= 6 && (bc.startsWith(bq) || bq.startsWith(bc) && bc.length >= 6) && kotlin.math.abs(bc.length - bq.length) <= 12) 0.85 else {
+            else if (bq.length >= 6 && bc.startsWith(bq) && kotlin.math.abs(bc.length - bq.length) <= 12) 0.85 else {
                 val a = words(clean); val b = words(q)
                 if (a.isEmpty() || b.isEmpty()) 0.0 else a.intersect(b).size.toDouble() / a.union(b).size * 0.9
             }
             val y = yearOf(r)
             // A series' year is when it first aired: a different one is another show with the same name.
-            if (wantYear != null && y != null) sc += when { kotlin.math.abs(y - wantYear) <= 1 -> 0.2; series -> -0.35; else -> -0.4 }
-            if (series) Regex("(?i)season\\s*(\\d+)|\\bS(\\d{1,2})\\b").find(r.name)?.let { m ->
+            // A series' page often shows its latest season's year (Game of Thrones "2019"): a later year with the exact
+            // name is only a small minus; an earlier one is another show.
+            if (wantYear != null && y != null) sc += when { kotlin.math.abs(y - wantYear) <= 1 -> 0.2; series && sc >= 1.0 && y > wantYear -> -0.1; series -> -0.35; else -> -0.4 }
+            // "S1-S12" / "Season 1-5": every season in the range is there.
+            val range = if (series) Regex("(?i)(?:season|\\bS)\\s*(\\d{1,2})\\s*(?:-|–|to)\\s*(?:S|season)?\\s*(\\d{1,2})\\b").find(r.name) else null
+            if (range != null) {
+                val a = range.groupValues[1].toIntOrNull() ?: 0; val b = range.groupValues[2].toIntOrNull() ?: 0
+                sc += if ((season ?: 1) in a..b) 0.25 else -0.6
+            } else if (series) Regex("(?i)season\\s*(\\d+)|\\bS(\\d{1,2})\\b").find(r.name)?.let { m ->
                 val n = m.groupValues[1].ifEmpty { m.groupValues[2] }.toIntOrNull()
                 if (n != null) sc += if (n == (season ?: 1)) 0.25 else -0.6
             }
@@ -143,8 +150,10 @@ object PluginSources {
 
     /** One provider's links for this title; every step is logged (Activity log › CSPLAY) so a silent plugin can be traced. */
     suspend fun linksFrom(api: MainAPI, name: String, year: Int?, series: Boolean, season: Int?, episode: Int?,
-                          onLink: ((StreamItem) -> Unit)? = null): List<StreamItem> {
+                          onLink: ((StreamItem) -> Unit)? = null, retried: Boolean = false): List<StreamItem> {
         fun log(s: String) = ActLog.add("CSPLAY", "${api.name}: $s")
+        val tSearch = System.currentTimeMillis()
+        var searchErr = false
         val nsKey = NoStream.key(name, season, episode)
         if (apiKey(api) in noSearch || dead(apiKey(api))) return emptyList()          // a browse-only provider (Disney / Marvel shelves…)
         val noKey = "${apiKey(api)}|${core(name)}|$year|$series"
@@ -161,7 +170,7 @@ object PluginSources {
                 paged?.items ?: try { api.search(q) } catch (e: NotImplementedError) { if (paged == null) throw e else null }
             }
         } catch (e: NotImplementedError) { throw e
-        } catch (e: Throwable) { log("search \"$q\" failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
+        } catch (e: Throwable) { searchErr = true; log("search \"$q\" failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
         // Each name in turn until one finds this title (the first gets 20 s, the others 12 s).
         var found: List<SearchResponse>? = null
         var cands: List<SearchResponse> = emptyList()
@@ -172,7 +181,23 @@ object PluginSources {
                 cands = ranked(found, name, year, series, season)
                 if (cands.isNotEmpty()) { if (i > 0) log("found with \"$q\""); break }
             }
-        } catch (e: NotImplementedError) { noSearch += apiKey(api); log("has no search — skipped from now on"); return emptyList() }
+        } catch (e: NotImplementedError) {
+            // Only a provider that refuses at once (no request made) has no search. One that fails after trying its site
+            // (a dead address answers 404, then the plugin errors) is reloaded below instead — never switched off.
+            if (System.currentTimeMillis() - tSearch < 1_500 && !searchErr) { noSearch += apiKey(api); log("has no search — skipped from now on"); return emptyList() }
+            log("search broke (${e.javaClass.simpleName}) after trying the site"); searchErr = true
+        }
+        if (found == null && searchErr && !retried) {
+            // The site address it used looks dead: a fresh copy of the plugin reads the current address again (once per 10 min).
+            val key = CsPlugins.keyOf(api)
+            val last = reloadedAt[key ?: ""] ?: 0L
+            if (key != null && System.currentTimeMillis() - last > 10 * 60_000L) {
+                reloadedAt[key] = System.currentTimeMillis()
+                log("reloading the plugin to get its current site address, then searching again")
+                val fresh = CsPlugins.reload(key)?.apis?.firstOrNull { it.name == api.name }
+                if (fresh != null) return linksFrom(fresh, name, year, series, season, episode, onLink, retried = true)
+            }
+        }
         if (found == null) { log("search gave nothing (timeout or no answer)"); NoStream.note(nsKey, api.name, "no answer from the site"); return emptyList() }
         noteEmpty(apiKey(api), found.isEmpty())
         if (cands.isEmpty()) { noTitle[noKey] = System.currentTimeMillis(); NoStream.note(nsKey, api.name, "${found.size} results, none matched"); log("${found.size} results, none matched \"$name\"" + found.take(4).joinToString("; ", " — top: ") { it.name.take(60) }); return emptyList() }
@@ -182,7 +207,8 @@ object PluginSources {
         for (c in cands.take(5)) {
             val l = try { withDeadline(20_000) { api.load(c.url) } } catch (e: Throwable) { log("load failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null } ?: continue
             val ly = runCatching { l.year }.getOrNull()
-            if (year != null && ly != null && kotlin.math.abs(ly - year) > 1 && (series || c !== cands.take(5).last())) { log("\"${c.name.take(60)}\" is from $ly, not $year — trying the next result"); continue }
+            val offYear = if (series) ly != null && year != null && ly < year - 1 else ly != null && year != null && kotlin.math.abs(ly - year) > 1
+            if (offYear && (series || c !== cands.take(5).last())) { log("\"${c.name.take(60)}\" is from $ly, not $year — trying the next result"); continue }
             hit = c; lr = l; break
         }
         if (lr == null) { NoStream.note(nsKey, api.name, "matched but the page didn't load"); log("matched \"${hit.name.take(60)}\" but its page didn't load"); return emptyList() }
@@ -277,6 +303,7 @@ object PluginSources {
     }.flowOn(kotlinx.coroutines.Dispatchers.IO)
 
     private val noSearch = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val reloadedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
      * One answer per provider + title for 10 minutes, shared by everything (title page, Quick Play, Upgrade to 4K, Play
@@ -351,9 +378,11 @@ object PluginSources {
                 } }
             } }
             if (nuvio.isNotEmpty()) jobs += launch {
-                val all = ArrayList<StreamItem>()
-                runCatching { nuvio(ctx, vm, meta, id).collect { all.clear(); all += it } }
-                add(all.toList())
+                // Each Nuvio link is passed on the moment it comes (they used to wait for the slowest Nuvio plugin,
+                // and arrived after the player had already given up).
+                val seen = HashSet<String>()
+                runCatching { nuvio(ctx, vm, meta, id).collect { l -> val n = l.filter { it.stream.url?.let { u -> seen.add(u) } == true }; if (n.isNotEmpty()) add(n, delta = 0) } }
+                add(emptyList())
             }
         }
     }.flowOn(kotlinx.coroutines.Dispatchers.IO)

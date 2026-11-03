@@ -308,9 +308,22 @@ object CinemaOnly {
         hidden.value = p(ctx).all.mapNotNull { (k, v) -> (v as? String)?.takeIf { it.startsWith("cinema:") && now - (it.removePrefix("cinema:").toLongOrNull() ?: 0) < 2 * 86_400_000L }?.let { k } }.toSet()
     }
 
+    /** Titles asked for while a check was already running: checked right after it (they used to be skipped). */
+    private val queued = java.util.Collections.synchronizedList(ArrayList<Meta>())
     suspend fun check(vm: AppViewModel, metas: List<Meta>) {
-        val key = vm.tmdbKey(); if (key.isEmpty() || !running.compareAndSet(false, true)) return
+        val key = vm.tmdbKey(); if (key.isEmpty()) return
+        if (!running.compareAndSet(false, true)) { queued += metas; return }
         try {
+            checkNow(vm, key, metas)
+            while (true) {
+                val more = synchronized(queued) { queued.toList().also { queued.clear() } }
+                if (more.isEmpty()) break
+                checkNow(vm, key, more)
+            }
+        } finally { running.set(false) }
+    }
+    private suspend fun checkNow(vm: AppViewModel, key: String, metas: List<Meta>) {
+        run {
             val pr = p(vm.appContext)
             val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
             val now = System.currentTimeMillis()
@@ -328,7 +341,7 @@ object CinemaOnly {
                     hidden.value = if (v) hidden.value - id else hidden.value + id
                 } } finally { sem.release() } } }
             }
-        } finally { running.set(false) }
+        }
     }
 
     /** true = out on web / disc / TV somewhere (or not a cinema release at all); false = only in cinemas so far. */

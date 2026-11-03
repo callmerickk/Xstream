@@ -13,6 +13,17 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.1", "3 Nov 2026", "Plugins stay on, VegaMovies back, smoother switching", listOf(
+        "Your switched-on plugins can't disappear any more, and they update themselves every few hours",
+        "VegaMovies finds titles again: when its site moves, the plugin picks up the new address by itself",
+        "Changing quality from the Quality menu fades in at the same frame, without a loading screen",
+        "After a switch the picture plays smoothly again (no dropped frames on 60 fps and 1080p files)",
+        "No HDR is respected everywhere, including Upgrade to 4K and automatic swaps",
+        "After you pick a stream or upgrade, the player never switches back by itself",
+        "Upgrade to 4K keeps looking for up to 3 minutes",
+        "Films not out yet stay off Home; no green microphone dot while a video plays",
+        "Continue Watching no longer fails after reopening the app",
+    )),
     Release("0.8.0", "3 Nov 2026", "One app for every phone, smarter plugins, Xstream Music like YouTube Music", listOf(
         "Xstream now works on every phone (64-bit and 32-bit). The Live server moves to a separate app later",
         "Plugins are never switched off and search with several spellings, so titles like Agents of S.H.I.E.L.D. are found",
@@ -425,6 +436,16 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.1", "3 Nov 2026", "Plugin set safety, Vega reload, SWITCH log, HDR rule, surface handoff", listOf(
+        "Official.apply never on the dev phone (devPhone flag) and once per published version; refresh keeps plugins of unreachable repos; PLUGIN change log; self-repair from enabledBackup; upkeep refresh every 6 h",
+        "linksFrom: NotImplementedError after a site request = reload plugin (fresh urls.json) and retry, not noSearch; CSLOAD logs each provider's mainUrl",
+        "SWITCH log (auto/you, why, from → to, position, faded/reloaded/blocked); fadeTo for Quality menu; byHand after Upgrade/Quality",
+        "HdrRule: names + real colorTransfer; blocked in swaps, 4K search, upgrades; back to previous on HDR picture",
+        "ottSwapTo: seekable probe, then moves the player onto the main SurfaceView after the fade; dropped-frame + decoder logging",
+        "4K search re-asks every 30 s for 3 min, expired 403 links retried; Nuvio links streamed as they come",
+        "Reload freeze frame sharp, capsule after 2.5 s; CinemaOnly queue + Home check + union freeze; wake word off in player; local 127.0.0.1 links never saved",
+        "Matching: one-way prefix, season ranges S1-S12, series later-year results allowed",
+    )),
     Release("0.8.0", "3 Nov 2026", "Universal, plugin search, home freeze, fade upgrades, music", listOf(
         "Phone flavor: HAS_LIVE false, HAS_MUSIC true, arm64 + armv7; build/smoke without the Live server; plan in docs/XSTREAM-LIVE.md",
         "PluginSources: never bench (dead() false), query variants (dots/possessive/colon/&), bare() matching, 5 load candidates, musicOnly providers skipped, NoStream notes",

@@ -399,7 +399,8 @@ fun warmUpLink(url: String) {
 }
 
 /** Copies the frame on screen (VLC or ExoPlayer surface) so it can stay visible while another link loads. */
-fun captureFrame(root: View, onDone: (android.graphics.Bitmap?) -> Unit) {
+fun captureFrame(root: View, full: Boolean = false, onDone: (android.graphics.Bitmap?) -> Unit) {
+    val d = if (full) 1 else 2
     fun find(v: View, pick: (View) -> Boolean): View? {
         if (pick(v)) return v
         if (v is android.view.ViewGroup) for (i in 0 until v.childCount) find(v.getChildAt(i), pick)?.let { return it }
@@ -407,11 +408,11 @@ fun captureFrame(root: View, onDone: (android.graphics.Bitmap?) -> Unit) {
     }
     try {
         (find(root) { it is android.view.TextureView && it.isAvailable } as? android.view.TextureView)?.let { tv ->
-            onDone(tv.getBitmap(tv.width / 2, tv.height / 2)); return
+            onDone(tv.getBitmap(tv.width / d, tv.height / d)); return
         }
         val sv = find(root) { it is android.view.SurfaceView && it.width > 0 && it.visibility == View.VISIBLE } as? android.view.SurfaceView
         if (sv == null || !sv.holder.surface.isValid || android.os.Build.VERSION.SDK_INT < 24) { onDone(null); return }
-        val bmp = android.graphics.Bitmap.createBitmap((sv.width / 2).coerceAtLeast(1), (sv.height / 2).coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
+        val bmp = android.graphics.Bitmap.createBitmap((sv.width / d).coerceAtLeast(1), (sv.height / d).coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
         android.view.PixelCopy.request(sv, bmp, { r -> onDone(if (r == android.view.PixelCopy.SUCCESS) bmp else null) }, android.os.Handler(android.os.Looper.getMainLooper()))
     } catch (e: Throwable) { onDone(null) }
 }
@@ -720,6 +721,13 @@ fun PlayerScreen(
     var switchLabel by remember { mutableStateOf<String?>(null) }
     var frozen by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var videoView by remember { mutableStateOf<View?>(null) }
+    /** The main video view (a SurfaceView inside): after a fade the new player moves back onto it (smooth 60 fps). */
+    val mainPv = remember { arrayOfNulls<PlayerView>(1) }
+    /** The picture turned out HDR while "no HDR" is set, after a switch the app made: go back (handled further down). */
+    var hdrHit by remember { mutableStateOf(false) }
+    /** Where an app-made switch came from (for going back if the new picture is HDR). */
+    var hdrBackTo by remember { mutableStateOf<String?>(null) }
+    val hdrBlocked = remember { HashSet<String>() }
 
     fun curPos(): Long = if (usingVlc) vlc?.time ?: 0L else player.currentPosition
     fun curDur(): Long = if (usingVlc) vlc?.length ?: 0L else player.duration.coerceAtLeast(0L)
@@ -825,7 +833,7 @@ fun PlayerScreen(
         if (firstFrame) {
             switching = true
             switchLabel = label
-            videoView?.let { vv -> captureFrame(vv) { bmp -> if (switching) frozen = bmp } }
+            videoView?.let { vv -> captureFrame(vv, full = true) { bmp -> if (switching) frozen = bmp } }
         }
         StreamHeaders.active = StreamHeaders.forUrl(n.url)
         resumeAt = startMs
@@ -1764,7 +1772,24 @@ fun PlayerScreen(
                 if (ffNow) PlayTiming.late("audio now: ${f.sampleMimeType?.substringAfter('/') ?: "?"} · ${f.channelCount} ch${if (f.bitrate > 0) " · ${f.bitrate / 1000} kbps" else ""}${f.language?.let { " · $it" } ?: ""}")
             }
             override fun onVideoInputFormatChanged(e: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, f: androidx.media3.common.Format, d: androidx.media3.exoplayer.DecoderReuseEvaluation?) {
-                if (ffNow) PlayTiming.late("video now: ${f.width}×${f.height}${if (f.bitrate > 0) " · %.1f Mbps".format(f.bitrate / 1e6) else ""}")
+                val hdr = HdrRule.isHdr(f)
+                if (ffNow) PlayTiming.late("video now: ${f.width}×${f.height}${if (f.bitrate > 0) " · %.1f Mbps".format(f.bitrate / 1e6) else ""}${if (f.frameRate > 0) " · ${"%.0f".format(f.frameRate)} fps" else ""} · ${if (hdr) "HDR" else "SDR"} · ${f.sampleMimeType?.substringAfter('/') ?: "?"}")
+                if (hdr && HdrRule.banned(vm)) {
+                    ActLog.add("SWITCH", "HDR picture while \"no HDR\" is set (${now?.url?.let { itemFor(it) }?.let { Public.streamName(it) } ?: "?"})" + if (hdrBackTo != null) " — going back" else " — no earlier stream to go back to")
+                    if (hdrBackTo != null) hdrHit = true
+                }
+            }
+            override fun onVideoDecoderInitialized(e: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, name: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
+                PlayTiming.late("video decoder: $name (${if (shadow === player) "texture view" else "surface view"})")
+            }
+            var dropped = 0; var dropT = SystemClock.elapsedRealtime()
+            override fun onDroppedVideoFrames(e: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
+                dropped += droppedFrames
+                val t = SystemClock.elapsedRealtime()
+                if (t - dropT >= 10_000) {
+                    if (dropped >= 10) PlayTiming.late("frames dropped: $dropped in ${(t - dropT) / 1000} s (${player.videoFormat?.let { "${it.height}p ${"%.0f".format(it.frameRate)} fps ${it.sampleMimeType?.substringAfter('/')}" } ?: "?"}, ${if (shadow === player) "texture view" else "surface view"})")
+                    dropped = 0; dropT = t
+                }
             }
         }
         player.addAnalyticsListener(l)
@@ -1908,21 +1933,32 @@ fun PlayerScreen(
         PlayTiming.late("4K: asking ${names.size} plugin(s) for a 4K link")
         val pool = java.util.concurrent.ConcurrentHashMap<String, StreamItem>()
         var done = false
-        val gather = scope.launch {
+        fun ask() = scope.launch {
             runCatching { vm.streamsFlow(type, p.key, only = names).collect { (l, d) -> l.forEach { s0 -> s0.stream.url?.let { u -> pool.putIfAbsent(u, s0) } }; done = d } }
             done = true
         }
+        var gather = ask()
+        var asks = 1; var lastAsk = SystemClock.elapsedRealtime()
         try {
             val tried = HashSet<String>()
             val t0 = SystemClock.elapsedRealtime()
             while (SystemClock.elapsedRealtime() - t0 < 180_000 && hdReady["4k"].isNullOrEmpty()) {
                 if (buffering) { delay(1_000); continue }
                 val cands = vm.rankedCandidates(vm.filtered(pool.values.toList()).list.filter { it.effectiveRes() >= 2160 && it.stream.url !in tried }, "4k", quickOnly = false)
-                    .filter { !Ranker.isDead(it) && !Ranker.keepsFailing(it) && !it.unplayableHere() }
+                    .filter { !Ranker.isDead(it) && !Ranker.keepsFailing(it) && !it.unplayableHere() && !(HdrRule.banned(vm) && (HdrRule.named(it) || it.stream.url in hdrBlocked)) }
                     .sortedWith(compareBy<StreamItem>({ if (it.isVega() && vm.langRank(it) < vm.qsLangs().size) 0 else 1 }, { vm.langRank(it) }, { PicturePref.rank(vm, it) }))
                 if (cands.isNotEmpty() && tried.isEmpty()) PlayTiming.late("4K: ${cands.size} candidate(s), best first: " + cands.take(3).joinToString(" / ") { "${Public.streamName(it)} (${it.languagesOrOriginal().joinToString("+")})" })
                 val c = cands.firstOrNull()
-                if (c == null) { if (done) break; delay(1_500); continue }
+                if (c == null) {
+                    // Nothing yet: the plugins are asked again every 30 s for the full 3 minutes (slow sites answer late,
+                    // and links that expired — 403 — come back fresh), instead of giving up after the first answer.
+                    if (done && SystemClock.elapsedRealtime() - lastAsk >= 30_000) {
+                        gather.cancel(); PluginSources.forget(p.key); done = false; asks++; lastAsk = SystemClock.elapsedRealtime()
+                        PlayTiming.late("4K: asking the plugins again (round $asks, ${pool.size} links so far)")
+                        gather = ask()
+                    }
+                    delay(1_500); continue
+                }
                 val url = c.stream.url!!
                 tried += url
                 val label = "${Prepare.qualityName(c.effectiveRes())} · ${c.addonName.removePrefix("CloudStream · ")}"
@@ -1931,7 +1967,10 @@ fun PlayerScreen(
                 val pr = StreamCache.probe(url)
                 if (!pr.ok || !pr.seekable || pr.size <= 0) {
                     if (pr.ok && !pr.seekable) Ranker.markUnseekable(url)
-                    PlayTiming.late("4K: $label refused (${pr.error ?: "HTTP ${pr.status}"}${if (pr.ok && !pr.seekable) ", can't jump inside" else ""})"); continue
+                    PlayTiming.late("4K: $label refused (${pr.error ?: "HTTP ${pr.status}"}${if (pr.ok && !pr.seekable) ", can't jump inside" else ""})")
+                    // An expired link (403/410): asked again soon, so a fresh one can come back.
+                    if (pr.status == 403 || pr.status == 410) { pool.remove(url); lastAsk = 0L }
+                    continue
                 }
                 // A real jump test: a piece from the middle must come back (servers that only send the start can't seek —
                 // they'd show the first picture after every jump).
@@ -2404,7 +2443,22 @@ fun PlayerScreen(
         }
     }
     /** Play another Quick Start file (quality or language change) from the same second. */
-    fun switchTo(st: StreamItem, label: String? = null) {
+    fun descr(u: String?, live: Boolean = false): String {
+        val it = u?.let { x -> itemFor(x) } ?: return u?.substringAfter("//")?.take(50) ?: "-"
+        val f = if (live && !usingVlc) runCatching { player.videoFormat }.getOrNull() else null
+        val hdr = if (f != null) HdrRule.isHdr(f) else HdrRule.named(it)
+        return "${it.addonName.removePrefix("CloudStream · ")} · ${Public.streamName(it).take(60)} · ${f?.height?.takeIf { h -> h > 0 } ?: it.effectiveRes()}p ${if (hdr) "HDR" else "SDR"}" +
+            (f?.frameRate?.takeIf { r -> r > 0 }?.let { r -> " ${"%.0f".format(r)}fps" } ?: "") + " · " + it.languagesOrOriginal().joinToString("+")
+    }
+    /** One line per stream change: who did it (the player = auto, or you), why, from → to, where, and how it went. */
+    fun swLog(auto: Boolean, why: String, toUrl: String?, how: String) =
+        ActLog.add("SWITCH", "${if (auto) "auto" else "you"} · $why · at ${fmtTime(curPos())}\n  from: ${descr(now?.url, live = true)}\n  to:   ${descr(toUrl)} · $how")
+    fun switchTo(st: StreamItem, label: String? = null, auto: Boolean = false, why: String? = null, upgrade: Boolean = false) {
+        if ((auto || upgrade) && HdrRule.banned(vm) && (HdrRule.named(st) || st.stream.url in hdrBlocked)) {
+            swLog(auto, (why ?: label ?: "switch") + " — blocked", st.stream.url, "not switched: HDR isn't allowed"); return
+        }
+        swLog(auto, why ?: label ?: "switch", st.stream.url, "reloaded from the same second")
+        hdrBackTo = if (auto || upgrade) now?.url else null
         val keep = keepPos()
         val addonSubs = now?.subs.orEmpty().filter { sub -> st.stream.subtitles.orEmpty().none { it.url == sub.url } }
         load(Now(st.stream.url!!, st.stream.subtitles.orEmpty() + addonSubs, st.stream.name ?: st.addonName, st.addonName), keep, label)
@@ -2421,7 +2475,7 @@ fun PlayerScreen(
         upCooldownUntil = SystemClock.elapsedRealtime() + 60_000
         HdMemo.forget(ctx, p.key)
         Snack.show("The HD file stopped — back to the quick server")
-        switchTo(from, "Back to the quick server")
+        switchTo(from, "Back to the quick server", auto = true, why = "the upgraded file failed ($why)")
         return true
     }
     // ───── Plugin mode: playing MovieBox because Netflix / Prime Video / Hotstar / MPlayer weren't ready yet ─────
@@ -2438,10 +2492,17 @@ fun PlayerScreen(
      * Heavy files (60 fps, 4K): "freeze fade" — the old picture stops on its frame and the new one fades in over it,
      * so only one video is decoded at a time (no stutter).
      */
-    suspend fun ottSwapTo(c: StreamItem, asked: Boolean = false): Boolean {
+    suspend fun ottSwapTo(c: StreamItem, asked: Boolean = false, why: String = if (asked) "Upgrade" else "OTT swap"): Boolean {
         val url = c.stream.url ?: return false
         val name = Public.streamName(c)
         val startUrl = now?.url
+        val auto = !asked
+        if (HdrRule.banned(vm) && (HdrRule.named(c) || url in hdrBlocked)) { swLog(auto, "$why — blocked", url, "not switched: HDR isn't allowed"); hdrBlocked += url; return false }
+        // A file you can't jump inside is never switched to (the picture went back to 0:01 after every jump).
+        if (!isPlaylistLink(c, url) && StreamType.mimeFor(url, c.fileName()) == null) {
+            val pr = StreamCache.probe(url)
+            if (pr.ok && !pr.seekable) { Ranker.markUnseekable(url); swLog(auto, "$why — skipped", url, "not switched: the file can't be jumped inside"); return false }
+        }
         val hold = HeaderHold(StreamHeaders.forUrl(url))
         val sp = buildPlayer(ctx, vm, true, hold = hold)
         sp.setSeekParameters(androidx.media3.exoplayer.SeekParameters.EXACT)
@@ -2467,10 +2528,14 @@ fun PlayerScreen(
             return false
         }
         PlayTiming.late("swap: opening $name quietly at ${fmtTime(target)}")
-        if (!ready(25_000)) { PlayTiming.late("swap: $name didn't open in time"); drop(); return false }
+        if (!ready(25_000)) { PlayTiming.late("swap: $name didn't open in time"); swLog(auto, "$why — failed", url, "not switched: didn't open in 25 s"); drop(); return false }
+        if (HdrRule.banned(vm) && HdrRule.isHdr(sp.videoFormat)) {
+            hdrBlocked += url; swLog(auto, "$why — blocked", url, "not switched: the picture is HDR (its name didn't say so)"); drop(); return false
+        }
         val dMain = curDur(); val dSh = sp.duration
         if (dMain <= 0 || dSh <= 0 || kotlin.math.abs(dMain - dSh) > 1_500) {
             PlayTiming.late("swap: lengths differ (${fmtTime(dMain)} vs ${fmtTime(dSh)})" + if (asked) " — switching the usual way" else " — Upgrade quality offered instead")
+            if (!asked) swLog(true, "$why — not faded", url, "lengths differ by ${kotlin.math.abs(dMain - dSh) / 1000} s, offered as Upgrade instead")
             drop()
             if (asked) return false
             if (upgrade == null) { upgrade = UpgradeOffer(c, false); upLeft = 30 }
@@ -2480,7 +2545,7 @@ fun PlayerScreen(
         if (audioLang != null) {
             val langs = sp.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { g -> (0 until g.length).mapNotNull { g.getTrackFormat(it).language } }
             if (langs.isNotEmpty() && langs.none { it.take(2).equals(audioLang.take(2), true) }) {
-                PlayTiming.late("swap: $name has no ${audioLang} audio — not switched"); drop(); return false
+                PlayTiming.late("swap: $name has no ${audioLang} audio — not switched"); swLog(auto, "$why — skipped", url, "not switched: no $audioLang audio"); drop(); return false
             }
         }
         val vf = sp.videoFormat
@@ -2514,6 +2579,7 @@ fun PlayerScreen(
             repeat(10) { i -> val f = (i + 1) / 10f; shadowAlpha = f; sp.volume = f; runCatching { old.volume = 1f - f }; delay(30) }
         }
         PlayTiming.late("swap: now playing $name (frame-matched, ${kotlin.math.abs(curPos() - (sp.currentPosition))} ms apart)")
+        swLog(auto, why, url, if (heavy) "freeze-faded, no loading" else "faded, no loading")
         hold.map = null
         StreamHeaders.active = StreamHeaders.forUrl(url)
         known = (known + c).distinctBy { it.stream.url }
@@ -2525,7 +2591,45 @@ fun PlayerScreen(
         vm.rememberLink(p.key, url, now?.source, now?.addon)
         if (speed != 1f) sp.setPlaybackSpeed(speed)
         playing = sp.isPlaying; buffering = false
+        // Back onto the main surface view: a texture view drops frames with 1080p HEVC / 60 fps, and only a surface view
+        // gets the screen's refresh rate matched to the film. The faded-in picture stays on top until the surface view
+        // has drawn its first frame, so nothing flickers.
+        mainPv[0]?.let { pv ->
+            var drawn = false
+            val l = object : Player.Listener { override fun onRenderedFirstFrame() { drawn = true } }
+            sp.addListener(l)
+            pv.player = sp
+            val t0 = SystemClock.elapsedRealtime()
+            while (!drawn && SystemClock.elapsedRealtime() - t0 < 1_500) delay(20)
+            sp.removeListener(l)
+            delay(60)
+            if (shadow === sp) { shadow = null; shadowAlpha = 0f }
+            videoView = pv
+            PlayTiming.late("swap: moved to the surface view${if (drawn) "" else " (no new frame in 1.5 s)"}")
+        }
         return true
+    }
+    /** Every switch you ask for (Quality menu, Upgrade, Sources): faded in at the same frame when it can be, else reloaded. */
+    fun fadeTo(st: StreamItem, label: String?, why: String, upgrade: Boolean = false) {
+        byHand = true   // your choice: no automatic swap afterwards
+        if (usingVlc || !firstFrame) { switchTo(st, label, why = why, upgrade = upgrade); return }
+        scope.launch {
+            Snack.show("${label ?: "Switching"} · getting it ready")
+            val ok = runCatching { ottSwapTo(st, asked = true, why = why) }.getOrDefault(false)
+            if (ok) label?.let { Snack.show(it) }
+            else if (st.stream.url in hdrBlocked && HdrRule.banned(vm) && upgrade) Snack.show("That copy is HDR — not switched (no HDR is on)")
+            else switchTo(st, label, why = why, upgrade = upgrade)
+        }
+    }
+    // The picture turned out HDR after a switch the app made while "no HDR" is set: back to what played before.
+    LaunchedEffect(hdrHit) {
+        if (!hdrHit) return@LaunchedEffect
+        hdrHit = false
+        val back = hdrBackTo?.let { itemFor(it) } ?: return@LaunchedEffect
+        now?.url?.let { hdrBlocked += it; upTried += it }
+        hdrBackTo = null
+        swLog(true, "HDR not allowed", back.stream.url, "going back")
+        switchTo(back, "Back · no HDR")
     }
     LaunchedEffect(firstFrame) {
         if (!firstFrame || BuildConfig.IS_TV || usingVlc || !vm.pluginMode() || ottSwapStarted || byHand) return@LaunchedEffect
@@ -2552,7 +2656,7 @@ fun PlayerScreen(
                     val pt = playing.ottTier()
                     val waited = SystemClock.elapsedRealtime() - t0 >= 60_000
                     val all = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false)
-                        .filter { it.stream.url !in triedSwap && vm.langRank(it) <= vm.langRank(playing) && !it.unplayableHere() }
+                        .filter { it.stream.url !in triedSwap && vm.langRank(it) <= vm.langRank(playing) && !it.unplayableHere() && !(HdrRule.banned(vm) && (HdrRule.named(it) || it.stream.url in hdrBlocked)) }
                     val c = all.firstOrNull { it.isOtt() }
                         ?: (if (waited && pt != 2) all.filter { it.isVega() && it.effectiveRes() in 720..1080 }.maxByOrNull { it.effectiveRes() } else null)
                         ?: (if (waited && pt in setOf(1, 3) && all.none { it.isVega() }) all.firstOrNull { it.ottTier() == 4 && vm.langRank(it) == vm.langRank(playing) } else null)
@@ -2565,7 +2669,7 @@ fun PlayerScreen(
                     }
                     triedSwap += c.stream.url!!
                     PlayTiming.late("swap: trying ${Public.streamName(c)}")
-                    runCatching { ottSwapTo(c) }
+                    runCatching { ottSwapTo(c, why = "OTT swap (${if (c.isOtt()) "Netflix-type ready" else "better copy after 60 s"})") }
                 }
             } finally {
                 gather.cancel()
@@ -2602,7 +2706,7 @@ fun PlayerScreen(
                     if (c == null) { delay(2_000); continue }
                     triedUp += c.stream.url!!
                     PlayTiming.late("OTT 1080p: trying ${Public.streamName(c)}")
-                    if (runCatching { ottSwapTo(c) }.getOrDefault(false)) break
+                    if (runCatching { ottSwapTo(c, why = "OTT 720p → 1080p") }.getOrDefault(false)) break
                 }
             } finally { gather.cancel() }
         }
@@ -2630,7 +2734,7 @@ fun PlayerScreen(
         quality = id; qualityMenu = false; poke++
         vm.setPlayerPref("quality", id)
         val st = vm.pickQuick(quickList, id) ?: return
-        if (st.stream.url != now?.url) switchTo(st, AllQualityLevels.firstOrNull { it.id == id }?.label)
+        if (st.stream.url != now?.url) fadeTo(st, AllQualityLevels.firstOrNull { it.id == id }?.label, "Quality menu → ${AllQualityLevels.firstOrNull { it.id == id }?.label ?: id}")
     }
     fun setAspect(i: Int, label: String = AspectModes[i].first) {
         cinematic = false
@@ -2674,10 +2778,10 @@ fun PlayerScreen(
             val longStall = buffering && t - stallAt > 5000 && t - seekedAt > 60_000
             if ((stalls >= 2 && t - seekedAt > 60_000) || longStall) {
                 val lower = ladder.filter { it < res }.sortedDescending().firstNotNullOfOrNull { r -> streamAt(r, cur) }
-                if (lower != null) { stalls = 0; switchTo(lower, "Auto · ${lower.resolution()}p (slow connection)"); return@LaunchedEffect }
+                if (lower != null) { stalls = 0; switchTo(lower, "Auto · ${lower.resolution()}p (slow connection)", auto = true, why = "slow connection, lower quality"); return@LaunchedEffect }
             } else if (!usingVlc && t - smoothSince > 90_000 && player.bufferedPosition - player.currentPosition > 45_000) {
                 val higher = ladder.filter { it > res }.sorted().firstNotNullOfOrNull { r -> streamAt(r, cur) }
-                if (higher != null) { switchTo(higher, "Auto · ${higher.resolution()}p"); return@LaunchedEffect }
+                if (higher != null) { switchTo(higher, "Auto · ${higher.resolution()}p", auto = true, why = "connection good again, higher quality"); return@LaunchedEffect }
                 smoothSince = t // nothing better: check again later
             }
         }
@@ -2751,7 +2855,7 @@ fun PlayerScreen(
         val u = tvUp ?: return
         tvUp = null; tvZone = "bar"
         PlayTiming.late("TV: upgrade taken (${VisualTags.quality(u)}${if (tvUpFallback) ", backup" else ""})")
-        switchTo(u, "${tvQualityOf(u)} · same moment")
+        switchTo(u, "${tvQualityOf(u)} · same moment", why = "TV upgrade", upgrade = true)
     }
     /** TV bottom row: Watch Next · Next · Episodes (series) · More. */
     // Movies: only Watch Next and ❯ More (Next title lives inside More). Series: Watch Next · Next episode · Episodes · More.
@@ -3156,7 +3260,7 @@ fun PlayerScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else AndroidView(
-                    factory = { c -> PlayerView(c).apply { useController = false; this.player = if (shadow === player) null else player; keepScreenOn = true; if (shadow == null) videoView = this } },
+                    factory = { c -> PlayerView(c).apply { useController = false; this.player = if (shadow === player) null else player; keepScreenOn = true; mainPv[0] = this; if (shadow == null) videoView = this } },
                     update = { v -> v.resizeMode = if (BuildConfig.IS_TV) AspectRatioFrameLayout.RESIZE_MODE_FIT else resize; v.subtitleView?.visibility = View.GONE },
                     // TV: most videos are 16:9 like the TV, so Crop / Stretch changed nothing. On TV they zoom past the
                     // black bars instead: Crop = 1.33× (fills a wide film), Stretch = taller only.
@@ -3208,12 +3312,20 @@ fun PlayerScreen(
                 Box(Modifier.fillMaxSize().graphicsLayer { alpha = 1f - videoAlpha }.background(Color.Black))
                 // Switching link mid-playback: the last frame stays, softly blurred, until the new one is on screen.
                 androidx.compose.animation.AnimatedVisibility(switching && failure == null, Modifier.fillMaxSize(), enter = fadeIn(tween(120)), exit = fadeOut(tween(450))) {
+                    // The frame stays sharp (it looks paused, not loading); the loading capsule only shows if the new
+                    // link takes longer than 2.5 s.
+                    var slowSwitch by remember { mutableStateOf(false) }
+                    LaunchedEffect(Unit) { delay(2_500); slowSwitch = true }
                     Box(Modifier.fillMaxSize().background(Color.Black)) {
                         frozen?.let { bmp ->
-                            androidx.compose.foundation.Image(bmp.asImageBitmap(), null, Modifier.fillMaxSize().blur(18.dp), contentScale = if (aspectIdx == 1) ContentScale.Crop else ContentScale.Fit)
+                            androidx.compose.foundation.Image(bmp.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = if (aspectIdx == 1) ContentScale.Crop else ContentScale.Fit)
                         }
-                        Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0x33000000), Color(0x99000000)))))
-                        SwitchCapsule(bufProgress, resumeAt, Modifier.align(Alignment.Center))
+                        androidx.compose.animation.AnimatedVisibility(slowSwitch || frozen == null, Modifier.fillMaxSize(), enter = fadeIn(tween(250)), exit = fadeOut(tween(150))) {
+                            Box(Modifier.fillMaxSize()) {
+                                Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0x33000000), Color(0x99000000)))))
+                                SwitchCapsule(bufProgress, resumeAt, Modifier.align(Alignment.Center))
+                            }
+                        }
                     }
                 }
             }
@@ -3590,12 +3702,15 @@ fun PlayerScreen(
                             upgrade = null; poke++
                             // Gets the better file ready in the background, then fades it in at the same frame (no
                             // "Resuming" screen). Only when that can't be done does it switch the usual way.
-                            if (usingVlc) switchTo(u.item, if (u.is4k) "4K" else "Better quality")
+                            byHand = true   // after your upgrade the player never swaps back by itself
+                            val upWhy = if (u.is4k) "Upgrade to 4K" else "Upgrade quality"
+                            if (usingVlc) switchTo(u.item, if (u.is4k) "4K" else "Better quality", why = upWhy, upgrade = true)
                             else scope.launch {
                                 upPrep = if (u.is4k) "Getting 4K ready" else "Getting better quality ready"
-                                val ok = runCatching { ottSwapTo(u.item, asked = true) }.getOrDefault(false)
+                                val ok = runCatching { ottSwapTo(u.item, asked = true, why = upWhy) }.getOrDefault(false)
                                 upPrep = null
-                                if (!ok) switchTo(u.item, if (u.is4k) "4K" else "Better quality")
+                                if (!ok && u.item.stream.url in hdrBlocked && HdrRule.banned(vm)) Snack.show("That copy is HDR — not switched (no HDR is on)")
+                                else if (!ok) switchTo(u.item, if (u.is4k) "4K" else "Better quality", why = upWhy, upgrade = true)
                                 else Snack.show(if (u.is4k) "Now in 4K" else "Better quality on")
                             }
                         }
@@ -4154,7 +4269,7 @@ fun PlayerScreen(
                 }, onPoke = { poke++ }) { st ->
                     qualityMenu = false; poke++
                     upgrade = null
-                    switchTo(st, VisualTags.quality(st))
+                    fadeTo(st, VisualTags.quality(st), "Quality menu → ${VisualTags.quality(st)}")
                 } else Row(
                     Modifier.widthIn(max = 660.dp).heightIn(max = 330.dp).clip(shape).background(Color(0xF0141418)).border(1.dp, Color(0x1FFFFFFF), shape)
                         .onFocusChanged {
@@ -4202,7 +4317,7 @@ fun PlayerScreen(
                                                 qualityMenu = false; poke++
                                                 if (onQuick && !st.isMovieBox()) { upgradedFrom = curItem; upgradedUrl = st.stream.url }
                                                 upgrade = null
-                                                switchTo(st, VisualTags.quality(st))
+                                                fadeTo(st, VisualTags.quality(st), "Quality menu → ${VisualTags.quality(st)}")
                                             }
                                             .padding(horizontal = 9.dp, vertical = 7.dp),
                                     ) {
@@ -4480,7 +4595,7 @@ fun PlayerScreen(
                             val keep = keepPos()
                             scope.launch {
                                 val extra = withTimeoutOrNull(1500) { runCatching { vm.subtitles(type, p.key) }.getOrDefault(emptyList()) }.orEmpty()
-                                load(Now(st.stream.url!!, st.stream.subtitles.orEmpty() + extra, st.stream.name ?: st.addonName, st.addonName), keep, "Source changed")
+                                swLog(false, "Sources list", st.stream.url, "reloaded from the same second"); hdrBackTo = null; load(Now(st.stream.url!!, st.stream.subtitles.orEmpty() + extra, st.stream.name ?: st.addonName, st.addonName), keep, "Source changed")
                             }
                           }
                           // Sources: by visual tag, no server / provider names. Dev sources (chosen accounts): everything, as before.
