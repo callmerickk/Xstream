@@ -150,7 +150,7 @@ object PluginSources {
 
     /** One provider's links for this title; every step is logged (Activity log › CSPLAY) so a silent plugin can be traced. */
     suspend fun linksFrom(api: MainAPI, name: String, year: Int?, series: Boolean, season: Int?, episode: Int?,
-                          onLink: ((StreamItem) -> Unit)? = null, retried: Boolean = false): List<StreamItem> {
+                          retried: Boolean = false, onLink: ((StreamItem) -> Unit)? = null): List<StreamItem> {
         fun log(s: String) = ActLog.add("CSPLAY", "${api.name}: $s")
         val tSearch = System.currentTimeMillis()
         var searchErr = false
@@ -195,7 +195,7 @@ object PluginSources {
                 reloadedAt[key] = System.currentTimeMillis()
                 log("reloading the plugin to get its current site address, then searching again")
                 val fresh = CsPlugins.reload(key)?.apis?.firstOrNull { it.name == api.name }
-                if (fresh != null) return linksFrom(fresh, name, year, series, season, episode, onLink, retried = true)
+                if (fresh != null) return linksFrom(fresh, name, year, series, season, episode, retried = true, onLink = onLink)
             }
         }
         if (found == null) { log("search gave nothing (timeout or no answer)"); NoStream.note(nsKey, api.name, "no answer from the site"); return emptyList() }

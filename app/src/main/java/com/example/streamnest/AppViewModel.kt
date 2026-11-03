@@ -1002,9 +1002,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     fun lastLink(key: String): LastLink? = lib.getString("link_$key", null)?.let { runCatching { Api.json.decodeFromString<LastLink>(it) }.getOrNull() }
         ?.takeIf { !isLocalUrl(it.url) }
+        ?.takeIf { System.currentTimeMillis() - it.at < 6L * 3600 * 1000 } // provider links expire; reuse for 6 hours (a refused link is refreshed automatically)
     /** The app's own local relay (127.0.0.1:port): its port changes every start, so it is never saved for Continue Watching. */
     private fun isLocalUrl(u: String) = Regex("^https?://(127\\.0\\.0\\.1|localhost)(:|/)", RegexOption.IGNORE_CASE).containsMatchIn(u)
-        ?.takeIf { System.currentTimeMillis() - it.at < 6L * 3600 * 1000 } // provider links expire; reuse for 6 hours (a refused link is refreshed automatically)
 
     fun rememberLink(key: String, url: String, source: String?, addon: String?) {
         if (key.isBlank() || url.isBlank() || isLocalUrl(url)) return
