@@ -197,6 +197,12 @@ fun SourcesScreen(
         NU_TAB -> nuList.isEmpty()
         else -> shown.isEmpty() && (addon != null || (quickItems.isEmpty() && backupGroups.isEmpty() && csList.isEmpty() && nuList.isEmpty()))
     }
+    LaunchedEffect(nothing && done, addon) {
+        if (nothing && done && addon == null) {
+            val parts = target.videoId.split(":")
+            NoStream.report(target.title, NoStream.key(meta.name, parts.getOrNull(1)?.toIntOrNull(), parts.getOrNull(2)?.toIntOrNull()), "sources page: no streams")
+        }
+    }
     var resume by remember(resumeMs) { mutableStateOf(resumeMs > 0) }
     val fusion = isOn(v("fusionBadges"))
     val showAddon = isOn(v("showAddonName"))

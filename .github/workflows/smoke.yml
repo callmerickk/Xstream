@@ -21,16 +21,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - name: Live server version
-        run: echo "PM_TAG=$(cat tools/live-server.tag)" >> $GITHUB_ENV
-      - uses: actions/cache@v4
-        with:
-          path: |
-            live-server-cache
-            ~/.cargo/bin/cargo-ndk
-          key: live-server-${{ env.PM_TAG }}-r1
-      - name: Live server (64-bit app)
-        run: bash tools/build-live-server.sh
       - name: Build
         run: gradle assemblePhoneDebug --no-daemon -q
       - name: Enable KVM

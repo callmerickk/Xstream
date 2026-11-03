@@ -30,17 +30,6 @@ jobs:
           mkdir -p ../../app/src/main/assets/nuvio
           npx esbuild entry.js --bundle --minify --platform=browser --format=iife --outfile=../../app/src/main/assets/nuvio/libs.js
           ls -la ../../app/src/main/assets/nuvio
-      # Live server for the 64-bit app: PencariMovie Server built unchanged for Android arm64 (cached per version).
-      - name: Live server version
-        run: echo "PM_TAG=$(cat tools/live-server.tag)" >> $GITHUB_ENV
-      - uses: actions/cache@v4
-        with:
-          path: |
-            live-server-cache
-            ~/.cargo/bin/cargo-ndk
-          key: live-server-${{ env.PM_TAG }}-r1
-      - name: Live server (64-bit app)
-        run: bash tools/build-live-server.sh
       - name: Build
         run: |
           set -o pipefail
@@ -50,9 +39,8 @@ jobs:
         run: |
           for a in app/build/outputs/apk/phone/debug/*.apk; do
             n=$(basename "$a"); sz=$(du -m "$a" | cut -f1)
-            live=$(unzip -l "$a" | grep -c "libxlive.so" || true)
-            libs=$(unzip -l "$a" | grep "lib/" | awk '{print $1, $4}' | sort -rn | head -8 | awk '{printf "%s %.1fMB; ", $2, $1/1048576}')
-            echo "::notice title=$n ($sz MB, Live server: $live)::$libs"
+                        libs=$(unzip -l "$a" | grep "lib/" | awk '{print $1, $4}' | sort -rn | head -8 | awk '{printf "%s %.1fMB; ", $2, $1/1048576}')
+            echo "::notice title=$n ($sz MB)::$libs"
           done
       - name: Report errors
         if: failure()

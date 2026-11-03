@@ -19,7 +19,11 @@ val mapper: JsonMapper = LoggingMapper().apply {
 
 /** Jackson that tells the plugin test log when a plugin's JSON doesn't fit what it expected (then fails as usual). */
 class LoggingMapper : JsonMapper() {
+    private val seen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private fun report(e: Throwable, what: String, content: String?) {
+        // Also into the activity log (once per type + error), so a plugin whose answer we can't read shows up in shared logs.
+        val k = "$what|${e.javaClass.simpleName}"
+        if (seen.size < 200 && seen.add(k)) runCatching { com.example.streamnest.ActLog.add("CSJSON", "$what: ${e.javaClass.simpleName}: ${e.message?.lineSequence()?.firstOrNull()?.take(140)} · starts: ${content?.take(60)?.replace("\n", " ")}") }
         CsBridge.note("JSON ✗ $what: ${e.javaClass.simpleName}: ${e.message?.lineSequence()?.firstOrNull()?.take(160)} · text starts: ${content?.take(80)?.replace("\n", " ")}")
     }
     override fun <T : Any?> readValue(content: String?, valueType: Class<T>?): T =

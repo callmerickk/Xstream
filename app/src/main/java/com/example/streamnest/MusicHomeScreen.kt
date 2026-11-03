@@ -13,7 +13,7 @@ import androidx.core.graphics.drawable.IconCompat
 import kotlinx.coroutines.launch
 
 /** Opens Xstream straight into Xstream Music (with its own opening animation). */
-private fun musicIntent(ctx: Context) = Intent(ctx, if (BuildConfig.HAS_LIVE) MusicActivity::class.java else MainActivity::class.java).apply {
+private fun musicIntent(ctx: Context) = Intent(ctx, if (BuildConfig.HAS_MUSIC) MusicActivity::class.java else MainActivity::class.java).apply {
     action = Intent.ACTION_VIEW
     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
     putExtra("musicHome", true)
@@ -32,7 +32,7 @@ object MusicShortcut {
 
     /** Listed when the Xstream icon is held (phones only). */
     fun publish(ctx: Context) {
-        if (BuildConfig.IS_TV || !BuildConfig.HAS_LIVE) return
+        if (BuildConfig.IS_TV || !BuildConfig.HAS_MUSIC) return
         runCatching { ShortcutManagerCompat.pushDynamicShortcut(ctx, info(ctx)) }
     }
 

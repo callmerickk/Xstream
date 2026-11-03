@@ -37,12 +37,32 @@ object PluginSources {
      * One provider of one plugin. Two repositories can each have a "MovieBox" / "Netflix" provider: keyed by name they
      * shared one answer, so the slow (or failing) copy held back the fast one.
      */
+    /** Music / audio-only providers (SimpMusic…) are never asked for movies or episodes. */
+    fun musicOnly(api: MainAPI): Boolean = runCatching { api.supportedTypes.isNotEmpty() && api.supportedTypes.all { it in MUSIC_TYPES } }.getOrDefault(false)
+        || api.name.contains("music", true)
+    private val MUSIC_TYPES = setOf(TvType.Music, TvType.AudioBook, TvType.Audio, TvType.Podcast)
     fun apiKey(api: MainAPI): String = "${api.javaClass.name}|${api.name}|${runCatching { api.mainUrl }.getOrDefault("")}"
     private fun words(s: String) = s.lowercase().replace(Regex("[^a-z0-9 ]"), " ").split(" ").filter { it.isNotBlank() && it !in setOf("the", "a", "an", "of", "and") }.toSet()
     private fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
     /** The name without "and" / "&" / "the": "Pritam Pedro" = "Pritam and Pedro" = "Pritam & Pedro". */
-    private fun core(s: String) = s.lowercase().replace("&", " ").replace(Regex("[^a-z0-9 ]"), " ").split(" ")
+    private fun core(s: String) = s.lowercase().replace("&", " ").replace(Regex("[^a-z0-9 ]"), "").split(" ")
         .filter { it.isNotBlank() && it != "and" && it != "the" }.joinToString("")
+    /** core() without a studio prefix: "Marvel's Agents of S.H.I.E.L.D." = "Agents of SHIELD". */
+    private fun bare(s: String) = core(s).removePrefix("marvels").removePrefix("marvel").removePrefix("dcs").removePrefix("disneys").removePrefix("tomclancys")
+
+    /**
+     * The names to search with, best first: as written, without dots/apostrophes ("Agents of SHIELD"), without the part
+     * after a colon, and "&" written as "and". Sites often find nothing for "S.H.I.E.L.D." but find "SHIELD".
+     */
+    fun queries(name: String): List<String> {
+        val out = LinkedHashSet<String>()
+        out += name
+        out += name.replace(Regex("(?<=\\b\\w)\\.(?=\\w)"), "").replace(".", "").replace("'", "").replace("’", "").replace(Regex("\\s+"), " ").trim()
+        out += name.replace(Regex("^(?i)(marvel's|marvel|dc's|disney's|tom clancy's)\\s+"), "").replace(".", "").trim()
+        if (':' in name) out += name.substringBefore(':').trim()
+        if ('&' in name) out += name.replace("&", "and")
+        return out.filter { it.length >= 2 }.take(4)
+    }
 
     /** "This site doesn't have this title" (it searched and nothing matched), kept 3 hours: not asked again 20 times. */
     private val noTitle = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -51,12 +71,12 @@ object PluginSources {
      * after 6 empty searches in a row they're left out for 3 days. One hit resets it.
      */
     private val emptyRun = java.util.concurrent.ConcurrentHashMap<String, Int>()
-    private fun dead(k: String): Boolean = (CsPlugins.prefsOrNull()?.getLong("dead_$k", 0L) ?: 0L) > System.currentTimeMillis()
+    // Plugins are never switched off any more (they keep being asked; empty answers just mean "not on this site").
+    @Suppress("UNUSED_PARAMETER") private fun dead(k: String): Boolean = false
     private fun noteEmpty(k: String, empty: Boolean) {
         if (!empty) { if (emptyRun.remove(k) != null) CsPlugins.prefsOrNull()?.edit()?.remove("dead_$k")?.apply(); return }
         val n = (emptyRun[k] ?: 0) + 1; emptyRun[k] = n
-        if (n >= 6) { CsPlugins.prefsOrNull()?.edit()?.putLong("dead_$k", System.currentTimeMillis() + 3 * 86_400_000L)?.apply(); emptyRun.remove(k)
-            ActLog.add("CSPLAY", "${k.substringAfter('|').substringBefore('|')}: search always empty — left out for 3 days") }
+        if (n == 6) ActLog.add("CSPLAY", "${k.substringAfter('|').substringBefore('|')}: 6 empty searches in a row (still asked)")
     }
     private fun yearOf(r: SearchResponse): Int? = (r as? MovieSearchResponse)?.year ?: (r as? TvSeriesSearchResponse)?.year
         ?: Regex("\\b(19|20)\\d{2}\\b").find(r.name)?.value?.toIntOrNull()
@@ -69,7 +89,9 @@ object PluginSources {
     fun ranked(found: List<SearchResponse>, q: String, wantYear: Int?, series: Boolean, season: Int?): List<SearchResponse> =
         found.map { r ->
             val clean = CsTester.cleanTitle(r.name)
-            var sc = if (norm(clean) == norm(q.replace("&", " and ")) || core(clean) == core(q)) 1.0 else {
+            val bq = bare(q); val bc = bare(clean)
+            var sc = if (norm(clean) == norm(q.replace("&", " and ")) || core(clean) == core(q) || (bq.length >= 4 && bc == bq)) 1.0
+            else if (bq.length >= 6 && (bc.startsWith(bq) || bq.startsWith(bc) && bc.length >= 6) && kotlin.math.abs(bc.length - bq.length) <= 12) 0.85 else {
                 val a = words(clean); val b = words(q)
                 if (a.isEmpty() || b.isEmpty()) 0.0 else a.intersect(b).size.toDouble() / a.union(b).size * 0.9
             }
@@ -123,36 +145,47 @@ object PluginSources {
     suspend fun linksFrom(api: MainAPI, name: String, year: Int?, series: Boolean, season: Int?, episode: Int?,
                           onLink: ((StreamItem) -> Unit)? = null): List<StreamItem> {
         fun log(s: String) = ActLog.add("CSPLAY", "${api.name}: $s")
+        val nsKey = NoStream.key(name, season, episode)
         if (apiKey(api) in noSearch || dead(apiKey(api))) return emptyList()          // a browse-only provider (Disney / Marvel shelves…)
         val noKey = "${apiKey(api)}|${core(name)}|$year|$series"
-        noTitle[noKey]?.let { if (System.currentTimeMillis() - it < 3 * 3_600_000L) return emptyList() else noTitle.remove(noKey) }
+        noTitle[noKey]?.let { if (System.currentTimeMillis() - it < 30 * 60_000L) return emptyList() else noTitle.remove(noKey) }
         // The show's page (search + load) is kept 15 minutes: any other episode then needs only its links (~0.5 s),
         // so episode 4 or 10 starts as fast as episode 1.
         val pageKey = "${apiKey(api)}|$name|$series|$year|${if (series) season else ""}"
         pages[pageKey]?.takeIf { System.currentTimeMillis() - it.first < 15 * 60_000L }?.second?.let { cached ->
             return linksFromPage(api, cached, name, series, season, episode, onLink, ::log)
         }
-        val found = try {
-            withDeadline(20_000) {
-                val paged = try { api.search(name, 1) } catch (_: NotImplementedError) { null }
-                paged?.items ?: try { api.search(name) } catch (e: NotImplementedError) { if (paged == null) throw e else null }
+        suspend fun searchOnce(q: String, ms: Long): List<SearchResponse>? = try {
+            withDeadline(ms) {
+                val paged = try { api.search(q, 1) } catch (_: NotImplementedError) { null }
+                paged?.items ?: try { api.search(q) } catch (e: NotImplementedError) { if (paged == null) throw e else null }
             }
-        } catch (e: NotImplementedError) { noSearch += apiKey(api); log("has no search — skipped from now on"); null
-        } catch (e: Throwable) { log("search failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
-        if (found == null) { log("search gave nothing (timeout or no answer)"); return emptyList() }
+        } catch (e: NotImplementedError) { throw e
+        } catch (e: Throwable) { log("search \"$q\" failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null }
+        // Each name in turn until one finds this title (the first gets 20 s, the others 12 s).
+        var found: List<SearchResponse>? = null
+        var cands: List<SearchResponse> = emptyList()
+        try {
+            for ((i, q) in queries(name).withIndex()) {
+                val f = searchOnce(q, if (i == 0) 20_000 else 12_000) ?: continue
+                found = (found.orEmpty() + f).distinctBy { it.url }
+                cands = ranked(found, name, year, series, season)
+                if (cands.isNotEmpty()) { if (i > 0) log("found with \"$q\""); break }
+            }
+        } catch (e: NotImplementedError) { noSearch += apiKey(api); log("has no search — skipped from now on"); return emptyList() }
+        if (found == null) { log("search gave nothing (timeout or no answer)"); NoStream.note(nsKey, api.name, "no answer from the site"); return emptyList() }
         noteEmpty(apiKey(api), found.isEmpty())
-        val cands = ranked(found, name, year, series, season)
-        if (cands.isEmpty()) { noTitle[noKey] = System.currentTimeMillis(); log("${found.size} results, none matched \"$name\"" + found.take(4).joinToString("; ", " — top: ") { it.name.take(60) }); return emptyList() }
+        if (cands.isEmpty()) { noTitle[noKey] = System.currentTimeMillis(); NoStream.note(nsKey, api.name, "${found.size} results, none matched"); log("${found.size} results, none matched \"$name\"" + found.take(4).joinToString("; ", " — top: ") { it.name.take(60) }); return emptyList() }
         // The page tells the real year: a same-name show from another year is skipped for the next result.
         var hit = cands.first()
         var lr: LoadResponse? = null
-        for (c in cands.take(3)) {
+        for (c in cands.take(5)) {
             val l = try { withDeadline(20_000) { api.load(c.url) } } catch (e: Throwable) { log("load failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null } ?: continue
             val ly = runCatching { l.year }.getOrNull()
-            if (year != null && ly != null && kotlin.math.abs(ly - year) > 1 && (series || c !== cands.take(3).last())) { log("\"${c.name.take(60)}\" is from $ly, not $year — trying the next result"); continue }
+            if (year != null && ly != null && kotlin.math.abs(ly - year) > 1 && (series || c !== cands.take(5).last())) { log("\"${c.name.take(60)}\" is from $ly, not $year — trying the next result"); continue }
             hit = c; lr = l; break
         }
-        if (lr == null) { log("matched \"${hit.name.take(60)}\" but its page didn't load"); return emptyList() }
+        if (lr == null) { NoStream.note(nsKey, api.name, "matched but the page didn't load"); log("matched \"${hit.name.take(60)}\" but its page didn't load"); return emptyList() }
         pages[pageKey] = System.currentTimeMillis() to (hit.name to lr)
         return linksFromPage(api, hit.name to lr, name, series, season, episode, onLink, ::log)
     }
@@ -162,6 +195,7 @@ object PluginSources {
     private suspend fun linksFromPage(api: MainAPI, page: Pair<String, LoadResponse>, name: String, series: Boolean, season: Int?, episode: Int?,
                                       onLink: ((StreamItem) -> Unit)?, log: (String) -> Unit): List<StreamItem> {
         val (hitName, lr) = page
+        val nsKey = NoStream.key(name, season, episode)
         val hit = object { val name = hitName }
         val data = when (lr) {
             // A series asked for and the site gave a film (The Flash / Supergirl have both): never play the film.
@@ -190,6 +224,7 @@ object PluginSources {
         // Subtitles often arrive after the first links: every link gets all of them.
         val res = if (subs.isEmpty()) out.toList() else links.map { it.toItem(api.name, subs.toList()) }
         log("${res.size} links, ${subs.size} subtitles for \"${hit.name.take(60)}\"")
+        NoStream.note(nsKey, api.name, if (res.isEmpty()) "matched \"${hit.name.take(40)}\", 0 links" else "${res.size} links")
         return res
     }
 
@@ -206,7 +241,7 @@ object PluginSources {
             CsPlugins.enabledEntries().forEach { e ->
                 launch {
                     val reg = runCatching { CsPlugins.ensureLoaded(e) }.onFailure { x -> ActLog.add("CSPLAY", "${e.name}: plugin didn't load — ${x.javaClass.simpleName} ${x.message ?: ""}".take(200)) }.getOrNull() ?: return@launch
-                    reg.apis.forEach { api ->
+                    reg.apis.filterNot { musicOnly(it) }.forEach { api ->
                         launch {
                             val l = runCatching { linksFrom(api, meta.name, year, series, season, episode) }.getOrDefault(emptyList())
                             if (l.isNotEmpty()) lock.withLock { acc += l; send(acc.toList()) }
@@ -233,7 +268,7 @@ object PluginSources {
             CsPlugins.catalog.value.filter { it.key in plugins }.forEach { e ->
                 launch {
                     val reg = runCatching { CsPlugins.ensureLoaded(e) }.getOrNull() ?: return@launch
-                    reg.apis.filter { csProviderKey(e.key, it.name) in picked }.forEach { api ->
+                    reg.apis.filter { csProviderKey(e.key, it.name) in picked && !musicOnly(it) }.forEach { api ->
                         launch { runCatching { linksFrom(api, meta.name, year, series, season, episode) { trySend(it) } } }
                     }
                 }
@@ -303,7 +338,7 @@ object PluginSources {
             val t0 = System.currentTimeMillis()
             entries.forEach { e -> jobs += launch {
                 val reg = runCatching { CsPlugins.ensureLoaded(e) }.onFailure { x -> ActLog.add("PLUGIN", "${e.name}: not loaded — ${x.message ?: x.javaClass.simpleName}".take(200)) }.getOrNull()
-                val apis = reg?.apis?.filter { wanted(csDisplayName(it.name)) }.orEmpty()
+                val apis = reg?.apis?.filter { wanted(csDisplayName(it.name)) && !musicOnly(it) }.orEmpty()
                 if (apis.isEmpty()) { add(emptyList()); return@launch }
                 lock.withLock { pending += apis.size - 1 }
                 apis.forEach { api -> launch {

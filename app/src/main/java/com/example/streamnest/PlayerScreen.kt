@@ -489,6 +489,14 @@ fun PlayerScreen(
     var firstFrame by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(if (p.url.isBlank() && pre == null) "Finding stream source" else "Buffering…") }
     var failure by remember { mutableStateOf<String?>(null) }
+    // Developer report when this title ends with no picture (what each plugin answered, from which phone).
+    LaunchedEffect(failure) {
+        val f = failure ?: return@LaunchedEffect
+        if ("internet" in f.lowercase() || "offline" in f.lowercase()) return@LaunchedEffect
+        val parts = p.key.split(":")
+        val nk = NoStream.key(p.meta?.name ?: p.title.substringBefore("  S"), parts.getOrNull(1)?.toIntOrNull(), parts.getOrNull(2)?.toIntOrNull())
+        NoStream.report(p.title, nk, f)
+    }
     var findRequest by remember { mutableIntStateOf(if (p.url.isBlank() && pre == null) 1 else 0) }
     var controls by remember { mutableStateOf(false) }
     var poke by remember { mutableIntStateOf(0) }
@@ -6286,6 +6294,8 @@ object DecoderSafe {
             (0 until g.length).joinToString(", ") { i -> val f = g.getTrackFormat(i); "${f.sampleMimeType} ${f.codecs ?: ""} ${f.width}x${f.height}${if (g.isTrackSupported(i)) "" else " NOT-SUPPORTED"}" } }
         val chain = generateSequence(e as Throwable) { it.cause }.take(4).joinToString(" ← ") { "${it.javaClass.simpleName}: ${it.message?.take(120)}" }
         val b = android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL + " · Android " + android.os.Build.VERSION.RELEASE + " · " + (if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MODEL else android.os.Build.HARDWARE)
+        val http = generateSequence(e as Throwable) { it.cause }.filterIsInstance<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>().firstOrNull()
+        ActLog.add("PLAYFAIL", "why: " + NoStream.reason(code, http?.responseCode, http?.headerFields?.get("Content-Type")?.firstOrNull()))
         ActLog.add("ERROR", "player $code on $b · async feeding ${if (on(vm)) "off" else "on"} · tracks: ${formats.ifEmpty { "none yet" }} · $chain".take(900))
         if (decoder && vm.store("safeDecoders") != "yes") {
             vm.storePut("safeDecoders", "yes")

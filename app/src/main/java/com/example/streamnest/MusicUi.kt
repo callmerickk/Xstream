@@ -504,10 +504,10 @@ fun MusicHost(vm: AppViewModel, profileId: String, profileName: String) {
     val nowOpen by MusicPlayer.openNow.collectAsStateWithLifecycle()
     val splash by MusicPlayer.splash.collectAsStateWithLifecycle()
     if (splash) MusicSplash { MusicPlayer.splash.value = false; MusicPlayer.openLibrary.value = true }
-    if (BuildConfig.HAS_LIVE && (lib || nowOpen)) MusicApp(profileId, profileName, profileVm = vm, initiallyNowPlaying = nowOpen) {
+    if (BuildConfig.HAS_MUSIC && (lib || nowOpen)) MusicApp(profileId, profileName, profileVm = vm, initiallyNowPlaying = nowOpen) {
         MusicPlayer.openLibrary.value = false
         MusicPlayer.openNow.value = false
-    } else if (!BuildConfig.HAS_LIVE) {
+    } else if (!BuildConfig.HAS_MUSIC) {
         if (lib) MusicLibrary { MusicPlayer.openLibrary.value = false }
         if (nowOpen) MusicNowPlaying { MusicPlayer.openNow.value = false }
     }

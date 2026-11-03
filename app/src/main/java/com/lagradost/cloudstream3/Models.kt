@@ -32,6 +32,9 @@ data class Score(val value: Double) {
 data class Actor(val name: String, val image: String? = null)
 data class ActorData(val actor: Actor, val role: ActorRole? = null, val roleString: String? = null, val voiceActor: Actor? = null)
 
+/** A season's own name ("Season 1: Pilot"), as plugins report it. */
+data class SeasonData(val season: Int, val name: String? = null, val displaySeason: Int? = null)
+
 data class TrailerData(val extractorUrl: String, val referer: String?, val raw: Boolean, val headers: Map<String, String> = mapOf())
 
 interface SearchResponse {
@@ -117,6 +120,7 @@ interface LoadResponse {
         fun LoadResponse.addActorsOnly(actors: List<Actor>?) { this.actors = actors?.map { ActorData(it) } }
         fun LoadResponse.getImdbId(): String? = syncData["imdb"]
         fun LoadResponse.getTMDbId(): String? = syncData["tmdb"]
+        fun LoadResponse.addSeasonNames(names: List<SeasonData>) { (this as? TvSeriesLoadResponse)?.seasonNames = names }
     }
 }
 
