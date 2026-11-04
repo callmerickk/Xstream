@@ -1,3 +1,16 @@
+Xstream 0.8.2
+
+• Play starts on the quickest copy, then moves up to the best one by itself (VegaMovies / RogMovies first) with a smooth fade — no messages on screen.
+• Upgrade to 4K waits for VegaMovies and RogMovies first, and the pill hides once you're already in 4K.
+• Files that couldn't jump now jump properly, and are labelled "Can't jump" in Sources.
+• Wrong films are caught and skipped quietly. Films not out online yet say so and can remind you the day they're out.
+• MovieBox links arrive much faster.
+• New rows: Top Movies and Series on Netflix, Prime Video and JioHotstar (English + Hindi).
+• Top cards: the title and buttons rise in after the card settles. Top 10 numbers are a little softer.
+• Hindi titles now suggest mostly Hindi titles, and related titles open instantly.
+• Subtitle and audio choices are remembered per title. Episodes not aired yet are blurred (no spoilers).
+• The notice at start no longer flashes.
+
 Xstream 0.8.1
 
 • Your switched-on plugins can't disappear any more, and they update themselves every few hours.

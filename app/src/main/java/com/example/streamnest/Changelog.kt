@@ -13,6 +13,18 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.2", "5 Nov 2026", "Instant start, then the best copy — silently", listOf(
+        "Play starts on the quickest copy, then moves up to the best one by itself (VegaMovies / RogMovies first) with a fade — no messages",
+        "Upgrade to 4K waits for VegaMovies and RogMovies first; the pill hides once you're already in 4K",
+        "Files without a seek index now jump properly (they reopen in VLC at that spot) and are labelled \"Can't jump\" in Sources",
+        "Wrong films are caught by their length and skipped quietly; films not out online yet say so and can remind you",
+        "MovieBox links arrive much faster",
+        "New rows: Top Movies and Series on Netflix, Prime Video and JioHotstar (English + Hindi)",
+        "Top cards: title and buttons rise in after the card settles; Top 10 numbers a little softer",
+        "Hindi titles suggest mostly Hindi titles; related titles open instantly",
+        "Your subtitle and audio choices are remembered per title; unaired episodes are blurred (no spoilers)",
+        "The legal notice no longer flashes at start",
+    )),
     Release("0.8.1", "3 Nov 2026", "Plugins stay on, VegaMovies back, smoother switching", listOf(
         "Your switched-on plugins can't disappear any more, and they update themselves every few hours",
         "VegaMovies finds titles again: when its site moves, the plugin picks up the new address by itself",
@@ -436,6 +448,16 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.2", "5 Nov 2026", "Ladder, fade checks, per-file seek, MovieBox direct, service rows", listOf(
+        "Player ladder: MPD/OTT≤720 → MP4 → OTT>720 → Vega/Rog (25 s wait); ottSwapTo checks position, index, decoder (MediaCodecList), 15 s buffer in 12 s; swapFail → quick switch",
+        "Upgrade pill hidden when not better; 4K: Vega/Rog only for 25 s; Vega/Rog plugins only from CNCVerse (foreignVega)",
+        "Ranker: unseekable per file name (unseekFiles), host marks dropped; seekAbs: !isCurrentMediaItemSeekable → VLC at the spot; Sources label \"Can't jump\"",
+        "Wrong film: duration vs Cinemeta runtime (<70 % / >140 %) → next link quietly; quiet failover texts; relay URLs ExoPlayer only, 10 s; paused player 3 s; ABR climbs in 1 s",
+        "MovieBoxDirect (h5-api.aoneroom.com) first, MovieBox plugins as backup; MBDIRECT log; broken → plugins first 24 h",
+        "CinemaOnly: digital/disc/TV or theatrical > 8 weeks; unknown this-year hidden; rechecks every 2 days; numbered row filters Hindi picks",
+        "ServiceRows (TMDB watch providers IN, en+hi), Deck rise-in, dim numerals, same-language picks, tmdb→imdb cache + prefetch, legal notice settle",
+        "AvailableNow follow + worker notify; per-title subs/audio prefs (titleScope); unaired episodes blurred",
+    )),
     Release("0.8.1", "3 Nov 2026", "Plugin set safety, Vega reload, SWITCH log, HDR rule, surface handoff", listOf(
         "Official.apply never on the dev phone (devPhone flag) and once per published version; refresh keeps plugins of unreachable repos; PLUGIN change log; self-repair from enabledBackup; upkeep refresh every 6 h",
         "linksFrom: NotImplementedError after a site request = reload plugin (fresh urls.json) and retry, not noSearch; CSLOAD logs each provider's mainUrl",
