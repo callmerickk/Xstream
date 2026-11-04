@@ -785,6 +785,10 @@ fun PlayerScreen(
     /** What this player shows, for Watch together. */
     fun roomState(play: Boolean, pos: Long = curPos()) =
         RoomState(url = now?.url.orEmpty(), key = p.key, title = p.title, image = p.image, type = type, pos = pos, playing = play)
+    /** Reopens what plays in VLC at [ms] (set up below, next to startWay). */
+    var vlcJump: (Long) -> Unit = {}
+    /** A link's file name (set below, once itemFor exists). */
+    var nameOf: (String) -> String? = { null }
     fun seekAbs(ms: Long) {
         seekedAt = SystemClock.uptimeMillis()
         // A file our player can't jump in (an MKV whose index it can't find): VLC finds its own way through these files,
@@ -792,7 +796,7 @@ fun PlayerScreen(
         val nu = now?.url
         if (!usingVlc && nu != null && firstFrame && kotlin.math.abs(ms - curPos()) > 20_000 && StreamType.quick(nu).let { it != StreamType.HLS && it != StreamType.DASH } &&
             player.playbackState != Player.STATE_IDLE && player.duration > 0 && !player.isCurrentMediaItemSeekable) {
-            Ranker.markUnseekable(nu, itemFor(nu)?.fileName())
+            Ranker.markUnseekable(nu, nameOf(nu))
             PlayTiming.late("jump to ${fmtTime(ms)}: this file has no index our player can read — reopening in VLC there")
             vlcJump(ms); return
         }
@@ -803,7 +807,7 @@ fun PlayerScreen(
         if (!usingVlc && u0 != null && ms > 90_000 && StreamType.quick(u0).let { it != StreamType.HLS && it != StreamType.DASH }) scope.launch {
             delay(6_000)
             if (now?.url == u0 && !buffering && curPos() < ms - 60_000 && curPos() < 60_000) {
-                Ranker.markUnseekable(u0, itemFor(u0)?.fileName()); PlayTiming.late("jump to ${fmtTime(ms)} landed at ${fmtTime(curPos())} — this file can't seek, reopening in VLC")
+                Ranker.markUnseekable(u0, nameOf(u0)); PlayTiming.late("jump to ${fmtTime(ms)} landed at ${fmtTime(curPos())} — this file can't seek, reopening in VLC")
                 vlcJump(ms)
             }
         }
@@ -817,8 +821,6 @@ fun PlayerScreen(
     fun keepPos(): Long = if (firstFrame) curPos().takeIf { it > 0 } ?: resumeAt else resumeAt
 
     var onEngineError: (String) -> Unit = {}
-    /** Reopens what plays in VLC at [ms] (set up below, next to startWay). */
-    var vlcJump: (Long) -> Unit = {}
     val probeSeq = remember { intArrayOf(0) }
 
     /** The stream entry behind a link, when we know it (for its size and tags). */
@@ -896,6 +898,7 @@ fun PlayerScreen(
         }
     }
 
+    nameOf = { u -> itemFor(u)?.fileName() }
     vlcJump = { ms ->
         now?.let { n ->
             ways = listOf(Way(true, true, StreamHeaders.forUrl(n.url).keys.any { !it.equals("User-Agent", true) && !it.equals("Referer", true) }), Way(true, false, false))
@@ -1257,7 +1260,7 @@ fun PlayerScreen(
         val got = d / 60_000.0
         if (got < expMin * 0.7 || got > expMin * 1.4) {
             PlayTiming.late("wrong film? this copy is ${"%.0f".format(got)} min, the film is $expMin min — next link")
-            ActLog.add("SWITCH", "auto · wrong film (length ${"%.0f".format(got)} min vs $expMin) · ${descr(n.url)}")
+            ActLog.add("SWITCH", "auto · wrong film (length ${"%.0f".format(got)} min vs $expMin) · ${n.addon} · ${n.source}")
             badFiles += fileId(n.url); tried += n.url
             tryNextSource(n, 0L, "WRONG_TITLE", quiet = true)
         }
