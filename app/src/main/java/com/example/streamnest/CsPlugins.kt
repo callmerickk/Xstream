@@ -170,6 +170,7 @@ object CsPlugins {
     }
 
     fun setEnabled(key: String, on: Boolean) {
+        if (on && catalog.value.firstOrNull { it.key == key }?.let { foreignVega(it) } == true) { ActLog.add("PLUGIN", "VegaMovies/RogMovies from another repository can't be switched on (CNCVerse's only)"); return }
         val n = if (on) enabled.value + key else enabled.value - key
         logChange(enabled.value, n, "you"); enabled.value = n; save(); if (!on) loaded.remove(key)
         prefs?.edit()?.putStringSet("enabledBackup", n)?.apply()
@@ -306,7 +307,9 @@ object CsPlugins {
     }
 
     fun entry(key: String): CsPluginEntry? = catalog.value.firstOrNull { it.key == key }
-    fun enabledEntries(): List<CsPluginEntry> = catalog.value.filter { it.key in enabled.value }
+    fun enabledEntries(): List<CsPluginEntry> = catalog.value.filter { it.key in enabled.value && !foreignVega(it) }
+    /** VegaMovies / RogMovies only from CNCVerse: copies from any other repository never run (they point at dead sites). */
+    fun foreignVega(e: CsPluginEntry): Boolean = e.repo != CNC && (e.internalName.contains("vega", true) || e.internalName.contains("rogmovies", true) || e.name.contains("vega", true))
 
     /** "Keep warm": loads the switched-on plugins and asks each provider one small search, so the first real use is fast. */
     suspend fun warmAll(log: (String) -> Unit = { ActLog.add("CSWARM", it) }) = withContext(Dispatchers.IO) {

@@ -272,7 +272,7 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
         .apply { if (!DecoderSafe.on(vm)) forceEnableMediaCodecAsynchronousQueueing() }
     // Adaptive streams step up after 3 s of good speed (default 10 s): a lower first quality is replaced quickly.
     val selector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(ctx,
-        androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection.Factory(3_000, 25_000, 6_000, 0.7f))
+        androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection.Factory(1_000, 25_000, 6_000, 0.85f))
     return ExoPlayer.Builder(ctx, renderers).setLoadControl(load).setTrackSelector(selector).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
         // Seeking may land up to 0.3 s off the exact spot: much faster jumps on big files (as CloudStream does).
         .setSeekParameters(androidx.media3.exoplayer.SeekParameters(300_000L, 300_000L))
@@ -323,6 +323,8 @@ data class Way(val vlc: Boolean, val hw: Boolean, val relay: Boolean) {
  */
 fun waysFor(url: String, engine: String, big: Boolean = false, manifest: Boolean = false, plugin: Boolean = false): List<Way> {
     val h = StreamHeaders.forUrl(url)
+    // The app's own relay for token playlists (127.0.0.1): ExoPlayer only — VLC through it just times out (Friends: 40 s).
+    if (url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost")) return listOf(Way(false, true, false))
     // A plugin's playlist (Netflix / Prime Video / Hotstar / MovieBox): ExoPlayer only — when it times out the link has
     // expired, and the next link is tried at once (VLC can't revive it, and closing it froze the app).
     if (manifest && plugin) return listOf(Way(false, true, false))
@@ -396,6 +398,29 @@ fun warmUpLink(url: String) {
             }
         }
     }
+}
+
+/** "2h 32min" / "152 min" / "PT2H32M" → minutes. */
+fun runtimeMinutes(r: String?): Int? {
+    if (r.isNullOrBlank()) return null
+    val h = Regex("(\\d+)\\s*h", RegexOption.IGNORE_CASE).find(r)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+    val m = Regex("(\\d+)\\s*m", RegexOption.IGNORE_CASE).find(r)?.groupValues?.get(1)?.toIntOrNull()
+        ?: if (h == 0) r.trim().toIntOrNull() else 0
+    val t = h * 60 + (m ?: 0)
+    return t.takeIf { it > 0 }
+}
+
+/** Whether this phone's video decoder can play [f] (its size at its frame rate) — checked before a silent fade. */
+fun decoderCanPlay(f: androidx.media3.common.Format?): Boolean {
+    if (f == null) return true
+    val mime = f.sampleMimeType ?: return true
+    return runCatching {
+        android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.filter { !it.isEncoder && it.supportedTypes.any { t -> t.equals(mime, true) } }.any { ci ->
+            val vc = ci.getCapabilitiesForType(mime).videoCapabilities ?: return@any false
+            if (f.width <= 0 || f.height <= 0) true
+            else if (f.frameRate > 0) vc.areSizeAndRateSupported(f.width, f.height, f.frameRate.toDouble()) else vc.isSizeSupported(f.width, f.height)
+        }
+    }.getOrDefault(true)
 }
 
 /** Copies the frame on screen (VLC or ExoPlayer surface) so it can stay visible while another link loads. */
@@ -647,6 +672,8 @@ fun PlayerScreen(
     val tried = remember { Prepare.failedFor(p.key).toMutableSet() }
     /** Files that failed to open (not a refusal): their other links are skipped. */
     val badFiles = remember { mutableSetOf<String>() }
+    /** You chose this stream yourself (Sources / Quality): it is never judged or swapped by the player. */
+    var userPicked by remember { mutableStateOf(false) }
     /** Servers that refused once, or sent nothing twice, during this play: their other links go last. */
     val skipHosts = remember { mutableSetOf<String>() }
     val silentCount = remember { mutableMapOf<String, Int>() }
@@ -760,6 +787,15 @@ fun PlayerScreen(
         RoomState(url = now?.url.orEmpty(), key = p.key, title = p.title, image = p.image, type = type, pos = pos, playing = play)
     fun seekAbs(ms: Long) {
         seekedAt = SystemClock.uptimeMillis()
+        // A file our player can't jump in (an MKV whose index it can't find): VLC finds its own way through these files,
+        // so it reopens there at the spot you picked (the file is labelled "Can't jump" and never auto-picked again).
+        val nu = now?.url
+        if (!usingVlc && nu != null && firstFrame && kotlin.math.abs(ms - curPos()) > 20_000 && StreamType.quick(nu).let { it != StreamType.HLS && it != StreamType.DASH } &&
+            player.playbackState != Player.STATE_IDLE && player.duration > 0 && !player.isCurrentMediaItemSeekable) {
+            Ranker.markUnseekable(nu, itemFor(nu)?.fileName())
+            PlayTiming.late("jump to ${fmtTime(ms)}: this file has no index our player can read — reopening in VLC there")
+            vlcJump(ms); return
+        }
         if (usingVlc) vlc?.seek(ms) else player.seekTo(ms)
         if (firstFrame) Together.local(roomState(isPlayingNow(), ms))
         // A jump that lands back at the start: this server can't seek — remembered, it becomes a last backup.
@@ -767,7 +803,8 @@ fun PlayerScreen(
         if (!usingVlc && u0 != null && ms > 90_000 && StreamType.quick(u0).let { it != StreamType.HLS && it != StreamType.DASH }) scope.launch {
             delay(6_000)
             if (now?.url == u0 && !buffering && curPos() < ms - 60_000 && curPos() < 60_000) {
-                Ranker.markUnseekable(u0); PlayTiming.late("jump to ${fmtTime(ms)} landed at ${fmtTime(curPos())} — server can't seek")
+                Ranker.markUnseekable(u0, itemFor(u0)?.fileName()); PlayTiming.late("jump to ${fmtTime(ms)} landed at ${fmtTime(curPos())} — this file can't seek, reopening in VLC")
+                vlcJump(ms)
             }
         }
     }
@@ -780,6 +817,8 @@ fun PlayerScreen(
     fun keepPos(): Long = if (firstFrame) curPos().takeIf { it > 0 } ?: resumeAt else resumeAt
 
     var onEngineError: (String) -> Unit = {}
+    /** Reopens what plays in VLC at [ms] (set up below, next to startWay). */
+    var vlcJump: (Long) -> Unit = {}
     val probeSeq = remember { intArrayOf(0) }
 
     /** The stream entry behind a link, when we know it (for its size and tags). */
@@ -857,6 +896,15 @@ fun PlayerScreen(
         }
     }
 
+    vlcJump = { ms ->
+        now?.let { n ->
+            ways = listOf(Way(true, true, StreamHeaders.forUrl(n.url).keys.any { !it.equals("User-Agent", true) && !it.equals("Referer", true) }), Way(true, false, false))
+            wayIdx = 0
+            if (firstFrame) { switching = true; videoView?.let { vv -> captureFrame(vv, full = true) { bmp -> if (switching) frozen = bmp } } }
+            resumeAt = ms
+            startWay(n, ms)
+        }
+    }
     /** Subtitles of a new stream plus the ones already loaded (from the subtitle addons), without duplicates. */
     fun withSubs(st: StreamItem, old: List<Subtitle>): List<Subtitle> =
         st.stream.subtitles.orEmpty() + old.filter { s -> st.stream.subtitles.orEmpty().none { it.url == s.url } }
@@ -1026,7 +1074,7 @@ fun PlayerScreen(
     }
 
     /** No more ways for this link: the next source; in Quick Start, then every other addon's files; else the error. */
-    fun tryNextSource(n: Now?, start: Long, code: String) {
+    fun tryNextSource(n: Now?, start: Long, code: String, quiet: Boolean = false) {
         // This link failed every way: count it for its provider group (twice in a row = under observation).
         n?.let { nn -> val it0 = itemFor(nn.url); scope.launch { Ranker.recordFail(it0, code) } }
         // The best remaining link by the Source Test ranking (dead and keeps-failing groups last resort only):
@@ -1040,7 +1088,8 @@ fun PlayerScreen(
         when {
             next != null -> {
                 candidates = candidates.filter { it !== next && it.stream.url.orEmpty() !in tried }
-                Snack.show("That source didn't play — trying the next one")
+                // Before the first picture this happens quietly (only the loading screen shows); mid-film a short note.
+                if (firstFrame && !quiet) Snack.show("That source stopped — continuing on another one")
                 load(Now(next.stream.url!!, withSubs(next, n?.subs.orEmpty()), next.stream.name ?: next.addonName, next.addonName), start)
             }
             // Quick Start ran out of files: carry on with every other addon's files before giving up.
@@ -1061,7 +1110,7 @@ fun PlayerScreen(
                     tryNextSource(n, start, code)
                 }
             }
-            else -> { forgetStreams(p.key); switching = false; frozen = null; failure = "This file couldn't be played, even after trying every way ($code). Try another source." }
+            else -> { forgetStreams(p.key); switching = false; frozen = null; failure = "Couldn't play this right now. Try again, or pick a source." ; PlayTiming.mark("nothing played ($code)") }
         }
     }
 
@@ -1069,7 +1118,7 @@ fun PlayerScreen(
     fun tryOtherWays(n: Now?, start: Long, code: String) {
         if (n != null && wayIdx + 1 < ways.size) {
             wayIdx++
-            if (wayIdx == 1) Snack.show("Trying another way to play this file…")
+            if (wayIdx == 1 && firstFrame) Snack.show("Trying another way to play this file…")
             resumeAt = start
             startWay(n, start)
         } else tryNextSource(n, start, code)
@@ -1193,14 +1242,31 @@ fun PlayerScreen(
             delay(budget)
             var waited = budget
             while (waited < maxOf(14_000L, budget) && !firstFrame && (tracks.groups.isNotEmpty() || player.bufferedPosition > 0)) { delay(500); waited += 500 }
-        } else delay(if (now?.url.orEmpty().startsWith("http://127.0.0.1")) 45_000L else 30_000L)
+        } else delay(if (now?.url.orEmpty().startsWith("http://127.0.0.1")) 10_000L else if (hasMoreLinks()) 12_000L else 30_000L)
         if (!firstFrame && failure == null && now != null && !recovering) onEngineError("TIMEOUT")
+    }
+    // The right film? Once a film's link opens, its length is compared with the title's runtime: a copy far shorter or
+    // longer is another film with the same name (Deva, Godzilla Minus Zero) — dropped quietly, the next link plays.
+    LaunchedEffect(firstFrame, now?.url) {
+        if (!firstFrame || type != "movie" || p.manual || userPicked) return@LaunchedEffect
+        val n = now ?: return@LaunchedEffect
+        val expMin = runtimeMinutes(p.meta?.runtime) ?: runCatching { runtimeMinutes(PluginSources.metaFor(type, p.key)?.runtime) }.getOrNull() ?: return@LaunchedEffect
+        if (expMin < 40) return@LaunchedEffect
+        delay(1_500)
+        val d = curDur(); if (d <= 0 || now?.url != n.url) return@LaunchedEffect
+        val got = d / 60_000.0
+        if (got < expMin * 0.7 || got > expMin * 1.4) {
+            PlayTiming.late("wrong film? this copy is ${"%.0f".format(got)} min, the film is $expMin min — next link")
+            ActLog.add("SWITCH", "auto · wrong film (length ${"%.0f".format(got)} min vs $expMin) · ${descr(n.url)}")
+            badFiles += fileId(n.url); tried += n.url
+            tryNextSource(n, 0L, "WRONG_TITLE", quiet = true)
+        }
     }
     // The paused player from the title page: if no picture 6 s after Play, it is treated like a stuck link.
     LaunchedEffect(Unit) {
         if (pre == null) return@LaunchedEffect
-        delay(6_000L)
-        if (!firstFrame && failure == null && !recovering && loadTick == 0) { PlayTiming.mark("paused player gave no picture in 6 s"); onEngineError("TIMEOUT") }
+        delay(3_000L)
+        if (!firstFrame && failure == null && !recovering && loadTick == 0) { PlayTiming.mark("paused player gave no picture in 3 s — next link"); onEngineError("TIMEOUT") }
     }
     // Back on screen after a switch: say where we continued, with a quick way to start over.
     // Started: the provider group worked; instant play says how fast; phones save the other qualities' next minute.
@@ -1948,7 +2014,9 @@ fun PlayerScreen(
                     .filter { !Ranker.isDead(it) && !Ranker.keepsFailing(it) && !it.unplayableHere() && !(HdrRule.banned(vm) && (HdrRule.named(it) || it.stream.url in hdrBlocked)) }
                     .sortedWith(compareBy<StreamItem>({ if (it.isVega() && vm.langRank(it) < vm.qsLangs().size) 0 else 1 }, { vm.langRank(it) }, { PicturePref.rank(vm, it) }))
                 if (cands.isNotEmpty() && tried.isEmpty()) PlayTiming.late("4K: ${cands.size} candidate(s), best first: " + cands.take(3).joinToString(" / ") { "${Public.streamName(it)} (${it.languagesOrOriginal().joinToString("+")})" })
-                val c = cands.firstOrNull()
+                // VegaMovies / RogMovies get the first 25 s; only then 4KHDHub, HDHub4U and the rest.
+                val vegaOnly = SystemClock.elapsedRealtime() - t0 < 25_000
+                val c = (if (vegaOnly) cands.filter { it.isVega() } else cands).firstOrNull { !Ranker.knownUnseekable(it) }
                 if (c == null) {
                     // Nothing yet: the plugins are asked again every 30 s for the full 3 minutes (slow sites answer late,
                     // and links that expired — 403 — come back fresh), instead of giving up after the first answer.
@@ -2486,6 +2554,8 @@ fun PlayerScreen(
     var ottSwapStarted by remember(p.key) { mutableStateOf(false) }
     /** A stream you picked yourself (Play manually / Sources): it is never swapped for another one. */
     var byHand by remember(p.key) { mutableStateOf(p.manual) }
+    /** Why the last fade didn't happen: smooth… / timing… / cut… (a quick switch is fine), other = skip that copy. */
+    var swapFail by remember { mutableStateOf<String?>(null) }
     /**
      * Opens [c] quietly and fades it in at the same frame. [asked]: you tapped "Upgrade" — a copy of another length is
      * not faded (returns false, the caller then switches the usual way). The audio language you are hearing is kept.
@@ -2493,6 +2563,7 @@ fun PlayerScreen(
      * so only one video is decoded at a time (no stutter).
      */
     suspend fun ottSwapTo(c: StreamItem, asked: Boolean = false, why: String = if (asked) "Upgrade" else "OTT swap"): Boolean {
+        swapFail = null
         val url = c.stream.url ?: return false
         val name = Public.streamName(c)
         val startUrl = now?.url
@@ -2528,28 +2599,46 @@ fun PlayerScreen(
             return false
         }
         PlayTiming.late("swap: opening $name quietly at ${fmtTime(target)}")
-        if (!ready(25_000)) { PlayTiming.late("swap: $name didn't open in time"); swLog(auto, "$why — failed", url, "not switched: didn't open in 25 s"); drop(); return false }
+        if (!ready(25_000)) { swapFail = "open"; PlayTiming.late("swap: $name didn't open in time"); swLog(auto, "$why — failed", url, "not switched: didn't open in 25 s"); drop(); return false }
+        // The copy must really be at the asked moment (a file that ignores the start time began at 0:00 — Mirzapur).
+        if (target > 30_000 && kotlin.math.abs(sp.currentPosition - target) > 3_000) {
+            swapFail = "seek"; Ranker.markUnseekable(url, c.fileName())
+            swLog(auto, "$why — skipped", url, "not switched: it opened at ${fmtTime(sp.currentPosition)}, not ${fmtTime(target)} (can't jump)"); drop(); return false
+        }
+        if (!isPlaylistLink(c, url) && StreamType.mimeFor(url, c.fileName()) == null && sp.duration > 0 && !sp.isCurrentMediaItemSeekable) {
+            swapFail = "seek"; Ranker.markUnseekable(url, c.fileName())
+            swLog(auto, "$why — skipped", url, "not switched: the file has no index to jump with"); drop(); return false
+        }
         if (HdrRule.banned(vm) && HdrRule.isHdr(sp.videoFormat)) {
             hdrBlocked += url; swLog(auto, "$why — blocked", url, "not switched: the picture is HDR (its name didn't say so)"); drop(); return false
         }
         val dMain = curDur(); val dSh = sp.duration
         if (dMain <= 0 || dSh <= 0 || kotlin.math.abs(dMain - dSh) > 1_500) {
+            swapFail = if (dMain > 0 && dSh > 0 && kotlin.math.abs(dMain - dSh) < dMain * 0.08) "cut (${kotlin.math.abs(dMain - dSh) / 1000} s longer/shorter)" else "length"
+            if (!asked && why.startsWith("ladder")) { swLog(true, "$why — not faded", url, "lengths differ (${fmtTime(dMain)} vs ${fmtTime(dSh)})"); drop(); return false }
             PlayTiming.late("swap: lengths differ (${fmtTime(dMain)} vs ${fmtTime(dSh)})" + if (asked) " — switching the usual way" else " — Upgrade quality offered instead")
             if (!asked) swLog(true, "$why — not faded", url, "lengths differ by ${kotlin.math.abs(dMain - dSh) / 1000} s, offered as Upgrade instead")
             drop()
             if (asked) return false
-            if (upgrade == null) { upgrade = UpgradeOffer(c, false); upLeft = 30 }
             return true
         }
         // The language must be there too: a copy without it is never faded in.
         if (audioLang != null) {
             val langs = sp.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { g -> (0 until g.length).mapNotNull { g.getTrackFormat(it).language } }
             if (langs.isNotEmpty() && langs.none { it.take(2).equals(audioLang.take(2), true) }) {
-                PlayTiming.late("swap: $name has no ${audioLang} audio — not switched"); swLog(auto, "$why — skipped", url, "not switched: no $audioLang audio"); drop(); return false
+                swapFail = "lang"; PlayTiming.late("swap: $name has no ${audioLang} audio — not switched"); swLog(auto, "$why — skipped", url, "not switched: no $audioLang audio"); drop(); return false
             }
         }
         val vf = sp.videoFormat
         val heavy = (vf?.frameRate ?: 0f) >= 48f || (vf?.height ?: 0) >= 2000
+        // Silent switches only when they will be smooth: this phone's decoder handles the size and frame rate, and the
+        // new copy loads fast (15 s of video ready ahead within 12 s ≈ the connection is ≥ 1.25× its bitrate).
+        if (!asked) {
+            if (!decoderCanPlay(vf)) { swapFail = "smooth: decoder can't do ${vf?.width}×${vf?.height} @ ${vf?.frameRate?.toInt()} fps"; swLog(true, "$why — not faded", url, swapFail!!); drop(); return false }
+            val tb = SystemClock.elapsedRealtime()
+            while (sp.bufferedPosition - sp.currentPosition < 15_000 && SystemClock.elapsedRealtime() - tb < 12_000) { if (failed) { drop(); return false }; delay(200) }
+            if (sp.bufferedPosition - sp.currentPosition < 15_000) { swapFail = "smooth: connection too slow (${(sp.bufferedPosition - sp.currentPosition) / 1000} s loaded in 12 s)"; swLog(true, "$why — not faded", url, swapFail!!); drop(); return false }
+        }
         if (heavy) PlayTiming.late("swap: ${vf?.height}p ${vf?.frameRate?.toInt()} fps — freeze fade")
         // Wait for the picture to reach the second player's frame; aim again if you jumped or paused for long.
         while (true) {
@@ -2609,9 +2698,18 @@ fun PlayerScreen(
         }
         return true
     }
+    /** The Upgrade pill goes away when what plays (or is about to) is already as good as the offer. */
+    fun hideOfferIfNotBetter(st: StreamItem?) {
+        val u = upgrade ?: return
+        val res = maxOf(st?.effectiveRes() ?: 0, runCatching { if (usingVlc) 0 else player.videoFormat?.height ?: 0 }.getOrDefault(0))
+        if (res >= u.item.effectiveRes() || (u.is4k && res >= 1440)) { upgrade = null; PlayTiming.late("Upgrade pill hidden — already ${res}p") }
+    }
+    LaunchedEffect(now?.url, tracks) { hideOfferIfNotBetter(now?.url?.let { itemFor(it) }) }
     /** Every switch you ask for (Quality menu, Upgrade, Sources): faded in at the same frame when it can be, else reloaded. */
     fun fadeTo(st: StreamItem, label: String?, why: String, upgrade: Boolean = false) {
         byHand = true   // your choice: no automatic swap afterwards
+        userPicked = true
+        hideOfferIfNotBetter(st)
         if (usingVlc || !firstFrame) { switchTo(st, label, why = why, upgrade = upgrade); return }
         scope.launch {
             Snack.show("${label ?: "Switching"} · getting it ready")
@@ -2631,84 +2729,75 @@ fun PlayerScreen(
         swLog(true, "HDR not allowed", back.stream.url, "going back")
         switchTo(back, "Back · no HDR")
     }
+    // ───── Plugin mode: the quality ladder (same 1080p film, lowest → highest) ─────
+    //   0 = MovieBox streaming playlist (MPD / HLS) or Netflix / Prime Video / Hotstar / MPlayer at 720p or lower
+    //   1 = MovieBox MP4 · 2 = Netflix / Prime Video / Hotstar / MPlayer above 720p · 3 = VegaMovies / RogMovies (CNCVerse)
+    // Play starts on the quickest link; the player then climbs silently: VegaMovies / RogMovies are waited for 25 s, then
+    // the highest rung that is there (OTT above 720p, else MovieBox MP4). Each step fades in at the same frame when every
+    // safety check passes, else one quick switch with a still frame. 4K is never automatic (the pill offers it).
+    fun rung(s: StreamItem): Int = when {
+        s.isVega() -> 3
+        s.isOtt() -> if (s.effectiveRes() > 720) 2 else 0
+        s.isMovieBox() -> if (s.mbKind() == 2) 1 else 0
+        else -> -1
+    }
+    /** What actually plays: a playlist that tops out at 720p counts as 720p. */
+    fun rungNow(s: StreamItem): Int {
+        val r = rung(s)
+        if (r != 2 || usingVlc) return r
+        val top = runCatching { player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }.flatMap { g -> (0 until g.length).map { g.getTrackFormat(it).height } }.maxOrNull() }.getOrNull() ?: 0
+        return if (top in 1..720) 0 else 2
+    }
     LaunchedEffect(firstFrame) {
         if (!firstFrame || BuildConfig.IS_TV || usingVlc || !vm.pluginMode() || ottSwapStarted || byHand) return@LaunchedEffect
-        val cur = now?.url?.let { itemFor(it) } ?: return@LaunchedEffect
-        if (cur.isOtt()) return@LaunchedEffect
+        val start = now?.url?.let { itemFor(it) } ?: return@LaunchedEffect
+        if (rung(start) < 0 || rung(start) >= 3) return@LaunchedEffect
         ottSwapStarted = true
         ottSwapping = true
         scope.launch {
-            // Fade switches, best first: Netflix-type (any time) → after 60 s on the backup without one: VegaMovies 1080p →
-            // MovieBox's MP4 in the same language (the last one). Each opens quietly and fades in at the same frame.
             val pool = java.util.concurrent.ConcurrentHashMap<String, StreamItem>()
-            var done = false
             val gather = scope.launch {
-                runCatching { vm.streamsFlow(type, p.key).collect { (l, d) -> vm.filtered(l).list.filter { it.ottTier() in setOf(0, 2, 4) }.forEach { s -> s.stream.url?.let { u -> pool.putIfAbsent(u, s) } }; done = d } }
-                done = true
+                runCatching { vm.streamsFlow(type, p.key).collect { (l, _) -> vm.filtered(l).list.filter { rung(it) >= 1 }.forEach { s -> s.stream.url?.let { u -> pool.putIfAbsent(u, s) } } } }
             }
             try {
                 val t0 = SystemClock.elapsedRealtime()
-                val triedSwap = HashSet<String>()
+                val tried = HashSet<String>()
+                PlayTiming.late("ladder: playing rung ${rungNow(start)} (${Public.streamName(start)}) — climbing to the best copy")
                 while (SystemClock.elapsedRealtime() - t0 < 600_000) {
-                    val playing = now?.url?.let { itemFor(it) } ?: cur
-                    // Live server playback stays on the Live server (no swap to another source).
-                    if (playing.isOtt() || usingVlc || byHand || playing.addonName == LiveServer.NAME) break
-                    val pt = playing.ottTier()
-                    val waited = SystemClock.elapsedRealtime() - t0 >= 60_000
-                    val all = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false)
-                        .filter { it.stream.url !in triedSwap && vm.langRank(it) <= vm.langRank(playing) && !it.unplayableHere() && !(HdrRule.banned(vm) && (HdrRule.named(it) || it.stream.url in hdrBlocked)) }
-                    val c = all.firstOrNull { it.isOtt() }
-                        ?: (if (waited && pt != 2) all.filter { it.isVega() && it.effectiveRes() in 720..1080 }.maxByOrNull { it.effectiveRes() } else null)
-                        ?: (if (waited && pt in setOf(1, 3) && all.none { it.isVega() }) all.firstOrNull { it.ottTier() == 4 && vm.langRank(it) == vm.langRank(playing) } else null)
-                    if (c == null) {
-                        if (done && pool.values.none { it.isOtt() && it.stream.url !in triedSwap } && (waited || pool.isEmpty())) {
-                            // Nothing better will come: stop once every later option was tried too.
-                            if (all.none { it.isVega() || it.ottTier() == 4 }) break
-                        }
-                        delay(1_000); continue
+                    val cur = now?.url?.let { itemFor(it) } ?: break
+                    if (usingVlc || byHand || cur.addonName == LiveServer.NAME) break
+                    val here = rungNow(cur)
+                    if (here >= 3) break
+                    if (buffering) { delay(1_000); continue }
+                    val hdrOff = HdrRule.banned(vm)
+                    val ok = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false).filter {
+                        it.stream.url !in tried && it.effectiveRes() in 1000..1199 && vm.langRank(it) <= vm.langRank(cur) && !it.unplayableHere() &&
+                            !Ranker.knownUnseekable(it) && !Ranker.isDead(it) && !(hdrOff && (HdrRule.named(it) || it.stream.url in hdrBlocked)) && rung(it) > here
                     }
-                    triedSwap += c.stream.url!!
-                    PlayTiming.late("swap: trying ${Public.streamName(c)}")
-                    runCatching { ottSwapTo(c, why = "OTT swap (${if (c.isOtt()) "Netflix-type ready" else "better copy after 60 s"})") }
+                    val waited = SystemClock.elapsedRealtime() - t0 >= 25_000
+                    // VegaMovies / RogMovies first; after 25 s without them, the highest rung that is there.
+                    val c = ok.firstOrNull { rung(it) == 3 }
+                        ?: (if (waited) (ok.firstOrNull { rung(it) == 2 } ?: ok.firstOrNull { rung(it) == 1 }) else null)
+                    if (c == null) { delay(1_000); continue }
+                    tried += c.stream.url!!
+                    val why = "ladder ${here} → ${rung(c)} (${if (rung(c) == 3) "VegaMovies/RogMovies" else if (rung(c) == 2) "OTT 1080p" else "MovieBox MP4"})"
+                    PlayTiming.late("$why: trying ${Public.streamName(c)}")
+                    val faded = runCatching { ottSwapTo(c, why = why) }.getOrDefault(false)
+                    if (faded) continue
+                    // Not sure a fade would be smooth (phone, connection, the other copy's timing): one quick switch with a
+                    // still frame instead. A different film (length off by more than 8 %) or a file that failed is skipped.
+                    val f = swapFail ?: ""
+                    if (f.startsWith("smooth") || f.startsWith("timing") || f.startsWith("cut")) {
+                        swLog(true, "$why — quick switch", c.stream.url, "fade not safe ($f)")
+                        switchTo(c, null, auto = true, why = why)
+                        delay(8_000)
+                    }
                 }
             } finally {
                 gather.cancel()
                 shadow?.takeIf { it !== player }?.let { runCatching { it.release() }; shadow = null; shadowAlpha = 0f }
                 ottSwapping = false
             }
-        }
-    }
-    // Netflix / Prime / Hotstar topping out at 720p or lower: a 1080p copy of the same film (VegaMovies, MovieBox MP4,
-    // other servers; same language, same length) is opened quietly and faded in at the same frame. If none fits, the
-    // usual Upgrade quality offer stays the way to get it. Above 720p nothing happens.
-    var lowOttChecked by remember { mutableStateOf(false) }
-    LaunchedEffect(firstFrame, tracks) {
-        if (lowOttChecked || !firstFrame || usingVlc || byHand || BuildConfig.IS_TV || !vm.pluginMode()) return@LaunchedEffect
-        val cur = now?.url?.let { itemFor(it) } ?: return@LaunchedEffect
-        if (!cur.isOtt()) return@LaunchedEffect
-        val g = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO } ?: return@LaunchedEffect
-        val top = (0 until g.length).maxOfOrNull { g.getTrackFormat(it).height } ?: return@LaunchedEffect
-        lowOttChecked = true
-        if (top <= 0 || top > 720) return@LaunchedEffect
-        PlayTiming.late("OTT tops out at ${top}p — looking for a 1080p copy")
-        scope.launch {
-            val pool = java.util.concurrent.ConcurrentHashMap<String, StreamItem>()
-            val gather = scope.launch { runCatching { vm.streamsFlow(type, p.key).collect { (l, _) -> vm.filtered(l).list.filter { !it.isOtt() && it.effectiveRes() in 1000..1199 }.forEach { s -> s.stream.url?.let { u -> pool.putIfAbsent(u, s) } } } } }
-            try {
-                val t0 = SystemClock.elapsedRealtime(); val triedUp = HashSet<String>()
-                while (SystemClock.elapsedRealtime() - t0 < 120_000 && triedUp.size < 3) {
-                    val playingNow = now?.url?.let { itemFor(it) } ?: break
-                    if (!playingNow.isOtt() || byHand || usingVlc) break
-                    // Only the ranked 1080p groups: VegaMovies, RogMovies, 4KHDHub, HDHub4U (seekable files only).
-                    val c = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false)
-                        .filter { it.stream.url !in triedUp && vm.langRank(it) <= vm.langRank(playingNow) && !it.unplayableHere() && !Ranker.knownUnseekable(it) &&
-                            (it.isVega() || it.addonName.contains("hdhub", true) || it.addonName.contains("4khd", true)) }.firstOrNull()
-                    if (c == null) { delay(2_000); continue }
-                    triedUp += c.stream.url!!
-                    PlayTiming.late("OTT 1080p: trying ${Public.streamName(c)}")
-                    if (runCatching { ottSwapTo(c, why = "OTT 720p → 1080p") }.getOrDefault(false)) break
-                }
-            } finally { gather.cancel() }
         }
     }
     /** An online subtitle: reload this link from the same second with it added first, and pick it. */
@@ -4590,6 +4679,7 @@ fun PlayerScreen(
                           val pickSource: (StreamItem, List<StreamItem>) -> Unit = { st, all ->
                             panel = null
                             byHand = true   // your choice: no automatic swap afterwards
+                            userPicked = true
                             known = all
                             candidates = all.filter { it !== st }
                             val keep = keepPos()
@@ -6451,7 +6541,7 @@ private fun PluginQualityBar(
                                         .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB6BDCC))
                                 }
                                 Text(listOfNotNull(VisualTags.audio(st), VisualTags.size(st), st.languagesOrOriginal().joinToString(" + ") { langLabel(it) },
-                                    if (Ranker.knownUnseekable(st) || st.isEmbedBackup()) "backup" else null).joinToString(" · "),
+                                    if (Ranker.knownUnseekable(st)) "Can't jump" else if (st.isEmbedBackup()) "backup" else null).joinToString(" · "),
                                     fontSize = 10.5.sp, color = Color(0xFF9AA3B5), maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                             if (on) Icon(Icons.Default.Check, null, Modifier.size(15.dp), tint = red)

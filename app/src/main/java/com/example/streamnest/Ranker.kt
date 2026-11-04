@@ -140,17 +140,27 @@ object Ranker {
         return if (k in unseekable && s.isPlaylist()) sc + 60 else sc
     }
 
-    fun knownUnseekable(s: StreamItem): Boolean = !s.isPlaylist() && (groupKey(s) in unseekable || s.stream.url?.let { hostKey(it) in unseekableHosts } == true)
+    fun knownUnseekable(s: StreamItem): Boolean = !s.isPlaylist() && (groupKey(s) in unseekable || fileKey(s.stream.url.orEmpty(), s.fileName()) in unseekableFiles)
 
-    /** Servers where a jump lands back at the start (found by a real jump test or while you watch): kept as last backup. */
-    private val unseekableHosts: MutableSet<String> = ConcurrentHashMap.newKeySet()
-    fun markUnseekable(url: String) {
-        val h = hostKey(url)
-        if (h.isBlank() || !unseekableHosts.add(h)) return
-        prefs?.edit()?.putStringSet("unseekHosts", unseekableHosts.toSet())?.apply()
-        ActLog.add("RANK", "can't jump inside: $h (last backup from now on)")
+    /**
+     * Files where a jump lands back at the start. Kept per FILE (its name, so every mirror of the same upload counts),
+     * not per server: one file without a seek index used to mark all of pixeldrain / fuckingfast as bad.
+     */
+    private val unseekableFiles: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    fun fileKey(url: String, name: String?): String =
+        name?.takeIf { it.length > 8 }?.lowercase()?.trim() ?: url.substringBefore('?').substringAfter("//").lowercase()
+    fun markUnseekable(url: String, name: String? = null) {
+        val k = fileKey(url, name)
+        if (k.isBlank() || !unseekableFiles.add(k)) return
+        prefs?.edit()?.putStringSet("unseekFiles", unseekableFiles.toSet())?.apply()
+        ActLog.add("RANK", "can't jump inside this file: ${k.take(90)} (labelled, never auto-picked)")
     }
-    fun loadUnseekable() { prefs?.getStringSet("unseekHosts", null)?.let { unseekableHosts += it } }
+    fun isUnseekableUrl(url: String, name: String? = null) = fileKey(url, name) in unseekableFiles
+    fun loadUnseekable() {
+        // 0.8.2: the old per-server marks are dropped (they hid good files on the same servers).
+        prefs?.edit()?.remove("unseekHosts")?.apply()
+        prefs?.getStringSet("unseekFiles", null)?.let { unseekableFiles += it }
+    }
 
     /** Never checked by the Source Test (no score yet): shown "Unidentified" until the next test. */
     fun untested(s: StreamItem): Boolean = !anyScores.containsKey(groupKey(s))
