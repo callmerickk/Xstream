@@ -787,10 +787,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 }.getOrNull() }
             }.awaitAll().filterNotNull()
             val pushedSrc = pushed.mapNotNull { it.src }.toSet()
+            // "Top on Netflix / Prime Video / JioHotstar" (TMDB, India, English + Hindi): after the first three rows.
+            val svc = if (BuildConfig.IS_TV || current.value?.kids == true || texts.value["svcRows"] == "off") emptyList()
+                else kotlinx.coroutines.withTimeoutOrNull(5_000) { runCatching { ServiceRows.rows() }.getOrNull() }.orEmpty()
             // 0.8: Home is managed by the developer. When a layout is published, every other account shows only those rows
             // (its own catalogue addons no longer add rows); the developer still sees everything.
             val own = if (pushed.isNotEmpty() && !Public.dev) emptyList() else result.filterNotNull()
-            shelves.value = (pushed + own.filter { it.src == null || it.src !in pushedSrc })
+            shelves.value = (pushed + own.filter { it.src == null || it.src !in pushedSrc }).let { l -> if (svc.isEmpty()) l else l.take(3) + svc + l.drop(3) }
                 .filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.filter { !isErrorCard(it) }.map { posterFromPattern(it) }.distinctBy { it.type + it.id }) }
             loading.value = false
             // Films only in cinemas / not out yet: checked right away (while "Who's watching?" is up), so Home never

@@ -42,17 +42,19 @@ fun LegalNoticeGate(vm: AppViewModel) {
     val texts by vm.texts.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val uid = user?.uid
-    var accepted by remember(uid) { mutableStateOf(false) }
-
-    LaunchedEffect(uid, texts["legalAcceptedAt"], texts["legalVersion"], texts["legalAcceptedUid"]) {
-        if (uid == null) { accepted = false; return@LaunchedEffect }
+    // Worked out right away (not a frame later): the notice used to flash for a second before the saved "accepted"
+    // was read, then vanish. Now it only appears when it has really not been accepted on this account yet.
+    var acceptedNow by remember(uid) { mutableStateOf(false) }
+    val accepted = acceptedNow || uid == null || run {
         val prefs = context.getSharedPreferences("xstream_legal", Context.MODE_PRIVATE)
-        accepted = prefs.getInt("version_" + uid, 0) >= XSTREAM_LEGAL_VERSION ||
-            (texts["legalVersion"]?.toIntOrNull() ?: 0) >= XSTREAM_LEGAL_VERSION &&
-            texts["legalAcceptedUid"] == uid && !texts["legalAcceptedAt"].isNullOrBlank()
+        prefs.getInt("version_" + uid, 0) >= XSTREAM_LEGAL_VERSION ||
+            (texts["legalVersion"]?.toIntOrNull() ?: 0) >= XSTREAM_LEGAL_VERSION && texts["legalAcceptedUid"] == uid && !texts["legalAcceptedAt"].isNullOrBlank()
     }
+    // The account's saved settings arrive a moment after sign-in: wait for them before deciding (no flash either way).
+    var settled by remember(uid) { mutableStateOf(false) }
+    LaunchedEffect(uid) { settled = false; kotlinx.coroutines.delay(1_500); settled = true }
 
-    if (user != null && !accepted) {
+    if (user != null && !accepted && settled) {
         var checked by remember(uid) { mutableStateOf(false) }
         BackHandler(enabled = true) { }
         Dialog(
@@ -84,7 +86,7 @@ fun LegalNoticeGate(vm: AppViewModel) {
                             vm.setText("legalVersion", XSTREAM_LEGAL_VERSION.toString())
                             vm.setText("legalAcceptedAt", now)
                             vm.setText("legalAcceptedUid", uid.orEmpty())
-                            accepted = true
+                            acceptedNow = true
                         },
                         enabled = checked,
                         modifier = Modifier.fillMaxWidth().height(52.dp),

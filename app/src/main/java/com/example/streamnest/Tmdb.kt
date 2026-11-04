@@ -151,10 +151,11 @@ suspend fun AppViewModel.tmdbInfo(imdb: String, type: String): TmdbInfo? {
 }
 
 /** IMDb id for a TMDB recommendation, so it can open in Xstream. */
-suspend fun AppViewModel.tmdbToImdb(r: TmRec): String? = runCatching {
+private val imdbOfTmdb = java.util.concurrent.ConcurrentHashMap<String, String>()
+suspend fun AppViewModel.tmdbToImdb(r: TmRec): String? = imdbOfTmdb[r.kind + r.tmdbId] ?: runCatching {
     val o = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/${r.kind}/${r.tmdbId}/external_ids?api_key=${tmdbKey()}")).jsonObject
     o.str("imdb_id")
-}.getOrNull()
+}.getOrNull()?.also { if (it.isNotBlank()) imdbOfTmdb[r.kind + r.tmdbId] = it }
 
 private fun parseRec(r: JsonObject, kind: String): TmRec? {
     val id = r.str("id") ?: return null
@@ -178,6 +179,26 @@ suspend fun AppViewModel.tmdbSimilar(kind: String, tmdbId: String): List<TmRec> 
         val o = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/$kind/$tmdbId/similar?api_key=$key")).jsonObject
         o.arr("results").take(20).mapNotNull { parseRec(it, kind) }.distinctBy { it.kind + it.tmdbId }
     }.getOrDefault(emptyList()).also { if (it.isNotEmpty()) similarCache[kind + tmdbId] = it }
+}
+
+/**
+ * Titles in the same language as a non-English title (Hindi → Hindi): same genres, popular, from nearby years.
+ * TMDB's own recommendations are mostly English, so a Bollywood film used to get Hollywood picks.
+ */
+suspend fun AppViewModel.tmdbSameLanguage(kind: String, tmdbId: String, lang: String, genreIds: List<Int>, year: Int?): List<TmRec> {
+    val key = tmdbKey(); if (key.isEmpty()) return emptyList()
+    similarCache["lang:$kind$tmdbId"]?.let { return it }
+    val dk = if (kind == "tv") "first_air_date" else "primary_release_date"
+    val yr = year?.let { "&$dk.gte=${it - 8}-01-01&$dk.lte=${it + 6}-12-31" } ?: ""
+    suspend fun q(genres: String) = runCatching {
+        Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/discover/$kind?api_key=$key&with_original_language=${lang.lowercase()}" +
+            "&sort_by=popularity.desc&vote_count.gte=15$genres$yr&page=1")).jsonObject.arr("results").take(20).mapNotNull { parseRec(it, kind) }
+    }.getOrDefault(emptyList())
+    val g = genreIds.take(2)
+    // Sharing both genres first, then either one.
+    val both = if (g.size == 2) q("&with_genres=${g.joinToString(",")}") else emptyList()
+    val any = q(if (g.isNotEmpty()) "&with_genres=" + java.net.URLEncoder.encode(g.joinToString("|"), "UTF-8") else "")
+    return (both + any).filter { it.tmdbId != tmdbId }.distinctBy { it.tmdbId }.take(20).also { if (it.isNotEmpty()) similarCache["lang:$kind$tmdbId"] = it }
 }
 
 /** TMDB genre ids (movies and TV) to names. */
@@ -239,6 +260,59 @@ object TmdbPosters {
  * Bollywood in the Top rows: the most popular new Hindi films / series (TMDB, Hindi original language), with their
  * IMDb ids so they open and play like every other title. Fetched once per app start.
  */
+/**
+ * "Top on Netflix / Prime Video / JioHotstar" rows from TMDB (India's streaming lists), English and Hindi mixed — titles
+ * carry IMDb ids and TMDB's tall posters, so they look and play like every other card. Fetched once per app start.
+ */
+object ServiceRows {
+    private data class Svc(val name: String, val ids: String)
+    private val services = listOf(Svc("Netflix", "8"), Svc("Prime Video", "119"), Svc("JioHotstar", "122|2336"))
+    @Volatile private var cache: List<Shelf>? = null
+    private val lock = kotlinx.coroutines.sync.Mutex()
+
+    suspend fun rows(): List<Shelf> = cache ?: lock.withLock { cache ?: fetchAll().also { if (it.isNotEmpty()) cache = it } }
+
+    private suspend fun fetchAll(): List<Shelf> = kotlinx.coroutines.coroutineScope {
+        val vm = Public.vm ?: return@coroutineScope emptyList()
+        val key = vm.tmdbKey().ifEmpty { return@coroutineScope emptyList() }
+        services.flatMap { sv -> listOf(sv to "movie", sv to "series") }.map { (sv, kind) ->
+            async { runCatching { row(key, sv, kind) }.getOrNull() }
+        }.awaitAll().filterNotNull().filter { it.items.size >= 6 }
+    }
+
+    private suspend fun row(key: String, sv: Svc, kind: String): Shelf = kotlinx.coroutines.coroutineScope {
+        val tv = kind == "series"
+        val since = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(System.currentTimeMillis() - 3L * 365 * 86_400_000L))
+        fun url(lang: String) = "https://api.themoviedb.org/3/discover/${if (tv) "tv" else "movie"}?api_key=$key&watch_region=IN&with_watch_providers=${java.net.URLEncoder.encode(sv.ids, "UTF-8")}" +
+            "&with_watch_monetization_types=flatrate&with_original_language=$lang&sort_by=popularity.desc&vote_count.gte=5&page=1" +
+            (if (tv) "&first_air_date.gte=$since" else "&primary_release_date.gte=$since")
+        val en = async { runCatching { Api.json.parseToJsonElement(Api.get(url("en"))).jsonObject.arr("results").take(12) }.getOrDefault(emptyList()) }
+        val hi = async { runCatching { Api.json.parseToJsonElement(Api.get(url("hi"))).jsonObject.arr("results").take(8) }.getOrDefault(emptyList()) }
+        // English and Hindi woven together (3 English : 2 Hindi), most popular first.
+        val e = en.await(); val h = hi.await()
+        val mixed = ArrayList<JsonObject>()
+        var i = 0; var j = 0
+        while (mixed.size < 20 && (i < e.size || j < h.size)) {
+            repeat(3) { if (i < e.size) mixed += e[i++].jsonObject }
+            repeat(2) { if (j < h.size) mixed += h[j++].jsonObject }
+        }
+        val items = mixed.map { o ->
+            async {
+                runCatching {
+                    val id = o["id"]?.jsonPrimitive?.content ?: return@runCatching null
+                    val imdb = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/${if (tv) "tv" else "movie"}/$id/external_ids?api_key=$key")).jsonObject
+                        .str("imdb_id")?.takeIf { it.startsWith("tt") } ?: return@runCatching null
+                    val poster = o.str("poster_path")?.let { "${IMG}w500$it" }
+                    Meta(id = imdb, type = kind, name = o.str("title") ?: o.str("name") ?: return@runCatching null, poster = poster,
+                        background = o.str("backdrop_path")?.let { "${IMG}w1280$it" },
+                        releaseInfo = (o.str("release_date") ?: o.str("first_air_date"))?.take(4)).also { m -> if (poster != null) TmdbPosters.remember(m, poster) }
+                }.getOrNull()
+            }
+        }.awaitAll().filterNotNull().distinctBy { it.id }
+        Shelf("Top ${if (tv) "Series" else "Movies"} on ${sv.name}", items, src = "tmdb-svc:${sv.name}:$kind")
+    }
+}
+
 object HindiTrending {
     private val cache = java.util.concurrent.ConcurrentHashMap<String, List<Meta>>()
     private val lock = kotlinx.coroutines.sync.Mutex()
@@ -305,7 +379,8 @@ object CinemaOnly {
 
     fun load(ctx: android.content.Context) {
         val now = System.currentTimeMillis()
-        hidden.value = p(ctx).all.mapNotNull { (k, v) -> (v as? String)?.takeIf { it.startsWith("cinema:") && now - (it.removePrefix("cinema:").toLongOrNull() ?: 0) < 2 * 86_400_000L }?.let { k } }.toSet()
+        // Every film last seen as not out stays hidden from the start (a re-check shows it once it is out).
+        hidden.value = p(ctx).all.mapNotNull { (k, v) -> (v as? String)?.takeIf { it.startsWith("cinema:") }?.let { k } }.toSet()
     }
 
     /** Titles asked for while a check was already running: checked right after it (they used to be skipped). */
@@ -332,14 +407,21 @@ object CinemaOnly {
             val todo = metas.asSequence().filter { it.type == "movie" && it.id.startsWith("tt") }
                 .filter { m -> (m.releaseInfo?.take(4)?.toIntOrNull() ?: year) >= year - 1 }
                 .map { it.id.substringBefore(":") }.distinct()
-                .filter { id -> val v = pr.getString(id, null); v == null || (v.startsWith("cinema:") && now - (v.removePrefix("cinema:").toLongOrNull() ?: 0) > 2 * 86_400_000L) }
+                // Checked again every 2 days while recent (a film's online date can move; "web" answers used to stick forever).
+                .filter { id -> val v = pr.getString(id, null); v == null || v == "web" ||
+                    (v.contains(":") && now - (v.substringAfter(":").toLongOrNull() ?: 0) > 2 * 86_400_000L) }
                 .take(120).toList()
             val sem = kotlinx.coroutines.sync.Semaphore(5)
             kotlinx.coroutines.coroutineScope {
-                todo.forEach { id -> launch(kotlinx.coroutines.Dispatchers.IO) { sem.acquire(); try { runCatching { verdict(key, id) }.getOrNull()?.let { v ->
-                    pr.edit().putString(id, if (v) "web" else "cinema:$now").apply()
-                    hidden.value = if (v) hidden.value - id else hidden.value + id
-                } } finally { sem.release() } } }
+                val yearOf = metas.associate { it.id.substringBefore(":") to (it.releaseInfo?.take(4)?.toIntOrNull() ?: year) }
+                todo.forEach { id -> launch(kotlinx.coroutines.Dispatchers.IO) { sem.acquire(); try {
+                    // No answer about its dates and it's from this year: not shown until it is known to be out.
+                    val v = runCatching { verdict(key, id) }.getOrNull() ?: if ((yearOf[id] ?: year) >= year) false else null
+                    if (v != null) {
+                        pr.edit().putString(id, if (v) "web:$now" else "cinema:$now").apply()
+                        hidden.value = if (v) hidden.value - id else hidden.value + id
+                    }
+                } finally { sem.release() } } }
             }
         }
     }
@@ -347,7 +429,7 @@ object CinemaOnly {
     /** true = out on web / disc / TV somewhere (or not a cinema release at all); false = only in cinemas so far. */
     private suspend fun verdict(key: String, imdb: String): Boolean? {
         val f = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/find/$imdb?api_key=$key&external_source=imdb_id")).jsonObject
-        val id = f.arr("movie_results").firstOrNull()?.str("id") ?: return true
+        val id = f.arr("movie_results").firstOrNull()?.str("id") ?: return null
         val rd = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/movie/$id/release_dates?api_key=$key")).jsonObject
         val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
         val dates = rd.arr("results").flatMap { it.arr("release_dates") }.mapNotNull { d ->
@@ -360,8 +442,13 @@ object CinemaOnly {
         if (past.isEmpty()) return null
         return checkPast(past)
     }
+    /**
+     * Out for people at home: a digital (4), Blu-ray / DVD (5) or TV (6) release that has happened somewhere, or a cinema
+     * release more than 8 weeks ago (by then it's online almost everywhere). A premiere or festival only = not out.
+     */
     private fun checkPast(dates: List<Pair<Int, String>>): Boolean {
         if (dates.any { it.first >= 4 }) return true
-        return !dates.any { it.first == 2 || it.first == 3 }
+        val cut = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(System.currentTimeMillis() - 56L * 86_400_000L))
+        return dates.any { (it.first == 2 || it.first == 3) && it.second <= cut }
     }
 }

@@ -19,6 +19,18 @@ suspend fun AppViewModel.likedCandidates(imdb: String, info: TmdbInfo): List<TmR
     candidateCache[imdb]?.let { return it }
     var list = info.recs
     if (list.size < 6) list = (list + tmdbSimilar(info.kind, info.tmdbId)).distinctBy { it.kind + it.tmdbId }
+    // Not an English title (Hindi, Tamil…): about 80 % from its own language (same genres, nearby years), the rest from
+    // TMDB's picks — a Bollywood film no longer gets mostly Hollywood suggestions.
+    val lang = info.language?.lowercase()
+    if (lang != null && lang != "en") {
+        val same = runCatching { tmdbSameLanguage(info.kind, info.tmdbId, lang, info.genreIds, info.release?.take(4)?.toIntOrNull()) }.getOrDefault(emptyList())
+        if (same.isNotEmpty()) {
+            val other = list.filter { r -> same.none { it.tmdbId == r.tmdbId } }
+            val out = ArrayList<TmRec>(); val a = same.iterator(); val b = other.iterator()
+            while (out.size < 20 && (a.hasNext() || b.hasNext())) { repeat(4) { if (a.hasNext()) out += a.next() }; if (b.hasNext()) out += b.next() }
+            list = out
+        }
+    }
     return list.filter { it.tmdbId != info.tmdbId }.take(20).also { if (it.isNotEmpty()) candidateCache[imdb] = it }
 }
 

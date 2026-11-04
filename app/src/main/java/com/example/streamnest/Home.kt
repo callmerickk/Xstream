@@ -521,10 +521,14 @@ fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
         if (value == null) value = kotlinx.coroutines.withTimeoutOrNull(3_000) { runCatching { HindiTrending.list(kind) }.getOrNull() } ?: emptyList()
     }
     val h = hindi ?: run { Spacer(Modifier.fillMaxWidth().height(186.dp)); return }
-    val top = remember(items, h) { HindiTrending.mix(items, h).take(10) }
+    // Hindi trending titles are checked too: a film not out online never takes a place in the top 10.
+    val notOut by CinemaOnly.hidden.collectAsState()
+    LaunchedEffect(h) { Public.vm?.let { v -> if (h.isNotEmpty()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CinemaOnly.check(v, h) } } } }
+    val top = remember(items, h, notOut) { HindiTrending.mix(items, h).filter { it.id.substringBefore(":") !in notOut }.take(10) }
     // All ten posters are asked for at once (one quick TMDB call each, remembered), so the row fills in together.
     LaunchedEffect(top) { top.forEach { m -> launch { runCatching { TmdbPosters.portrait(m) } } } }
-    val fill = remember { Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFFD5D9E2), Color(0xFF9AA1B0))) }
+    // Same numbers, a little dimmer (soft grey), so the eye goes to the posters first.
+    val fill = remember { Brush.verticalGradient(listOf(Color(0xFF9EA3AC), Color(0xFF7E838C), Color(0xFF5C6069))) }
     // Like Netflix: each number has its own space to the left of its poster; the poster only just touches its edge.
     // A fresh scroll position for every list: it always opens at 1.
     val rowState = remember(top) { androidx.compose.foundation.lazy.LazyListState() }
@@ -541,7 +545,7 @@ fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
                         shadow = androidx.compose.ui.graphics.Shadow(Color(0xCC000000), androidx.compose.ui.geometry.Offset(0f, 6f), 18f))), softWrap = false)
                 }
                 TallPoster(m, Modifier.align(Alignment.BottomEnd).width(120.dp).aspectRatio(2f / 3f)
-                    .softHalo(corner, spread = 8.dp, strength = 0.5f, dy = 4.dp).clip(shape).titleTap(m) { onOpen(m) })
+                    .softHalo(corner, spread = 10.dp, strength = 0.8f, dy = 5.dp).clip(shape).titleTap(m) { onOpen(m) })
             }
         }
     }
@@ -912,6 +916,7 @@ private fun Deck(
             DeckCard(
                 d.meta, rank = page % n + 1, catalog = d.catalog, saved = myList.any { it.id == d.meta.id },
                 trailerOn = isFront && tid != null, videoOn = isFront && videoOn, muted = muted,
+                settled = isFront && !pager.isScrollInProgress,
                 onMute = { muted = !muted; HeroSound.muted = muted },
                 // A card behind the front one: a tap brings it forward.
                 onOpen = { if (page == pager.currentPage) onOpen(d.meta) else scope.launch { pager.animateScrollToPage(page) } },
@@ -1028,8 +1033,15 @@ private fun DeckCard(
     /** a trailer is up for this card (drawn by Deck under it) / its video is really playing */
     trailerOn: Boolean, videoOn: Boolean, muted: Boolean, onMute: () -> Unit,
     onOpen: () -> Unit, onToggle: () -> Unit, modifier: Modifier, onHold: () -> Unit = {}, onTrailer: () -> Unit = {},
+    /** the card has settled in front: its title and buttons rise in (hidden at once while the cards move) */
+    settled: Boolean = true,
 ) {
     val shape = RoundedCornerShape(Palette.corner.dp)
+    // Premium touch: the poster moves alone; ~180 ms after it settles, the title, Watch now and + rise in with a soft spring.
+    var show by remember { mutableStateOf(settled) }
+    LaunchedEffect(settled) { if (settled) { delay(180); show = true } else show = false }
+    val rise by animateFloatAsState(if (show) 1f else 0f,
+        if (show) androidx.compose.animation.core.spring(dampingRatio = 0.72f, stiffness = 260f) else tween(90), label = "deckRise")
     val rating = m.imdbRating?.toDoubleOrNull()
     val rankText = when {
         catalog == "Picked for you" || catalog == AIDEN_PICK -> AIDEN_PICK
@@ -1076,7 +1088,10 @@ private fun DeckCard(
         }
         // While the trailer plays the title shrinks to the bottom-left corner (animated), out of the picture's way.
         val shrink by animateFloatAsState(if (videoOn) 1f else 0f, tween(650), label = "titleShrink")
-        Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
+        Column(Modifier.align(Alignment.BottomStart).padding(16.dp).graphicsLayer {
+            alpha = rise.coerceIn(0f, 1f); translationY = (1f - rise) * 28.dp.toPx(); val sc = 0.96f + 0.04f * rise; scaleX = sc; scaleY = sc
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)
+        }) {
             val logo = logoOf(m)
             if (logo != null && !logoFailed) {
                 AsyncImage(logo, m.name, Modifier.fillMaxWidth(0.85f - 0.35f * shrink).height((84f - 38f * shrink).dp), contentScale = ContentScale.Fit,

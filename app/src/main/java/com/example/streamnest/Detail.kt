@@ -148,6 +148,9 @@ fun DetailScreen(
         if (!isOn(texts["detailMore"] ?: "yes")) return@LaunchedEffect
         val cands = runCatching { vm.likedCandidates(imdb, info) }.getOrDefault(emptyList())
         picks = tmdbPicks(info, cands)
+        // Their IMDb ids are looked up now, in the background: tapping a poster then opens its page at once (it waited
+        // for this lookup before — the lag you felt).
+        cands.take(12).forEach { r -> launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { vm.tmdbToImdb(r) } } }
         val ai = runCatching { vm.aiLikedPicks(imdb, meta.name, (info.release ?: meta.releaseInfo)?.take(4), meta.type, cands) }.getOrNull()
         if (!ai.isNullOrEmpty()) { picks = ai; aiPicked = true }
     }
