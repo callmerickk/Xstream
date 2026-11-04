@@ -426,6 +426,9 @@ object CinemaOnly {
         }
     }
 
+    /** For "Available now": is this film out for people at home yet? null = can't tell. */
+    suspend fun isOut(key: String, imdb: String): Boolean? = runCatching { verdict(key, imdb) }.getOrNull()
+
     /** true = out on web / disc / TV somewhere (or not a cinema release at all); false = only in cinemas so far. */
     private suspend fun verdict(key: String, imdb: String): Boolean? {
         val f = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/find/$imdb?api_key=$key&external_source=imdb_id")).jsonObject

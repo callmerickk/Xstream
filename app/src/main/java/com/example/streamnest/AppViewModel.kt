@@ -1031,8 +1031,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     // ───────────── Player choices remembered per profile (aspect, audio language, subtitle language) ─────────────
-    fun playerPref(k: String): String = lib.getString("pp_$k", "") ?: ""
-    fun setPlayerPref(k: String, value: String) { lib.edit().putString("pp_$k", value).apply() }
+    /** The title playing now (IMDb id): subtitles and audio language are remembered for it ("Remember per title"). */
+    @Volatile var titleScope: String? = null
+    private val perTitlePrefs = setOf("subs", "audio")
+    fun playerPref(k: String): String {
+        val t = titleScope
+        if (t != null && k in perTitlePrefs) lib.getString("pt_${t}_$k", null)?.let { return it }
+        return lib.getString("pp_$k", "") ?: ""
+    }
+    fun setPlayerPref(k: String, value: String) {
+        val e = lib.edit().putString("pp_$k", value)
+        titleScope?.takeIf { k in perTitlePrefs }?.let { e.putString("pt_${it}_$k", value) }
+        e.apply()
+    }
 
     // ───────────── Badge pack (Layout > Streams) ─────────────
     val badgePack = MutableStateFlow<List<PackBadge>>(emptyList())

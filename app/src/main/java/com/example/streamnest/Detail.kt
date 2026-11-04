@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -156,6 +157,23 @@ fun DetailScreen(
     }
 
     var pick by remember { mutableStateOf<SourceTarget?>(null) }
+    var notOutAsk by remember { mutableStateOf(false) }
+    if (notOutAsk) {
+        var followed by remember { mutableStateOf(AvailableNow.following(ctx, meta.id)) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { notOutAsk = false },
+            title = { Text("Not out online yet") },
+            text = { Text("${meta.name} is only in cinemas or not released yet, so there's nothing right to play. " +
+                if (followed) "You'll get a notification the day it's out." else "Want a notification the day it's out at home?") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    followed = !followed; AvailableNow.follow(ctx, vm, meta, followed)
+                    Snack.show(if (followed) "We'll tell you when ${meta.name} is out" else "Reminder off"); notOutAsk = false
+                }) { Text(if (followed) "Stop reminding me" else "Remind me") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { notOutAsk = false }) { Text("Close") } },
+        )
+    }
     var actions by remember { mutableStateOf(false) }
     var showVideos by remember { mutableStateOf(false) }
     var shareFriends by remember { mutableStateOf(false) }
@@ -230,6 +248,8 @@ fun DetailScreen(
 
     /** Play button / episode tap: Quick Start or auto modes go straight to the player, manual opens the sources page. */
     fun start(t: SourceTarget, forceSources: Boolean = false, fromStart: Boolean = false) {
+        // Not out online yet (only in cinemas, or not released): no searching for links that would be the wrong film.
+        if (meta.type == "movie" && !forceSources && meta.id.substringBefore(":") in CinemaOnly.hidden.value) { notOutAsk = true; return }
         // Not out yet: say when it airs instead of searching every server for nothing.
         episodes.firstOrNull { it.id == t.videoId }?.let { ep -> airsIn(ep.released)?.let { Snack.show("${t.epLabel ?: "This episode"} · $it"); return } }
         // Downloaded: play the file on the phone (no internet needed).
@@ -914,13 +934,15 @@ private fun VideosSheet(title: String, videos: List<TmVideo>, official: Boolean,
 @Composable
 private fun EpisodeRow(ep: Video, watched: Boolean, frac: Float, isNext: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
     val alpha by animateFloatAsState(if (watched) 0.6f else 1f, label = "w")
+    // Spoiler-free: an episode that hasn't aired yet shows a blurred picture and no description.
+    val unaired = remember(ep.released) { ep.released?.take(10)?.let { it > java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date()) } == true }
     Row(
         Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(horizontal = 16.dp, vertical = 8.dp)
             .graphicsLayer { this.alpha = alpha },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.width(150.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Surface1)) {
-            AsyncImage(ep.thumbnail, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            AsyncImage(ep.thumbnail, null, Modifier.fillMaxSize().then(if (unaired) Modifier.blur(16.dp) else Modifier), contentScale = ContentScale.Crop)
             if (watched) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(22.dp).clip(CircleShape).background(Color(0xCC000000)), Alignment.Center) {
                 Icon(Icons.Default.Check, "Watched", Modifier.size(14.dp))
             } else Icon(Icons.Default.PlayCircle, null, Modifier.align(Alignment.Center).size(30.dp), tint = Color(0xD9FFFFFF))
@@ -935,7 +957,7 @@ private fun EpisodeRow(ep: Video, watched: Boolean, frac: Float, isNext: Boolean
                     .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Accent, letterSpacing = 0.5.sp)
             }
             Text(ep.title ?: ep.name ?: "Episode ${ep.episode}", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            (ep.overview ?: ep.description)?.takeIf { it.isNotBlank() }?.let {
+            (ep.overview ?: ep.description)?.takeIf { it.isNotBlank() && !unaired }?.let {
                 Text(it, fontSize = 12.sp, color = Color(0xFF9AA3B5), maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 16.sp)
             }
             airsIn(ep.released)?.let { Text(it, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Accent) }

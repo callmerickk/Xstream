@@ -708,6 +708,7 @@ fun PlayerScreen(
 
     // Faster start: begin playing after ~1 s of video instead of the default 2.5 s (Playback > Fast start).
     // A var: plugin mode's quiet swap (MovieBox → Netflix-type link) hands the screen over to a second player.
+    remember(p.key) { vm.titleScope = p.key.substringBefore(':').takeIf { it.isNotBlank() }; 0 }
     var player by remember { mutableStateOf(pre?.player ?: buildPlayer(ctx, vm, isOn(texts["fastStart"] ?: Defaults["fastStart"] ?: "yes"))) }
 
     // ───── Sound (Audio boost / Night mode), Sleep timer, Picture-in-picture ─────
@@ -912,6 +913,8 @@ fun PlayerScreen(
     fun withSubs(st: StreamItem, old: List<Subtitle>): List<Subtitle> =
         st.stream.subtitles.orEmpty() + old.filter { s -> st.stream.subtitles.orEmpty().none { it.url == s.url } }
 
+    // Remember per title: this title's own subtitle and audio choices apply while it plays.
+    DisposableEffect(p.key) { vm.titleScope = p.key.substringBefore(':').takeIf { it.isNotBlank() }; onDispose { vm.titleScope = null } }
     // ───── Watch together: follow the room (play / pause / seek / video), share this player's state ─────
     DisposableEffect(Unit) {
         Together.provider = { roomState(isPlayingNow()) }

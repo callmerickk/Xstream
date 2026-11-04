@@ -131,9 +131,51 @@ object EpisodeAlerts {
     }
 }
 
+/**
+ * "Available now": films you follow while they're only in cinemas (or not out yet). Checked with the episode alerts
+ * (every 6 hours); the day one is out online you get a notification, and it stops being followed.
+ */
+object AvailableNow {
+    private const val CHANNEL = "available"
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("available_now", Context.MODE_PRIVATE)
+    fun following(ctx: Context, id: String) = prefs(ctx).contains("f_$id")
+    fun follow(ctx: Context, vm: AppViewModel, m: Meta, on: Boolean) {
+        val e = prefs(ctx).edit()
+        if (on) e.putString("f_${m.id}", m.name).putString("key", vm.tmdbKey()) else e.remove("f_${m.id}")
+        e.apply()
+        if (on) EpisodeAlerts.schedule(ctx, true)
+    }
+    suspend fun check(ctx: Context) = withContext(Dispatchers.IO) {
+        val p = prefs(ctx)
+        val key = p.getString("key", null)?.takeIf { it.isNotBlank() } ?: return@withContext
+        p.all.filterKeys { it.startsWith("f_") }.forEach { (k, v) ->
+            val id = k.removePrefix("f_")
+            if (CinemaOnly.isOut(key, id) == true) {
+                post(ctx, id, v as? String ?: "A film you follow")
+                p.edit().remove(k).apply()
+            }
+        }
+    }
+    private fun post(ctx: Context, id: String, name: String) {
+        runCatching {
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(CHANNEL) == null)
+                nm.createNotificationChannel(NotificationChannel(CHANNEL, "Available now", NotificationManager.IMPORTANCE_DEFAULT))
+            val open = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: Intent(ctx, MainActivity::class.java)
+            open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            val pi = PendingIntent.getActivity(ctx, id.hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            val n = NotificationCompat.Builder(ctx, CHANNEL).setSmallIcon(R.drawable.ic_stat_signal)
+                .setContentTitle("$name is out now").setContentText("Now available to watch at home — tap to open Xstream")
+                .setAutoCancel(true).setContentIntent(pi).build()
+            NotificationManagerCompat.from(ctx).notify(id.hashCode(), n)
+        }
+    }
+}
+
 class EpisodeAlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
         runCatching { EpisodeAlerts.check(applicationContext) }
+        runCatching { AvailableNow.check(applicationContext) }
         return Result.success()
     }
 }
