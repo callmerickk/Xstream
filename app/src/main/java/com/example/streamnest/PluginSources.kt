@@ -358,7 +358,7 @@ object PluginSources {
                 .filter { s -> wanted("Nuvio · ${s.name}") && (s.types.isEmpty() || (if (series) ("tv" in s.types || "series" in s.types) else "movie" in s.types)) }
             // MovieBox asked directly first (one search, every language at once); the MovieBox plugins wait for it and only
             // run when it found nothing (they're the backup).
-            val direct = if (wanted("MovieBox") && MovieBoxDirect.preferred() && entries.any { it.internalName.contains("moviebox", true) })
+            val direct: kotlinx.coroutines.Deferred<List<StreamItem>>? = if (wanted("MovieBox") && MovieBoxDirect.preferred() && entries.any { it.internalName.contains("moviebox", true) })
                 async { runCatching { MovieBoxDirect.links(meta.name, year, series, season, episode) }.getOrDefault(emptyList()) } else null
             var pending = entries.size + (if (nuvio.isEmpty()) 0 else 1) + (if (direct != null) 1 else 0)
             if (pending == 0) { send(emptyList<StreamItem>() to true); return@coroutineScope }
