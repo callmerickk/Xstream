@@ -356,7 +356,11 @@ object PluginSources {
             val entries = CsPlugins.enabledEntries()
             val nuvio = if (only != null) emptyList() else runCatching { NuvioPlugins.init(ctx); NuvioPlugins.enabledScrapers() }.getOrDefault(emptyList())
                 .filter { s -> wanted("Nuvio · ${s.name}") && (s.types.isEmpty() || (if (series) ("tv" in s.types || "series" in s.types) else "movie" in s.types)) }
-            var pending = entries.size + (if (nuvio.isEmpty()) 0 else 1)
+            // MovieBox asked directly first (one search, every language at once); the MovieBox plugins wait for it and only
+            // run when it found nothing (they're the backup).
+            val direct = if (wanted("MovieBox") && MovieBoxDirect.preferred() && entries.any { it.internalName.contains("moviebox", true) })
+                async { runCatching { MovieBoxDirect.links(meta.name, year, series, season, episode) }.getOrDefault(emptyList()) } else null
+            var pending = entries.size + (if (nuvio.isEmpty()) 0 else 1) + (if (direct != null) 1 else 0)
             if (pending == 0) { send(emptyList<StreamItem>() to true); return@coroutineScope }
             suspend fun add(l: List<StreamItem>, delta: Int = -1) = lock.withLock {
                 acc += l.filter { keep(it) && !it.isInstantDownload() && !TitleMatch.wrong(it, type, id) && !vm.extHides(it) }
@@ -364,13 +368,22 @@ object PluginSources {
                 send(acc.distinctBy { it.stream.url } to (pending <= 0))
             }
             val t0 = System.currentTimeMillis()
+            if (direct != null) jobs += launch {
+                val l = direct.await()
+                ActLog.add("PLUGIN", "MovieBox (direct): ${l.size} links in ${System.currentTimeMillis() - t0} ms · $id")
+                add(l)
+            }
             entries.forEach { e -> jobs += launch {
                 val reg = runCatching { CsPlugins.ensureLoaded(e) }.onFailure { x -> ActLog.add("PLUGIN", "${e.name}: not loaded — ${x.message ?: x.javaClass.simpleName}".take(200)) }.getOrNull()
                 val apis = reg?.apis?.filter { wanted(csDisplayName(it.name)) && !musicOnly(it) }.orEmpty()
                 if (apis.isEmpty()) { add(emptyList()); return@launch }
                 lock.withLock { pending += apis.size - 1 }
                 apis.forEach { api -> launch {
+                    val isMb = api.name.contains("moviebox", true)
+                    val got = if (isMb && direct != null) direct.await() else null
+                    if (got != null && got.isNotEmpty()) { MovieBoxDirect.noteOk(); add(emptyList()); return@launch }
                     val l = shared(api, id) { linksFrom(api, meta.name, year, series, season, episode) }
+                    if (isMb && got != null && l.isNotEmpty()) MovieBoxDirect.noteBroken("nothing found for \"${meta.name}\" while ${api.name} found ${l.size}")
                     // Timing of each plugin (Activity log → PLUGIN), to see which one is slow.
                     ActLog.add("PLUGIN", "${api.name}: ${l.size} links in ${System.currentTimeMillis() - t0} ms · $id")
                     SourceHealth.answered(api.name, l.size, System.currentTimeMillis() - t0)
