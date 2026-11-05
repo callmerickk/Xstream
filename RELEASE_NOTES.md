@@ -1,3 +1,11 @@
+Xstream 0.8.3
+
+• VegaMovies and RogMovies work again, and Xstream finds their working address by itself.
+• Stricter matching: same year, same cast and the right length — no more other shows or films with the same name.
+• No more buffering caused by background work: better quality and 4K are looked for only once the video plays smoothly.
+• Smooth fades like before. Upgrade to 4K fades even when the copy is a few seconds longer, and there's no "Resuming at" text.
+• A slow first link gets enough time to start again.
+
 Xstream 0.8.2
 
 • Play starts on the quickest copy, then moves up to the best one by itself (VegaMovies / RogMovies first) with a smooth fade — no messages on screen.

@@ -80,8 +80,8 @@ object MovieBoxDirect {
                 val m = rx.find(raw.trim()) ?: return@mapNotNull null
                 if (norm(m.groupValues[1]) != norm(name)) return@mapNotNull null
                 val y = o.s("releaseDate")?.take(4)?.toIntOrNull()
-                if (year != null && y != null && kotlin.math.abs(y - year) > 1 && !series) return@mapNotNull null
-                if (series && year != null && y != null && y < year - 1) return@mapNotNull null
+                // Strict year (±1) for films and series: "The Office" (2005) never takes the 2024 show.
+                if (year != null && (y == null || kotlin.math.abs(y - year) > 1)) return@mapNotNull null
                 Triple(id, m.groupValues[2].ifBlank { "Original" }, o.s("detailPath").orEmpty())
             }.distinctBy { it.first }.take(4)
             if (found.isNotEmpty()) pages[key] = found

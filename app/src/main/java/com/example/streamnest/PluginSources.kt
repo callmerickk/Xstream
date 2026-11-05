@@ -99,7 +99,7 @@ object PluginSources {
             // A series' year is when it first aired: a different one is another show with the same name.
             // A series' page often shows its latest season's year (Game of Thrones "2019"): a later year with the exact
             // name is only a small minus; an earlier one is another show.
-            if (wantYear != null && y != null) sc += when { kotlin.math.abs(y - wantYear) <= 1 -> 0.2; series && sc >= 1.0 && y > wantYear -> -0.1; series -> -0.35; else -> -0.4 }
+            if (wantYear != null && y != null) sc += if (kotlin.math.abs(y - wantYear) <= 1) 0.2 else -1.0
             // "S1-S12" / "Season 1-5": every season in the range is there.
             val range = if (series) Regex("(?i)(?:season|\\bS)\\s*(\\d{1,2})\\s*(?:-|–|to)\\s*(?:S|season)?\\s*(\\d{1,2})\\b").find(r.name) else null
             if (range != null) {
@@ -182,21 +182,15 @@ object PluginSources {
                 if (cands.isNotEmpty()) { if (i > 0) log("found with \"$q\""); break }
             }
         } catch (e: NotImplementedError) {
-            // Only a provider that refuses at once (no request made) has no search. One that fails after trying its site
-            // (a dead address answers 404, then the plugin errors) is reloaded below instead — never switched off.
-            if (System.currentTimeMillis() - tSearch < 1_500 && !searchErr) { noSearch += apiKey(api); log("has no search — skipped from now on"); return emptyList() }
-            log("search broke (${e.javaClass.simpleName}) after trying the site"); searchErr = true
+            // "Has no search" only when the plugin's code really has no search (browse-only Disney / Marvel shelves). An
+            // error while searching (a site answering with a web page — VegaMovies, 0.8.2) is just a failed search: the
+            // next title asks again, like CloudStream does.
+            if (!hasSearchCode(api)) { noSearch += apiKey(api); log("has no search (browse-only) — skipped"); return emptyList() }
+            log("search broke (${e.javaClass.simpleName}) — will ask again next time"); searchErr = true
         }
-        if (found == null && searchErr && !retried) {
-            // The site address it used looks dead: a fresh copy of the plugin reads the current address again (once per 10 min).
-            val key = CsPlugins.keyOf(api)
-            val last = reloadedAt[key ?: ""] ?: 0L
-            if (key != null && System.currentTimeMillis() - last > 10 * 60_000L) {
-                reloadedAt[key] = System.currentTimeMillis()
-                log("reloading the plugin to get its current site address, then searching again")
-                val fresh = CsPlugins.reload(key)?.apis?.firstOrNull { it.name == api.name }
-                if (fresh != null) return linksFrom(fresh, name, year, series, season, episode, retried = true, onLink = onLink)
-            }
+        if (found == null && searchErr && !retried && SiteAddress.handles(api)) {
+            // VegaMovies / RogMovies: their site moves. The known addresses are tested and the working one is used.
+            if (SiteAddress.fix(api)) return linksFrom(api, name, year, series, season, episode, retried = true, onLink = onLink)
         }
         if (found == null) { log("search gave nothing (timeout or no answer)"); NoStream.note(nsKey, api.name, "no answer from the site"); return emptyList() }
         noteEmpty(apiKey(api), found.isEmpty())
@@ -207,8 +201,17 @@ object PluginSources {
         for (c in cands.take(5)) {
             val l = try { withDeadline(20_000) { api.load(c.url) } } catch (e: Throwable) { log("load failed: ${e.javaClass.simpleName} ${e.message ?: ""}".take(200)); null } ?: continue
             val ly = runCatching { l.year }.getOrNull()
-            val offYear = if (series) ly != null && year != null && ly < year - 1 else ly != null && year != null && kotlin.math.abs(ly - year) > 1
-            if (offYear && (series || c !== cands.take(5).last())) { log("\"${c.name.take(60)}\" is from $ly, not $year — trying the next result"); continue }
+            // Strict: the same year (±1) for films and series alike — a same-name show from another year is another show.
+            if (ly != null && year != null && kotlin.math.abs(ly - year) > 1) { log("\"${c.name.take(60)}\" is from $ly, not $year — skipped"); continue }
+            // Cast: when both the page and the title list actors, at least one must be the same.
+            val want = castOf["${core(name)}|$year"].orEmpty()
+            val have = runCatching { l.actors?.mapNotNull { it.actor.name } }.getOrNull().orEmpty()
+            if (want.size >= 3 && have.size >= 3) {
+                fun n(x: String) = x.lowercase().replace(Regex("[^a-z ]"), "").trim()
+                val w = want.map(::n).toSet()
+                val shared = have.map(::n).count { h -> h in w || w.any { it.split(' ').last() == h.split(' ').last() && it.split(' ').first().take(1) == h.split(' ').first().take(1) } }
+                if (shared == 0) { log("\"${c.name.take(60)}\": none of its cast is in the title's cast — skipped"); continue }
+            }
             hit = c; lr = l; break
         }
         if (lr == null) { NoStream.note(nsKey, api.name, "matched but the page didn't load"); log("matched \"${hit.name.take(60)}\" but its page didn't load"); return emptyList() }
@@ -303,6 +306,15 @@ object PluginSources {
     }.flowOn(kotlinx.coroutines.Dispatchers.IO)
 
     private val noSearch = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** Whether the plugin's own class (or a parent other than MainAPI) defines a search. */
+    private fun hasSearchCode(api: MainAPI): Boolean = runCatching {
+        var c: Class<*>? = api.javaClass
+        while (c != null && c != MainAPI::class.java) {
+            if (c.declaredMethods.any { it.name == "search" || it.name.startsWith("search\$") }) return@runCatching true
+            c = c.superclass
+        }
+        false
+    }.getOrDefault(true)
     private val reloadedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
@@ -324,6 +336,8 @@ object PluginSources {
     fun forget(id: String) { answers.keys.filter { it.endsWith("|$id") }.forEach { answers.remove(it) } }
     fun forgetAll() { answers.clear(); noTitle.clear() }
     private val metas = java.util.concurrent.ConcurrentHashMap<String, Meta>()
+    /** "name|year" → the title's cast (Cinemeta), for the cast check on plugin pages. */
+    val castOf = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
     /** The title's name and year (Cinemeta) — plugins search by name. */
     suspend fun metaFor(type: String, id: String): Meta? {
         val imdb = id.substringBefore(':')
@@ -347,6 +361,7 @@ object PluginSources {
         val season = id.split(":").getOrNull(1)?.toIntOrNull()
         val episode = id.split(":").getOrNull(2)?.toIntOrNull()
         val year = meta.releaseInfo?.take(4)?.toIntOrNull()
+        meta.cast?.takeIf { it.isNotEmpty() }?.let { castOf["${core(meta.name)}|$year"] = it }
         fun wanted(name: String) = (only == null || name in only || (MB_ANY in only && name.contains("moviebox", true)) || (VEGA_ANY in only && isVegaName(name)) || (OTT_ANY in only && isOttName(name))) && (except == null || name !in except)
         val acc = ArrayList<StreamItem>(); val lock = Mutex()
         val jobs = ArrayList<kotlinx.coroutines.Job>()

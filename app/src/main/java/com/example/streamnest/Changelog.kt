@@ -13,6 +13,13 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.3", "5 Nov 2026", "Fixes: VegaMovies back, right titles, no buffering, smooth fades", listOf(
+        "VegaMovies and RogMovies work again (they were switched off after one bad answer); Xstream finds their working address by itself",
+        "Stricter matching: same year, same cast and the right length — no more other shows or films with the same name",
+        "No more buffering caused by background work: upgrades and 4K are looked for only once the video plays smoothly",
+        "Smooth fades like before; Upgrade to 4K fades even when the copy is a few seconds longer; no \"Resuming at\" text",
+        "A slow first link gets 6 s again (it was cut off too early)",
+    )),
     Release("0.8.2", "5 Nov 2026", "Instant start, then the best copy — silently", listOf(
         "Play starts on the quickest copy, then moves up to the best one by itself (VegaMovies / RogMovies first) with a fade — no messages",
         "Upgrade to 4K waits for VegaMovies and RogMovies first; the pill hides once you're already in 4K",
@@ -448,6 +455,13 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.3", "5 Nov 2026", "0.8.2 regressions fixed", listOf(
+        "noSearch only via reflection (no search method); SiteAddress probes Vega/Rog addresses (search.php JSON) at load and on failure; plugin reload removed",
+        "Matching: year ±1 for series too (ranked -1.0, load check), cast overlap when both ≥3, MovieBoxDirect year strict; length check films 0.75–1.35, episodes 0.6–1.4 before first frame; wrongAddons",
+        "ABR back to 3 s / 0.7; seeks never land later (SeekParameters 300 s, 0); paused player 6 s; no Resumed-at snack",
+        "ottSwapTo back to 0.8.1 (no decoder/15 s buffer checks), asked tolerance 10 s; ladder fade-only, no OTT↔OTT, needs 30 s ahead",
+        "4K search after 60 s smooth play + 30 s ahead, asks again once at 2 min; Sources pre-save after 90 s",
+    )),
     Release("0.8.2", "5 Nov 2026", "Ladder, fade checks, per-file seek, MovieBox direct, service rows", listOf(
         "Player ladder: MPD/OTT≤720 → MP4 → OTT>720 → Vega/Rog (25 s wait); ottSwapTo checks position, index, decoder (MediaCodecList), 15 s buffer in 12 s; swapFail → quick switch",
         "Upgrade pill hidden when not better; 4K: Vega/Rog only for 25 s; Vega/Rog plugins only from CNCVerse (foreignVega)",

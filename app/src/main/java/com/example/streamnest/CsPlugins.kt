@@ -241,6 +241,8 @@ object CsPlugins {
         // Which site address each provider ended up with (a dead address is the usual reason a plugin finds nothing).
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             reg.apis.forEach { a -> runCatching { kotlinx.coroutines.withTimeoutOrNull(20_000) { a.mainUrl } }.getOrNull()?.let { ActLog.add("CSLOAD", "${e.name} v${e.version} · ${a.name} → $it") } }
+            // VegaMovies / RogMovies: the address they start with is checked, and swapped for one that answers.
+            reg.apis.filter { SiteAddress.handles(it) }.forEach { a -> runCatching { SiteAddress.fix(a, force = false) } }
         }
         reg
     }
