@@ -61,7 +61,40 @@ object PluginSources {
         out += name.replace(Regex("^(?i)(marvel's|marvel|dc's|disney's|tom clancy's)\\s+"), "").replace(".", "").trim()
         if (':' in name) out += name.substringBefore(':').trim()
         if ('&' in name) out += name.replace("&", "and")
-        return out.filter { it.length >= 2 }.take(4)
+        // Dotted letters written out ("S.H.I.E.L.D." → "S H I E L D") and as a normal word ("Shield").
+        Regex("\\b(?:[A-Za-z]\\.){2,}").find(name)?.let { m ->
+            val letters = m.value.replace(".", "")
+            out += name.replace(m.value, letters.toCharArray().joinToString(" ")).trim()
+            out += name.replace(m.value, letters.lowercase().replaceFirstChar { it.uppercase() }).replace(Regex("^(?i)(marvel's|marvel)\\s+"), "").trim()
+        }
+        // Spacing and singular / plural: "Shadowhunters" = "Shadowhunter"; "Shadow Hunters" = "Shadowhunters".
+        val plain = name.substringBefore(':').trim()
+        if (plain.endsWith("s", true) && plain.length > 4) out += plain.dropLast(1)
+        if (' ' in plain && plain.split(' ').size == 2) out += plain.replace(" ", "")
+        // The title's other names on TMDB (US / India titles, alternative titles), asked last.
+        altOf[core(name)]?.let { out += it }
+        return out.filter { it.length >= 2 }.take(9)
+    }
+    /** core(name) → TMDB's other names for the title (filled before the plugins are asked). */
+    val altOf = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+    /** Fetches TMDB's alternative names once per title (US, IN, GB and the original title). */
+    suspend fun loadAltNames(vm: AppViewModel, imdb: String, name: String, series: Boolean) {
+        if (altOf.containsKey(core(name))) return
+        val key = vm.tmdbKey().ifEmpty { return }
+        runCatching {
+            val f = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/find/$imdb?api_key=$key&external_source=imdb_id")) as kotlinx.serialization.json.JsonObject
+            val arr = (f[if (series) "tv_results" else "movie_results"] as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? kotlinx.serialization.json.JsonObject ?: return
+            val id = arr["id"]?.toString()?.trim('"') ?: return
+            val orig = (arr[if (series) "original_name" else "original_title"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            val alt = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/${if (series) "tv" else "movie"}/$id/alternative_titles?api_key=$key")) as kotlinx.serialization.json.JsonObject
+            val list = ((alt["results"] ?: alt["titles"]) as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { e ->
+                val o = e as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                val c = (o["iso_3166_1"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                if (c != null && c !in setOf("US", "IN", "GB")) return@mapNotNull null
+                (o["title"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            }
+            altOf[core(name)] = (listOfNotNull(orig) + list).map { it.trim() }.filter { it.isNotBlank() && core(it) != core(name) }.distinct().take(4)
+        }
     }
 
     /** "This site doesn't have this title" (it searched and nothing matched), kept 3 hours: not asked again 20 times. */
@@ -90,7 +123,8 @@ object PluginSources {
         found.map { r ->
             val clean = CsTester.cleanTitle(r.name)
             val bq = bare(q); val bc = bare(clean)
-            var sc = if (norm(clean) == norm(q.replace("&", " and ")) || core(clean) == core(q) || (bq.length >= 4 && bc == bq)) 1.0
+            var sc = if (norm(clean) == norm(q.replace("&", " and ")) || core(clean) == core(q) || (bq.length >= 4 && bc == bq) ||
+                (bq.length >= 6 && bq.trimEnd('s') == bc.trimEnd('s'))) 1.0
             else if (bq.length >= 6 && bc.startsWith(bq) && kotlin.math.abs(bc.length - bq.length) <= 12) 0.85 else {
                 val a = words(clean); val b = words(q)
                 if (a.isEmpty() || b.isEmpty()) 0.0 else a.intersect(b).size.toDouble() / a.union(b).size * 0.9
@@ -362,6 +396,8 @@ object PluginSources {
         val episode = id.split(":").getOrNull(2)?.toIntOrNull()
         val year = meta.releaseInfo?.take(4)?.toIntOrNull()
         meta.cast?.takeIf { it.isNotEmpty() }?.let { castOf["${core(meta.name)}|$year"] = it }
+        // TMDB's other names for the title (a plugin's site may list it under one of them), at most 2 s.
+        kotlinx.coroutines.withTimeoutOrNull(2_000) { runCatching { loadAltNames(vm, id.substringBefore(':'), meta.name, series) } }
         fun wanted(name: String) = (only == null || name in only || (MB_ANY in only && name.contains("moviebox", true)) || (VEGA_ANY in only && isVegaName(name)) || (OTT_ANY in only && isOttName(name))) && (except == null || name !in except)
         val acc = ArrayList<StreamItem>(); val lock = Mutex()
         val jobs = ArrayList<kotlinx.coroutines.Job>()

@@ -2499,6 +2499,43 @@ fun PlayerScreen(
 
     fun seekBy(ms: Long) { seekAbs((curPos() + ms).coerceIn(0L, maxOf(0L, curDur()))); poke++ }
 
+    // ───── Watch next, loaded in the corner ─────
+    var wnLoad by remember { mutableStateOf<WnLoad?>(null) }
+    var wnAt by remember { mutableLongStateOf(0L) }
+    fun wnBegin(w: WnLoad) {
+        wnLoad = w; wnAt = SystemClock.elapsedRealtime()
+        PlayTiming.late("Watch next: getting ${w.name} ready in the corner (the current video keeps playing)")
+        val level = vm.playerPref("quality").ifEmpty { vm.texts.value["qsQuality"] ?: "auto" }
+        Prepare.start(vm, ctx, w.type, w.id, 0L, null, vm.qsActive(), level, w.meta)
+    }
+    fun wnOpen(w: WnLoad, st: Prepared?) {
+        wnLoad = null
+        val item = st?.item; val url = item?.stream?.url
+        PlayTiming.begin(w.title, "Watch next · " + if (url != null) "ready in the corner" else "not ready — opening the usual way")
+        if (st != null && item != null && url != null) {
+            Prepare.stopSaving()
+            onReplace(Screen.Player(w.title, url, st.subs, key = w.id, image = w.image, type = w.type, meta = w.meta,
+                source = item.stream.name ?: item.addonName, addon = item.addonName,
+                candidates = st.list.filter { it.stream.url != url }, quick = vm.qsActive(), instant = true))
+        } else {
+            Prepare.cancel()
+            onReplace(Screen.Player(w.title, "", emptyList(), key = w.id, image = w.image, type = w.type, meta = w.meta, find = true, quick = vm.qsActive()))
+        }
+    }
+    LaunchedEffect(wnLoad) {
+        val w = wnLoad ?: return@LaunchedEffect
+        while (wnLoad === w) {
+            val st = Prepare.state.value?.takeIf { it.key == w.id }
+            val waited = SystemClock.elapsedRealtime() - wnAt
+            when {
+                // Ready to show a picture at once: the new title plays now and this one stops.
+                st != null && st.item != null && (st.playerReady || (BuildConfig.IS_TV && st.ready)) -> { wnOpen(w, st); return@LaunchedEffect }
+                st != null && st.failed -> { wnOpen(w, null); return@LaunchedEffect }
+                waited > 25_000 -> { wnOpen(w, st?.takeIf { it.item != null }); return@LaunchedEffect }
+            }
+            delay(150)
+        }
+    }
     fun playEpisode(ep: Video) {
         val m = meta ?: return
         // Same saved place the title page would use (Continue Watching or the episode's own progress).
@@ -3825,6 +3862,12 @@ fun PlayerScreen(
                         poster = nextEp?.thumbnail ?: meta?.background ?: p.image,
                         label = nextEp?.let { "S${it.season} E${it.episode}" + ((it.title ?: it.name)?.let { n -> " · $n" } ?: "") }) { playNext() }
                 }
+                AnimatedVisibility(wnLoad != null,
+                    enter = fadeIn(tween(260)) + slideInHorizontally(tween(360)) { it / 3 },
+                    exit = fadeOut(tween(200))) {
+                    val w = wnLoad
+                    if (w != null) WatchNextLoadingCard(w, wnAt) { wnLoad = null; Prepare.cancel() }
+                }
             }
 
             // ───── Controls (fade in / out), Hotstar layout ─────
@@ -4492,16 +4535,16 @@ fun PlayerScreen(
                 dragging = { wnDrag >= 0f },
             ) { m ->
                 watchNext = false
+                // Watch next: the film keeps playing; the picked title gets ready in the corner (poster, "Playing now"
+                // and a ring running down), then takes over the moment it can play.
                 scope.launch {
                     if (m.type == "series") {
                         val full = vm.fullMeta(m) ?: m
                         val first = full.videos.orEmpty().filter { (it.season ?: 0) > 0 && it.episode != null }
                             .sortedWith(compareBy({ it.season }, { it.episode })).firstOrNull()
                         if (first == null) { Snack.show("No episodes found for ${m.name}"); return@launch }
-                        onReplace(Screen.Player("${full.name}  S${first.season}E${first.episode}", "", emptyList(), key = first.id,
-                            image = first.thumbnail ?: full.background ?: full.poster, type = "series", meta = full, find = true, quick = vm.qsActive()))
-                    } else onReplace(Screen.Player(m.name, "", emptyList(), key = m.id, image = m.background ?: m.poster, type = "movie", meta = m,
-                        find = true, quick = vm.qsActive()))
+                        wnBegin(WnLoad(first.id, "${full.name}  S${first.season}E${first.episode}", first.thumbnail ?: full.background ?: full.poster, full.poster ?: full.background, full.name, "series", full))
+                    } else wnBegin(WnLoad(m.id, m.name, m.background ?: m.poster, m.poster ?: m.background, m.name, "movie", m))
                 }
             }
             }
@@ -6629,3 +6672,42 @@ fun stackCues(cs: List<Cue>): List<Cue> {
 
 /** The source of the link that is playing (for Source health when it fails). */
 object PlayFailNote { @Volatile var addon: String? = null }
+
+
+/** A title picked from Watch next, getting ready in the corner while the current video plays. */
+private data class WnLoad(val id: String, val title: String, val image: String?, val poster: String?, val name: String, val type: String, val meta: Meta?)
+
+/**
+ * The corner card for Watch next (like the next-episode card): the picture, "Playing now" and the title, with a ring that
+ * runs down while the stream gets ready. Tap ✕ to keep watching what's on.
+ */
+@Composable
+private fun WatchNextLoadingCard(w: WnLoad, startedAt: Long, onCancel: () -> Unit) {
+    val st by Prepare.state.collectAsState()
+    var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(Unit) { while (true) { now = SystemClock.elapsedRealtime(); delay(100) } }
+    // Runs down over ~12 s, faster as the stream gets ready (the prepared player's progress).
+    val mine = st?.takeIf { it.key == w.id }
+    val byTime = ((now - startedAt) / 12_000f).coerceIn(0f, 0.95f)
+    val done = maxOf(byTime, if (mine?.item != null) 0.7f else 0f, mine?.progress ?: 0f)
+    val left by androidx.compose.animation.core.animateFloatAsState(1f - done, tween(300), label = "wnRing")
+    val cs = RoundedCornerShape(14.dp)
+    Column(Modifier.padding(top = 10.dp).width(236.dp).softHalo(14.dp, spread = 8.dp, strength = 0.4f).clip(cs).background(Color(0xF014151B))
+        .border(1.dp, Color(0x26FFFFFF), cs)) {
+        Box(Modifier.fillMaxWidth().height(110.dp)) {
+            AsyncImage(w.image ?: w.poster, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color(0xAA000000))))
+            Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(34.dp).clip(CircleShape).background(Color(0x99000000)), Alignment.Center) {
+                CircularProgressIndicator(progress = { left }, modifier = Modifier.fillMaxSize(), color = Color.White, strokeWidth = 2.5.dp, trackColor = Color(0x33FFFFFF))
+                Icon(Icons.Default.PlayArrow, null, Modifier.size(16.dp), tint = Color.White)
+            }
+            Box(Modifier.align(Alignment.TopStart).padding(8.dp).size(26.dp).clip(CircleShape).background(Color(0x99000000)).clickable(onClick = onCancel), Alignment.Center) {
+                Icon(Icons.Default.Close, "Cancel", Modifier.size(14.dp), tint = Color.White)
+            }
+        }
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text("Playing now", fontSize = 12.sp, color = Color(0xFFB8BECB), fontWeight = FontWeight.SemiBold)
+            Text(w.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
