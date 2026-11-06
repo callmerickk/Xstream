@@ -66,16 +66,19 @@ object MusicLibraryStore {
             added = old.liked.none { it.id == item.id }
             old.copy(liked = if (added) listOf(item) + old.liked else old.liked.filterNot { it.id == item.id })
         }
+        MusicLog.add("${if (added) "liked" else "unliked"} \"${item.title}\"")
         return added
     }
 
     suspend fun createPlaylist(context: Context, name: String): MusicPlaylist {
         val playlist = MusicPlaylist(java.util.UUID.randomUUID().toString(), name.trim().ifBlank { "New playlist" })
         edit(context) { it.copy(playlists = listOf(playlist) + it.playlists) }
+        MusicLog.add("playlist created")
         return playlist
     }
 
     suspend fun addToPlaylist(context: Context, playlistId: String, item: YtmItem) = edit(context) { old ->
+        MusicLog.add("added to a playlist: \"${item.title}\"")
         old.copy(playlists = old.playlists.map { p ->
             if (p.id == playlistId && p.items.none { it.id == item.id }) p.copy(items = p.items + item) else p
         })
@@ -94,10 +97,12 @@ object MusicLibraryStore {
     }
 
     suspend fun togglePinned(context: Context, item: YtmItem) = edit(context) { old ->
+        MusicLog.add("pin / unpin: \"${item.title}\"")
         old.copy(pinned = if (old.pinned.any { it.id == item.id }) old.pinned.filterNot { it.id == item.id } else (listOf(item) + old.pinned).take(27))
     }
 
     suspend fun toggleSubscription(context: Context, artist: YtmItem) = edit(context) { old ->
+        MusicLog.add("subscribe / unsubscribe: \"${artist.title}\"")
         old.copy(subscriptions = if (old.subscriptions.any { it.id == artist.id }) old.subscriptions.filterNot { it.id == artist.id } else listOf(artist) + old.subscriptions)
     }
 

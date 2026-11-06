@@ -42,6 +42,7 @@ class MusicService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         val ctx = applicationContext
+        ActLog.init(ctx)
         // googlevideo songs are read in pieces (YtChunked), Live server songs straight from this phone.
         val ok = OkHttpDataSource.Factory(LiveServer.http)
         val upstream = DefaultDataSource.Factory(ctx, androidx.media3.datasource.DataSource.Factory { YtChunked(ok.createDataSource()) })
@@ -50,8 +51,10 @@ class MusicService : MediaSessionService() {
             if (uri.scheme == "ytm") {
                 // Xstream Music (SimpMusic): the song's audio in the quality the connection can carry right now.
                 val vid = uri.lastPathSegment.orEmpty()
-                val m = runBlocking { YtDirect.music(vid) } ?: throw IOException("This song isn't available right now")
-                val url = (if (MusicQuality.hi) m.hi ?: m.lo else m.lo ?: m.hi) ?: throw IOException("This song isn't available right now")
+                val t0 = android.os.SystemClock.elapsedRealtime()
+                val m = runBlocking { YtDirect.music(vid) } ?: run { MusicLog.add("song address failed · $vid · nothing from YouTube in ${android.os.SystemClock.elapsedRealtime() - t0} ms"); throw IOException("This song isn't available right now") }
+                val url = (if (MusicQuality.hi) m.hi ?: m.lo else m.lo ?: m.hi) ?: run { MusicLog.add("song address failed · $vid · no audio file"); throw IOException("This song isn't available right now") }
+                MusicLog.add("song address · $vid in ${android.os.SystemClock.elapsedRealtime() - t0} ms · ${if (MusicQuality.hi && m.hi != null) "high" else "low"} quality")
                 return@Factory spec.withUri(Uri.parse(url)).withRequestHeaders(mapOf("User-Agent" to m.ua))
             }
             // DASH pieces of a music video: the client's user agent.
@@ -60,7 +63,7 @@ class MusicService : MediaSessionService() {
             if (uri.scheme != "xlive") return@Factory spec
             val id = uri.lastPathSegment.orEmpty()
             val url = MusicPlayer.resolved[id] ?: runBlocking { LiveServer.trackUrl(ctx, LiveServer.Track(id = id)) }
-                ?.also { MusicPlayer.resolved[id] = it } ?: throw IOException("This song isn't available right now")
+                ?.also { MusicPlayer.resolved[id] = it } ?: run { MusicLog.add("song address failed · Live server · $id"); throw IOException("This song isn't available right now") }
             spec.withUri(Uri.parse(url))
         }
         // FFmpeg audio decoders too (FLAC / ALAC / Opus files play on every phone).
@@ -76,6 +79,7 @@ class MusicService : MediaSessionService() {
         val open = PendingIntent.getActivity(ctx, 41, Intent(ctx, MainActivity::class.java).setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra("openMusic", true), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         session = MediaSession.Builder(this, player).setSessionActivity(open).build()
+        MusicLog.attach(player)
         // Auto quality: a song that stops to load for more than 1.5 s drops to 128 kbps at the same second; after a
         // minute of smooth play the next songs go back to 160 kbps.
         MusicQuality.start(ctx)
@@ -107,6 +111,7 @@ class MusicService : MediaSessionService() {
                     stallCheck = Runnable {
                         if (player.playbackState != Player.STATE_BUFFERING) return@Runnable
                         MusicQuality.hi = false; MusicQuality.smoothSince = System.currentTimeMillis()
+                        MusicLog.add("quality → low (128 kbps): stuck loading for 1.5 s at ${MusicLog.t(player.currentPosition)}")
                         val i = player.currentMediaItemIndex; val pos = player.currentPosition
                         player.currentMediaItem?.let { cur ->
                             // Same song again at 128 kbps (a new address makes the player load it afresh).
@@ -115,7 +120,7 @@ class MusicService : MediaSessionService() {
                         }
                     }.also { main.postDelayed(it, 1_500) }
                 }
-                if (state == Player.STATE_READY && !MusicQuality.hi && System.currentTimeMillis() - MusicQuality.smoothSince > 60_000) MusicQuality.hi = true
+                if (state == Player.STATE_READY && !MusicQuality.hi && System.currentTimeMillis() - MusicQuality.smoothSince > 60_000) { MusicQuality.hi = true; MusicLog.add("quality → high again (smooth for a minute)") }
             }
         })
     }
@@ -199,6 +204,7 @@ object MusicPlayer {
                 override fun onEvents(player: Player, events: Player.Events) = publish()
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                     now.value = now.value.copy(error = "Couldn't play this song")
+                    MusicLog.add(if (mc.hasNextMediaItem()) "skipping to the next song after the error" else "stopped: error on the last song in the queue")
                     // Skip to the next one instead of stopping.
                     if (mc.hasNextMediaItem()) { mc.seekToNextMediaItem(); mc.prepare(); mc.play() }
                 }
@@ -271,12 +277,15 @@ object MusicPlayer {
 
     /** Plays [i] and fills the queue with its YouTube Music radio (like tapping a song in YouTube Music). */
     fun startRadio(ctx: Context, i: YtmItem) {
+        MusicLog.add("play ${if (i.kind == YtmKind.VIDEO) "video" else "song"} \"${i.title}\" · ${i.subtitle.take(60)} · with its radio")
         videoMode.value = i.kind == YtmKind.VIDEO
         play(ctx, listOf(ytTrack(i)), 0)
         radioLabel.value = i.title + " mix"
         radioJob?.cancel()
         radioJob = scope.launch {
-            val n = runCatching { YtMusic.next(i.id, "RDAMVM" + i.id) }.getOrNull() ?: return@launch
+            val r0 = android.os.SystemClock.elapsedRealtime()
+            val n = runCatching { YtMusic.next(i.id, "RDAMVM" + i.id) }.getOrNull() ?: run { MusicLog.add("radio failed for \"${i.title}\" (no answer)"); return@launch }
+            MusicLog.add("radio: ${n.queue.size} songs in ${android.os.SystemClock.elapsedRealtime() - r0} ms")
             counterparts.putAll(n.counterparts)
             radioChips.value = n.chips; radioChip.value = n.chips.firstOrNull()?.first
             n.title?.let { radioLabel.value = it }
@@ -292,6 +301,7 @@ object MusicPlayer {
         val v = radioChips.value.firstOrNull { it.first == label }?.second ?: return
         val cur = now.value.track?.id?.removePrefix("yt:") ?: return
         radioChip.value = label
+        MusicLog.add("radio chip: $label")
         radioJob?.cancel()
         radioJob = scope.launch {
             val n = runCatching { YtMusic.next(cur, v.substringBefore('|'), v.substringAfter('|').ifBlank { null }) }.getOrNull() ?: return@launch
@@ -308,6 +318,7 @@ object MusicPlayer {
         val at = songs.indexOf(list.getOrNull(index)).coerceAtLeast(0)
         videoMode.value = false
         radioLabel.value = label
+        MusicLog.add("play list \"$label\" · song ${at + 1} of ${songs.size}")
         play(ctx, songs.map { ytTrack(it, label) }, at)
     }
 
@@ -317,17 +328,19 @@ object MusicPlayer {
         if (mc.mediaItemCount - mc.currentMediaItemIndex > 3 || radioJob?.isActive == true) return
         val last = queue.value.lastOrNull()?.id?.removePrefix("yt:") ?: return
         radioJob = scope.launch {
-            val n = runCatching { YtMusic.next(last, "RDAMVM$last") }.getOrNull() ?: return@launch
+            val n = runCatching { YtMusic.next(last, "RDAMVM$last") }.getOrNull() ?: run { MusicLog.add("radio: more songs failed (no answer)"); return@launch }
+            MusicLog.add("radio: ${n.queue.size} more songs added")
             counterparts.putAll(n.counterparts)
             appendRadio(ctx, n.queue.map { ytTrack(it) })
         }
     }
 
-    fun addNext(ctx: Context, i: YtmItem) = playNext(ctx, ytTrack(i))
+    fun addNext(ctx: Context, i: YtmItem) { MusicLog.add("play next: \"${i.title}\""); playNext(ctx, ytTrack(i)) }
     fun addToQueue(ctx: Context, i: YtmItem) = withController(ctx) { mc ->
+        MusicLog.add("added to queue: \"${i.title}\"")
         val t = ytTrack(i); mc.addMediaItem(item(t)); queue.value = queue.value + t
     }
-    fun removeAt(i: Int) { controller?.let { if (i in 0 until it.mediaItemCount && i != it.currentMediaItemIndex) { it.removeMediaItem(i); queue.value = queue.value.toMutableList().apply { if (i < size) removeAt(i) } } } }
+    fun removeAt(i: Int) { MusicLog.add("removed queue item ${i + 1}"); controller?.let { if (i in 0 until it.mediaItemCount && i != it.currentMediaItemIndex) { it.removeMediaItem(i); queue.value = queue.value.toMutableList().apply { if (i < size) removeAt(i) } } } }
     fun dismissQueue() { controller?.let { mc -> val at = mc.currentMediaItemIndex; if (mc.mediaItemCount > at + 1) mc.removeMediaItems(at + 1, mc.mediaItemCount); queue.value = queue.value.take(at + 1) } }
 
     /**
@@ -347,6 +360,7 @@ object MusicPlayer {
         val i = mc.currentMediaItemIndex; val pos = mc.currentPosition
         val cur = queue.value.getOrNull(i) ?: return@withController
         val t = cur.copy(id = "yt:$toId", format = if (asVideo) "ytv" else "yt")
+        MusicLog.add("switched to the ${if (asVideo) "video" else "song"} version at ${MusicLog.t(pos)}")
         mc.replaceMediaItem(i, item(t)); mc.seekTo(i, pos); mc.play()
         queue.value = queue.value.toMutableList().apply { set(i, t) }
         publish()
@@ -354,7 +368,7 @@ object MusicPlayer {
 
     private val sleepHandler = android.os.Handler(android.os.Looper.getMainLooper())
     /** Sleep timer: music pauses after [ms]. */
-    fun sleepIn(ms: Long) { sleepHandler.removeCallbacksAndMessages(null); sleepHandler.postDelayed({ controller?.pause() }, ms) }
+    fun sleepIn(ms: Long) { MusicLog.add("sleep timer: ${ms / 60_000} min"); sleepHandler.removeCallbacksAndMessages(null); sleepHandler.postDelayed({ controller?.pause() }, ms) }
 
     fun attachVideo(tv: android.view.TextureView?) { controller?.let { if (tv != null) it.setVideoTextureView(tv) else it.clearVideoSurface() } }
     fun videoSize(): androidx.media3.common.VideoSize = controller?.videoSize ?: androidx.media3.common.VideoSize.UNKNOWN
@@ -367,20 +381,21 @@ object MusicPlayer {
         mc.addMediaItem(at, item(t)); queue.value = queue.value.toMutableList().apply { add(at.coerceAtMost(size), t) }
     }
 
-    fun toggle() { controller?.let { if (it.isPlaying) it.pause() else { if (it.playbackState == Player.STATE_IDLE) it.prepare(); it.play() } }; publish() }
-    fun next() { controller?.seekToNextMediaItem(); publish() }
-    fun previous() { controller?.let { if (it.currentPosition > 4_000) it.seekTo(0) else it.seekToPreviousMediaItem() }; publish() }
+    fun toggle() { MusicLog.add("tap: play/pause"); controller?.let { if (it.isPlaying) it.pause() else { if (it.playbackState == Player.STATE_IDLE) it.prepare(); it.play() } }; publish() }
+    fun next() { MusicLog.add("tap: next"); controller?.seekToNextMediaItem(); publish() }
+    fun previous() { MusicLog.add("tap: previous"); controller?.let { if (it.currentPosition > 4_000) it.seekTo(0) else it.seekToPreviousMediaItem() }; publish() }
     fun seekTo(ms: Long) { controller?.seekTo(ms); publish() }
-    fun jumpTo(i: Int) { controller?.let { it.seekTo(i, 0); it.play() }; publish() }
+    fun jumpTo(i: Int) { MusicLog.add("tap: queue item ${i + 1}"); controller?.let { it.seekTo(i, 0); it.play() }; publish() }
     fun shuffle() { controller?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled }; publish() }
     fun cycleRepeat() {
         controller?.let { it.repeatMode = when (it.repeatMode) { Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL; Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE; else -> Player.REPEAT_MODE_OFF } }
         publish()
     }
-    fun stop() { controller?.let { it.stop(); it.clearMediaItems() }; queue.value = emptyList(); now.value = Now() }
+    fun stop() { MusicLog.add("stopped (queue cleared)"); controller?.let { it.stop(); it.clearMediaItems() }; queue.value = emptyList(); now.value = Now() }
     /** A movie starts: music pauses (audio focus does it too; this also covers players that don't ask for it). */
     /** Widget buttons: "prev", "toggle", "next" ([done] is called once it's sent). */
     fun control(ctx: Context, action: String, done: () -> Unit) {
+        MusicLog.add("widget: $action")
         val timeout = android.os.Handler(android.os.Looper.getMainLooper())
         timeout.postDelayed({ done() }, 8_000)
         android.os.Handler(android.os.Looper.getMainLooper()).post {
@@ -395,7 +410,7 @@ object MusicPlayer {
         }
     }
 
-    fun pauseForVideo() { controller?.takeIf { it.isPlaying }?.pause() }
+    fun pauseForVideo() { if (controller?.isPlaying == true) MusicLog.add("paused for a movie"); controller?.takeIf { it.isPlaying }?.pause() }
     /** Position of the song playing now (for "Video": the music video starts at the same second). */
     fun positionMs(): Long = controller?.currentPosition ?: 0L
 }

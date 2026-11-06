@@ -148,6 +148,21 @@ fun MusicApp(
     var libVersion by remember { mutableIntStateOf(0) }
     LaunchedEffect(profileId) { MusicPlayer.init(ctx); MusicLibraryStore.open(ctx, profileId); libVersion++ }
     LaunchedEffect(Unit) { while (true) { MusicPlayer.publish(); delay(500) } }
+    // Activity log: which Music page is open (taps are written with it).
+    LaunchedEffect(tab, stack.lastOrNull(), nowOpen, fullVideo, menuFor) {
+        val p = stack.lastOrNull()
+        val page = when {
+            fullVideo -> "Full video"
+            nowOpen -> "Now playing"
+            p is MPage.Browse -> "Page \"${p.title}\""
+            p is MPage.Search -> "Search"
+            p is MPage.Explore -> "Explore ${p.which}"
+            p is MPage.Local -> "List \"${p.title}\""
+            else -> "Tab $tab"
+        } + (menuFor?.let { " · menu for \"${it.title}\"" } ?: "")
+        ActLog.screen = "Music › $page"
+        ActLog.add("SCREEN", ActLog.screen)
+    }
 
     val nav = remember {
         MusicNav(

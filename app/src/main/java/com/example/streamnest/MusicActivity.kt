@@ -54,8 +54,18 @@ import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
 
 class MusicActivity : ComponentActivity() {
+    // Activity log: every tap in Xstream Music, with the button it hit.
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        val r = super.dispatchTouchEvent(ev)
+        runCatching { ActLog.onTouch(window.decorView, ev) }
+        return r
+    }
+    override fun onResume() { super.onResume(); MusicLog.add("Music app in front") }
+    override fun onPause() { super.onPause(); MusicLog.add("Music app to background") }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ActLog.init(this)
         MusicPlayer.init(applicationContext)
         enableEdgeToEdge()
         Coil.setImageLoader(ImageLoader.Builder(this).components { add(HdPoster) }.crossfade(120).build())

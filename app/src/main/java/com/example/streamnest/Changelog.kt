@@ -13,6 +13,9 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.4", "6 Nov 2026", "Xstream Music improvements behind the scenes", listOf(
+        "Xstream Music reports problems so they can be fixed faster",
+    )),
     Release("0.8.3", "5 Nov 2026", "Fixes: VegaMovies back, right titles, no buffering, smooth fades", listOf(
         "VegaMovies and RogMovies work again (they were switched off after one bad answer); Xstream finds their working address by itself",
         "Stricter matching: same year, same cast and the right length — no more other shows or films with the same name",
@@ -455,6 +458,12 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.4", "6 Nov 2026", "Xstream Music activity log", listOf(
+        "MUSIC lines: every song started (source, reason, time to start, audio format), finished / left at, jumps, pauses with the reason, buffering, errors, quality changes",
+        "Song address lookups timed; radio and pages timed (empty pages flagged); searches",
+        "Taps and pages inside Xstream Music; queue, likes, playlists, pins, subscriptions, sleep timer, widget buttons",
+        "All MUSIC lines go to the developer's cloud log",
+    )),
     Release("0.8.3", "5 Nov 2026", "0.8.2 regressions fixed", listOf(
         "noSearch only via reflection (no search method); SiteAddress probes Vega/Rog addresses (search.php JSON) at load and on failure; plugin reload removed",
         "Matching: year ±1 for series too (ranked -1.0, load check), cast overlap when both ≥3, MovieBoxDirect year strict; length check films 0.75–1.35, episodes 0.6–1.4 before first frame; wrongAddons",

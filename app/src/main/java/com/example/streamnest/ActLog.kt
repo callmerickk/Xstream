@@ -217,7 +217,7 @@ object ActLog {
     // ── Cloud logs for the developer (all accounts) ──
 
     const val CLOUD_KEEP_DAYS = 15
-    private val importantRx = Regex("(?i)(\\bERROR\\b|crash|app ended|froze|not responding|exception|failed|refused|can't play|cannot play|no streams|no links|nothing found|first picture|= ✓|stopped|gave up|timeout|timed out|HTTP [45]\\d\\d|wake word|live (closed|failed)|APP +opened)")
+    private val importantRx = Regex("(?i)(\\bERROR\\b|crash|app ended|froze|not responding|exception|failed|refused|can't play|cannot play|no streams|no links|nothing found|first picture|= ✓|stopped|gave up|timeout|timed out|HTTP [45]\\d\\d|wake word|live (closed|failed)|APP +opened|MUSIC |Music ›)")
 
     /** Sends the important lines written since the last upload (errors, crashes, play results) to xshared/logs. */
     private suspend fun uploadImportant() {

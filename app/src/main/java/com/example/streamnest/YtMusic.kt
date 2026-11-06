@@ -236,7 +236,10 @@ object YtMusic {
 
     private suspend fun cached(key: String, block: suspend () -> YtmPage): YtmPage {
         cache[key]?.takeIf { System.currentTimeMillis() - it.at < TTL }?.let { return it.page }
+        val t0 = System.currentTimeMillis()
         val page = block()
+        val n = page.items.size + page.shelves.sumOf { it.items.size }
+        MusicLog.add("loaded ${key.take(80)} in ${System.currentTimeMillis() - t0} ms · ${page.shelves.size} rows, $n items" + if (n == 0) " · EMPTY (nothing found)" else "")
         cache[key] = Cached(System.currentTimeMillis(), page)
         return page
     }
