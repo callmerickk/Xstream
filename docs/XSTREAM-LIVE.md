@@ -10,3 +10,8 @@ Removed from Xstream in 0.8.0 because plugins start streams faster. Kept here as
 - Daily tag watcher: `docs-live-server-watch.yml.disabled` (move back to `.github/workflows/` in the new repo).
 - Known: starts in ~3–13 s, seeks 7–26 s. Ideas: bigger read-ahead, measure per-file speed, prefer lighter files.
 - Never mention "Telegram" in any text the user can see.
+
+## Next for Xstream Live (agreed 17 Nov)
+- VR headset mode (JioDive / Cardboard-style): player button "VR headset" → side-by-side picture for the two lenses on a
+  big virtual screen (OpenGL, lens distortion), landscape locked, screen kept on, controls by tap or a Bluetooth remote.
+- Size: optional removal of offline voice (Vosk 8.5 MB) and face detection (7.9 MB) → ~40 MB.
