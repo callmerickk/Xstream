@@ -310,7 +310,11 @@ fun HomeScreen(
     }
     val tint = Palette.tint
     val bg = Bg
-    val topBrush = remember(tint, bg) { Brush.verticalGradient(listOf(tint, bg)) }
+    val topBrush = remember(tint, bg) {
+        // Xstream Live: indigo at the very top, a purple haze, then the page colour.
+        if (BuildConfig.LIVE_ONLY) Brush.verticalGradient(0f to tint, 0.35f to Color(0xFF3A2266).copy(alpha = 0.55f), 1f to bg)
+        else Brush.verticalGradient(listOf(tint, bg))
+    }
     val accent = Accent
     val brandRim = remember(accent) { Brush.horizontalGradient(listOf(accent, accent.copy(alpha = 0.25f))) }
     val onFilter: (String) -> Unit = remember(onLive) {

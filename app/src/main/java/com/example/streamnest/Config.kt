@@ -127,7 +127,8 @@ val Defaults: Map<String, String> = linkedMapOf(
     "btnColor" to "",
     "btnText" to "",
     "background" to "#0F1014",
-    "deckTint" to "#3A0E17",
+    // Xstream Live: deep indigo glow at the top over a navy-black page (like the big streaming apps).
+    "deckTint" to (if (BuildConfig.LIVE_ONLY) "#2B2F7A" else "#3A0E17"),
     "cardCorner" to "34",
     // Collections (Nuvio-style)
     "traktClientId" to "",
