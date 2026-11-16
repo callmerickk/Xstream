@@ -46,7 +46,7 @@ val Defaults: Map<String, String> = linkedMapOf(
     "accent2" to "#FF6A5C",
     "amoled" to "no",
     "navStyle" to "adaptive",
-    "navBar" to "streamx",
+    "navBar" to (if (BuildConfig.LIVE_ONLY) "orbit" else "streamx"),
     "showHero" to "yes",
     "rowsHidden" to "",
     "rowsOrder" to "",

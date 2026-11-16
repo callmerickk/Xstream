@@ -108,6 +108,8 @@ android {
         // Keep one copy of the C++ runtime, and store native libraries compressed (much smaller APK).
         jniLibs {
             pickFirsts += listOf("**/libc++_shared.so")
+            // Xstream Live: no Watch together (video calls) — its 11 MB calling library is left out.
+            excludes += listOf("**/libjingle_peerconnection_so.so")
             useLegacyPackaging = true
         }
     }

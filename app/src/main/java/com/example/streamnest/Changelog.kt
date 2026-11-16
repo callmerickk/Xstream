@@ -16,6 +16,10 @@ private val UserReleases get() = listOf(
     Release("1.0.0", "17 Nov 2026", "Xstream Live", listOf(
         "Xstream Live: everything plays from the Live server on this phone — no plugins or addons to set up",
         "Same look, profiles, progress and activity log as Xstream, on the same account",
+        "New home: one big card with its trailer inside, the title's logo, Play and More Info",
+        "New bottom bar \"Orbit\" (Settings › Layout › Bottom bar switches between Orbit, StreamX bar and Capsule)",
+        "Deep indigo look, new 3D Xstream Live icon",
+        "Asks to update when a newer Live server is out",
     )),
     Release("0.8.4", "6 Nov 2026", "Xstream Music improvements behind the scenes", listOf(
         "Xstream Music reports problems so they can be fixed faster",

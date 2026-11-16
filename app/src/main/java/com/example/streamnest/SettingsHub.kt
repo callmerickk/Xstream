@@ -273,8 +273,10 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
             SettingRow(null, "Navigation Bar", navNames[navStyle] ?: "Adaptive") { navDialog = true }
             if (!BuildConfig.IS_TV) {
                 RowDivider(20.dp)
-                val bar = texts["navBar"] ?: "streamx"
-                SettingRow(null, "Bottom bar", if (bar == "streamx") "StreamX bar" else "Capsule") { vm.setText("navBar", if (bar == "streamx") "capsule" else "streamx") }
+                val bar = texts["navBar"] ?: (if (BuildConfig.LIVE_ONLY) "orbit" else "streamx")
+                SettingRow(null, "Bottom bar", when (bar) { "streamx" -> "StreamX bar"; "orbit" -> "Orbit"; else -> "Capsule" }) {
+                    vm.setText("navBar", when (bar) { "streamx" -> "capsule"; "capsule" -> "orbit"; else -> "streamx" })
+                }
                 RowDivider(20.dp)
                 ToggleRow("Card border", "White edge and glow around the top cards on Home.", texts["deckBorder"] == "on") { vm.setText("deckBorder", if (it) "on" else "off") }
                 RowDivider(20.dp)
