@@ -710,16 +710,18 @@ private fun AppIconPicker() {
 private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> Unit) {
     Page("Sources & Extensions", onBack) {
         // 1 · How you watch (Turbo / Classic), 2 · Sources, Extensions and Filters, 3 · Recommendations — each its own card.
-        if (!BuildConfig.IS_TV) {
+        // Xstream Live: plugins / addons stay hidden unless Developer's Corner turns them on.
+        val liveOnly = BuildConfig.LIVE_ONLY && vm.texts.collectAsStateWithLifecycle().value["devSources"] != "on"
+        if (!BuildConfig.IS_TV && !liveOnly) {
             SectionLabel("How you watch")
             WatchModeCard(vm)
         }
-        SectionLabel("Sources & extensions")
+        SectionLabel(if (liveOnly) "Live server" else "Sources & extensions")
         SettingsCard {
-            SettingRow(null, "Sources", "Install, remove, refresh and sort your add-ons.") { open("addons") }
+            if (!liveOnly) SettingRow(null, "Sources", "Install, remove, refresh and sort your add-ons.") { open("addons") }
             if (!BuildConfig.IS_TV) {
-                RowDivider(20.dp)
-                SettingRow(null, "Extensions", "Add Nuvio extension repositories and switch providers on or off.") { open("extensions") }
+                if (!liveOnly) RowDivider(20.dp)
+                if (!liveOnly) SettingRow(null, "Extensions", "Add Nuvio extension repositories and switch providers on or off.") { open("extensions") }
                 if (BuildConfig.HAS_LIVE) {
                     RowDivider(20.dp)
                     val ls by LiveServer.state.collectAsStateWithLifecycle()

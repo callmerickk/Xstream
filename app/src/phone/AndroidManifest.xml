@@ -2,19 +2,16 @@
     <application>
         <activity
             android:name="com.example.streamnest.MusicActivity"
-            android:taskAffinity="com.example.xstream.music"
+            android:taskAffinity="com.example.xstreamlive.music"
             android:label="Xstream Music"
             android:icon="@mipmap/ic_launcher_music"
             android:roundIcon="@mipmap/ic_launcher_music"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode"
             android:supportsPictureInPicture="false"
-            android:exported="true"
+            android:exported="false"
             android:theme="@style/Theme.Xstream">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+            <!-- Xstream Live: Music is off for now (no launcher icon). -->
         </activity>
     </application>
 </manifest>

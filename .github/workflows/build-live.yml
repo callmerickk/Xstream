@@ -1,0 +1,122 @@
+name: Build Xstream Live
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the APK as a release (off = only check that it builds)"
+        type: boolean
+        default: true
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Nuvio runtime libraries (cheerio, crypto-js)
+        run: |
+          cd tools/nuvio && npm install --no-audit --no-fund --silent
+          mkdir -p ../../app/src/main/assets/nuvio
+          npx esbuild entry.js --bundle --minify --platform=browser --format=iife --outfile=../../app/src/main/assets/nuvio/libs.js
+          ls -la ../../app/src/main/assets/nuvio
+      - uses: actions/cache@v4
+        with:
+          path: live-server-cache
+          key: live-server-${{ hashFiles('tools/live-server.tag') }}
+      - name: Live server (PencariMovie Server, arm64)
+        run: bash tools/build-live-server.sh
+      - name: Build
+        run: |
+          set -o pipefail
+          gradle assemblePhoneDebug --no-daemon 2>&1 | tee build.log
+          ls -la app/build/outputs/apk/*/debug/*.apk
+      - name: Check the APKs
+        run: |
+          for a in app/build/outputs/apk/phone/debug/*.apk; do
+            n=$(basename "$a"); sz=$(du -m "$a" | cut -f1)
+                        libs=$(unzip -l "$a" | grep "lib/" | awk '{print $1, $4}' | sort -rn | head -8 | awk '{printf "%s %.1fMB; ", $2, $1/1048576}')
+            echo "::notice title=$n ($sz MB)::$libs"
+          done
+      - name: Report errors
+        if: failure()
+        run: |
+          grep -E "^e: |What went wrong|Could not (find|resolve)|> " build.log | grep -v "^> Task" | head -60 > errs.txt || true
+          sed -i 's/%/%25/g' errs.txt
+          for chunk in 0 20 40; do
+            msg=$(sed -n "$((chunk+1)),$((chunk+20))p" errs.txt | awk 'BEGIN{ORS="%0A"}{print}')
+            [ -n "$msg" ] && echo "::error title=Build errors $chunk::$msg"
+          done
+          true
+      - name: CloudStream plugin compatibility check
+        if: success()
+        continue-on-error: true
+        run: |
+          mkdir -p cscheck && cd cscheck
+          for u in \
+            "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/FourKHDHub.cs3" \
+            "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/HDhub4u.cs3" \
+            "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/MPlayerProvider.cs3" \
+            "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/UHDmoviesProvider.cs3" \
+            "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/VegaMovies.cs3" \
+            "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/builds/CNC%20Verse.cs3" \
+            "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/builds/CNC%20Verse%20Mobile.cs3"; do
+            curl -sL -o "$(basename "$u" | sed 's/%20/_/g')" "$u"
+          done
+          cd ..
+          python3 tools/cs_compat.py app/build/outputs/apk/phone/debug/*.apk cscheck/*.cs3 | tee cscheck.txt
+          msg=$(head -40 cscheck.txt | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+          echo "::warning title=CloudStream compatibility::$msg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Xstream-phone-apk
+          path: app/build/outputs/apk/phone/debug/*.apk
+      - name: Prepare release files
+        if: ${{ inputs.publish }}
+        run: |
+          mkdir -p release
+          cp app/build/outputs/apk/phone/debug/*.apk release/Xstream-Live.apk
+          G=app/build.gradle.kts
+          CODE=$(grep 'versionCode = ' $G | sed -n 1p | grep -o '[0-9]\+')
+          NAME=$(grep 'versionName = ' $G | sed -n 1p | sed 's/.*"\(.*\)".*/\1/')
+          echo "{\"phone\":$CODE,\"tv\":0,\"phoneName\":\"$NAME\",\"tvName\":\"\",\"tag\":\"live-build-${{ github.run_number }}\"}" > release/versions.json
+          cat release/versions.json
+          echo "TAG=live-build-${{ github.run_number }}" >> $GITHUB_ENV
+          echo "TITLE=Xstream Live $NAME" >> $GITHUB_ENV
+          cp RELEASE_NOTES.md release/notes.md
+      # This build's own release (never "latest", so Xstream's updates are untouched)…
+      - uses: softprops/action-gh-release@v2
+        if: ${{ inputs.publish }}
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.TITLE }}
+          body_path: release/notes.md
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+          files: |
+            release/Xstream-Live.apk
+            release/versions.json
+            release/notes.md
+      # …and the fixed "xstream-live" release the app checks for updates (always the newest Xstream Live).
+      - uses: softprops/action-gh-release@v2
+        if: ${{ inputs.publish }}
+        with:
+          tag_name: xstream-live
+          name: Xstream Live (newest)
+          body_path: release/notes.md
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+          files: |
+            release/Xstream-Live.apk
+            release/versions.json
+            release/notes.md

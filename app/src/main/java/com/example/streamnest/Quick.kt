@@ -100,9 +100,9 @@ fun StreamItem.languages(): List<String> {
  * Plugin mode (Xstream phones, Settings › Sources: Addons / Plugins): every stream comes from CloudStream / Nuvio plugins
  * and no addon is asked. Addon mode (default): addons only, plugins are never loaded.
  */
-fun AppViewModel.pluginMode(): Boolean = !BuildConfig.IS_TV && (texts.value["srcMode"] == "plugins" || (texts.value["srcMode"] == "live" && !BuildConfig.HAS_LIVE))
+fun AppViewModel.pluginMode(): Boolean = !BuildConfig.IS_TV && !(BuildConfig.LIVE_ONLY && texts.value["devSources"] != "on") && (texts.value["srcMode"] == "plugins" || (texts.value["srcMode"] == "live" && !BuildConfig.HAS_LIVE))
 /** Live mode (64-bit app): only the Live server's links. */
-fun AppViewModel.liveMode(): Boolean = !BuildConfig.IS_TV && texts.value["srcMode"] == "live" && LiveServer.available(appContext)
+fun AppViewModel.liveMode(): Boolean = !BuildConfig.IS_TV && (texts.value["srcMode"] == "live" || (BuildConfig.LIVE_ONLY && texts.value["devSources"] != "on")) && LiveServer.available(appContext)
 /** The name a CloudStream provider's links carry (StreamItem.addonName). */
 fun csDisplayName(provider: String) = "CloudStream · $provider"
 /** Quick Start: in plugin mode the picked CloudStream providers (by their link name), else the picked addons. */

@@ -474,6 +474,15 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                 SettingRow(Icons.Default.FilterList, "Stream filters (all)", "Include, exclude or force every tag — the defaults users build on.") { subPage = "streamFilters" }
             }
         }
+        if (BuildConfig.LIVE_ONLY) {
+            item { SectionLabel("Xstream Live") }
+            item {
+                SettingsCard {
+                    ToggleRow("Plugins and addons", "Off: the Live server is the only source and Sources & Extensions stay hidden.",
+                        texts["devSources"] == "on") { vm.setText("devSources", if (it) "on" else "off") }
+                }
+            }
+        }
         item { SectionLabel("Built-in servers for everyone") }
         item {
             val scope = rememberCoroutineScope()

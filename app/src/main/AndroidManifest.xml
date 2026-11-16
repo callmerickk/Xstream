@@ -96,18 +96,7 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_continue_info" />
         </receiver>
-        <!-- Home screen widget: Xstream Music (MusicHomeScreen.kt). -->
-        <receiver
-            android:name=".MusicWidget"
-            android:exported="false"
-            android:label="Xstream Music">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_music_info" />
-        </receiver>
+        <!-- Xstream Live: no Music widget for now. -->
         <receiver android:name=".MusicWidgetControl" android:exported="false" />
         <!-- In-app updates (Updates.kt): shares the downloaded APK with the installer. -->
         <provider

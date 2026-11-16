@@ -387,7 +387,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         StreamHeaders.init(app); AddonSpeed.init(app); Relay.warmUp()
         // Source ranking: this phone's copy now, the shared one from the cloud in the background.
         AutoPlayRules.init(app); Ranker.init(app); HostStats.init(app)
-        if (!BuildConfig.IS_TV) { Buddies.init(app); Invites.start(app) }
+        if (!BuildConfig.IS_TV && BuildConfig.HAS_SOCIAL) { Buddies.init(app); Invites.start(app) }
         ProfileLock.init(app)
         AppLook.init(app); Call.init(app); Vpn.resume(app)
         Downloads.init(app)

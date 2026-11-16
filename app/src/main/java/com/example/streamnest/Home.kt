@@ -1227,9 +1227,9 @@ private fun FloatingFilters(
     val maxCapsule = (LocalConfiguration.current.screenWidthDp - 2 * (12 + 52 + 8)).dp
     Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         // Xstream: no TV / Movies / Live capsule — only the AI voice button.
-        Box(Modifier.align(Alignment.CenterEnd).tourTarget("ai")) { AiOrbButton(vm, 52.dp, hide, onAi) }
+        if (BuildConfig.HAS_AI) Box(Modifier.align(Alignment.CenterEnd).tourTarget("ai")) { AiOrbButton(vm, 52.dp, hide, onAi) }
         // AIDEN wakes up when the app opens: slides out of the button, says hello, and goes back to sleep.
-        Box(Modifier.align(Alignment.CenterEnd).padding(end = 56.dp).offset(y = (-58).dp)) { AidenWake(vm, onAi) }
+        if (BuildConfig.HAS_AI) Box(Modifier.align(Alignment.CenterEnd).padding(end = 56.dp).offset(y = (-58).dp)) { AidenWake(vm, onAi) }
     }
 }
 

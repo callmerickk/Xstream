@@ -10,11 +10,11 @@ android {
     namespace = "com.example.streamnest"
     compileSdk = 35
     defaultConfig {
-        applicationId = "com.example.xstream"
+        applicationId = "com.example.xstreamlive"
         minSdk = 24
         targetSdk = 34
-        versionCode = 38
-        versionName = "0.8.4"
+        versionCode = 1
+        versionName = "1.0.0"
     }
     // Two apps from one project: the phone app and StreamX TV (Fire TV / Android TV).
     // "gradle assembleDebug" builds both APKs.
@@ -23,14 +23,18 @@ android {
         create("phone") {
             dimension = "device"
             buildConfigField("boolean", "IS_TV", "false")
-            // Live server moved out (planned separate app "Xstream Live", see docs/XSTREAM-LIVE.md).
-            buildConfigField("boolean", "HAS_LIVE", "false")
-            // Xstream Music (its own launcher entry, widget, YouTube Music data).
-            buildConfigField("boolean", "HAS_MUSIC", "true")
+            // Xstream Live: the Live server is the only source (plugins / addons only from Developer's Corner).
+            buildConfigField("boolean", "HAS_LIVE", "true")
+            buildConfigField("boolean", "LIVE_ONLY", "true")
+            // No AI, no Watch together: this app is for playing.
+            buildConfigField("boolean", "HAS_AI", "false")
+            buildConfigField("boolean", "HAS_SOCIAL", "false")
+            // Music is off in Xstream Live for now.
+            buildConfigField("boolean", "HAS_MUSIC", "false")
             // Testing app: no "Publish for everyone" buttons.
             buildConfigField("boolean", "NO_PUBLISH", "true")
             // Universal: 64-bit and 32-bit ARM phones.
-            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            ndk { abiFilters += listOf("arm64-v8a") }
             // The app's own words are in its code; the libraries' translations into ~80 languages are left out (smaller APK).
             resourceConfigurations += listOf("en")
         }
@@ -39,6 +43,9 @@ android {
             dimension = "device"
             buildConfigField("boolean", "IS_TV", "false")
             buildConfigField("boolean", "HAS_LIVE", "false")
+            buildConfigField("boolean", "LIVE_ONLY", "false")
+            buildConfigField("boolean", "HAS_AI", "true")
+            buildConfigField("boolean", "HAS_SOCIAL", "true")
             buildConfigField("boolean", "HAS_MUSIC", "false")
             buildConfigField("boolean", "NO_PUBLISH", "false")
             ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
@@ -51,6 +58,9 @@ android {
             versionName = "TV 0.7.2 beta"
             buildConfigField("boolean", "IS_TV", "true")
             buildConfigField("boolean", "HAS_LIVE", "false")
+            buildConfigField("boolean", "LIVE_ONLY", "false")
+            buildConfigField("boolean", "HAS_AI", "true")
+            buildConfigField("boolean", "HAS_SOCIAL", "true")
             buildConfigField("boolean", "HAS_MUSIC", "false")
             buildConfigField("boolean", "NO_PUBLISH", "false")
             // Fire TV Sticks run 32-bit Android; 32-bit ARM also runs on every 64-bit TV box.

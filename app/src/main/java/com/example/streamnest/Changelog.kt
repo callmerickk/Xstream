@@ -13,6 +13,10 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("1.0.0", "17 Nov 2026", "Xstream Live", listOf(
+        "Xstream Live: everything plays from the Live server on this phone — no plugins or addons to set up",
+        "Same look, profiles, progress and activity log as Xstream, on the same account",
+    )),
     Release("0.8.4", "6 Nov 2026", "Xstream Music improvements behind the scenes", listOf(
         "Xstream Music reports problems so they can be fixed faster",
     )),

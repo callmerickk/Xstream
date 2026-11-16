@@ -1,3 +1,5 @@
-Xstream 0.8.4
+Xstream Live 1.0.0
 
-• Xstream Music now records what happens while you listen (songs, start times, buffering, errors, taps), so music problems can be found and fixed quickly.
+• Everything plays from the Live server on this phone — no plugins or addons to set up.
+• Same look, profiles, progress, cloud sync and activity log as Xstream, on the same account.
+• 64-bit phones only.

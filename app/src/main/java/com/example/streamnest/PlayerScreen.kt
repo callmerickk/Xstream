@@ -3856,7 +3856,7 @@ fun PlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(clockNow(), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E8EE))
-                        if (!BuildConfig.IS_TV) Box {
+                        if (!BuildConfig.IS_TV && BuildConfig.HAS_SOCIAL) Box {
                             GlassBtn(Icons.Default.Groups, null, "Watch together", at("together")) { panel = "together" }
                             // In a room: a small green dot.
                             val unread by Together.unread.collectAsState()
@@ -4135,7 +4135,7 @@ fun PlayerScreen(
                                     aspectLabel = if (freeZoom) "Free zoom: pinch anywhere, drag to move" else "Free zoom off: pinch to fill"
                                 })
                                 add(Triple(Icons.Default.GraphicEq, "Sound") { pick { panel = "sound" } })
-                                add(Triple(Icons.Default.Groups, "Watch together") { pick { panel = "together" } })
+                                if (BuildConfig.HAS_SOCIAL) add(Triple(Icons.Default.Groups, "Watch together") { pick { panel = "together" } })
                                 if (type == "series" && episodes.isNotEmpty()) add(Triple(Icons.Default.VideoLibrary, "Episodes") { pick { showEpisodes = true; controls = false } })
                                 if (nextEp != null) add(Triple(Icons.Default.SkipNext, "Next episode") { pick { playNext() } })
                                 if (type != "series") add(Triple(Icons.Default.SkipNext, "Next title") { pick { tvNext() } })
