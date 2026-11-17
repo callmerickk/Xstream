@@ -178,8 +178,9 @@ private fun RowScope.MeItem(selected: Boolean, vm: AppViewModel, onTab: (Int) ->
             }
         }
     }
+    val row = this
     Box {
-        OrbitItem(selected, null, "Me", gesture = gesture, iconContent = {
+        row.OrbitItem(selected, null, "Me", gesture = gesture, iconContent = {
             ProfileAvatar(vm, current, 26.dp, if (selected) Modifier.border(1.5.dp, Color.White, CircleShape) else Modifier, animate = true)
         }) { onTab(2) }
         if (switcher) SxProfileSwitcher(vm, hover, onDismiss = { switcher = false }, onPicked = { switcher = false; onTab(2) }, onAdd = { switcher = false; adding = true })
