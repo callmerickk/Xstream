@@ -235,7 +235,10 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     val budgetMb = when { tv -> if (ramGb >= 1.6) 96 else 72; ramGb < 3.2 -> 96; ramGb < 4.8 -> 160; ramGb < 6.8 -> 220; else -> 300 }
     val load = DefaultLoadControl.Builder()
         // About a minute ahead (like Nuvio): more was downloaded and thrown away at every seek.
-        .setBufferDurationsMs(if (tv) 30_000 else 25_000, 60_000, if (fast) 1_500 else 2_500, if (fast) 3_000 else 5_000)
+        // Xstream Live: start after ~1 s of video (and ~1.5 s after a seek) — the Live server keeps delivering steadily, so
+        // waiting for 5 s before playing only made every jump slower.
+        .setBufferDurationsMs(if (tv) 30_000 else 25_000, 60_000, if (BuildConfig.LIVE_ONLY) 1_000 else if (fast) 1_500 else 2_500,
+            if (BuildConfig.LIVE_ONLY) 1_500 else if (fast) 3_000 else 5_000)
         .setTargetBufferBytes(budgetMb * 1024 * 1024)
         .setPrioritizeTimeOverSizeThresholds(false)
         .setBackBuffer(if (tv) 10_000 else if (BuildConfig.LIVE_ONLY) 5_000 else 20_000, true)
@@ -275,7 +278,8 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
         androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection.Factory(3_000, 25_000, 6_000, 0.7f))
     return ExoPlayer.Builder(ctx, renderers).setLoadControl(load).setTrackSelector(selector).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
         // Seeking may land up to 0.3 s off the exact spot: much faster jumps on big files (as CloudStream does).
-        .setSeekParameters(androidx.media3.exoplayer.SeekParameters(300_000L, 0L))
+        // Xstream Live: a jump lands on the nearest keyframe — no extra video to fetch and decode before the picture shows.
+        .setSeekParameters(if (BuildConfig.LIVE_ONLY) androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC else androidx.media3.exoplayer.SeekParameters(300_000L, 0L))
         .build().apply {
         val aLang = vm.playerPref("audio")
         val sLang = vm.playerPref("subs")

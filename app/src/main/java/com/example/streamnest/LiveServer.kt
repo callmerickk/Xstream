@@ -3,6 +3,7 @@ package com.example.streamnest
 import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -167,15 +168,49 @@ object LiveServer {
     private val warmed = java.util.Collections.synchronizedSet(HashSet<String>())
 
     /** Streams for a title (an IMDb id, "tt…:season:episode" for episodes). */
+    // One search per title: the same title asked 2–3 times at once (title page, hero, prepare) shares one request, and
+    // the answer is kept on the phone for 6 hours, so reopening a title — even after a restart — is instant.
+    private val linkJobs = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
+    private val linkScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private val linkMem = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String>>()
+    private const val LINKS_TTL = 6 * 3600_000L
+
+    private suspend fun linksBody(ctx: Context, type: String, streamId: String): String? {
+        val key = "$type/$streamId"
+        val now = System.currentTimeMillis()
+        linkMem[key]?.let { (at, b) -> if (now - at < LINKS_TTL) return b }
+        val f = java.io.File(ctx.cacheDir, "livelinks/" + key.hashCode().toUInt().toString(16) + ".json")
+        if (f.exists() && now - f.lastModified() < LINKS_TTL) runCatching { f.readText() }.getOrNull()?.takeIf { it.isNotBlank() }?.let { b0 ->
+            // Saved links point at this phone's server; only the port can differ after a restart.
+            val b = b0.replace(Regex("http://127\\.0\\.0\\.1:\\d+"), base)
+            linkMem[key] = f.lastModified() to b
+            return b
+        }
+        val job = linkJobs.computeIfAbsent(key) {
+            linkScope.async {
+                try {
+                    runCatching {
+                        http.newBuilder().readTimeout(20, TimeUnit.SECONDS).build()
+                            .newCall(Request.Builder().url("$base/stream/$type/${enc(streamId)}.json").build()).execute()
+                            .use { if (it.isSuccessful) it.body!!.string() else null }
+                    }.getOrNull()?.also { b ->
+                        // Only real results are kept (a "setting up" / nothing-found answer is asked again next time).
+                        if (b.contains("\"url\"")) {
+                            linkMem[key] = System.currentTimeMillis() to b
+                            runCatching { f.parentFile?.mkdirs(); f.writeText(b) }
+                        }
+                    }
+                } finally { linkJobs.remove(key) }
+            }
+        }
+        return job.await()
+    }
+
     suspend fun streams(ctx: Context, type: String, id: String): List<StreamItem> = withContext(Dispatchers.IO) {
         if (!awaitReady(ctx)) return@withContext emptyList()
         val streamId = if (type == "series" && !id.contains(':')) "$id:1:1" else id
         val t0 = System.currentTimeMillis()
-        val body = runCatching {
-            http.newBuilder().readTimeout(20, TimeUnit.SECONDS).build()
-                .newCall(Request.Builder().url("$base/stream/$type/${enc(streamId)}.json").build()).execute()
-                .use { if (it.isSuccessful) it.body!!.string() else null }
-        }.getOrNull() ?: return@withContext emptyList()
+        val body = linksBody(ctx, type, streamId) ?: return@withContext emptyList()
         val raw = runCatching { (Api.json.parseToJsonElement(body).jsonObject["streams"] as? JsonArray).orEmpty() }.getOrDefault(emptyList())
         val out = ArrayList<StreamItem>()
         var noteText = ""

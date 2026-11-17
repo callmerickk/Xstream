@@ -13,6 +13,15 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("1.0.3", "17 Nov 2026", "Faster starts and seeks, new look", listOf(
+        "Plays after about 1 s of video, and about 1.5 s after a jump (was 5 s)",
+        "Jumps land on the nearest keyframe: the picture shows sooner",
+        "Each title is searched once, and its links are remembered for 6 hours (instant when you come back)",
+        "No AI requests any more (they were still sent from title pages)",
+        "Profile picker: two big circles per row, your main profile on the right",
+        "Bottom bar: clear-glass selected tab with a red glow line",
+        "Opening animation: Xstream with a LIVE badge popping up under it",
+    )),
     Release("1.0.2", "17 Nov 2026", "Light on data, instant seeks, VR controls", listOf(
         "Much less data: the Live server only fetches what is about to play (like Nuvio); about a minute is kept ahead",
         "Seeking starts much faster: no preview frames, no hidden second player for Live server links",

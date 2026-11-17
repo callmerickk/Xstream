@@ -85,10 +85,30 @@ private fun RowScope.OrbitItem(selected: Boolean, icon: ImageVector, label: Stri
     val springy = spring<Float>(dampingRatio = 0.62f, stiffness = Spring.StiffnessMediumLow)
     val grow by animateFloatAsState(if (selected) 1f else 0f, springy, label = "orbitGrow")
     val w by animateDpAsState(if (selected) 132.dp else 56.dp, spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow), label = "orbitW")
-    val tint by animateColorAsState(if (selected) Color.White else Color(0xFF9EA3B8), label = "orbitTint")
+    val tint by animateColorAsState(if (selected) Color.White else Color(0xFFB4B9CA), label = "orbitTint")
+    // Selected tab: clear glass (a soft white fill, a fine light border, a highlight along the top) and a small red
+    // glowing line under it — no colour fill.
+    val pill = RoundedCornerShape(50)
     Row(
-        Modifier.width(w).height(52.dp).clip(RoundedCornerShape(50))
-            .background(Brush.horizontalGradient(listOf(Color(0xFF4B4FD8).copy(alpha = 0.9f * grow), Color(0xFFE50914).copy(alpha = 0.85f * grow))))
+        Modifier.width(w).height(52.dp)
+            .drawBehind {
+                if (grow > 0.02f) {
+                    val lw = size.width * 0.34f
+                    val y = size.height - 6.dp.toPx()
+                    drawRoundRect(Color(0xFFE50914).copy(alpha = 0.35f * grow), topLeft = Offset((size.width - lw) / 2 - 3.dp.toPx(), y - 3.dp.toPx()),
+                        size = androidx.compose.ui.geometry.Size(lw + 6.dp.toPx(), 9.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(5.dp.toPx()))
+                }
+            }
+            .clip(pill)
+            .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.16f * grow), Color.White.copy(alpha = 0.07f * grow))))
+            .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.38f * grow), Color.White.copy(alpha = 0.12f * grow))), pill)
+            .drawBehind {
+                if (grow > 0.02f) {
+                    val lw = size.width * 0.34f
+                    drawRoundRect(Color(0xFFE50914).copy(alpha = grow), topLeft = Offset((size.width - lw) / 2, size.height - 6.dp.toPx()),
+                        size = androidx.compose.ui.geometry.Size(lw, 3.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()))
+                }
+            }
             .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onClick)
             .padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,

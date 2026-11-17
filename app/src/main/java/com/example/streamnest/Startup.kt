@@ -22,6 +22,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -106,6 +108,7 @@ fun StartupSplash(onDone: () -> Unit) {
     val zoom = remember { Animatable(1f) }
     val out = remember { Animatable(1f) }      // logo + "stream" fade
     val xAlpha = remember { Animatable(1f) }
+    val live = remember { Animatable(0f) }      // Xstream Live: the "● LIVE" badge under "am"
     val done by rememberUpdatedState(onDone)
 
     LaunchedEffect(Unit) {
@@ -115,6 +118,7 @@ fun StartupSplash(onDone: () -> Unit) {
         launch { x.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 300f)) }
         delay(240)
         word.animateTo(1f, tween(480, easing = FastOutSlowInEasing))
+        if (BuildConfig.LIVE_ONLY) { delay(80); live.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 380f)) }
         delay(520)
         launch { out.animateTo(0f, tween(320)) }
         launch { delay(250); bg.animateTo(0f, tween(800)) }
@@ -142,11 +146,28 @@ fun StartupSplash(onDone: () -> Unit) {
             else Image(painterResource(AppLook.logoRes(lookLogo)), null, Modifier.size(76.dp).then(markMod))
             Spacer(Modifier.width(14.dp))
             ZoomX(44f, { x.value }, { zoom.value }, { xAlpha.value })
-            Text(
-                if (BuildConfig.LIVE_ONLY) "stream Live" else "stream",
-                Modifier.graphicsLayer { alpha = word.value * out.value; translationX = (1f - word.value) * -18.dp.toPx() },
-                fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 44.sp, letterSpacing = (-1).sp, color = Color.White,
-            )
+            Box {
+                Text(
+                    "stream",
+                    Modifier.graphicsLayer { alpha = word.value * out.value; translationX = (1f - word.value) * -18.dp.toPx() },
+                    fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 44.sp, letterSpacing = (-1).sp, color = Color.White,
+                )
+                // Xstream Live: a small red "● LIVE" pops up under the end of the word (under "am").
+                if (BuildConfig.LIVE_ONLY) Row(
+                    Modifier.align(Alignment.BottomEnd).offset(x = 2.dp, y = 30.dp).graphicsLayer {
+                        val v = live.value
+                        alpha = v.coerceIn(0f, 1f) * out.value
+                        scaleX = 0.3f + 0.7f * v; scaleY = scaleX
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)
+                    }.shadow(14.dp, RoundedCornerShape(50), ambientColor = BrandRed, spotColor = BrandRed)
+                        .clip(RoundedCornerShape(50)).background(BrandRed).padding(start = 9.dp, end = 10.dp, top = 3.dp, bottom = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(6.dp).clip(CircleShape).background(Color.White))
+                    Text("LIVE", Modifier.padding(start = 6.dp), fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 12.sp,
+                        letterSpacing = 3.sp, color = Color.White)
+                }
+            }
         }
     }
 }
@@ -222,11 +243,23 @@ fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPicked: () -
                 Wordmark("Xstream", 30.sp)
                 Text(if (editMode) "Tap a profile to edit" else "Who's watching?", Modifier.padding(top = 26.dp), fontSize = 24.sp,
                     fontWeight = FontWeight.SemiBold, color = Color.White)
-                val cells: List<Profile?> = profiles + (if (profiles.size < 5) listOf(null) else emptyList())
-                Column(Modifier.padding(top = 36.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(26.dp),
+                // Two big circles per row; the main profile always sits on the right (easiest to reach with the thumb),
+                // "Add" on its own row, centred, below.
+                val canAdd = profiles.size < 5
+                val main = profiles.firstOrNull()
+                val others = profiles.drop(1)
+                val rowsOf: List<List<Profile?>> = buildList {
+                    if (main != null) add(listOfNotNull(others.firstOrNull(), main))
+                    others.drop(1).chunked(2).forEach { add(it) }
+                    if (canAdd) add(listOf(null))
+                }
+                val cells: List<Profile?> = rowsOf.flatten()
+                val big = profiles.size <= 2
+                val avD = if (big) 132.dp else 116.dp
+                Column(Modifier.padding(top = 40.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(if (big) 30.dp else 22.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
-                    cells.chunked(if (cells.size == 4) 2 else 3).forEach { rowCells ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                    rowsOf.forEach { rowCells ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(40.dp)) {
                             rowCells.forEach { p ->
                                 val i = cells.indexOf(p)
                                 val pop = remember { Animatable(0f) }
@@ -234,7 +267,7 @@ fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPicked: () -
                                 val focused = p != null && p.id == focusId && !editMode && leaving == null
                                 val isLeaving = p != null && p.id == leaving
                                 Column(
-                                    Modifier.width(92.dp).graphicsLayer {
+                                    Modifier.width(avD + 16.dp).graphicsLayer {
                                         val v = pop.value
                                         alpha = v.coerceIn(0f, 1f) * (if (leaving != null && !isLeaving) 1f - leave.value else 1f)
                                         translationY = (1f - v) * 24.dp.toPx()
@@ -245,25 +278,25 @@ fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPicked: () -
                                     },
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                 ) {
-                                    Box(Modifier.size(92.dp), contentAlignment = Alignment.Center) {
+                                    Box(Modifier.size(avD + 16.dp), contentAlignment = Alignment.Center) {
                                         if (p == null) {
-                                            Box(Modifier.size(80.dp).clip(CircleShape).background(Color(0x0FFFFFFF)).border(1.5.dp, Color(0x33FFFFFF), CircleShape), Alignment.Center) {
+                                            Box(Modifier.size(avD * 0.78f).clip(CircleShape).background(Color(0x0FFFFFFF)).border(1.5.dp, Color(0x33FFFFFF), CircleShape), Alignment.Center) {
                                                 Icon(Icons.Default.Add, "Add profile", Modifier.size(30.dp), tint = Color(0xFFB8BED3))
                                             }
                                         } else {
                                             if (focused || isLeaving) Canvas(Modifier.fillMaxSize()) {
                                                 drawCircle(Brush.radialGradient(listOf(Color(0x664B4FD8), Color.Transparent)), radius = size.minDimension / 2f)
                                             }
-                                            ProfileAvatar(vm, p, 80.dp, Modifier.border(2.dp,
+                                            ProfileAvatar(vm, p, avD, Modifier.border(2.5.dp,
                                                 if (focused || isLeaving) Brush.linearGradient(listOf(Color(0xFF6A6FF0), BrandRed)) else Brush.linearGradient(listOf(Color(0x22FFFFFF), Color(0x22FFFFFF))), CircleShape))
-                                            if (editMode) Box(Modifier.size(80.dp).clip(CircleShape).background(Color(0x88000000)), Alignment.Center) { Icon(Icons.Default.Edit, "Edit ${p.name}", Modifier.size(22.dp)) }
-                                            if (focused && countdown.value > 0f && !cancelled) Canvas(Modifier.size(92.dp)) {
+                                            if (editMode) Box(Modifier.size(avD).clip(CircleShape).background(Color(0x88000000)), Alignment.Center) { Icon(Icons.Default.Edit, "Edit ${p.name}", Modifier.size(22.dp)) }
+                                            if (focused && countdown.value > 0f && !cancelled) Canvas(Modifier.size(avD + 16.dp)) {
                                                 val sw = 2.5.dp.toPx()
                                                 drawArc(Color.White, -90f, 360f * countdown.value, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw, cap = StrokeCap.Round))
                                             }
                                         }
                                     }
-                                    Text(p?.name ?: "Add", Modifier.padding(top = 10.dp), fontSize = 14.sp, fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal,
+                                    Text(p?.name ?: "Add", Modifier.padding(top = 12.dp), fontSize = 17.sp, fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal,
                                         color = if (p == null) Color(0xFF8A90A6) else if (focused) Color.White else Color(0xFFB8BED3), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     if (p?.kids == true) Text("KIDS", fontSize = 9.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7DA2FF))
                                 }

@@ -1,7 +1,5 @@
-Xstream Live 1.0.2
+Xstream Live 1.0.3
 
-• Far less data: only the part you are about to watch is downloaded.
-• Seeking starts much faster.
-• VR: press the headset button for controls, turn your head to point, press to click.
-  Timeline, volume, brightness, screen size, audio, subtitles, next episode and Browse — no need to take the phone out.
-• Trailers only on the Home card (360p on mobile data); plugins no longer load at start.
+• Faster: plays after about 1 s, and about 1.5 s after a jump.
+• Titles are searched once and remembered for 6 hours — coming back is instant.
+• New profile picker (main profile on the right), clear-glass bottom bar, new opening animation.
