@@ -479,7 +479,7 @@ fun DetailScreen(
                     Box(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(shape).background(TitleCardBg).border(1.dp, CardRim, shape)) {
                         AsyncImage(artwork, meta.name, Modifier.fillMaxWidth().height((300f + extra).dp).background(Surface1).graphicsLayer { alpha = 1f - grow },
                             alignment = BiasAlignment(0f, -0.4f), contentScale = ContentScale.Crop)
-                        if (heroId != null && tArm && !tStop && isOn(texts["cardTrailers"] ?: "yes")) {
+                        if (heroId != null && tArm && !tStop && !BuildConfig.LIVE_ONLY && isOn(texts["cardTrailers"] ?: "yes")) {
                             TrailerVideo(heroId, tMuted, Modifier.fillMaxWidth().height((300f + extra).dp), fitWhole = false, backdrop = backdrop,
                                 onPlaying = { tPlay = true; HeroSound.played += meta.id }, onEnded = { tStop = true; tPlay = false }, onError = { tStop = true; tPlay = false })
                         }

@@ -1,8 +1,7 @@
-Xstream Live 1.0.1
+Xstream Live 1.0.2
 
-• Only Live server links — your account's plugins and addons are no longer used.
-• The Play light turns green as soon as the first frame is ready.
-• VR headset mode in the player (JioDive and other phone headsets).
-• Home card with a curved edge and a sound button; darker navy-black look.
-• New profile picker; Pilot / Finale labels; Library › Watched.
-• Smaller app (about 40 MB).
+• Far less data: only the part you are about to watch is downloaded.
+• Seeking starts much faster.
+• VR: press the headset button for controls, turn your head to point, press to click.
+  Timeline, volume, brightness, screen size, audio, subtitles, next episode and Browse — no need to take the phone out.
+• Trailers only on the Home card (360p on mobile data); plugins no longer load at start.

@@ -234,11 +234,11 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     // few seconds buffered.
     val budgetMb = when { tv -> if (ramGb >= 1.6) 96 else 72; ramGb < 3.2 -> 96; ramGb < 4.8 -> 160; ramGb < 6.8 -> 220; else -> 300 }
     val load = DefaultLoadControl.Builder()
-        // Phones with the Live server keep up to 2 minutes loaded ahead (Telegram files come in bursts).
-        .setBufferDurationsMs(if (tv) 30_000 else 25_000, if (tv) 60_000 else if (BuildConfig.HAS_LIVE) 120_000 else 60_000, if (fast) 1_500 else 2_500, if (fast) 3_000 else 5_000)
+        // About a minute ahead (like Nuvio): more was downloaded and thrown away at every seek.
+        .setBufferDurationsMs(if (tv) 30_000 else 25_000, 60_000, if (fast) 1_500 else 2_500, if (fast) 3_000 else 5_000)
         .setTargetBufferBytes(budgetMb * 1024 * 1024)
         .setPrioritizeTimeOverSizeThresholds(false)
-        .setBackBuffer(if (tv) 10_000 else 20_000, true)
+        .setBackBuffer(if (tv) 10_000 else if (BuildConfig.LIVE_ONLY) 5_000 else 20_000, true)
         .build()
     // Streams go through the app's HTTP client (DNS setting) with the addon's request headers.
     val http = OkHttpDataSource.Factory(Api.http).setUserAgent(PlayerUserAgent)
@@ -644,7 +644,8 @@ fun PlayerScreen(
     val nowUrl = now?.url
     val thumbsOn = isOn(opt("seekThumbs"))
     val thumbs = remember(nowUrl, thumbsOn) {
-        if (thumbsOn && nowUrl != null) SeekThumbs(nowUrl, StreamHeaders.forUrl(nowUrl), p.key, ctx.cacheDir,
+        // Live server links: no preview frames (each one pulled ~2 MB through the server and held up the real seek).
+        if (thumbsOn && nowUrl != null && !nowUrl.startsWith("http://127.0.0.1")) SeekThumbs(nowUrl, StreamHeaders.forUrl(nowUrl), p.key, ctx.cacheDir,
             // MovieBox DASH: previews from the same title's MovieBox MP4 (same cut).
             alt = known.firstOrNull { it.isMovieBox() && it.mbKind() == 2 && it.stream.url != nowUrl }?.stream?.url) else null
     }
@@ -754,7 +755,7 @@ fun PlayerScreen(
     /** The main video view (a SurfaceView inside): after a fade the new player moves back onto it (smooth 60 fps). */
     val mainPv = remember { arrayOfNulls<PlayerView>(1) }
     /** Xstream Live: VR headset mode (side by side, one picture per lens). */
-    var vrOn by remember { mutableStateOf(false) }
+    var vrOn by remember { mutableStateOf(BuildConfig.LIVE_ONLY && VrState.resume.also { VrState.resume = false }) }
     var vrWas by remember { mutableStateOf(false) }
     LaunchedEffect(vrOn) { if (vrOn) vrWas = true else if (vrWas) { vrWas = false; delay(60); mainPv[0]?.let { pv -> if (pv.player === player) { pv.player = null; pv.player = player } } } }
     /** The picture turned out HDR while "no HDR" is set, after a switch the app made: go back (handled further down). */
@@ -2591,6 +2592,9 @@ fun PlayerScreen(
         val name = Public.streamName(c)
         val startUrl = now?.url
         val auto = !asked
+        // Live server → Live server: no second hidden player streaming the same film in parallel (data); the caller
+        // switches the usual way, from the same second.
+        if (BuildConfig.LIVE_ONLY && url.startsWith("http://127.0.0.1")) { swapFail = "live"; return false }
         if (HdrRule.banned(vm) && (HdrRule.named(c) || url in hdrBlocked)) { swLog(auto, "$why — blocked", url, "not switched: HDR isn't allowed"); hdrBlocked += url; return false }
         // A file you can't jump inside is never switched to (the picture went back to 0:01 after every jump).
         if (!isPlaylistLink(c, url) && StreamType.mimeFor(url, c.fileName()) == null) {
@@ -3370,7 +3374,9 @@ fun PlayerScreen(
                         when (aspectIdx) { 1 -> { scaleX = 1.33f; scaleY = 1.33f }; 2 -> { scaleX = 1f; scaleY = 1.33f }; else -> { scaleX = 1f; scaleY = 1f } }
                     } else Modifier.graphicsLayer { scaleX = vScale; scaleY = vScale; if (freeZoom) { translationX = fzX; translationY = fzY } }),
                 )
-                if (vrOn && !usingVlc) key(player) { VrHeadsetView(player) { vrOn = false } }
+                if (vrOn && !usingVlc) key(player) {
+                    VrHeadsetView(vm, player, p.title, onSeekTo = { seekAbs(it); poke++ }, onNext = if (nextEp != null) ({ playNext() }) else null) { vrOn = false }
+                }
                 // Plugin mode's quiet swap: the second player's picture, above the main one (fades in, then stays).
                 val sh = shadow
                 if (sh != null && !usingVlc) key(sh) {

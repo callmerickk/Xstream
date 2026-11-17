@@ -241,6 +241,15 @@ fun App(vm: AppViewModel = viewModel()) {
     CompositionLocalProvider(LocalTexts provides texts) {
         LaunchedEffect(profile == null) { if (profile == null) stack.clear() }
         val open: (Meta) -> Unit = { stack.add(Screen.Detail(it)) }
+        // VR › Browse picked a title: leave this player, open its page, which starts it (again in VR).
+        val vrPick by VrState.openTitle.collectAsState()
+        LaunchedEffect(vrPick) {
+            val m = vrPick ?: return@LaunchedEffect
+            VrState.openTitle.value = null
+            while (stack.lastOrNull() is Screen.Player) stack.removeAt(stack.lastIndex)
+            pendingDetailPlay.value = m.id
+            stack.add(Screen.Detail(m))
+        }
         // "Hey Aiden": the offline wake word opens the AI card (anywhere in the app, also during a movie).
         val buddyCtx = androidx.compose.ui.platform.LocalContext.current
         val callMic by Call.micOn.collectAsState()
@@ -478,6 +487,8 @@ fun App(vm: AppViewModel = viewModel()) {
             // starts its own plugins at once, so playing is never slower. Plugins are checked (repaired, updated) and
             // woken on every start whenever any are switched on.
             delay(4_000)
+            // Xstream Live: no plugins are used, so none are loaded or woken (it cost data and battery at every start).
+            if (LiveLock.on) return@LaunchedEffect
             runCatching { CsPlugins.init(vm.appContext); CsPlugins.upkeep(); if (CsPlugins.enabled.value.isNotEmpty()) CsPlugins.warmAll() }
             if (!(vm.store("csWarm") == "yes" || vm.pluginMode())) return@LaunchedEffect
             // Plugin mode: the first two Continue Watching titles get their Quick Play links fetched now (kept 10 minutes),

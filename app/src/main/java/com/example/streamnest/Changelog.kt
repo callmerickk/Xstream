@@ -13,6 +13,14 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("1.0.2", "17 Nov 2026", "Light on data, instant seeks, VR controls", listOf(
+        "Much less data: the Live server only fetches what is about to play (like Nuvio); about a minute is kept ahead",
+        "Seeking starts much faster: no preview frames, no hidden second player for Live server links",
+        "Trailers only on the Home card, 360p on mobile data",
+        "Plugins are no longer loaded at start",
+        "VR: press the headset button for controls, turn your head to point, press to click; press on empty space to hide",
+        "VR controls: timeline, ±10 s, volume, brightness, screen size, audio, subtitles, recenter, next episode, Browse, leave VR",
+    )),
     Release("1.0.1", "17 Nov 2026", "VR headset, darker look, new profile picker", listOf(
         "Only the Live server: the account's plugins and addons are no longer used (Developer's Corner can switch them back on)",
         "The Play light turns green once the first frame is ready",

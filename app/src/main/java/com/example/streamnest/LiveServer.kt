@@ -118,14 +118,17 @@ object LiveServer {
         val root = File(ctx.filesDir, "live").apply { mkdirs() }
         val tmp = File(ctx.cacheDir, "live-tmp").apply { mkdirs() }
         state.value = State("Starting", false, port)
-        // Speed: 8 Telegram connections × 32 parts in flight and 32 one-MB windows ahead per stream (the server's
-        // defaults are 4 × 8 and 16; its own measurements: 8 × 32 is about twice as fast on phones).
+        // Data: like Nuvio — only what is about to play is fetched. 8 × 32 parts with 32 MB read-ahead pulled ~20 MB/s and
+        // threw it away at every seek. Wi-Fi: the server's own defaults (4 × 8, 8 windows); mobile data: lighter (2 × 4, 4).
+        val metered = runCatching { (ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered }.getOrDefault(true)
+        val (wk, inf, pipe) = if (metered) Triple(2, 4, 4) else Triple(4, 8, 8)
+        note("Speed: $wk connections × $inf parts, $pipe MB ahead (${if (metered) "mobile data" else "Wi-Fi"})")
         val pb = ProcessBuilder(binary(ctx).absolutePath, "--port", "$port", "--host", "127.0.0.1", "--no-open",
-            "--workers", "8", "--inflight", "32",
+            "--workers", "$wk", "--inflight", "$inf",
             "--app-version", BuildConfig.VERSION_NAME).directory(root).redirectErrorStream(true)
         pb.environment().apply {
             put("PM_APP_ROOT", root.absolutePath); put("HOME", root.absolutePath); put("TMPDIR", tmp.absolutePath)
-            put("PM_NO_TRAY", "1"); put("PM_PIPELINE", "32")
+            put("PM_NO_TRAY", "1"); put("PM_PIPELINE", "$pipe")
         }
         val p = runCatching { pb.start() }.getOrElse { e ->
             state.value = State("Could not start", note = e.message ?: ""); note("Could not start: ${e.message}"); return

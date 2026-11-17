@@ -88,7 +88,11 @@ object YtDirect {
     private val JSONT = "application/json".toMediaType()
 
     /** Tallest picture to ask for: small on TV sticks (a second decoder next to the movie's), sharper on phones. */
-    private val maxHeight: Int get() = if (BuildConfig.IS_TV) 480 else 720
+    private val maxHeight: Int get() = if (BuildConfig.IS_TV) 480 else if (BuildConfig.LIVE_ONLY && metered()) 360 else 720
+    /** Xstream Live: trailers at 360p on mobile data (20 trailers at 720p were ~235 MB). */
+    private fun metered(): Boolean = runCatching {
+        (Public.vm!!.appContext.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered
+    }.getOrDefault(true)
 
     /** IPv4 first for YouTube (IPv6 to googlevideo is slow on some networks, e.g. Jio). Keeps the app's DNS choice. */
     val http: okhttp3.OkHttpClient by lazy {
