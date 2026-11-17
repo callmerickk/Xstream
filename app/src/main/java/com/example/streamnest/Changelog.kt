@@ -13,6 +13,14 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("1.0.7", "18 Nov 2026", "VR cinema, StreamX Home", listOf(
+        "VR: controls click what the dot is on (only Forward 10 s worked before); every VR action is in the log",
+        "VR: a cinema around you — curved screen, seats, wall lamps that glow when you pause; real depth for each eye",
+        "VR: Fixed screen (turn your head, the screen stays), bigger sizes up to Giant, Picture Sharp / Smooth, 4K on Wi-Fi",
+        "VR: subtitles like the player (white, no box); real 3D copies play in 3D; VR covers the whole screen",
+        "Home: the same rows, order and names as StreamX",
+        "Trailers stop when you leave the app or swipe away; the trailer bubble shows on every title page",
+    )),
     Release("1.0.6", "18 Nov 2026", "VR fixed and curved, endless Home cards", listOf(
         "VR: every control now clicks; a compact panel; the name of the control under the dot is shown",
         "VR: a curved cinema screen that wraps around you, sharper picture, subtitles on the screen; a better copy is picked when the picture is below 1080p",

@@ -425,8 +425,8 @@ fun DetailScreen(
     var trailerTip by remember(meta.id) { mutableStateOf<String?>(null) }
     val tipPrefs = remember { ctx.getSharedPreferences("tips", android.content.Context.MODE_PRIVATE) }
     fun tipOnce(key: String, text: String, times: Int = 5) {
-        val n = tipPrefs.getInt(key, 0)
-        if (n < times) { tipPrefs.edit().putInt(key, n + 1).apply(); trailerTip = text }
+        // Every time (the limit made it vanish after a few title pages).
+        trailerTip = null; trailerTip = text
     }
     fun trailerChain(): List<TmVideo> = (videos.filter { it.type == "Trailer" }.sortedBy { langOrder(it) } + videos.filter { it.type == "Teaser" }.sortedBy { langOrder(it) }).ifEmpty { videos }
     fun playInCard(v: TmVideo) {

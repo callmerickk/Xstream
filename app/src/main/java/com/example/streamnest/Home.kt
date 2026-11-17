@@ -209,6 +209,7 @@ fun HomeScreen(
     val recsFirst = false
     // Old default names (kept by phones that saved them) give way to the new ones.
     val recTitle = t("recommendedFor").let { if (it == "Recommended for {name}") "{ai} picked for {name}" else it }
+        .let { if (!BuildConfig.HAS_AI) it.replace("{ai} picked", "Picked") else it }
         .replace("{ai}", aiName().lowercase().replaceFirstChar { it.uppercase() }).replace("{name}", profile?.name?.takeIf { it.isNotBlank() && it != "Me" } ?: "you")
     var filter by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -1474,7 +1475,8 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
                 .border(1.5.dp, Brush.verticalGradient(0f to Color(0xD9E50914), 0.55f to Color(0x1AE50914), 1f to Color(0xA6E50914)), LiveHeroShape)
                 .clickable { onOpen(m) }) {
                 val id = tid
-                if (front && id != null) TrailerVideo(id, muted, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
+                // Stops when the card leaves the screen; silent while you swipe to the next card.
+                if (front && id != null && onScreen.value) TrailerVideo(id, muted || pager.isScrollInProgress, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
                     backdrop = backdropOf(m) ?: m.poster, onPlaying = { videoOn = true }, onEnded = { videoOn = false; next() }, onError = { videoOn = false },
                     trimBars = true)
                 val artAlpha by animateFloatAsState(if (front && videoOn) 0f else 1f, tween(450), label = "liveArt")

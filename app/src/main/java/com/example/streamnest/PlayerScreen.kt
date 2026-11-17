@@ -2565,9 +2565,13 @@ fun PlayerScreen(
         if (!vrOn || !BuildConfig.LIVE_ONLY) return@LaunchedEffect
         delay(800)
         val curH = player.videoSize.height
-        if (curH in 1 until 1000) {
-            val best = known.filter { it.resolution() in 1000..1200 && it.stream.url != now?.url }.firstOrNull()
-            if (best != null) switchTo(best, "VR: best picture", auto = true, why = "VR: best picture (was ${curH}p)")
+        // On Wi-Fi a 4K copy (scaled down to the phone it gives the cleanest picture in the lenses); else 1080p.
+        val wifi = runCatching { !(ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered }.getOrDefault(false)
+        val want = if (wifi) 2000..2300 else 1000..1200
+        if (curH in 1 until want.first) {
+            val best = known.filter { it.resolution() in want && it.stream.url != now?.url }.firstOrNull()
+                ?: if (curH < 1000) known.filter { it.resolution() in 1000..1200 && it.stream.url != now?.url }.firstOrNull() else null
+            if (best != null) switchTo(best, "VR: best picture", auto = true, why = "VR: best picture (was ${curH}p${if (wifi) ", Wi-Fi" else ""})")
         }
     }
     /** The upgraded HD file failed: straight back to the MovieBox link at the same second (no hunting through other HD files). */
@@ -3390,8 +3394,13 @@ fun PlayerScreen(
                     } else Modifier.graphicsLayer { scaleX = vScale; scaleY = vScale; if (freeZoom) { translationX = fzX; translationY = fzY } }),
                 )
                 if (vrOn && !usingVlc) key(player) {
+                    // A real 3D copy (side by side / top-bottom) plays as 3D in VR; another 3D copy offers a 3D button.
+                    val curItem = known.firstOrNull { it.stream.url == now?.url }
+                    val stereo = stereoKind(listOfNotNull(curItem?.stream?.name, curItem?.stream?.title, curItem?.stream?.behaviorHints?.filename, now?.source).joinToString(" "))
+                    val other3d = if (stereo != 0) null else known.firstOrNull { k -> stereoKind(listOfNotNull(k.stream.name, k.stream.title, k.stream.behaviorHints?.filename).joinToString(" ")) != 0 }
                     VrHeadsetView(vm, player, p.title, subText = { cues.joinToString("\n") { c -> c.text?.toString().orEmpty() }.trim() },
-                        onSeekTo = { seekAbs(it); poke++ }, onNext = if (nextEp != null) ({ playNext() }) else null) { vrOn = false }
+                        stereo = stereo, threeD = other3d?.let { o -> { switchTo(o, "VR: 3D copy") } },
+                        onSeekTo = { seekAbs(it); poke++ }, onNext = if (nextEp != null) ({ playNext() }) else null) { ActLog.add("PLAY", "VR: left"); vrOn = false }
                 }
                 // Plugin mode's quiet swap: the second player's picture, above the main one (fades in, then stays).
                 val sh = shadow

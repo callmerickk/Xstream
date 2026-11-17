@@ -42,7 +42,10 @@ object DevDefaults {
     suspend fun sync(vm: AppViewModel) {
         val t = Cloud.token() ?: return
         val o = withContext(Dispatchers.IO) {
-            runCatching { Api.json.parseToJsonElement(XNs.read("devDefaults", t)!!) as? JsonObject }.getOrNull()
+            // Xstream Live: StreamX's published layout (Home rows, row names and styles…) — the same Home as StreamX.
+            val raw = (if (BuildConfig.LIVE_ONLY) runCatching { Api.get("${CloudConfig.DB_URL}/shared/devDefaults.json?auth=$t") }.getOrNull()?.takeIf { it.trim() != "null" } else null)
+                ?: XNs.read("devDefaults", t)
+            runCatching { Api.json.parseToJsonElement(raw!!) as? JsonObject }.getOrNull()
         } ?: return
         val changed = ArrayList<String>()
         withContext(Dispatchers.Main) {

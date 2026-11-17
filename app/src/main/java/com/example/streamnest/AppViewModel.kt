@@ -803,7 +803,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 }.take(48).awaitAll()
             }
             // The developer's published rows (Home Layout › Publish): fetched for every account, shown first and locked.
-            val pushed = if (current.value?.kids == true || BuildConfig.IS_TV || Public.dev) emptyList() else pushedRows().map { r ->
+            val pushed = if (current.value?.kids == true || BuildConfig.IS_TV || (Public.dev && !BuildConfig.LIVE_ONLY)) emptyList() else pushedRows().map { r ->
                 async { runCatching {
                     val items = Api.fetch<CatalogResponse>(r.src).metas.map { m -> if (m.posterShape == null && r.shape != null) m.copy(posterShape = r.shape) else m }
                     Shelf(r.title, items, src = r.src, pinned = true)
@@ -815,7 +815,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 else kotlinx.coroutines.withTimeoutOrNull(5_000) { runCatching { ServiceRows.rows() }.getOrNull() }.orEmpty()
             // 0.8: Home is managed by the developer. When a layout is published, every other account shows only those rows
             // (its own catalogue addons no longer add rows); the developer still sees everything.
-            val own = if (pushed.isNotEmpty() && !Public.dev) emptyList() else result.filterNotNull()
+            val own = if (pushed.isNotEmpty() && (!Public.dev || BuildConfig.LIVE_ONLY)) emptyList() else result.filterNotNull()
             shelves.value = (pushed + own.filter { it.src == null || it.src !in pushedSrc }).let { l -> if (svc.isEmpty()) l else l.take(3) + svc + l.drop(3) }
                 .filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.filter { !isErrorCard(it) }.map { posterFromPattern(it) }.distinctBy { it.type + it.id }) }
             loading.value = false
