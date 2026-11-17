@@ -186,7 +186,7 @@ private fun SxNavItem(selected: Boolean, label: String, compact: State<Float>, o
 
 /** Quick profile switcher above the My Space button (slide a finger to pick, or tap). */
 @Composable
-private fun SxProfileSwitcher(vm: AppViewModel, hover: Int, onDismiss: () -> Unit, onPicked: () -> Unit, onAdd: () -> Unit) {
+internal fun SxProfileSwitcher(vm: AppViewModel, hover: Int, onDismiss: () -> Unit, onPicked: () -> Unit, onAdd: () -> Unit) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val current by vm.current.collectAsStateWithLifecycle()
     val above = remember {

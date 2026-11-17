@@ -78,6 +78,8 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.sign
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.ClipOp
@@ -1421,18 +1423,21 @@ object HomeFreeze {
 @Composable
 private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Boolean>, onOpen: (Meta) -> Unit) {
     if (items.isEmpty()) return
-    val pager = rememberPagerState { items.size }
+    // Never-ending: a very long strip that starts in its middle, so there is always a card on both sides.
+    val n = items.size
+    val loops = if (n > 1) 2_000 else 1
+    val pager = rememberPagerState(initialPage = if (n > 1) (loops / 2) * n else 0) { n * loops }
     var muted by remember { mutableStateOf(true) }
     var tid by remember { mutableStateOf<String?>(null) }
     var videoOn by remember { mutableStateOf(false) }
     val ring = remember { androidx.compose.animation.core.Animatable(0f) }
     val scope = rememberCoroutineScope()
-    fun next() = scope.launch { if (items.size > 1) pager.animateScrollToPage((pager.currentPage + 1) % items.size, animationSpec = tween(700)) }
+    fun next() = scope.launch { if (n > 1) pager.animateScrollToPage(pager.currentPage + 1, animationSpec = tween(700)) }
     LaunchedEffect(pager.settledPage, onScreen.value) {
         tid = null; videoOn = false; ring.snapTo(0f)
         if (!onScreen.value) return@LaunchedEffect
         delay(700)
-        tid = runCatching { vm.trailerId(items[pager.settledPage].meta) }.getOrNull()
+        tid = runCatching { vm.trailerId(items[pager.settledPage % n].meta) }.getOrNull()
         if (tid == null) { ring.animateTo(1f, tween(9_000, easing = androidx.compose.animation.core.LinearEasing)); next() }
     }
     // While the trailer plays the ring fills over ~60 s (trailers are about that long); it ends with the trailer.
@@ -1442,16 +1447,27 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
     }
     androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 18.dp), pageSpacing = 12.dp,
         beyondViewportPageCount = 1) { page ->
-        val m = items[page].meta
+        val m = items[page % n].meta
         val front = page == pager.settledPage
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9.6f)
-                // A soft red glow under the curved bottom edge (drawn outside the card, before it is clipped).
+                // A soft red light under the curved bottom edge: the curve itself, blurred (drawn before the card is clipped).
                 .drawBehind {
                     val w = size.width; val h = size.height
-                    drawOval(Brush.radialGradient(listOf(Color(0x66E50914), Color(0x22E50914), Color.Transparent),
-                        center = androidx.compose.ui.geometry.Offset(w / 2f, h * 0.99f), radius = w * 0.42f),
-                        topLeft = androidx.compose.ui.geometry.Offset(w * 0.1f, h * 0.86f), size = androidx.compose.ui.geometry.Size(w * 0.8f, h * 0.26f))
+                    val r = 26.dp.toPx(); val dip = h * 0.045f
+                    val curve = android.graphics.Path().apply { moveTo(r, h); quadTo(w / 2f, h - dip * 2f, w - r, h) }
+                    drawIntoCanvas { c ->
+                        val glow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                            style = android.graphics.Paint.Style.STROKE; strokeCap = android.graphics.Paint.Cap.ROUND
+                            color = 0xFFE50914.toInt()
+                        }
+                        c.nativeCanvas.save(); c.nativeCanvas.translate(0f, 10.dp.toPx())
+                        glow.strokeWidth = 26.dp.toPx(); glow.alpha = 70; glow.maskFilter = android.graphics.BlurMaskFilter(22.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+                        c.nativeCanvas.drawPath(curve, glow)
+                        glow.strokeWidth = 8.dp.toPx(); glow.alpha = 120; glow.maskFilter = android.graphics.BlurMaskFilter(8.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+                        c.nativeCanvas.drawPath(curve, glow)
+                        c.nativeCanvas.restore()
+                    }
                 }
                 .clip(LiveHeroShape).background(Color(0xFF05070C))
                 // Red rim light: bright at the top, faint down the sides, red again along the curve.
@@ -1459,7 +1475,8 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
                 .clickable { onOpen(m) }) {
                 val id = tid
                 if (front && id != null) TrailerVideo(id, muted, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
-                    backdrop = backdropOf(m) ?: m.poster, onPlaying = { videoOn = true }, onEnded = { videoOn = false; next() }, onError = { videoOn = false })
+                    backdrop = backdropOf(m) ?: m.poster, onPlaying = { videoOn = true }, onEnded = { videoOn = false; next() }, onError = { videoOn = false },
+                    trimBars = true)
                 val artAlpha by animateFloatAsState(if (front && videoOn) 0f else 1f, tween(450), label = "liveArt")
                 AsyncImage(hiResArt(backdropOf(m) ?: m.poster), m.name, Modifier.fillMaxSize().graphicsLayer { alpha = artAlpha },
                     contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
@@ -1478,7 +1495,19 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
                     overflow = TextOverflow.Ellipsis)
             }
             val info = listOfNotNull(m.genres?.firstOrNull(), m.releaseInfo?.take(4), if (m.type == "series") "Series" else m.runtime)
-            Text(info.joinToString("  ·  "), Modifier.padding(top = 10.dp), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFC9CCD6))
+            Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(info.joinToString("  ·  "), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFC9CCD6))
+                // IMDb rating, as a small yellow badge.
+                val rating by produceState(m.imdbRating?.toDoubleOrNull(), m.id) {
+                    if (value == null && m.id.startsWith("tt")) value = HeroRatings.get(vm, m)
+                }
+                rating?.takeIf { it > 0 }?.let { r ->
+                    Text("  ·  ", fontSize = 16.sp, color = Color(0xFFC9CCD6))
+                    Text("IMDb", Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFF5C518)).padding(horizontal = 5.dp, vertical = 1.dp),
+                        fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color.Black)
+                    Text(" ★ ${"%.1f".format(r)}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF5C518))
+                }
+            }
             Row(Modifier.padding(top = 16.dp).fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.weight(1.7f).height(56.dp).clip(RoundedCornerShape(28.dp)).background(Color(0xFFE6E7EB))
                     .clickable { pendingDetailPlay.value = m.id; onOpen(m) }, horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -1513,4 +1542,10 @@ private val LiveHeroShape = object : androidx.compose.ui.graphics.Shape {
         }
         return androidx.compose.ui.graphics.Outline.Generic(path)
     }
+}
+
+/** IMDb ratings for the Home card (Cinemeta has them; asked once per title while the app is open). */
+private object HeroRatings {
+    private val seen = java.util.concurrent.ConcurrentHashMap<String, Double>()
+    suspend fun get(vm: AppViewModel, m: Meta): Double? = seen[m.id] ?: runCatching { vm.fullMeta(m)?.imdbRating?.toDoubleOrNull() }.getOrNull()?.also { seen[m.id] = it }
 }

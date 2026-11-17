@@ -37,6 +37,7 @@ fun TrailerVideo(
     onPlaying: () -> Unit,
     onEnded: () -> Unit,
     onError: () -> Unit,
+    trimBars: Boolean = false,
 ) {
     if (!DirectTrailers) { TrailerWebVideo(videoId, muted, modifier, fitWhole, backdrop, zoom, onPlaying, onEnded, onError); return }
     var src by remember(videoId) { mutableStateOf<YtDirect.Src?>(null) }
@@ -55,7 +56,7 @@ fun TrailerVideo(
         }
         s != null -> androidx.compose.foundation.layout.Box(modifier) {
             if (fitWhole && backdrop != null) coil.compose.AsyncImage(backdrop, null, Modifier.matchParentSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-            DirectTrailer(s, muted, Modifier.matchParentSize(), crop = !fitWhole, zoom = zoom, onPlaying = onPlaying, onEnded = onEnded, onError = { noDirect = true })
+            DirectTrailer(s, muted, Modifier.matchParentSize(), crop = !fitWhole, zoom = zoom, onPlaying = onPlaying, onEnded = onEnded, onError = { noDirect = true }, trimBars = trimBars)
         }
     }
 }

@@ -598,7 +598,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         val off = texts.value["addonsOff"].orEmpty().split("|").filter { it.isNotBlank() }.toSet()
         val on = addons.value.filter { it.baseUrl !in off }
         // Xstream Live: the account's addons are ignored (only the title details and subtitles stay).
-        return if (liveLocked()) on.filter { isPinnedFixed(it) } else on
+        return if (liveLocked()) on.filter { isPinnedFixed(it) || isPostersPlus(it) } else on
     }
 
     /** Base URLs of the switched-on addons that can describe this title (used by the episode-alert check). */
@@ -614,6 +614,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     /** Cinemeta (all the titles' details) and OpenSubtitles always stay at the top; other addons can be pinned too. */
+    /** Xstream Live: Posters+ is the one addon whose rows show on Home. */
+    fun isPostersPlus(a: Addon) = "slokker" in a.baseUrl || "postersplus" in a.baseUrl || a.manifest.name.contains("posters+", true) || a.manifest.name.contains("posters plus", true)
     fun isPinnedFixed(a: Addon) = a.baseUrl == CINEMETA || a.manifest.id.contains("opensubtitles", true) || a.manifest.name.contains("opensubtitles", true)
     fun isPinned(a: Addon) = isPinnedFixed(a) || a.baseUrl in texts.value["addonsPinned"].orEmpty().split("|")
     private fun pinFirst(list: List<Addon>): List<Addon> =
@@ -778,7 +780,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             // Home posters only from catalogue addons (Cinemeta, TMDB, Posters+…), never from streaming addons
             // (CNCVerse Bridge / AIOStreams put error cards like "[❌] … 404" in their lists). If every addon streams,
             // they are used after all so Home is never empty.
-            val catalogOnly = active.filter { !it.streams && it.manifest.catalogs.isNotEmpty() }.ifEmpty { active }
+            // Xstream Live: Home rows only from Posters+ (Cinemeta stays only for title details and episodes).
+            val catalogOnly = if (liveLocked() && active.any { isPostersPlus(it) }) active.filter { isPostersPlus(it) }
+                else active.filter { !it.streams && it.manifest.catalogs.isNotEmpty() }.ifEmpty { active }
             val result = if (current.value?.kids == true) kidsShelves() else coroutineScope {
                 catalogOnly.flatMap { a ->
                     a.manifest.catalogs

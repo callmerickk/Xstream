@@ -27,6 +27,7 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -500,7 +501,7 @@ internal class YtChunked(private val up: androidx.media3.datasource.DataSource) 
 @Composable
 fun DirectTrailer(
     src: YtDirect.Src, muted: Boolean, modifier: Modifier = Modifier, crop: Boolean = true, zoom: Float = 1f,
-    onPlaying: () -> Unit = {}, onEnded: () -> Unit = {}, onError: () -> Unit = {},
+    onPlaying: () -> Unit = {}, onEnded: () -> Unit = {}, onError: () -> Unit = {}, trimBars: Boolean = false,
 ) {
     val ctx = LocalContext.current
     val playing by rememberUpdatedState(onPlaying)
@@ -545,6 +546,24 @@ fun DirectTrailer(
         player.addListener(l)
         onDispose { player.removeListener(l); player.release() }
     }
+    // [trimBars]: many trailers have black bars baked into the picture (a wide film inside a 16:9 video). A few small
+    // frames are checked; when both show the same bars, the picture is enlarged just enough to push them out of the box.
+    val bars = remember(src) { androidx.compose.animation.core.Animatable(1f) }
+    LaunchedEffect(first, trimBars) {
+        if (!first || !trimBars) return@LaunchedEffect
+        fun barShare(): Float? {
+            val bm = view[0]?.getBitmap(48, 64) ?: return null
+            fun dark(y: Int): Boolean { var sum = 0; for (x in 0 until bm.width) { val c = bm.getPixel(x, y); sum += (android.graphics.Color.red(c) + android.graphics.Color.green(c) + android.graphics.Color.blue(c)) / 3 }; return sum / bm.width < 18 }
+            var top = 0; while (top < bm.height / 3 && dark(top)) top++
+            var bot = 0; while (bot < bm.height / 3 && dark(bm.height - 1 - bot)) bot++
+            bm.recycle()
+            return minOf(top, bot).toFloat() / 64f
+        }
+        delay(2_500); val a = barShare() ?: return@LaunchedEffect
+        delay(3_500); val b = barShare() ?: return@LaunchedEffect
+        val share = minOf(a, b)
+        if (share >= 0.05f) bars.animateTo((1f / (1f - 2f * share)).coerceAtMost(1.6f), androidx.compose.animation.core.tween(600))
+    }
     AndroidView(
         factory = { c ->
             TextureView(c).also { tv ->
@@ -553,7 +572,7 @@ fun DirectTrailer(
                 player.setVideoTextureView(tv)
             }
         },
-        modifier = modifier.graphicsLayer { scaleX = zoom; scaleY = zoom; alpha = shown.value },
+        modifier = modifier.graphicsLayer { scaleX = zoom * bars.value; scaleY = zoom * bars.value; alpha = shown.value },
     )
 }
 

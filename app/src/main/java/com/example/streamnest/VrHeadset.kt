@@ -9,32 +9,56 @@ import android.view.Surface
 import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Brightness6
+import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.SubtitlesOff
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -63,24 +87,61 @@ object VrState {
     val openTitle = kotlinx.coroutines.flow.MutableStateFlow<Meta?>(null)
 }
 
-private data class VrHit(val id: String, val x: Float, val y: Float, val w: Float, val h: Float) {
+/** One control of the VR panel; its place is fixed (in panel dp), so what is drawn and what is clicked always agree. */
+private data class VrCtl(val id: String, val x: Float, val y: Float, val w: Float, val h: Float, val label: String = "", val meta: Meta? = null) {
     fun has(px: Float, py: Float) = px in x..(x + w) && py in y..(y + h)
 }
 
+private const val PANEL_W = 236f
+private const val BTN = 34f
+private const val GAP = 4f
+
+/** The compact panel: title, timeline, then two rows of six icons. */
+private fun controlLayout(hasNext: Boolean): List<VrCtl> {
+    fun col(i: Int) = 8f + i * (BTN + GAP)
+    val r1 = 44f; val r2 = r1 + 30f + GAP
+    return listOf(
+        VrCtl("bar", 8f, 20f, PANEL_W - 16f, 18f, "Jump here"),
+        VrCtl("back", col(0), r1, BTN, 30f, "Back 10 s"),
+        VrCtl("play", col(1), r1, BTN, 30f, "Play / Pause"),
+        VrCtl("fwd", col(2), r1, BTN, 30f, "Forward 10 s"),
+        VrCtl("volDown", col(3), r1, BTN, 30f, "Volume down"),
+        VrCtl("volUp", col(4), r1, BTN, 30f, "Volume up"),
+        VrCtl("bright", col(5), r1, BTN, 30f, "Brightness"),
+        VrCtl("subs", col(0), r2, BTN, 30f, "Subtitles"),
+        VrCtl("audio", col(1), r2, BTN, 30f, "Audio language"),
+        VrCtl("size", col(2), r2, BTN, 30f, "Screen size"),
+        VrCtl("center", col(3), r2, BTN, 30f, "Recenter"),
+        if (hasNext) VrCtl("next", col(4), r2, BTN, 30f, "Next episode") else VrCtl("browse", col(4), r2, BTN, 30f, "Browse"),
+        VrCtl("exit", col(5), r2, BTN, 30f, "Leave VR"),
+    ) + (if (hasNext) listOf(VrCtl("browse", 8f, r2 + 30f + GAP, PANEL_W - 16f, 18f, "Browse")) else emptyList())
+}
+private fun controlHeight(hasNext: Boolean) = if (hasNext) 154f else 132f
+
+/** Browse: up to three rows of five posters. */
+private fun browseLayout(rows: List<Pair<String, List<Meta>>>): List<VrCtl> = buildList {
+    rows.forEachIndexed { r, (_, items) ->
+        val y0 = 8f + r * 88f
+        items.forEachIndexed { i, m -> add(VrCtl("t:" + m.id, 8f + i * 45f, y0 + 14f, 41f, 66f, m.name, m)) }
+    }
+    add(VrCtl("browseBack", 8f, 8f + rows.size * 88f, 70f, 24f, "Back"))
+}
+private fun browseHeight(rows: Int) = 8f + rows * 88f + 32f
+
 /**
- * Xstream Live · VR headset (JioDive and other phone headsets): the film on a big screen in front of you, one picture per
- * lens, each corrected for the lens. The headset's button (it taps the screen) opens the controls: the gyro switches on and
- * a dot in the middle of your view is the pointer — turn your head to put it on a control, press the button to click.
- * Pressing with the dot on empty space closes the controls, the gyro switches off and the big screen stays.
+ * Xstream Live · VR headset (JioDive and other phone headsets): the film on a curved cinema screen around you (the edges
+ * come towards you, like a curved monitor), one picture per lens. The headset's button (it taps the screen) opens the
+ * controls: the gyro switches on and a dot in the middle of your view is the pointer — turn your head to put it on a
+ * control, press the button to click. Pressing with the dot on empty space closes the controls; the gyro switches off.
  */
 @Composable
 fun VrHeadsetView(
-    vm: AppViewModel, player: Player, title: String,
+    vm: AppViewModel, player: Player, title: String, subText: () -> String,
     onSeekTo: (Long) -> Unit, onNext: (() -> Unit)?, onExit: () -> Unit,
 ) {
     Dialog(onDismissRequest = onExit, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false, dismissOnClickOutside = false)) {
         val view = LocalView.current
-        val ctx = androidx.compose.ui.platform.LocalContext.current
+        val ctx = LocalContext.current
         val window = (view.parent as? DialogWindowProvider)?.window
         LaunchedEffect(Unit) {
             window?.let { w ->
@@ -96,26 +157,18 @@ fun VrHeadsetView(
         var glView by remember { mutableStateOf<VrGlView?>(null) }
         var controls by remember { mutableStateOf(false) }
         var browse by remember { mutableStateOf(false) }
-        var yaw by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }     // + = looking left (radians)
-        var pitch by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }   // + = looking up
-        var sizeIdx by remember { androidx.compose.runtime.mutableIntStateOf(1) }
+        var yaw by remember { mutableFloatStateOf(0f) }     // + = looking left (radians)
+        var pitch by remember { mutableFloatStateOf(0f) }   // + = looking up
+        var sizeIdx by remember { mutableIntStateOf(1) }
         var subsOn by remember { mutableStateOf(true) }
-        var cue by remember { mutableStateOf("") }
-        var tick by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+        var tick by remember { mutableIntStateOf(0) }
         var hint by remember { mutableStateOf(true) }
         LaunchedEffect(Unit) { delay(5_000); hint = false }
-        val hits = remember { mutableListOf<VrHit>() }
-        val sizes = listOf("Small" to 0.6f, "Big" to 0.78f, "IMAX" to 0.95f)
+        // Half-width of the curved screen (in units of its distance from you): Small / Big / IMAX.
+        val sizes = listOf("Small" to 0.55f, "Big" to 0.75f, "IMAX" to 0.95f)
         LaunchedEffect(sizeIdx, glView) { glView?.setScreen(sizes[sizeIdx].second) }
-        // Subtitles for both eyes (the normal subtitle layer isn't drawn in VR).
-        androidx.compose.runtime.DisposableEffect(player) {
-            val l = object : Player.Listener {
-                override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) { cue = cueGroup.cues.joinToString("\n") { it.text?.toString().orEmpty() }.trim() }
-            }
-            player.addListener(l); onDispose { player.removeListener(l) }
-        }
         // Gyro only while the controls are open.
-        androidx.compose.runtime.DisposableEffect(controls) {
+        DisposableEffect(controls) {
             if (!controls) return@DisposableEffect onDispose { }
             yaw = 0f; pitch = 0f
             val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
@@ -140,18 +193,23 @@ fun VrHeadsetView(
             onDispose { sm.unregisterListener(l) }
         }
         LaunchedEffect(controls) { while (controls) { tick++; delay(500) } }
-        val density = androidx.compose.ui.platform.LocalDensity.current
-        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
+        val browseRows = remember(browse) { if (browse) browseItems(vm) else emptyList() }
+        val hasNext = onNext != null
+        val layout = if (browse) browseLayout(browseRows) else controlLayout(hasNext)
+        val pH = if (browse) browseHeight(browseRows.size) else controlHeight(hasNext)
+
+        BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
             val eyeW = maxWidth.value / 2f
             val eyeH = maxHeight.value
             // Pointer travel: about one eye width for 75° of head turn.
             val k = eyeW / 1.3f
-            val pW = 320f; val pH = if (browse) 380f else 250f
-            val pointerX = pW / 2f - yaw * k
+            val pointerX = PANEL_W / 2f - yaw * k
             val pointerY = pH / 2f - pitch * k
+            val over = if (controls) layout.firstOrNull { it.has(pointerX, pointerY) } else null
             fun click() {
                 if (!controls) { controls = true; browse = false; return }
-                val h = hits.firstOrNull { it.has(pointerX, pointerY) }
+                val h = layout.firstOrNull { it.has(pointerX, pointerY) }
+                ActLog.add("PLAY", "VR click: ${h?.label ?: "empty space (controls closed)"}")
                 if (h == null) { controls = false; browse = false; return }
                 val dur = player.duration.coerceAtLeast(0)
                 val am = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
@@ -162,9 +220,11 @@ fun VrHeadsetView(
                     h.id == "bar" -> if (dur > 0) onSeekTo((dur * ((pointerX - h.x) / h.w).coerceIn(0f, 1f)).toLong())
                     h.id == "volDown" -> am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_LOWER, 0)
                     h.id == "volUp" -> am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_RAISE, 0)
-                    h.id == "briDown" || h.id == "briUp" -> window?.let { w ->
-                        val cur = w.attributes.screenBrightness.takeIf { it >= 0 } ?: 0.6f
-                        w.attributes = w.attributes.apply { screenBrightness = (cur + if (h.id == "briUp") 0.1f else -0.1f).coerceIn(0.05f, 1f) }
+                    h.id == "bright" -> window?.let { w ->
+                        // Cycles 30 % → 55 % → 80 % → 100 %.
+                        val cur = w.attributes.screenBrightness.takeIf { it >= 0 } ?: 0.55f
+                        val next = listOf(0.3f, 0.55f, 0.8f, 1f).firstOrNull { it > cur + 0.01f } ?: 0.3f
+                        w.attributes = w.attributes.apply { screenBrightness = next }
                     }
                     h.id == "size" -> sizeIdx = (sizeIdx + 1) % sizes.size
                     h.id == "center" -> { yaw = 0f; pitch = 0f }
@@ -174,36 +234,38 @@ fun VrHeadsetView(
                     h.id == "browse" -> browse = true
                     h.id == "browseBack" -> browse = false
                     h.id == "exit" -> onExit()
-                    h.id.startsWith("t:") -> {
-                        val m = browseItems(vm).flatMap { it.second }.firstOrNull { "t:" + it.id == h.id }
-                        if (m != null) { VrState.resume = true; VrState.openTitle.value = m }
-                    }
+                    h.meta != null -> { VrState.resume = true; VrState.openTitle.value = h.meta }
                 }
                 tick++
             }
             Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { click() }) }) {
                 AndroidView(factory = { c -> VrGlView(c, player).also { glView = it } }, onRelease = { it.release() }, modifier = Modifier.fillMaxSize())
+                // Where the bottom of the curved screen sits in each eye (for the subtitles).
+                val half = sizes[sizeIdx].second
+                val aspect = player.videoSize.let { v -> if (v.width > 0 && v.height > 0) v.width * v.pixelWidthHeightRatio / v.height else 16f / 9f }
+                val screenHalfH = half / aspect                 // at distance 1
+                val eyeAspect = eyeW / eyeH
+                val subY = (screenHalfH * eyeAspect * 0.86f).coerceAtMost(0.8f) * eyeH / 2f
+                val sub = if (subsOn) subText() else ""
                 Row(Modifier.fillMaxSize()) {
                     repeat(2) { eye ->
-                        // The lens centre sits a little towards the nose (same shift as the film).
                         val cx = eyeW / 2f + (if (eye == 0) 0.02f else -0.02f) * eyeW
                         val cy = eyeH / 2f
                         Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
-                            if (subsOn && cue.isNotBlank()) Text(cue, Modifier.align(Alignment.BottomCenter).padding(bottom = (eyeH * 0.2f).dp, start = 30.dp, end = 30.dp)
-                                .clip(RoundedCornerShape(6.dp)).background(Color(0x99000000)).padding(horizontal = 6.dp, vertical = 2.dp),
-                                fontSize = 12.sp, color = Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            if (sub.isNotBlank()) Text(sub, Modifier.align(Alignment.Center).offset(x = (cx - eyeW / 2f).dp, y = subY.dp).padding(horizontal = 40.dp)
+                                .clip(RoundedCornerShape(5.dp)).background(Color(0x99000000)).padding(horizontal = 6.dp, vertical = 2.dp),
+                                fontSize = 11.sp, lineHeight = 14.sp, color = Color.White, textAlign = TextAlign.Center)
                             if (controls) {
                                 val ox = cx - pointerX; val oy = cy - pointerY
-                                Box(Modifier.offset(ox.dp, oy.dp).size(pW.dp, pH.dp)) {
-                                    if (eye == 0) hits.clear()
-                                    if (browse) BrowsePanel(vm, pointerX, pointerY) { if (eye == 0) hits += it }
-                                    else ControlPanel(player, title, tick, sizes[sizeIdx].first, subsOn, onNext != null, pointerX, pointerY) { if (eye == 0) hits += it }
+                                Box(Modifier.offset(ox.dp, oy.dp).size(PANEL_W.dp, pH.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xE60F1014))
+                                    .border(1.dp, Color(0x594B4FD8), RoundedCornerShape(14.dp))) {
+                                    if (browse) BrowsePanel(browseRows, layout, over) else ControlPanel(player, title, tick, layout, over, subsOn, sizes[sizeIdx].first, pointerX)
                                 }
                                 // The pointer: always in the middle of your view.
-                                Box(Modifier.offset((cx - 6).dp, (cy - 6).dp).size(12.dp).clip(androidx.compose.foundation.shape.CircleShape)
-                                    .background(Color.White).border(2.dp, Color(0xFF6A6FF0), androidx.compose.foundation.shape.CircleShape))
+                                Box(Modifier.offset((cx - 5).dp, (cy - 5).dp).size(10.dp).clip(CircleShape)
+                                    .background(Color.White).border(2.dp, Color(0xFF6A6FF0), CircleShape))
                             } else if (hint) Text("Press the headset button for controls", Modifier.align(Alignment.BottomCenter).padding(bottom = (eyeH * 0.12f).dp)
-                                .clip(RoundedCornerShape(12.dp)).background(Color(0xAA000000)).padding(horizontal = 10.dp, vertical = 4.dp), fontSize = 11.sp, color = Color.White)
+                                .clip(RoundedCornerShape(12.dp)).background(Color(0xAA000000)).padding(horizontal = 10.dp, vertical = 4.dp), fontSize = 10.sp, color = Color.White)
                         }
                     }
                 }
@@ -231,68 +293,57 @@ private fun browseItems(vm: AppViewModel): List<Pair<String, List<Meta>>> = list
 private fun fmt(ms: Long): String { val s = (ms / 1000).coerceAtLeast(0); return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60) }
 
 @Composable
-private fun VrButton(id: String, label: String, x: Float, y: Float, w: Float, h: Float, px: Float, py: Float, add: (VrHit) -> Unit, accent: Boolean = false) {
-    val hit = VrHit(id, x, y, w, h)
-    add(hit)
-    val over = hit.has(px, py)
-    Box(Modifier.offset(x.dp, y.dp).size(w.dp, h.dp).clip(RoundedCornerShape(12.dp))
-        .background(if (over) Color(0xFF4B4FD8) else if (accent) Color(0xCCE50914) else Color(0xCC1A1E2E))
-        .border(if (over) 2.dp else 1.dp, if (over) Color.White else Color(0x33FFFFFF), RoundedCornerShape(12.dp)), Alignment.Center) {
-        Text(label, fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 2)
-    }
-}
-
-@Composable
-private fun ControlPanel(player: Player, title: String, tick: Int, size: String, subsOn: Boolean, hasNext: Boolean, px: Float, py: Float, add: (VrHit) -> Unit) {
-    Box(Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)).background(Color(0xE60F1014)).border(1.dp, Color(0x334B4FD8), RoundedCornerShape(20.dp)))
-    Text(title, Modifier.offset(12.dp, 8.dp).width(296.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
-    // Timeline: point anywhere on it and press to jump there.
+private fun ControlPanel(player: Player, title: String, tick: Int, layout: List<VrCtl>, over: VrCtl?, subsOn: Boolean, size: String, px: Float) {
+    @Suppress("UNUSED_VARIABLE") val t = tick
+    Text(title, Modifier.offset(8.dp, 5.dp).width((PANEL_W - 16f).dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
     val dur = player.duration.coerceAtLeast(1); val pos = player.currentPosition
-    val bar = VrHit("bar", 12f, 32f, 296f, 26f); add(bar)
-    val overBar = bar.has(px, py)
-    Box(Modifier.offset(12.dp, 43.dp).size(296.dp, if (overBar) 6.dp else 4.dp).clip(RoundedCornerShape(3.dp)).background(Color(0x40FFFFFF))) {
-        Box(Modifier.fillMaxHeight().width((296f * pos / dur).coerceIn(0f, 296f).dp).background(Color(0xFFE50914)))
+    val bar = layout.first { it.id == "bar" }
+    val overBar = over?.id == "bar"
+    Box(Modifier.offset(bar.x.dp, (bar.y + 7f).dp).size(bar.w.dp, if (overBar) 5.dp else 3.dp).clip(RoundedCornerShape(3.dp)).background(Color(0x40FFFFFF))) {
+        Box(Modifier.fillMaxHeight().width((bar.w * pos / dur).coerceIn(0f, bar.w).dp).background(Color(0xFFE50914)))
     }
-    if (overBar) Box(Modifier.offset((px - 1).dp, 36.dp).size(2.dp, 18.dp).background(Color.White))
-    Text(if (overBar) "Jump to ${fmt((dur * ((px - 12f) / 296f).coerceIn(0f, 1f)).toLong())}" else "${fmt(pos)} / ${fmt(dur)}",
-        Modifier.offset(12.dp, 58.dp), fontSize = 10.sp, color = Color(0xFFB8BED3))
-    val bw = 56f; val gap = 8f
-    fun x(i: Int) = 12f + i * (bw + gap) - 4f
-    VrButton("back", "−10 s", x(0), 80f, bw, 44f, px, py, add)
-    VrButton("play", if (player.isPlaying) "Pause" else "Play", x(1), 80f, bw, 44f, px, py, add, accent = true)
-    VrButton("fwd", "+10 s", x(2), 80f, bw, 44f, px, py, add)
-    VrButton("volDown", "Vol −", x(3), 80f, bw, 44f, px, py, add)
-    VrButton("volUp", "Vol +", x(4), 80f, bw, 44f, px, py, add)
-    VrButton("briDown", "Bright −", x(0), 132f, bw, 44f, px, py, add)
-    VrButton("briUp", "Bright +", x(1), 132f, bw, 44f, px, py, add)
-    VrButton("size", "Screen\n$size", x(2), 132f, bw, 44f, px, py, add)
-    VrButton("audio", "Audio", x(3), 132f, bw, 44f, px, py, add)
-    VrButton("subs", if (subsOn) "Subs on" else "Subs off", x(4), 132f, bw, 44f, px, py, add)
-    VrButton("center", "Recenter", x(0), 184f, bw, 44f, px, py, add)
-    VrButton("browse", "Browse", x(1), 184f, bw, 44f, px, py, add)
-    if (hasNext) VrButton("next", "Next ep", x(2), 184f, bw, 44f, px, py, add)
-    VrButton("exit", "Leave VR", x(4), 184f, bw, 44f, px, py, add)
-}
-
-@Composable
-private fun BrowsePanel(vm: AppViewModel, px: Float, py: Float, add: (VrHit) -> Unit) {
-    Box(Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp)).background(Color(0xE60F1014)).border(1.dp, Color(0x334B4FD8), RoundedCornerShape(20.dp)))
-    val rows = remember { browseItems(vm) }
-    rows.forEachIndexed { r, (name, items) ->
-        val y0 = 8f + r * 112f
-        Text(name, Modifier.offset(12.dp, y0.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB8BED3))
-        items.forEachIndexed { i, m ->
-            val hit = VrHit("t:" + m.id, 12f + i * 60f, y0 + 16f, 54f, 86f); add(hit)
-            val over = hit.has(px, py)
-            Box(Modifier.offset(hit.x.dp, hit.y.dp).size(54.dp, 86.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF1A1E2E))
-                .border(if (over) 2.dp else 0.dp, Color.White, RoundedCornerShape(8.dp))) {
-                coil.compose.AsyncImage(m.poster, m.name, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-            }
-            if (over) Text(m.name, Modifier.offset(12.dp, (y0 + 2f).dp).padding(start = 120.dp), fontSize = 11.sp, color = Color.White, maxLines = 1)
+    if (overBar) Box(Modifier.offset((px - 1).dp, (bar.y + 2f).dp).size(2.dp, 14.dp).background(Color.White))
+    Text(if (overBar) "Jump to ${fmt((dur * ((px - bar.x) / bar.w).coerceIn(0f, 1f)).toLong())}" else "${fmt(pos)} / ${fmt(dur)}",
+        Modifier.offset(bar.x.dp, (bar.y + 12f).dp), fontSize = 8.sp, color = Color(0xFFB8BED3))
+    layout.filter { it.id != "bar" }.forEach { c ->
+        val icon: ImageVector? = when (c.id) {
+            "back" -> Icons.Default.Replay10; "fwd" -> Icons.Default.Forward10
+            "play" -> if (player.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow
+            "volDown" -> Icons.AutoMirrored.Filled.VolumeDown; "volUp" -> Icons.AutoMirrored.Filled.VolumeUp
+            "bright" -> Icons.Default.Brightness6; "subs" -> if (subsOn) Icons.Default.Subtitles else Icons.Default.SubtitlesOff
+            "audio" -> Icons.Default.Audiotrack; "size" -> Icons.Default.AspectRatio; "center" -> Icons.Default.CenterFocusStrong
+            "next" -> Icons.Default.SkipNext; "browse" -> Icons.Default.GridView; "exit" -> Icons.Default.Close
+            else -> null
+        }
+        val hot = over?.id == c.id
+        Box(Modifier.offset(c.x.dp, c.y.dp).size(c.w.dp, c.h.dp).clip(RoundedCornerShape(8.dp))
+            .background(if (hot) Color(0xFF4B4FD8) else if (c.id == "play") Color(0xCCE50914) else Color(0xCC1A1E2E))
+            .border(if (hot) 1.5.dp else 1.dp, if (hot) Color.White else Color(0x24FFFFFF), RoundedCornerShape(8.dp)), Alignment.Center) {
+            if (icon != null) Icon(icon, c.label, Modifier.size(16.dp), tint = Color.White)
+            else Text(c.label, fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
         }
     }
-    if (rows.isEmpty()) Text("Nothing to show yet", Modifier.offset(12.dp, 20.dp), fontSize = 12.sp, color = Color(0xFFB8BED3))
-    VrButton("browseBack", "Back", 12f, 336f, 70f, 36f, px, py, add)
+    // The name of the control under the dot (one line under the rows).
+    val last = layout.maxOf { it.y + it.h }
+    Text(when { over == null -> "Press on empty space to close"; over.id == "size" -> "Screen size · $size"; else -> over.label },
+        Modifier.offset(0.dp, (last + 3f).dp).width(PANEL_W.dp), fontSize = 8.sp, color = Color(0xFFC9CEDE), textAlign = TextAlign.Center, maxLines = 1)
+}
+
+@Composable
+private fun BrowsePanel(rows: List<Pair<String, List<Meta>>>, layout: List<VrCtl>, over: VrCtl?) {
+    rows.forEachIndexed { r, (name, _) ->
+        Text(name, Modifier.offset(8.dp, (8f + r * 88f).dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB8BED3))
+    }
+    layout.forEach { c ->
+        val hot = over?.id == c.id
+        if (c.meta != null) Box(Modifier.offset(c.x.dp, c.y.dp).size(c.w.dp, c.h.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF1A1E2E))
+            .border(if (hot) 2.dp else 0.dp, Color.White, RoundedCornerShape(6.dp))) {
+            coil.compose.AsyncImage(c.meta.poster, c.meta.name, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+        } else Box(Modifier.offset(c.x.dp, c.y.dp).size(c.w.dp, c.h.dp).clip(RoundedCornerShape(8.dp))
+            .background(if (hot) Color(0xFF4B4FD8) else Color(0xCC1A1E2E)), Alignment.Center) { Text(c.label, fontSize = 9.sp, color = Color.White) }
+    }
+    if (over?.meta != null) Text(over.meta.name, Modifier.offset(90.dp, (8f + rows.size * 88f + 4f).dp).width((PANEL_W - 98f).dp), fontSize = 9.sp, color = Color.White, maxLines = 1)
+    if (rows.isEmpty()) Text("Nothing to show yet", Modifier.offset(8.dp, 10.dp), fontSize = 10.sp, color = Color(0xFFB8BED3))
 }
 
 private class VrGlView(ctx: Context, private val player: Player) : GLSurfaceView(ctx) {
@@ -303,6 +354,7 @@ private class VrGlView(ctx: Context, private val player: Player) : GLSurfaceView
 
     init {
         setEGLContextClientVersion(2)
+        setEGLConfigChooser(8, 8, 8, 8, 0, 0)
         setRenderer(renderer)
         renderMode = RENDERMODE_WHEN_DIRTY
         keepScreenOn = true
@@ -313,7 +365,7 @@ private class VrGlView(ctx: Context, private val player: Player) : GLSurfaceView
     /** Called on the GL thread once the video texture exists: the player draws into it from now on. */
     fun attach(surface: Surface) = post { player.setVideoSurface(surface) }
 
-    /** Screen size: share of each eye's width the film fills (Small / Big / IMAX). */
+    /** Half-width of the curved screen (Small / Big / IMAX). */
     fun setScreen(f: Float) { renderer.screen = f; requestRender() }
 
     fun release() {
@@ -331,14 +383,18 @@ private class VrRenderer(private val view: VrGlView) : GLSurfaceView.Renderer {
     private val texM = FloatArray(16).also { android.opengl.Matrix.setIdentityM(it, 0) }
     @Volatile private var dirty = false
     @Volatile private var videoAspect = 16f / 9f
-    @Volatile var screen = 0.78f
+    @Volatile private var videoW = 1920f
+    @Volatile private var videoH = 1080f
+    @Volatile var screen = 0.75f
     private var w = 1; private var h = 1
 
     private val quad: FloatBuffer = ByteBuffer.allocateDirect(4 * 4 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
         put(floatArrayOf(-1f, -1f, 0f, 0f, 1f, -1f, 1f, 0f, -1f, 1f, 0f, 1f, 1f, 1f, 1f, 1f)); position(0)
     }
 
-    fun setVideo(v: VideoSize) { if (v.width > 0 && v.height > 0) videoAspect = v.width * v.pixelWidthHeightRatio / v.height }
+    fun setVideo(v: VideoSize) {
+        if (v.width > 0 && v.height > 0) { videoAspect = v.width * v.pixelWidthHeightRatio / v.height; videoW = v.width.toFloat(); videoH = v.height.toFloat() }
+    }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         val t = IntArray(1); GLES20.glGenTextures(1, t, 0); tex = t[0]
@@ -371,13 +427,12 @@ private class VrRenderer(private val view: VrGlView) : GLSurfaceView.Renderer {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, tex)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(prog, "sTex"), 0)
-        // The virtual screen fills ~78 % of each eye's width, keeping the film's shape.
         val half = w / 2
         val eyeAspect = half.toFloat() / h
-        var sx = screen; var sy = sx * eyeAspect / videoAspect
-        if (sy > screen) { sy = screen; sx = sy * videoAspect / eyeAspect }
-        GLES20.glUniform2f(GLES20.glGetUniformLocation(prog, "uScreen"), sx, sy)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(prog, "uHalfW"), screen)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(prog, "uHalfH"), screen / videoAspect)
         GLES20.glUniform1f(GLES20.glGetUniformLocation(prog, "uAspect"), eyeAspect)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(prog, "uTexel"), 1f / videoW, 1f / videoH)
         for (eye in 0..1) {
             GLES20.glViewport(eye * half, 0, half, h)
             // Lens centre a little towards the nose (phone headsets' lenses sit closer together than half the screen).
@@ -405,23 +460,38 @@ private class VrRenderer(private val view: VrGlView) : GLSurfaceView.Renderer {
 attribute vec2 aPos; attribute vec2 aUv; varying vec2 vUv;
 void main() { gl_Position = vec4(aPos, 0.0, 1.0); vUv = aUv; }
 """
-        // Barrel distortion (k1, k2) cancels the headset lenses' pincushion; outside the virtual screen stays black.
+        // Each pixel is a ray from your eye (≈90° wide view). It meets a curved screen: part of a cylinder whose middle
+        // is 1 unit in front of you and whose edges come towards you (radius 1.6). Light barrel correction for the lens,
+        // and a gentle sharpen so the film stays crisp after the lens magnifies it.
         const val FS = """
 #extension GL_OES_EGL_image_external : require
-precision mediump float;
+precision highp float;
 varying vec2 vUv;
-uniform samplerExternalOES sTex; uniform mat4 uTex; uniform vec2 uScreen; uniform float uShift; uniform float uAspect;
+uniform samplerExternalOES sTex; uniform mat4 uTex;
+uniform float uHalfW; uniform float uHalfH; uniform float uShift; uniform float uAspect; uniform vec2 uTexel;
+vec3 tap(vec2 p) { return texture2D(sTex, (uTex * vec4(p, 0.0, 1.0)).xy).rgb; }
 void main() {
     vec2 c = vUv * 2.0 - 1.0;
     c.x -= uShift;
-    vec2 a = vec2(c.x * uAspect, c.y);
-    float r2 = dot(a, a) / (1.0 + uAspect * uAspect) * 2.0;
-    vec2 d = c * (1.0 + 0.22 * r2 + 0.24 * r2 * r2);
-    vec2 v = d / uScreen;
-    if (abs(v.x) > 1.0 || abs(v.y) > 1.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
-    vec2 t = (uTex * vec4(v * 0.5 + 0.5, 0.0, 1.0)).xy;
-    float edge = smoothstep(1.0, 0.97, max(abs(v.x), abs(v.y)));
-    gl_FragColor = vec4(texture2D(sTex, t).rgb * edge, 1.0);
+    float r2 = dot(vec2(c.x, c.y / uAspect), vec2(c.x, c.y / uAspect));
+    c *= 1.0 + 0.10 * r2 + 0.04 * r2 * r2;
+    vec3 d = vec3(c.x, c.y / uAspect, 1.0);
+    float R = 1.6; float zc = 1.0 - R;
+    float a = d.x * d.x + d.z * d.z;
+    float b = -2.0 * d.z * zc;
+    float cc = zc * zc - R * R;
+    float t = (-b + sqrt(b * b - 4.0 * a * cc)) / (2.0 * a);
+    vec3 p = d * t;
+    float theta = atan(p.x, p.z - zc);
+    float u = (theta * R) / (2.0 * uHalfW) + 0.5;
+    float v = p.y / (2.0 * uHalfH) + 0.5;
+    if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+    vec2 q = vec2(u, v);
+    vec3 col = tap(q);
+    vec3 blur = (tap(q + vec2(uTexel.x, 0.0)) + tap(q - vec2(uTexel.x, 0.0)) + tap(q + vec2(0.0, uTexel.y)) + tap(q - vec2(0.0, uTexel.y))) * 0.25;
+    col = clamp(col + (col - blur) * 0.45, 0.0, 1.0);
+    float edge = smoothstep(0.0, 0.012, min(min(u, 1.0 - u), min(v, 1.0 - v)));
+    gl_FragColor = vec4(col * edge, 1.0);
 }
 """
     }

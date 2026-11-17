@@ -34,6 +34,17 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Xstream Live's own bottom bar ("Orbit"): a floating glass capsule. The selected tab grows into a lit pill with its
@@ -71,6 +82,7 @@ fun LiveBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> U
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
         ) {
             items.forEach { (idx, icon, label) ->
+                if (idx == 2) MeItem(tab == 2, vm, onTab) else
                 OrbitItem(tab == idx, icon, label) {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onTab(idx)
@@ -81,7 +93,8 @@ fun LiveBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> U
 }
 
 @Composable
-private fun RowScope.OrbitItem(selected: Boolean, icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun RowScope.OrbitItem(selected: Boolean, icon: ImageVector?, label: String, gesture: Modifier? = null,
+    iconContent: (@Composable () -> Unit)? = null, onClick: () -> Unit) {
     val springy = spring<Float>(dampingRatio = 0.62f, stiffness = Spring.StiffnessMediumLow)
     val grow by animateFloatAsState(if (selected) 1f else 0f, springy, label = "orbitGrow")
     val w by animateDpAsState(if (selected) 132.dp else 56.dp, spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMediumLow), label = "orbitW")
@@ -109,12 +122,67 @@ private fun RowScope.OrbitItem(selected: Boolean, icon: ImageVector, label: Stri
                         size = androidx.compose.ui.geometry.Size(lw, 3.dp.toPx()), cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()))
                 }
             }
-            .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+            .then(gesture ?: Modifier.clickable(remember { MutableInteractionSource() }, indication = null, onClick = onClick))
             .padding(horizontal = 14.dp),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, label, Modifier.size(24.dp).graphicsLayer { val s = 1f + 0.12f * grow; scaleX = s; scaleY = s }, tint = tint)
+        if (iconContent != null) Box(Modifier.graphicsLayer { val s = 1f + 0.12f * grow; scaleX = s; scaleY = s }) { iconContent() }
+        else if (icon != null) Icon(icon, label, Modifier.size(24.dp).graphicsLayer { val s = 1f + 0.12f * grow; scaleX = s; scaleY = s }, tint = tint)
         if (grow > 0.35f) Text(label, Modifier.padding(start = 8.dp).graphicsLayer { alpha = ((grow - 0.35f) / 0.65f).coerceIn(0f, 1f) },
             fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
+    }
+}
+
+/**
+ * "Me": your profile picture (a GIF plays) instead of a plain icon. Tap = Me; hold = the profiles open above it —
+ * slide up and let go on one to switch (like StreamX).
+ */
+@Composable
+private fun RowScope.MeItem(selected: Boolean, vm: AppViewModel, onTab: (Int) -> Unit) {
+    val haptics = LocalHapticFeedback.current
+    val profiles by vm.profiles.collectAsStateWithLifecycle()
+    val current by vm.current.collectAsStateWithLifecycle()
+    var switcher by remember { mutableStateOf(false) }
+    var hover by remember { mutableIntStateOf(-1) }
+    var adding by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val itemPx = with(density) { 72.dp.toPx() }
+    val gapPx = with(density) { 34.dp.toPx() }
+    val gesture = Modifier.pointerInput(profiles.size) {
+        awaitEachGesture {
+            awaitFirstDown()
+            val held = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                while (true) { val e = awaitPointerEvent(); if (e.changes.all { !it.pressed }) return@withTimeoutOrNull false }
+                @Suppress("UNREACHABLE_CODE") false
+            } == null
+            if (!held) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); onTab(2); return@awaitEachGesture }
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress); switcher = true; hover = -1
+            while (true) {
+                val e = awaitPointerEvent()
+                val c = e.changes.firstOrNull() ?: break
+                if (!c.pressed) break
+                c.consume()
+                val up = -(c.position.y) - gapPx
+                val total = profiles.size + 1
+                val fromBottom = if (up < 0f) -1 else (up / itemPx).toInt()
+                val idx = if (fromBottom in 0 until total) { val top = total - 1 - fromBottom; if (top == 0) profiles.size else top - 1 } else -1
+                if (idx != hover) { hover = idx; if (idx >= 0) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+            }
+            val wantsAdd = hover == profiles.size
+            val pick = profiles.getOrNull(hover)
+            hover = -1
+            if (wantsAdd) { switcher = false; adding = true }
+            if (pick != null) {
+                switcher = false
+                if (pick.id == vm.current.value?.id) onTab(2) else ProfileLock.ask(pick) { vm.selectProfile(pick); onTab(2) }
+            }
+        }
+    }
+    Box {
+        OrbitItem(selected, null, "Me", gesture = gesture, iconContent = {
+            ProfileAvatar(vm, current, 26.dp, if (selected) Modifier.border(1.5.dp, Color.White, CircleShape) else Modifier, animate = true)
+        }) { onTab(2) }
+        if (switcher) SxProfileSwitcher(vm, hover, onDismiss = { switcher = false }, onPicked = { switcher = false; onTab(2) }, onAdd = { switcher = false; adding = true })
+        if (adding) ProfileEditor(vm, null) { adding = false }
     }
 }

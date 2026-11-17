@@ -13,6 +13,14 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("1.0.6", "18 Nov 2026", "VR fixed and curved, endless Home cards", listOf(
+        "VR: every control now clicks; a compact panel; the name of the control under the dot is shown",
+        "VR: a curved cinema screen that wraps around you, sharper picture, subtitles on the screen; a better copy is picked when the picture is below 1080p",
+        "Home card: a soft red light under the curve, never-ending swipe both ways, IMDb rating, trailers fill the card (black bars trimmed)",
+        "Home rows only from Posters+",
+        "Me: your profile picture (GIFs play); hold it to switch profiles",
+        "Title page: the trailer bubble no longer squeezes the Play button",
+    )),
     Release("1.0.5", "17 Nov 2026", "Red accents, trailers in the title card", listOf(
         "Home card: red rim light and a soft red glow under the curved edge",
         "Cards get a thin edge fading into red; a red tick before each row title; red edges on the bottom bar",

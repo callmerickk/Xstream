@@ -2559,6 +2559,17 @@ fun PlayerScreen(
         val addonSubs = now?.subs.orEmpty().filter { sub -> st.stream.subtitles.orEmpty().none { it.url == sub.url } }
         load(Now(st.stream.url!!, st.stream.subtitles.orEmpty() + addonSubs, st.stream.name ?: st.addonName, st.addonName), keep, label)
     }
+    // VR magnifies every pixel: when VR starts on a picture below 1080p, the best Live server copy (1080p, never 4K —
+    // too heavy for a phone stream) takes over from the same second.
+    LaunchedEffect(vrOn) {
+        if (!vrOn || !BuildConfig.LIVE_ONLY) return@LaunchedEffect
+        delay(800)
+        val curH = player.videoSize.height
+        if (curH in 1 until 1000) {
+            val best = known.filter { it.resolution() in 1000..1200 && it.stream.url != now?.url }.firstOrNull()
+            if (best != null) switchTo(best, "VR: best picture", auto = true, why = "VR: best picture (was ${curH}p)")
+        }
+    }
     /** The upgraded HD file failed: straight back to the MovieBox link at the same second (no hunting through other HD files). */
     backToMovieBox = fun(why: String): Boolean {
         val from = upgradedFrom ?: return false
@@ -3379,7 +3390,8 @@ fun PlayerScreen(
                     } else Modifier.graphicsLayer { scaleX = vScale; scaleY = vScale; if (freeZoom) { translationX = fzX; translationY = fzY } }),
                 )
                 if (vrOn && !usingVlc) key(player) {
-                    VrHeadsetView(vm, player, p.title, onSeekTo = { seekAbs(it); poke++ }, onNext = if (nextEp != null) ({ playNext() }) else null) { vrOn = false }
+                    VrHeadsetView(vm, player, p.title, subText = { cues.joinToString("\n") { c -> c.text?.toString().orEmpty() }.trim() },
+                        onSeekTo = { seekAbs(it); poke++ }, onNext = if (nextEp != null) ({ playNext() }) else null) { vrOn = false }
                 }
                 // Plugin mode's quiet swap: the second player's picture, above the main one (fades in, then stays).
                 val sh = shadow

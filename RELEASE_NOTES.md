@@ -1,4 +1,5 @@
-Xstream Live 1.0.5
+Xstream Live 1.0.6
 
-• Red accents: a rim light on the Home card with a soft glow under its curve, thin red edges on cards.
-• Trailers: tap Trailer on a title page to play it right in the card (sound, full screen); hold for all trailers.
+• VR: controls work, compact panel, curved cinema screen, sharper picture, subtitles.
+• Home: soft red light under the card, endless swipe, IMDb rating, trailers fill the card.
+• Home rows only from Posters+. Me shows your profile picture — hold it to switch profiles.
