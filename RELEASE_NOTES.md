@@ -1,5 +1,4 @@
-Xstream Live 1.0.3
+Xstream Live 1.0.4
 
-• Faster: plays after about 1 s, and about 1.5 s after a jump.
-• Titles are searched once and remembered for 6 hours — coming back is instant.
-• New profile picker (main profile on the right), clear-glass bottom bar, new opening animation.
+• Links come back reliably again — one slow file no longer blocks everything else.
+• A failed search is tried again; the title you open always goes first.

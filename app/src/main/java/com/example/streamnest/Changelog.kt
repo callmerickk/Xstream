@@ -13,6 +13,10 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("1.0.4", "17 Nov 2026", "Links come back reliably", listOf(
+        "The Live server has its normal number of download slots again (one slow file no longer blocks every other link or search)",
+        "A failed search is tried again once; Home's look-ahead searches no longer crowd out the title you open",
+    )),
     Release("1.0.3", "17 Nov 2026", "Faster starts and seeks, new look", listOf(
         "Plays after about 1 s of video, and about 1.5 s after a jump (was 5 s)",
         "Jumps land on the nearest keyframe: the picture shows sooner",

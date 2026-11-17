@@ -298,7 +298,7 @@ fun HomeScreen(
     LaunchedEffect(deckIds) {
         if (deckIds.isEmpty() || !vm.liveMode()) return@LaunchedEffect
         delay(6_000)
-        deckIds.forEach { id -> runCatching { LiveServer.streams(vm.appContext, "movie", id) } }
+        deckIds.forEach { id -> runCatching { LiveServer.streams(vm.appContext, "movie", id, ahead = true) } }
     }
     // True while at least half of the top cards are on screen. Recomputed on scroll, but only notifies readers
     // when the answer flips, so it costs nothing per frame. Trailers / auto-slide stop when the deck scrolls away.

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -122,7 +123,9 @@ object LiveServer {
         // Data: like Nuvio — only what is about to play is fetched. 8 × 32 parts with 32 MB read-ahead pulled ~20 MB/s and
         // threw it away at every seek. Wi-Fi: the server's own defaults (4 × 8, 8 windows); mobile data: lighter (2 × 4, 4).
         val metered = runCatching { (ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered }.getOrDefault(true)
-        val (wk, inf, pipe) = if (metered) Triple(2, 4, 4) else Triple(4, 8, 8)
+        // 1.0.3 lesson: with only 2 × 4 slots one slow file held every slot, so searches failed and other links were
+        // refused at once. Slots stay at the server's normal 4 × 8; only the read-ahead is smaller on mobile data.
+        val (wk, inf, pipe) = if (metered) Triple(4, 8, 4) else Triple(4, 8, 8)
         note("Speed: $wk connections × $inf parts, $pipe MB ahead (${if (metered) "mobile data" else "Wi-Fi"})")
         val pb = ProcessBuilder(binary(ctx).absolutePath, "--port", "$port", "--host", "127.0.0.1", "--no-open",
             "--workers", "$wk", "--inflight", "$inf",
@@ -189,11 +192,20 @@ object LiveServer {
         val job = linkJobs.computeIfAbsent(key) {
             linkScope.async {
                 try {
-                    runCatching {
-                        http.newBuilder().readTimeout(20, TimeUnit.SECONDS).build()
-                            .newCall(Request.Builder().url("$base/stream/$type/${enc(streamId)}.json").build()).execute()
-                            .use { if (it.isSuccessful) it.body!!.string() else null }
-                    }.getOrNull()?.also { b ->
+                    // A failed search is tried once more (a slow moment on the network or the server); the reason is logged.
+                    var why = ""
+                    var got: String? = null
+                    for (attempt in 1..2) {
+                        got = runCatching {
+                            http.newBuilder().readTimeout(25, TimeUnit.SECONDS).build()
+                                .newCall(Request.Builder().url("$base/stream/$type/${enc(streamId)}.json").build()).execute()
+                                .use { if (it.isSuccessful) it.body!!.string() else { why = "HTTP ${it.code}"; null } }
+                        }.onFailure { why = it.javaClass.simpleName + (it.message?.let { m -> ": " + m.take(60) } ?: "") }.getOrNull()
+                        if (got != null) break
+                        ActLog.add("LIVE", "search failed (attempt $attempt) · $streamId · $why")
+                        if (attempt == 1) delay(1_500)
+                    }
+                    got?.also { b ->
                         // Only real results are kept (a "setting up" / nothing-found answer is asked again next time).
                         if (b.contains("\"url\"")) {
                             linkMem[key] = System.currentTimeMillis() to b
@@ -206,7 +218,13 @@ object LiveServer {
         return job.await()
     }
 
-    suspend fun streams(ctx: Context, type: String, id: String): List<StreamItem> = withContext(Dispatchers.IO) {
+    /** Searches made ahead of time (Home cards) go two at a time, so they never crowd out the title you open. */
+    private val background = kotlinx.coroutines.sync.Semaphore(2)
+
+    suspend fun streams(ctx: Context, type: String, id: String, ahead: Boolean = false): List<StreamItem> =
+        if (ahead) background.withPermit { streams(ctx, type, id) } else streamsNow(ctx, type, id)
+
+    private suspend fun streamsNow(ctx: Context, type: String, id: String): List<StreamItem> = withContext(Dispatchers.IO) {
         if (!awaitReady(ctx)) return@withContext emptyList()
         val streamId = if (type == "series" && !id.contains(':')) "$id:1:1" else id
         val t0 = System.currentTimeMillis()
