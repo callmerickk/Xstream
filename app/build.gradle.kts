@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.xstreamlive"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
     }
     // Two apps from one project: the phone app and StreamX TV (Fire TV / Android TV).
     // "gradle assembleDebug" builds both APKs.
@@ -104,6 +104,11 @@ android {
         freeCompilerArgs += listOf("-Xskip-metadata-version-check")
     }
     buildFeatures { compose = true; buildConfig = true }
+    // Offline voice (Vosk) and face detection live here: universal and TV only.
+    sourceSets {
+        getByName("universal").java.srcDir("src/full/java")
+        getByName("tv").java.srcDir("src/full/java")
+    }
     packaging {
         // Keep one copy of the C++ runtime, and store native libraries compressed (much smaller APK).
         jniLibs {
@@ -146,8 +151,10 @@ dependencies {
     implementation("org.videolan.android:libvlc-all:3.6.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.2")
     // "Hey Aiden": offline wake word, Vosk (Apache 2.0) + JNA.
-    implementation("com.alphacephei:vosk-android:0.3.47@aar")
-    implementation("net.java.dev.jna:jna:5.13.0@aar")
+    "universalImplementation"("com.alphacephei:vosk-android:0.3.47@aar")
+    "universalImplementation"("net.java.dev.jna:jna:5.13.0@aar")
+    "tvImplementation"("com.alphacephei:vosk-android:0.3.47@aar")
+    "tvImplementation"("net.java.dev.jna:jna:5.13.0@aar")
     // Watch together voice + video (WebRTC, org.webrtc). Only the ARM library of each app is packaged (abiFilters).
     implementation("io.getstream:stream-webrtc-android:1.3.9")
     // StreamX VPN: WireGuard's official Android library (open source), and a QR scanner for WireGuard QR codes.
@@ -174,7 +181,9 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
     implementation("com.google.code.gson:gson:2.11.0")
     // Subtitles › Follow the speaker (beta): on-device face + lip contours (Apache-licensed ML Kit client, no network).
-    implementation("com.google.mlkit:face-detection:16.1.6")
+    // Xstream Live (phone) leaves it out (stub in src/phone).
+    "universalImplementation"("com.google.mlkit:face-detection:16.1.6")
+    "tvImplementation"("com.google.mlkit:face-detection:16.1.6")
     implementation("io.ktor:ktor-http:2.3.12")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")

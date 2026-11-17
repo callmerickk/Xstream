@@ -97,7 +97,7 @@ import kotlin.math.roundToInt
 
 @Composable
 private fun SectionTitle(text: String) =
-    Text(text, fontSize = 21.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E9F2),
+    Text(text.replace("StreamX", "Xstream"), fontSize = 21.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E9F2),
         maxLines = 1, overflow = TextOverflow.Ellipsis,
         modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 12.dp))
 
@@ -312,8 +312,8 @@ fun HomeScreen(
     val tint = Palette.tint
     val bg = Bg
     val topBrush = remember(tint, bg) {
-        // Xstream Live: indigo at the very top, a purple haze, then the page colour.
-        if (BuildConfig.LIVE_ONLY) Brush.verticalGradient(0f to tint, 0.35f to Color(0xFF3A2266).copy(alpha = 0.55f), 1f to bg)
+        // Xstream Live: a dark navy glow at the very top fading into the #0F1014 page.
+        if (BuildConfig.LIVE_ONLY) Brush.verticalGradient(0f to tint, 0.22f to Color(0xFF141B36).copy(alpha = 0.6f), 0.5f to bg, 1f to bg)
         else Brush.verticalGradient(listOf(tint, bg))
     }
     val accent = Accent
@@ -496,7 +496,11 @@ val PosterCorners = linkedMapOf("Sharp" to 0, "Subtle" to 4, "Classic" to 8, "Ro
 @Composable fun posterCorner(): Dp = (PosterCorners[t("posterCorner")] ?: 12).dp
 
 /** Rows are shuffled once per app start. */
-object HomeShuffle { val seed: Long = System.nanoTime() }
+object HomeShuffle {
+    val seed: Long = System.nanoTime()
+    /** Rows are shuffled once per app start (while a profile is being picked); after they first show, they never move. */
+    val frozen = java.util.concurrent.ConcurrentHashMap<String, List<Meta>>()
+}
 
 /** How each Home row looks: "numbered" (top 10 style), "portrait", "landscape" or "auto"; set in Home Layout by the developer. */
 object RowStyles {
@@ -533,7 +537,11 @@ fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     // Hindi trending titles are checked too: a film not out online never takes a place in the top 10.
     val notOut by CinemaOnly.hidden.collectAsState()
     LaunchedEffect(h) { Public.vm?.let { v -> if (h.isNotEmpty()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CinemaOnly.check(v, h) } } } }
-    val top = remember(items, h, notOut) { HindiTrending.mix(items, h).filter { it.id.substringBefore(":") !in notOut }.take(10) }
+    val top = remember(items, h, notOut) {
+        val fresh = HindiTrending.mix(items, h).filter { it.id.substringBefore(":") !in notOut }.take(10)
+        // Once shown, the top 10 stays exactly as it is until the app is closed (no reshuffle in front of you).
+        HomeShuffle.frozen[kind]?.takeIf { it.isNotEmpty() } ?: fresh.also { if (it.size >= 10 || (items.isNotEmpty() && it.isNotEmpty())) HomeShuffle.frozen[kind] = it }
+    }
     // All ten posters are asked for at once (one quick TMDB call each, remembered), so the row fills in together.
     LaunchedEffect(top) { top.forEach { m -> launch { runCatching { TmdbPosters.portrait(m) } } } }
     // Same numbers, a little dimmer (soft grey), so the eye goes to the posters first.
@@ -1408,7 +1416,7 @@ object HomeFreeze {
 private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Boolean>, onOpen: (Meta) -> Unit) {
     if (items.isEmpty()) return
     val pager = rememberPagerState { items.size }
-    var paused by remember { mutableStateOf(false) }
+    var muted by remember { mutableStateOf(true) }
     var tid by remember { mutableStateOf<String?>(null) }
     var videoOn by remember { mutableStateOf(false) }
     val ring = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -1419,11 +1427,11 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
         if (!onScreen.value) return@LaunchedEffect
         delay(700)
         tid = runCatching { vm.trailerId(items[pager.settledPage].meta) }.getOrNull()
-        if (tid == null) { ring.animateTo(1f, tween(9_000, easing = androidx.compose.animation.core.LinearEasing)); if (!paused) next() }
+        if (tid == null) { ring.animateTo(1f, tween(9_000, easing = androidx.compose.animation.core.LinearEasing)); next() }
     }
     // While the trailer plays the ring fills over ~60 s (trailers are about that long); it ends with the trailer.
-    LaunchedEffect(videoOn, paused) {
-        if (videoOn && !paused) ring.animateTo(1f, tween(((1f - ring.value) * 60_000).toInt().coerceAtLeast(1), easing = androidx.compose.animation.core.LinearEasing))
+    LaunchedEffect(videoOn) {
+        if (videoOn) ring.animateTo(1f, tween(((1f - ring.value) * 60_000).toInt().coerceAtLeast(1), easing = androidx.compose.animation.core.LinearEasing))
         else ring.stop()
     }
     androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 18.dp), pageSpacing = 12.dp,
@@ -1431,25 +1439,20 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
         val m = items[page].meta
         val front = page == pager.settledPage
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9.6f).clip(RoundedCornerShape(26.dp)).background(Color(0xFF05070C))
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9.6f).clip(LiveHeroShape).background(Color(0xFF05070C))
                 .clickable { onOpen(m) }) {
                 val id = tid
-                if (front && id != null && !paused) TrailerVideo(id, true, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
+                if (front && id != null) TrailerVideo(id, muted, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
                     backdrop = backdropOf(m) ?: m.poster, onPlaying = { videoOn = true }, onEnded = { videoOn = false; next() }, onError = { videoOn = false })
-                val artAlpha by animateFloatAsState(if (front && videoOn && !paused) 0f else 1f, tween(450), label = "liveArt")
+                val artAlpha by animateFloatAsState(if (front && videoOn) 0f else 1f, tween(450), label = "liveArt")
                 AsyncImage(hiResArt(backdropOf(m) ?: m.poster), m.name, Modifier.fillMaxSize().graphicsLayer { alpha = artAlpha },
                     contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.7f to Color.Transparent, 1f to Color(0x80000000))))
-                if (front) Box(Modifier.align(Alignment.TopEnd).padding(14.dp).size(46.dp).clip(CircleShape)
-                    .clickable { paused = !paused }, Alignment.Center) {
-                    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-                        drawCircle(Color(0x66000000))
-                        drawCircle(Color(0x55FFFFFF), style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx()))
-                        drawArc(Color.White, -90f, 360f * ring.value, false, style = androidx.compose.ui.graphics.drawscope.Stroke(3.dp.toPx(),
-                            cap = androidx.compose.ui.graphics.StrokeCap.Round))
-                    }
-                    Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, if (paused) "Play trailer" else "Pause trailer",
-                        Modifier.size(22.dp), tint = Color.White)
+                // Speaker: sound on / off for the trailer (starts muted).
+                if (front && videoOn) Box(Modifier.align(Alignment.TopEnd).padding(14.dp).size(42.dp).clip(CircleShape)
+                    .background(Color(0x66000000)).border(1.dp, Color(0x40FFFFFF), CircleShape).clickable { muted = !muted }, Alignment.Center) {
+                    Icon(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp, if (muted) "Sound on" else "Sound off",
+                        Modifier.size(20.dp), tint = Color.White)
                 }
             }
             var logoFailed by remember(m.id) { mutableStateOf(false) }
@@ -1471,5 +1474,27 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
                 }
             }
         }
+    }
+}
+
+/** Hero card: rounded top corners and a bottom edge that curves up in the middle. */
+private val LiveHeroShape = object : androidx.compose.ui.graphics.Shape {
+    override fun createOutline(size: androidx.compose.ui.geometry.Size, layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+        density: androidx.compose.ui.unit.Density): androidx.compose.ui.graphics.Outline {
+        val r = with(density) { 26.dp.toPx() }
+        val dip = size.height * 0.045f
+        val w = size.width; val h = size.height
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(0f, r)
+            quadraticTo(0f, 0f, r, 0f)
+            lineTo(w - r, 0f)
+            quadraticTo(w, 0f, w, r)
+            lineTo(w, h - r * 0.6f)
+            quadraticTo(w, h, w - r, h)
+            quadraticTo(w / 2f, h - dip * 2f, r, h)
+            quadraticTo(0f, h, 0f, h - r * 0.6f)
+            close()
+        }
+        return androidx.compose.ui.graphics.Outline.Generic(path)
     }
 }

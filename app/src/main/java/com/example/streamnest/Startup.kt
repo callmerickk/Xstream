@@ -143,7 +143,7 @@ fun StartupSplash(onDone: () -> Unit) {
             Spacer(Modifier.width(14.dp))
             ZoomX(44f, { x.value }, { zoom.value }, { xAlpha.value })
             Text(
-                "stream",
+                if (BuildConfig.LIVE_ONLY) "stream Live" else "stream",
                 Modifier.graphicsLayer { alpha = word.value * out.value; translationX = (1f - word.value) * -18.dp.toPx() },
                 fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 44.sp, letterSpacing = (-1).sp, color = Color.White,
             )
@@ -202,6 +202,86 @@ fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPicked: () -
     val wallY by drift.animateFloat(0f, 1f, infiniteRepeatable(tween(14000, easing = LinearEasing), RepeatMode.Reverse), label = "wallY")
     val h = LocalConfiguration.current.screenHeightDp.dp
     val arcY = h * 0.62f
+
+    // Xstream Live: a calm, premium picker — round avatars on the navy-black page, a soft glow ring on the last one
+    // (with the auto-open countdown), the picked one grows while the rest fade away.
+    if (BuildConfig.LIVE_ONLY) {
+        Box(
+            Modifier.fillMaxSize().background(Color(0xFF0F1014))
+                .background(Brush.radialGradient(listOf(Color(0x5523306E), Color.Transparent), center = Offset(540f, -120f), radius = 1500f))
+                .graphicsLayer { alpha = 1f - (leave.value - 0.6f).coerceAtLeast(0f) * 2.5f }
+                .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); if (countdown.value > 0f) cancelled = true } },
+        ) {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 18.dp, end = 10.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.weight(1f))
+                Text(if (editMode) "Done" else "Manage", Modifier.clip(RoundedCornerShape(14.dp)).clickable { editMode = !editMode; cancelled = true }
+                    .padding(horizontal = 12.dp, vertical = 8.dp), color = Color(0xFFB8BED3), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            }
+            Column(Modifier.fillMaxSize().statusBarsPadding().padding(top = 70.dp).graphicsLayer { alpha = enter.value; translationY = (1f - enter.value) * 16.dp.toPx() },
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                Wordmark("Xstream", 30.sp)
+                Text(if (editMode) "Tap a profile to edit" else "Who's watching?", Modifier.padding(top = 26.dp), fontSize = 24.sp,
+                    fontWeight = FontWeight.SemiBold, color = Color.White)
+                val cells: List<Profile?> = profiles + (if (profiles.size < 5) listOf(null) else emptyList())
+                Column(Modifier.padding(top = 36.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(26.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
+                    cells.chunked(if (cells.size == 4) 2 else 3).forEach { rowCells ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                            rowCells.forEach { p ->
+                                val i = cells.indexOf(p)
+                                val pop = remember { Animatable(0f) }
+                                LaunchedEffect(active) { if (active) { delay(200L + i * 90L); pop.animateTo(1f, spring(dampingRatio = 0.7f, stiffness = 240f)) } }
+                                val focused = p != null && p.id == focusId && !editMode && leaving == null
+                                val isLeaving = p != null && p.id == leaving
+                                Column(
+                                    Modifier.width(92.dp).graphicsLayer {
+                                        val v = pop.value
+                                        alpha = v.coerceIn(0f, 1f) * (if (leaving != null && !isLeaving) 1f - leave.value else 1f)
+                                        translationY = (1f - v) * 24.dp.toPx()
+                                        val k = if (isLeaving) 1f + 0.18f * leave.value else 1f
+                                        scaleX = k; scaleY = k
+                                    }.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {
+                                        when { p == null -> { cancelled = true; adding = true }; editMode -> editing = p; else -> pick(p) }
+                                    },
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    Box(Modifier.size(92.dp), contentAlignment = Alignment.Center) {
+                                        if (p == null) {
+                                            Box(Modifier.size(80.dp).clip(CircleShape).background(Color(0x0FFFFFFF)).border(1.5.dp, Color(0x33FFFFFF), CircleShape), Alignment.Center) {
+                                                Icon(Icons.Default.Add, "Add profile", Modifier.size(30.dp), tint = Color(0xFFB8BED3))
+                                            }
+                                        } else {
+                                            if (focused || isLeaving) Canvas(Modifier.fillMaxSize()) {
+                                                drawCircle(Brush.radialGradient(listOf(Color(0x664B4FD8), Color.Transparent)), radius = size.minDimension / 2f)
+                                            }
+                                            ProfileAvatar(vm, p, 80.dp, Modifier.border(2.dp,
+                                                if (focused || isLeaving) Brush.linearGradient(listOf(Color(0xFF6A6FF0), BrandRed)) else Brush.linearGradient(listOf(Color(0x22FFFFFF), Color(0x22FFFFFF))), CircleShape))
+                                            if (editMode) Box(Modifier.size(80.dp).clip(CircleShape).background(Color(0x88000000)), Alignment.Center) { Icon(Icons.Default.Edit, "Edit ${p.name}", Modifier.size(22.dp)) }
+                                            if (focused && countdown.value > 0f && !cancelled) Canvas(Modifier.size(92.dp)) {
+                                                val sw = 2.5.dp.toPx()
+                                                drawArc(Color.White, -90f, 360f * countdown.value, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw, cap = StrokeCap.Round))
+                                            }
+                                        }
+                                    }
+                                    Text(p?.name ?: "Add", Modifier.padding(top = 10.dp), fontSize = 14.sp, fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = if (p == null) Color(0xFF8A90A6) else if (focused) Color.White else Color(0xFFB8BED3), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (p?.kids == true) Text("KIDS", fontSize = 9.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7DA2FF))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            val focusName = profiles.firstOrNull { it.id == focusId }?.name ?: ""
+            if (countdown.value > 0f && !cancelled && !editMode && leaving == null) Text(buildAnnotatedString {
+                append("Opening "); withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append(focusName) }
+                append(" in "); withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append("$remaining") }
+            }, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 44.dp), fontSize = 14.sp, color = Color(0xFF8A90A6))
+        }
+        editing?.let { p -> ProfileEditor(vm, p) { editing = null } }
+        if (adding) ProfileEditor(vm, null) { adding = false }
+        return
+    }
 
     // Xstream "Box office": every profile is a cinema ticket. Tap yours: the stub tears off along the perforation and
     // drops away, "Admit one" lights up and you're in. The last profile keeps the auto-open ring on its stub.

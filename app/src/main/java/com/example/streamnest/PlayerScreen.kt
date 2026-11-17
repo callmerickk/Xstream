@@ -753,6 +753,10 @@ fun PlayerScreen(
     var videoView by remember { mutableStateOf<View?>(null) }
     /** The main video view (a SurfaceView inside): after a fade the new player moves back onto it (smooth 60 fps). */
     val mainPv = remember { arrayOfNulls<PlayerView>(1) }
+    /** Xstream Live: VR headset mode (side by side, one picture per lens). */
+    var vrOn by remember { mutableStateOf(false) }
+    var vrWas by remember { mutableStateOf(false) }
+    LaunchedEffect(vrOn) { if (vrOn) vrWas = true else if (vrWas) { vrWas = false; delay(60); mainPv[0]?.let { pv -> if (pv.player === player) { pv.player = null; pv.player = player } } } }
     /** The picture turned out HDR while "no HDR" is set, after a switch the app made: go back (handled further down). */
     var hdrHit by remember { mutableStateOf(false) }
     /** Where an app-made switch came from (for going back if the new picture is HDR). */
@@ -1593,7 +1597,7 @@ fun PlayerScreen(
                         val el = SystemClock.elapsedRealtime() - findT0
                         // Nothing playing 10 s after Play: CNCVerse is asked again (every 2 s until it returns links).
                         // Turbo has no slow server to ask again: "not available" can show as soon as everything answered.
-                        if (!askedAgain && vm.pluginMode()) askedAgain = true
+                        if (!askedAgain && (vm.pluginMode() || vm.liveMode())) askedAgain = true
                         if (!askedAgain && el >= 10_000 && !vm.pluginMode() && !vm.liveMode()) {
                             askedAgain = true
                             PlayTiming.mark("nothing playing 10 s — CNCVerse asked again", once = "cnc10")
@@ -3366,6 +3370,7 @@ fun PlayerScreen(
                         when (aspectIdx) { 1 -> { scaleX = 1.33f; scaleY = 1.33f }; 2 -> { scaleX = 1f; scaleY = 1.33f }; else -> { scaleX = 1f; scaleY = 1f } }
                     } else Modifier.graphicsLayer { scaleX = vScale; scaleY = vScale; if (freeZoom) { translationX = fzX; translationY = fzY } }),
                 )
+                if (vrOn && !usingVlc) key(player) { VrHeadsetView(player) { vrOn = false } }
                 // Plugin mode's quiet swap: the second player's picture, above the main one (fades in, then stays).
                 val sh = shadow
                 if (sh != null && !usingVlc) key(sh) {
@@ -3864,6 +3869,7 @@ fun PlayerScreen(
                                 .border(1.5.dp, Color.Black, CircleShape).padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             else if (roomNow != null) Box(Modifier.align(Alignment.TopEnd).padding(top = 5.dp, end = 5.dp).size(9.dp).clip(CircleShape).background(Color(0xFF3CCF7A)).border(2.dp, Color.Black, CircleShape))
                         }
+                        if (!BuildConfig.IS_TV && BuildConfig.LIVE_ONLY && !usingVlc) GlassBtn(Icons.Default.Vrpano, null, "VR headset") { vrOn = true; controls = false }
                         if (!BuildConfig.IS_TV) GlassBtn(Icons.Default.LockOpen, null, "Lock") { locked = true; controls = true; poke++ }
                         // Phones: plugin mode and Sources (addon) mode share the same quality button and menu.
                         val plugQ = !BuildConfig.IS_TV
@@ -5775,7 +5781,7 @@ private fun SubStyleColumn(
         SubSection("Look")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SubChip("Netflix style", isOn(v("subNetflix"))) { vm.setText("subNetflix", if (isOn(v("subNetflix"))) "no" else "yes") }
-            if (!BuildConfig.IS_TV) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
+            if (!BuildConfig.IS_TV && !BuildConfig.LIVE_ONLY) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
         }
         if (isOn(v("subNetflix"))) Text("Netflix style sets the font, colour and shadow; turn it off to choose your own below.", fontSize = 11.5.sp, color = Color(0xFF8A94A8))
         SubSection("Text colour")
@@ -5875,7 +5881,7 @@ private fun SubsPanel(
         SubSection("Look")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SubChip("Netflix style", isOn(v("subNetflix"))) { vm.setText("subNetflix", if (isOn(v("subNetflix"))) "no" else "yes") }
-            if (!BuildConfig.IS_TV) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
+            if (!BuildConfig.IS_TV && !BuildConfig.LIVE_ONLY) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
         }
         if (isOn(v("subNetflix"))) Text("Netflix style sets the font, colour and shadow; turn it off to choose your own below.", fontSize = 11.5.sp, color = Color(0xFF8A94A8))
         SubSection("Text colour")

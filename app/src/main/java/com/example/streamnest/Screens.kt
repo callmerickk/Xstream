@@ -228,7 +228,15 @@ fun App(vm: AppViewModel = viewModel()) {
     var sawRestore by remember { mutableStateOf(false) }
     LaunchedEffect(restoringCloud, restoredN) {
         if (restoringCloud) sawRestore = true
-        else if (sawRestore) { sawRestore = false; emptyAccount = restoredN == 0 }
+        else if (sawRestore) {
+            sawRestore = false
+            // No "this account has no profiles" screen: the first profile simply takes the account's name.
+            if (restoredN == 0) {
+                val nm = Cloud.user.value?.email?.substringBefore("@")?.replace(Regex("[._\\d]+"), " ")?.trim()
+                    ?.split(" ")?.firstOrNull { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
+                vm.profiles.value.firstOrNull { !it.kids && it.name == "Me" }?.let { p -> if (!nm.isNullOrBlank()) vm.renameProfile(p, nm, false) }
+            }
+        }
     }
     CompositionLocalProvider(LocalTexts provides texts) {
         LaunchedEffect(profile == null) { if (profile == null) stack.clear() }

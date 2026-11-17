@@ -98,7 +98,9 @@ private suspend fun googleIdToken(activity: Activity): String {
     } catch (e: GetCredentialCancellationException) {
         throw Cloud.CloudError("Cancelled")
     } catch (e: GetCredentialException) {
-        throw Cloud.CloudError("Google sign-in isn't available: ${e.message ?: e.type}")
+        ActLog.add("CLOUD", "Google sign-in failed: ${e.type} · ${e.message}")
+        throw Cloud.CloudError(if (BuildConfig.LIVE_ONLY) "Google sign-in isn't ready for Xstream Live yet — please sign in with email and password for now."
+            else "Google sign-in isn't available: ${e.message ?: e.type}")
     }
     val c = res.credential
     if (c is CustomCredential && c.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {

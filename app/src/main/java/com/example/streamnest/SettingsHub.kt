@@ -47,11 +47,11 @@ private const val REPO_URL = "https://github.com/callmerickk/Xstream"
 @Composable
 fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) {
     val pages = remember { mutableStateListOf(start) }
-    var devUnlocked by remember { mutableStateOf(false) }
+    var devUnlocked by remember { mutableStateOf(BuildConfig.LIVE_ONLY) }
     var query by remember { mutableStateOf("") } // kept while you open a result and come back
     val back: () -> Unit = {
         if (pages.size > 1) {
-            if (pages.last() == "dev") devUnlocked = false
+            if (pages.last() == "dev" && !BuildConfig.LIVE_ONLY) devUnlocked = false
             pages.removeAt(pages.lastIndex)
         } else onClose()
     }

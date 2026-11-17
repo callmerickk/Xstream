@@ -384,6 +384,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     // ───────────── Custom texts & colors ─────────────
     init {
         Public.vm = this
+        viewModelScope.launch { texts.collect { LiveLock.on = BuildConfig.LIVE_ONLY && it["devSources"] != "on" } }
         StreamHeaders.init(app); AddonSpeed.init(app); Relay.warmUp()
         // Source ranking: this phone's copy now, the shared one from the cloud in the background.
         AutoPlayRules.init(app); Ranker.init(app); HostStats.init(app)
@@ -422,6 +423,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         parseColor(m["deckTint"]!!)?.let { Palette.tint = it }
         parseColor(m["accent2"]!!)?.let { Palette.accent2 = it }
         if (isOn(m["amoled"]!!)) Palette.bg = Color.Black
+        // Xstream Live: always the navy-black page with a dark navy glow at the top (the account's Xstream colours aren't used).
+        if (BuildConfig.LIVE_ONLY) { Palette.bg = Color(0xFF0F1014); Palette.tint = Color(0xFF16204A) }
         m["cardCorner"]!!.trim().toIntOrNull()?.let { Palette.corner = it.coerceIn(0, 50) }
         // Buttons: the theme's own button colours, else the accent with readable text.
         Palette.button = parseColor(m["btnColor"].orEmpty()) ?: Palette.accent
@@ -481,6 +484,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         val done = p.durationMs > 0 && p.positionMs > p.durationMs * (if (series) 0.95 else 0.92)
         // No limit: every title you started stays (and syncs with your cloud) until it is finished or removed.
         progress.value = (if (done && !series) others else listOf(if (done) p.copy(positionMs = p.durationMs) else p) + others)
+        if (done && !series) addWatched(p)
         val ed = lib.edit().putString("progress", Api.json.encodeToString(progress.value))
         if (done && p.key !in doneKeys.value) {
             doneKeys.value = doneKeys.value + p.key
@@ -490,6 +494,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
         ed.apply()
         markCur("prog")
+    }
+
+    // ───────────── Library › Watched (finished movies) ─────────────
+    val watched = MutableStateFlow<List<Progress>>(emptyList())
+    fun loadWatched() { watched.value = runCatching { Api.json.decodeFromString<List<Progress>>(lib.getString("watched", null) ?: "[]") }.getOrDefault(emptyList()) }
+    private fun addWatched(p: Progress) {
+        loadWatched()
+        watched.value = (listOf(p.copy(positionMs = 0, updated = System.currentTimeMillis())) + watched.value.filter { it.key != p.key }).take(300)
+        lib.edit().putString("watched", Api.json.encodeToString(watched.value)).apply()
+    }
+    fun removeWatched(key: String) {
+        watched.value = watched.value.filter { it.key != key }
+        lib.edit().putString("watched", Api.json.encodeToString(watched.value)).apply()
     }
 
     fun removeProgress(key: String) {
@@ -579,7 +596,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     /** Addons switched on in Help & Settings > Content & Discovery > Addons. */
     private val active: List<Addon> get() {
         val off = texts.value["addonsOff"].orEmpty().split("|").filter { it.isNotBlank() }.toSet()
-        return addons.value.filter { it.baseUrl !in off }
+        val on = addons.value.filter { it.baseUrl !in off }
+        // Xstream Live: the account's addons are ignored (only the title details and subtitles stay).
+        return if (liveLocked()) on.filter { isPinnedFixed(it) } else on
     }
 
     /** Base URLs of the switched-on addons that can describe this title (used by the episode-alert check). */
@@ -710,7 +729,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     /** Switched-on addons that keep loading on their server (CNCVerse): asked again every 5 s (SlowAddons.kt). */
-    fun slowStreamAddons(type: String, id: String): List<Addon> = if (pluginMode()) emptyList() else active.filter { it.supports("stream", type, id) && SlowAddons.isSlow(it) }
+    fun slowStreamAddons(type: String, id: String): List<Addon> = if (pluginMode() || liveMode()) emptyList() else active.filter { it.supports("stream", type, id) && SlowAddons.isSlow(it) }
     fun streamUrl(a: Addon, type: String, id: String) = "${a.baseUrl}/stream/$type/${enc(id)}.json"
 
     /** Puts the addons in this order (by name; the ones not named keep their place after them). Source Test uses it. */
@@ -1005,6 +1024,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     fun lastLink(key: String): LastLink? = lib.getString("link_$key", null)?.let { runCatching { Api.json.decodeFromString<LastLink>(it) }.getOrNull() }
         ?.takeIf { !isLocalUrl(it.url) }
+        ?.takeIf { !liveLocked() || it.addon == LiveServer.NAME }
         ?.takeIf { System.currentTimeMillis() - it.at < 6L * 3600 * 1000 } // provider links expire; reuse for 6 hours (a refused link is refreshed automatically)
     /** The app's own local relay (127.0.0.1:port): its port changes every start, so it is never saved for Continue Watching. */
     private fun isLocalUrl(u: String) = Regex("^https?://(127\\.0\\.0\\.1|localhost)(:|/)", RegexOption.IGNORE_CASE).containsMatchIn(u)

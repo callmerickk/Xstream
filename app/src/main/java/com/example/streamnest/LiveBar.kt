@@ -60,13 +60,13 @@ fun LiveBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> U
         Row(
             Modifier.padding(horizontal = 18.dp).fillMaxWidth().height(70.dp)
                 .drawBehind {
-                    drawOval(Brush.radialGradient(listOf(Color(0x664B4FD8), Color.Transparent), center = Offset(size.width / 2, size.height),
+                    drawOval(Brush.radialGradient(listOf(Color(0x332A3570), Color.Transparent), center = Offset(size.width / 2, size.height),
                         radius = size.width * 0.6f), topLeft = Offset(-size.width * 0.1f, size.height * 0.2f),
                         size = androidx.compose.ui.geometry.Size(size.width * 1.2f, size.height * 1.4f))
                 }
                 .shadow(24.dp, shape).clip(shape)
-                .background(Brush.verticalGradient(listOf(Color(0xEE1C2036), Color(0xF20D0F1A))))
-                .border(1.dp, Brush.horizontalGradient(listOf(Color(0x664B4FD8), Color(0x22FFFFFF), Color(0x66E50914))), shape)
+                .background(Brush.verticalGradient(listOf(Color(0xF0151A2B), Color(0xF50F1014))))
+                .border(1.dp, Brush.horizontalGradient(listOf(Color(0x4D3A4590), Color(0x18FFFFFF), Color(0x4DE50914))), shape)
                 .padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
         ) {

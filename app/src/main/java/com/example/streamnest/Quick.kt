@@ -101,6 +101,9 @@ fun StreamItem.languages(): List<String> {
  * and no addon is asked. Addon mode (default): addons only, plugins are never loaded.
  */
 fun AppViewModel.pluginMode(): Boolean = !BuildConfig.IS_TV && !(BuildConfig.LIVE_ONLY && texts.value["devSources"] != "on") && (texts.value["srcMode"] == "plugins" || (texts.value["srcMode"] == "live" && !BuildConfig.HAS_LIVE))
+/** Xstream Live: the Live server is the only source unless Developer's Corner › Plugins and addons is on. */
+object LiveLock { @Volatile var on: Boolean = BuildConfig.LIVE_ONLY }
+fun AppViewModel.liveLocked(): Boolean = BuildConfig.LIVE_ONLY && texts.value["devSources"] != "on"
 /** Live mode (64-bit app): only the Live server's links. */
 fun AppViewModel.liveMode(): Boolean = !BuildConfig.IS_TV && (texts.value["srcMode"] == "live" || (BuildConfig.LIVE_ONLY && texts.value["devSources"] != "on")) && LiveServer.available(appContext)
 /** The name a CloudStream provider's links carry (StreamItem.addonName). */

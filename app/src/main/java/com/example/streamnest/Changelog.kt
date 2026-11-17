@@ -13,6 +13,18 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("1.0.1", "17 Nov 2026", "VR headset, darker look, new profile picker", listOf(
+        "Only the Live server: the account's plugins and addons are no longer used (Developer's Corner can switch them back on)",
+        "The Play light turns green once the first frame is ready",
+        "VR headset mode in the player (phone headsets like JioDive): one picture per lens on a big screen",
+        "Home card: curved bottom edge, speaker button for the trailer's sound",
+        "Darker navy-black look (#0F1014) and a darker bottom bar",
+        "New profile picker; first sign-in no longer asks about empty accounts",
+        "\"Xstream Live\" everywhere; Top 10 rows stay still once shown",
+        "Pilot, Season Finale and Series Finale labels; Library › Watched for finished films",
+        "Developer's Corner open by default; no publish buttons",
+        "Smaller app: offline voice and face detection left out",
+    )),
     Release("1.0.0", "17 Nov 2026", "Xstream Live", listOf(
         "Xstream Live: everything plays from the Live server on this phone — no plugins or addons to set up",
         "Same look, profiles, progress and activity log as Xstream, on the same account",

@@ -116,7 +116,7 @@ object VisualTags {
  */
 object Public {
     @Volatile var vm: AppViewModel? = null
-    val dev: Boolean get() = vm?.let { DevAccess.allowed(it) || isOn(it.texts.value["devEver"] ?: "no") } ?: false
+    val dev: Boolean get() = BuildConfig.LIVE_ONLY || vm?.let { DevAccess.allowed(it) || isOn(it.texts.value["devEver"] ?: "no") } ?: false
 
     private val quickNames = listOf("pengu", "aiostream", "aio streams", "moviebox", "movie box")
     private val hdNames = listOf("cncverse", "cnc verse", "hdhub", "hd hub")

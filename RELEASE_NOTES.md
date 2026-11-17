@@ -1,7 +1,8 @@
-Xstream Live 1.0.0
+Xstream Live 1.0.1
 
-• Everything plays from the Live server on this phone — no plugins or addons to set up.
-• New home: one big card with its trailer inside, the title's logo, Play and More Info.
-• New "Orbit" bottom bar (switch in Settings › Layout › Bottom bar), deep indigo look, new 3D icon.
-• Same profiles, progress, cloud sync and activity log as Xstream, on the same account.
-• Asks to update when a newer Live server is out. 64-bit phones only.
+• Only Live server links — your account's plugins and addons are no longer used.
+• The Play light turns green as soon as the first frame is ready.
+• VR headset mode in the player (JioDive and other phone headsets).
+• Home card with a curved edge and a sound button; darker navy-black look.
+• New profile picker; Pilot / Finale labels; Library › Watched.
+• Smaller app (about 40 MB).

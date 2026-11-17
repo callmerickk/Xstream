@@ -72,7 +72,7 @@ object Official {
 
     /** Every other account: the published set is applied when a profile opens (the developer's own phone is left alone). */
     suspend fun apply(vm: AppViewModel, ctx: Context) {
-        if (BuildConfig.IS_TV) return
+        if (BuildConfig.IS_TV || LiveLock.on) return
         CsPlugins.init(ctx)
         val pr = CsPlugins.prefsOrNull()
         // The developer's phone is never overwritten: once it has been seen as the developer's, it stays that way

@@ -627,11 +627,20 @@ fun DetailScreen(
                             }
                         }
                     }
+                    val lastInSeason = shown.filter { (it.season ?: 0) > 0 }.maxByOrNull { it.episode ?: 0 }?.id
+                    val ended = Regex("\\d{4}\\s*[–-]\\s*\\d{4}").containsMatchIn(meta.releaseInfo ?: "")
+                    val lastSeason = seasons.maxOrNull()
                     items(shown, key = { it.id }) { ep ->
                         val p = progress.firstOrNull { it.key == ep.id }
                         val watched = ep.id in done
                         val frac = if (p != null && p.durationMs > 0) (p.positionMs.toFloat() / p.durationMs).coerceIn(0f, 1f) else 0f
-                        EpisodeRow(ep, watched, frac, isNext = ep.id == playTarget.target.videoId,
+                        val tag = when {
+                            ep.season == 1 && ep.episode == 1 -> "PILOT"
+                            ep.id == lastInSeason && ended && ep.season == lastSeason -> "SERIES FINALE"
+                            ep.id == lastInSeason -> "SEASON FINALE"
+                            else -> null
+                        }
+                        EpisodeRow(ep, watched, frac, isNext = ep.id == playTarget.target.videoId, tag = tag,
                             onClick = { start(target(ep)) }, onLongClick = { start(target(ep), forceSources = true) })
                     }
                 }
@@ -932,7 +941,7 @@ private fun VideosSheet(title: String, videos: List<TmVideo>, official: Boolean,
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun EpisodeRow(ep: Video, watched: Boolean, frac: Float, isNext: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun EpisodeRow(ep: Video, watched: Boolean, frac: Float, isNext: Boolean, tag: String? = null, onClick: () -> Unit, onLongClick: () -> Unit) {
     val alpha by animateFloatAsState(if (watched) 0.6f else 1f, label = "w")
     // Spoiler-free: an episode that hasn't aired yet shows a blurred picture and no description.
     val unaired = remember(ep.released) { ep.released?.take(10)?.let { it > java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date()) } == true }
@@ -953,7 +962,10 @@ private fun EpisodeRow(ep: Video, watched: Boolean, frac: Float, isNext: Boolean
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("E${ep.episode}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF9AA3B5))
-                if (isNext) Text(if (frac > 0f) "CONTINUE" else "UP NEXT", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(5.dp)).background(Accent.copy(alpha = 0.2f))
+                // Pilot / Season Finale / Series Finale (a pilot is never called "Up next").
+                if (tag != null && !(isNext && frac > 0f)) Text(tag, Modifier.padding(start = 8.dp).clip(RoundedCornerShape(5.dp)).background(Color(0x334B6BFF))
+                    .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF9DB2FF), letterSpacing = 0.5.sp)
+                if (isNext && !(tag == "PILOT" && frac == 0f)) Text(if (frac > 0f) "CONTINUE" else "UP NEXT", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(5.dp)).background(Accent.copy(alpha = 0.2f))
                     .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Accent, letterSpacing = 0.5.sp)
             }
             Text(ep.title ?: ep.name ?: "Episode ${ep.episode}", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
