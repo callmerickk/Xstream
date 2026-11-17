@@ -13,6 +13,12 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("1.0.5", "17 Nov 2026", "Red accents, trailers in the title card", listOf(
+        "Home card: red rim light and a soft red glow under the curved edge",
+        "Cards get a thin edge fading into red; a red tick before each row title; red edges on the bottom bar",
+        "Title page: tap Trailer to play it inside the card (sound, full screen, stop); hold for every trailer",
+        "Small bubbles explain the Trailer button the first few times",
+    )),
     Release("1.0.4", "17 Nov 2026", "Links come back reliably", listOf(
         "The Live server has its normal number of download slots again (one slow file no longer blocks every other link or search)",
         "A failed search is tried again once; Home's look-ahead searches no longer crowd out the title you open",

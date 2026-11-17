@@ -96,10 +96,16 @@ import androidx.compose.ui.unit.Constraints
 import kotlin.math.roundToInt
 
 @Composable
-private fun SectionTitle(text: String) =
+private fun SectionTitle(text: String) = Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    // Xstream Live: a small red tick before every row title.
+    if (BuildConfig.LIVE_ONLY) Box(Modifier.padding(end = 9.dp).size(3.dp, 18.dp).clip(RoundedCornerShape(2.dp)).background(BrandRed))
     Text(text.replace("StreamX", "Xstream"), fontSize = 21.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E9F2),
-        maxLines = 1, overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 12.dp))
+        maxLines = 1, overflow = TextOverflow.Ellipsis)
+}
+
+/** Xstream Live: a thin edge on cards, faint white at the top fading into red at the bottom, so frames don't melt into the dark page. */
+private val liveEdgeBrush = Brush.verticalGradient(listOf(Color(0x1FFFFFFF), Color(0x14FFFFFF), Color(0x8CE50914)))
+fun Modifier.liveEdge(shape: androidx.compose.ui.graphics.Shape): Modifier = if (BuildConfig.LIVE_ONLY) this.border(1.dp, liveEdgeBrush, shape) else this
 
 /** The app's logo: the uploaded one from Developer's Corner, or the built-in red mark. */
 @Composable
@@ -562,7 +568,7 @@ fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
                         shadow = androidx.compose.ui.graphics.Shadow(Color(0xCC000000), androidx.compose.ui.geometry.Offset(0f, 6f), 18f))), softWrap = false)
                 }
                 TallPoster(m, Modifier.align(Alignment.BottomEnd).width(120.dp).aspectRatio(2f / 3f)
-                    .softHalo(corner, spread = 10.dp, strength = 0.8f, dy = 5.dp).clip(shape).titleTap(m) { onOpen(m) })
+                    .softHalo(corner, spread = 10.dp, strength = 0.8f, dy = 5.dp).clip(shape).liveEdge(shape).titleTap(m) { onOpen(m) })
             }
         }
     }
@@ -622,7 +628,7 @@ fun PortraitRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     val shape = remember(corner) { RoundedCornerShape(corner) }
     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items(items, key = { "p" + it.type + it.id }) { m ->
-            AsyncImage(hiResArt(m.poster ?: hdPoster(m)), m.name, Modifier.width(posterWidth()).aspectRatio(2f / 3f).clip(shape).background(Surface1).titleTap(m) { onOpen(m) },
+            AsyncImage(hiResArt(m.poster ?: hdPoster(m)), m.name, Modifier.width(posterWidth()).aspectRatio(2f / 3f).clip(shape).background(Surface1).liveEdge(shape).titleTap(m) { onOpen(m) },
                 contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
         }
     }
@@ -731,7 +737,7 @@ fun LandscapeRow(items: List<Meta>, onOpen: (Meta) -> Unit) =
 fun LandscapeCard(m: Meta, width: Dp = 236.dp, onClick: () -> Unit) {
     var logoFailed by remember(m.id) { mutableStateOf(false) }
     val hideLabels = isOn(t("hideLabels"))
-    Box(Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(posterCorner())).background(Surface1).titleTap(m, onClick)) {
+    Box(Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(posterCorner())).background(Surface1).liveEdge(RoundedCornerShape(posterCorner())).titleTap(m, onClick)) {
         AsyncImage(hiResArt(backdropOf(m)), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xCC000000), 0.65f to Color.Transparent)))
         val logo = logoOf(m)
@@ -1439,7 +1445,17 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
         val m = items[page].meta
         val front = page == pager.settledPage
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9.6f).clip(LiveHeroShape).background(Color(0xFF05070C))
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9.6f)
+                // A soft red glow under the curved bottom edge (drawn outside the card, before it is clipped).
+                .drawBehind {
+                    val w = size.width; val h = size.height
+                    drawOval(Brush.radialGradient(listOf(Color(0x66E50914), Color(0x22E50914), Color.Transparent),
+                        center = androidx.compose.ui.geometry.Offset(w / 2f, h * 0.99f), radius = w * 0.42f),
+                        topLeft = androidx.compose.ui.geometry.Offset(w * 0.1f, h * 0.86f), size = androidx.compose.ui.geometry.Size(w * 0.8f, h * 0.26f))
+                }
+                .clip(LiveHeroShape).background(Color(0xFF05070C))
+                // Red rim light: bright at the top, faint down the sides, red again along the curve.
+                .border(1.5.dp, Brush.verticalGradient(0f to Color(0xD9E50914), 0.55f to Color(0x1AE50914), 1f to Color(0xA6E50914)), LiveHeroShape)
                 .clickable { onOpen(m) }) {
                 val id = tid
                 if (front && id != null) TrailerVideo(id, muted, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,

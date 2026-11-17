@@ -19,6 +19,10 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -413,8 +417,29 @@ fun DetailScreen(
         TrailerActivity.nextLangs = list.map { it.lang.orEmpty() }
         launchTrailer(list.map { it.key }, list.map { it.name }, start, meta.name)
     }
+    // Xstream Live: trailers play inside the title card (nothing plays on its own; the Trailer button starts it).
+    var cardTrailer by remember(meta.id) { mutableStateOf<TmVideo?>(null) }
+    var cardMuted by remember { mutableStateOf(false) }
+    var cardPlaying by remember(meta.id) { mutableStateOf(false) }
+    var trailerTip by remember(meta.id) { mutableStateOf<String?>(null) }
+    val tipPrefs = remember { ctx.getSharedPreferences("tips", android.content.Context.MODE_PRIVATE) }
+    fun tipOnce(key: String, text: String, times: Int = 5) {
+        val n = tipPrefs.getInt(key, 0)
+        if (n < times) { tipPrefs.edit().putInt(key, n + 1).apply(); trailerTip = text }
+    }
+    fun trailerChain(): List<TmVideo> = (videos.filter { it.type == "Trailer" }.sortedBy { langOrder(it) } + videos.filter { it.type == "Teaser" }.sortedBy { langOrder(it) }).ifEmpty { videos }
+    fun playInCard(v: TmVideo) {
+        showVideos = false
+        cardTrailer = v; cardPlaying = false
+        if (videos.size > 1) tipOnce("tipMoreTrailers", "Hold for more trailers")
+    }
     /** Trailer button tap: the newest official trailer in your language (then the other trailers and teasers). */
     fun playTrailer() {
+        if (BuildConfig.LIVE_ONLY) {
+            val v = trailerChain().firstOrNull() ?: trailer?.let { TmVideo(it, "Trailer", "Trailer", null) }
+            if (v == null) Snack.show("No trailer found for this title") else if (cardTrailer?.key == v.key) { cardTrailer = null; cardPlaying = false } else playInCard(v)
+            return
+        }
         val chain = videos.filter { it.type == "Trailer" }.sortedBy { langOrder(it) } + videos.filter { it.type == "Teaser" }.sortedBy { langOrder(it) }
         val list = chain.ifEmpty { videos }
         val fallback = trailer
@@ -474,7 +499,7 @@ fun DetailScreen(
                     var tStop by remember(meta.id) { mutableStateOf(meta.id in HeroSound.played) }
                     var tMuted by remember { mutableStateOf(true) }
                     LaunchedEffect(heroId) { tArm = false; if (heroId != null) { delay(1_800); tArm = true } }
-                    val grow by animateFloatAsState(if (tPlay && !tStop) 1f else 0f, tween(650, easing = FastOutSlowInEasing), label = "trailerMode")
+                    val grow by animateFloatAsState(if ((tPlay && !tStop) || (BuildConfig.LIVE_ONLY && cardPlaying && cardTrailer != null)) 1f else 0f, tween(650, easing = FastOutSlowInEasing), label = "trailerMode")
                     val extra = 170f * grow
                     Box(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(shape).background(TitleCardBg).border(1.dp, CardRim, shape)) {
                         AsyncImage(artwork, meta.name, Modifier.fillMaxWidth().height((300f + extra).dp).background(Surface1).graphicsLayer { alpha = 1f - grow },
@@ -483,8 +508,33 @@ fun DetailScreen(
                             TrailerVideo(heroId, tMuted, Modifier.fillMaxWidth().height((300f + extra).dp), fitWhole = false, backdrop = backdrop,
                                 onPlaying = { tPlay = true; HeroSound.played += meta.id }, onEnded = { tStop = true; tPlay = false }, onError = { tStop = true; tPlay = false })
                         }
+                        val ct = cardTrailer
+                        if (BuildConfig.LIVE_ONLY && ct != null) key(ct.key) {
+                            TrailerVideo(ct.key, cardMuted, Modifier.fillMaxWidth().height((300f + extra).dp), fitWhole = false, backdrop = backdrop,
+                                onPlaying = { cardPlaying = true }, onEnded = { cardTrailer = null; cardPlaying = false },
+                                onError = { cardTrailer = null; cardPlaying = false; Snack.show("This trailer couldn't play") })
+                        }
                         Box(Modifier.padding(top = (150f + extra).dp).fillMaxWidth().height(160.dp).background(Brush.verticalGradient(listOf(Color.Transparent, TitleCardBg))))
-                        if (tStop && heroId != null && isOn(texts["cardTrailers"] ?: "yes")) Row(
+                        if (BuildConfig.LIVE_ONLY && ct != null) {
+                            // Sound, full screen and stop on the card; which trailer is playing; a thin red progress line.
+                            Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Box(Modifier.size(38.dp).clip(CircleShape).background(Color(0x88000000)).clickable { cardMuted = !cardMuted }, Alignment.Center) {
+                                    Icon(if (cardMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp, if (cardMuted) "Sound on" else "Sound off", Modifier.size(20.dp), tint = Color.White)
+                                }
+                                Box(Modifier.size(38.dp).clip(CircleShape).background(Color(0x88000000)).clickable {
+                                    val chain = trailerChain(); val i = chain.indexOfFirst { it.key == ct.key }
+                                    cardTrailer = null; cardPlaying = false
+                                    if (i >= 0) openTrailers(chain, i) else launchTrailer(listOf(ct.key), listOf(ct.name), 0, meta.name)
+                                }, Alignment.Center) { Icon(Icons.Default.Fullscreen, "Full screen", Modifier.size(22.dp), tint = Color.White) }
+                                Box(Modifier.size(38.dp).clip(CircleShape).background(Color(0x88000000)).clickable { cardTrailer = null; cardPlaying = false }, Alignment.Center) {
+                                    Icon(Icons.Default.Close, "Stop trailer", Modifier.size(20.dp), tint = Color.White)
+                                }
+                            }
+                            if (cardPlaying) Text(ct.name + (ct.lang?.let { l -> " · " + java.util.Locale(l).getDisplayLanguage(java.util.Locale.ENGLISH) } ?: ""),
+                                Modifier.padding(start = 14.dp, top = (252f + extra).dp).clip(RoundedCornerShape(10.dp)).background(Color(0x77000000)).padding(horizontal = 8.dp, vertical = 3.dp),
+                                fontSize = 11.sp, color = Color(0xFFE6E9F2), maxLines = 1)
+                        }
+                        if (tStop && heroId != null && !BuildConfig.LIVE_ONLY && isOn(texts["cardTrailers"] ?: "yes")) Row(
                             Modifier.align(Alignment.TopEnd).padding(12.dp).clip(RoundedCornerShape(50)).background(Color(0x88000000))
                                 .clickable { tStop = false; tPlay = false; tArm = true }.padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -571,6 +621,14 @@ fun DetailScreen(
                                 Icon(if (dlDone) Icons.Default.DownloadDone else Icons.Default.Download, "Download", Modifier.size(24.dp), tint = Color.White)
                             }
                         }
+                        if (BuildConfig.LIVE_ONLY) Box {
+                            // Tap = trailer in the card · hold = every trailer. A small bubble explains it the first few times.
+                            LaunchedEffect(hasTrailer) { if (hasTrailer) { delay(700); tipOnce("tipTapTrailer", "Tap to watch the trailer") } }
+                            val on = cardTrailer != null
+                            LabeledRound("Trailer", Modifier.tourTarget("trailer").alpha(if (hasTrailer) 1f else 0.45f).tapHold(onTap = { trailerTip = null; playTrailer() }, onHold = { trailerTip = null; holdTrailer() }),
+                                rim = if (on) BrandRed else Color(0x8CE50914)) { ClapperGlyph(22.dp) }
+                            TrailerTip(trailerTip, Modifier.align(Alignment.TopCenter)) { trailerTip = null }
+                        } else
                         LabeledRound("Trailers", Modifier.tourTarget("trailer").alpha(if (hasTrailer) 1f else 0.45f).tapHold(onTap = { if (videos.size > 1) showVideos = true else playTrailer() }, onHold = { holdTrailer() }), rim = Color(0x8CE50914)) { ClapperGlyph(22.dp) }
                     }
                 }
@@ -723,7 +781,7 @@ fun DetailScreen(
         if (shareFriends) ShareWithFriends(meta, Social.friends.collectAsState().value) { shareFriends = false }
         if (planWatch) PlanFlow(meta, null, Social.friends.collectAsState().value, null, onDone = { planWatch = false })
 
-        if (showVideos) VideosSheet(meta.name, videos, anyOfficial, onDismiss = { showVideos = false }) { list, i -> openTrailers(list, i) }
+        if (showVideos) VideosSheet(meta.name, videos, anyOfficial, onDismiss = { showVideos = false }) { list, i -> if (BuildConfig.LIVE_ONLY) playInCard(list[i]) else openTrailers(list, i) }
 
         // Full-screen sources page slides up over the details.
         val tgt = pick
@@ -1021,5 +1079,47 @@ fun airsIn(released: String?): String? {
         mins < 60 -> "Airs in ${mins.coerceAtLeast(1)} min"
         mins < 24 * 60 -> "Airs in ${mins / 60} h"
         else -> { val d = ((mins + 24 * 60 - 1) / (24 * 60)); if (d == 1L) "Airs tomorrow" else "Airs in $d days" }
+    }
+}
+
+/**
+ * Xstream Live: a small bubble that pops out of the Trailer button for ~3 s, then shrinks back into it (with one soft
+ * red pulse ring round the button).
+ */
+@Composable
+private fun TrailerTip(text: String?, modifier: Modifier, onGone: () -> Unit) {
+    val pop = remember { androidx.compose.animation.core.Animatable(0f) }
+    val ring = remember { androidx.compose.animation.core.Animatable(0f) }
+    var shown by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(text) {
+        if (text == null) { pop.animateTo(0f, tween(200)); shown = null; return@LaunchedEffect }
+        shown = text
+        pop.snapTo(0f)
+        pop.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 420f))
+        delay(3_000)
+        pop.animateTo(0f, tween(260, easing = FastOutSlowInEasing))
+        ring.snapTo(0f); ring.animateTo(1f, tween(700))
+        shown = null
+        onGone()
+    }
+    Box(modifier.offset(y = 4.dp).size(52.dp).graphicsLayer {
+        val v = ring.value
+        alpha = if (v in 0.001f..0.999f) 1f - v else 0f
+        scaleX = 1f + v * 0.35f; scaleY = scaleX
+    }.border(2.dp, BrandRed, CircleShape))
+    val t = shown ?: return
+    Box(
+        modifier.offset(y = (-48).dp).wrapContentSize(unbounded = true).graphicsLayer {
+            val v = pop.value
+            alpha = v.coerceIn(0f, 1f); scaleX = 0.3f + 0.7f * v; scaleY = scaleX
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+        },
+    ) {
+        Text(buildAnnotatedString {
+            val i = t.indexOf("trailer")
+            if (i >= 0) { append(t.substring(0, i)); withStyle(SpanStyle(color = Color(0xFFFF4D55))) { append(t.substring(i)) } } else append(t)
+        }, Modifier.shadow(10.dp, RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp)).background(Color(0xF01E2232))
+            .border(1.dp, Color(0x2EFFFFFF), RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 9.dp),
+            fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, softWrap = false)
     }
 }

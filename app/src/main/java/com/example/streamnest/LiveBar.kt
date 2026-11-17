@@ -66,7 +66,7 @@ fun LiveBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> U
                 }
                 .shadow(24.dp, shape).clip(shape)
                 .background(Brush.verticalGradient(listOf(Color(0xF0151A2B), Color(0xF50F1014))))
-                .border(1.dp, Brush.horizontalGradient(listOf(Color(0x4D3A4590), Color(0x18FFFFFF), Color(0x4DE50914))), shape)
+                .border(1.dp, Brush.horizontalGradient(listOf(Color(0x80E50914), Color(0x14FFFFFF), Color(0x14FFFFFF), Color(0x80E50914))), shape)
                 .padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
         ) {
