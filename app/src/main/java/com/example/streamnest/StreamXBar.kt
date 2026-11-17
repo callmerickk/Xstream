@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -219,8 +221,11 @@ internal fun SxProfileSwitcher(vm: AppViewModel, hover: Int, onDismiss: () -> Un
                         .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, onClick = onAdd),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
                 ) {
-                    Box(Modifier.size(44.dp).clip(CircleShape).background(Color(0x22FFFFFF)).border(2.dp, if (hot) Color.White else Color(0x44FFFFFF), CircleShape), Alignment.Center) {
-                        Icon(Icons.Default.Add, "Add profile", Modifier.size(24.dp), tint = Color.White)
+                    Box(Modifier.size(52.dp), Alignment.Center) {
+                        if (hot) SxWaterRipple(Modifier.matchParentSize())
+                        Box(Modifier.size(44.dp).clip(CircleShape).background(Color(0x22FFFFFF)).border(2.dp, if (hot) Color.White else Color(0x44FFFFFF), CircleShape), Alignment.Center) {
+                            Icon(Icons.Default.Add, "Add profile", Modifier.size(24.dp), tint = Color.White)
+                        }
                     }
                     Text("Add", Modifier.padding(top = 2.dp), fontSize = 11.sp, color = Color(0xFFB6BDCC), maxLines = 1)
                 }
@@ -234,7 +239,11 @@ internal fun SxProfileSwitcher(vm: AppViewModel, hover: Int, onDismiss: () -> Un
                         .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { if (!on) ProfileLock.ask(pr) { vm.selectProfile(pr); onPicked() } else onPicked() },
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
                 ) {
-                    ProfileAvatar(vm, pr, 44.dp, if (hot) Modifier.border(2.dp, Color.White, CircleShape) else if (on) Modifier.border(2.dp, Accent, CircleShape) else Modifier, animate = false)
+                    // Water rings spreading under the profile your finger is on (like StreamX).
+                    Box(Modifier.size(52.dp), Alignment.Center) {
+                        if (hot) SxWaterRipple(Modifier.matchParentSize())
+                        ProfileAvatar(vm, pr, 44.dp, if (hot) Modifier.border(2.dp, Color.White, CircleShape) else if (on) Modifier.border(2.dp, Accent, CircleShape) else Modifier, animate = false)
+                    }
                     Text(pr.name, Modifier.padding(top = 4.dp), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         fontWeight = if (on) FontWeight.Bold else FontWeight.Normal, color = if (on) Color.White else Color(0xFFB6BDCC))
                 }
@@ -243,3 +252,15 @@ internal fun SxProfileSwitcher(vm: AppViewModel, hover: Int, onDismiss: () -> Un
     }
 }
 
+/** Soft rings spreading out like water under the profile your finger is on. */
+@Composable
+private fun SxWaterRipple(modifier: Modifier) {
+    val inf = androidx.compose.animation.core.rememberInfiniteTransition(label = "water")
+    val t by inf.animateFloat(0f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1200, easing = androidx.compose.animation.core.LinearEasing)), label = "w")
+    Spacer(modifier.drawBehind {
+        for (k in 0..2) {
+            val p = (t + k / 3f) % 1f
+            drawCircle(Color(0xFF9FD8FF), radius = size.minDimension / 2f * (0.8f + 0.7f * p), alpha = 0.7f * (1f - p), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+        }
+    })
+}

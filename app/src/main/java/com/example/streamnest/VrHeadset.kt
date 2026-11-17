@@ -99,6 +99,19 @@ object VrState {
     var sizeIdx = 1
     var fixed = false
     var smooth = false
+    var depth = true
+}
+
+/** Live values the click reads directly (never through the screen's drawing, which kept old values). */
+private class VrLive {
+    @Volatile var yaw = 0f
+    @Volatile var pitch = 0f
+    @Volatile var openYaw = 0f
+    @Volatile var openPitch = 0f
+    @Volatile var events = 0
+    @Volatile var layout: List<VrCtl> = emptyList()
+    @Volatile var panelH = 0f
+    @Volatile var k = 300f
 }
 
 /** A real 3D copy (two pictures in one): 0 = none, 1 = side by side, 2 = top / bottom. */
@@ -187,6 +200,7 @@ fun VrHeadsetView(
                 (if (VrState.fixed) "fixed screen" else "screen follows the head") + (if (stereo != 0) " · 3D copy" else ""))
         }
         var glView by remember { mutableStateOf<VrGlView?>(null) }
+        val live = remember { VrLive() }
         var controls by remember { mutableStateOf(false) }
         var browse by remember { mutableStateOf(false) }
         // Head direction from the phone's motion sensor (radians, + = looking left / up), relative to "straight ahead".
@@ -199,6 +213,9 @@ fun VrHeadsetView(
         var fixed by remember { mutableStateOf(VrState.fixed) }
         var smooth by remember { mutableStateOf(VrState.smooth) }
         var subsOn by remember { mutableStateOf(true) }
+        // 3D: a real 3D copy when there is one; otherwise the cinema's depth (each eye from its own place) on / off.
+        var depth by remember { mutableStateOf(VrState.depth) }
+        LaunchedEffect(depth, glView) { glView?.setDepth(depth); VrState.depth = depth }
         var tick by remember { mutableIntStateOf(0) }
         var hint by remember { mutableStateOf(true) }
         var playing by remember { mutableStateOf(player.isPlaying) }
@@ -235,18 +252,19 @@ fun VrHeadsetView(
                     while (dy > Math.PI) dy -= (2 * Math.PI).toFloat(); while (dy < -Math.PI) dy += (2 * Math.PI).toFloat()
                     headYaw = -dy
                     headPitch = up - b.second
+                    live.yaw = -dy; live.pitch = up - b.second; live.events++
                 }
                 override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
             }
-            if (rv != null) sm.registerListener(l, rv, android.hardware.SensorManager.SENSOR_DELAY_GAME)
+            if (rv != null) { sm.registerListener(l, rv, android.hardware.SensorManager.SENSOR_DELAY_GAME); ActLog.add("PLAY", "VR: motion sensor on (${rv.name})") }
             else ActLog.add("PLAY", "VR: this phone has no motion sensor")
-            onDispose { sm.unregisterListener(l); if (!fixed) { headYaw = 0f; headPitch = 0f } }
+            onDispose { sm.unregisterListener(l); if (!fixed) { headYaw = 0f; headPitch = 0f; live.yaw = 0f; live.pitch = 0f } }
         }
         LaunchedEffect(headYaw, headPitch, fixed, glView) { glView?.setHead(if (fixed) headYaw else 0f, if (fixed) headPitch else 0f, fixed) }
         LaunchedEffect(controls) { while (controls) { tick++; delay(500) } }
         val browseRows = remember(browse) { if (browse) browseItems(vm) else emptyList() }
         val hasNext = onNext != null
-        val layout = if (browse) browseLayout(browseRows) else controlLayout(hasNext, threeD != null || stereo != 0)
+        val layout = if (browse) browseLayout(browseRows) else controlLayout(hasNext, true)
         val pH = if (browse) browseHeight(browseRows.size) else CONTROL_H
 
         BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
@@ -258,10 +276,17 @@ fun VrHeadsetView(
             val pointerX = PANEL_W / 2f - relYaw * k
             val pointerY = pH / 2f - relPitch * k
             val over = if (controls) layout.firstOrNull { it.has(pointerX, pointerY) } else null
+            live.layout = layout; live.panelH = pH; live.k = k
             fun click() {
-                if (!controls) { openYaw = headYaw; openPitch = headPitch; controls = true; browse = false; ActLog.add("PLAY", "VR: controls opened"); return }
-                val h = layout.firstOrNull { it.has(pointerX, pointerY) }
-                ActLog.add("PLAY", "VR click: ${h?.label ?: "empty space → controls closed"} · dot at ${pointerX.toInt()},${pointerY.toInt()} · head ${Math.toDegrees(relYaw.toDouble()).toInt()}°/${Math.toDegrees(relPitch.toDouble()).toInt()}°")
+                if (!controls) {
+                    live.openYaw = live.yaw; live.openPitch = live.pitch; openYaw = live.yaw; openPitch = live.pitch
+                    controls = true; browse = false; ActLog.add("PLAY", "VR: controls opened"); return
+                }
+                // Read the head and the panel as they are this instant.
+                val ry = live.yaw - live.openYaw; val rp = live.pitch - live.openPitch
+                val px = PANEL_W / 2f - ry * live.k; val py = live.panelH / 2f - rp * live.k
+                val h = live.layout.firstOrNull { it.has(px, py) }
+                ActLog.add("PLAY", "VR click: ${h?.label ?: "empty space → controls closed"} · dot at ${px.toInt()},${py.toInt()} · head ${Math.toDegrees(ry.toDouble()).toInt()}°/${Math.toDegrees(rp.toDouble()).toInt()}° · sensor ${live.events}")
                 if (h == null) { controls = false; browse = false; return }
                 val dur = player.duration.coerceAtLeast(0)
                 val am = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
@@ -269,7 +294,7 @@ fun VrHeadsetView(
                     h.id == "play" -> if (player.isPlaying) player.pause() else player.play()
                     h.id == "back" -> onSeekTo((player.currentPosition - 10_000).coerceAtLeast(0))
                     h.id == "fwd" -> onSeekTo((player.currentPosition + 10_000).coerceAtMost(dur))
-                    h.id == "bar" -> if (dur > 0) onSeekTo((dur * ((pointerX - h.x) / h.w).coerceIn(0f, 1f)).toLong())
+                    h.id == "bar" -> if (dur > 0) onSeekTo((dur * ((px - h.x) / h.w).coerceIn(0f, 1f)).toLong())
                     h.id == "volDown" -> am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_LOWER, 0)
                     h.id == "volUp" -> am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_RAISE, 0)
                     h.id == "bright" -> window?.let { w ->
@@ -281,10 +306,10 @@ fun VrHeadsetView(
                     h.id == "size" -> sizeIdx = (sizeIdx + 1) % sizes.size
                     h.id == "pic" -> smooth = !smooth
                     h.id == "fixed" -> { fixed = !fixed; VrState.fixed = fixed; recenter++ }
-                    h.id == "center" -> { recenter++; openYaw = 0f; openPitch = 0f; headYaw = 0f; headPitch = 0f }
+                    h.id == "center" -> { recenter++; openYaw = 0f; openPitch = 0f; headYaw = 0f; headPitch = 0f; live.openYaw = 0f; live.openPitch = 0f; live.yaw = 0f; live.pitch = 0f }
                     h.id == "subs" -> subsOn = !subsOn
                     h.id == "audio" -> nextAudio(player)
-                    h.id == "3d" -> threeD?.invoke()
+                    h.id == "3d" -> if (threeD != null) threeD() else if (stereo == 0) depth = !depth
                     h.id == "next" -> onNext?.let { VrState.resume = true; it() }
                     h.id == "browse" -> browse = true
                     h.id == "browseBack" -> browse = false
@@ -293,8 +318,19 @@ fun VrHeadsetView(
                 }
                 tick++
             }
-            // Always the newest click (it reads where the dot is right now — the old one kept the first position).
             val clickNow by rememberUpdatedState(::click)
+            // Also: keep the dot on a control for 1.5 s and it clicks by itself (a ring fills round the dot).
+            val dwell = remember { androidx.compose.animation.core.Animatable(0f) }
+            LaunchedEffect(over?.id, controls) {
+                dwell.snapTo(0f)
+                val id = over?.id ?: return@LaunchedEffect
+                if (!controls || id == "bar") return@LaunchedEffect
+                delay(250)
+                dwell.animateTo(1f, tween(1_250, easing = androidx.compose.animation.core.LinearEasing))
+                ActLog.add("PLAY", "VR: held on ${over.label} → click")
+                clickNow()
+                dwell.snapTo(0f)
+            }
             Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { clickNow() }) }) {
                 AndroidView(factory = { c -> VrGlView(c, player).also { glView = it } }, onRelease = { it.release() }, modifier = Modifier.fillMaxSize())
                 // Where the bottom of the curved screen sits in each eye (for the subtitles).
@@ -321,11 +357,16 @@ fun VrHeadsetView(
                                 Box(Modifier.offset(ox.dp, oy.dp).size(PANEL_W.dp, pH.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xE60F1014))
                                     .border(1.dp, Color(0x594B4FD8), RoundedCornerShape(14.dp))) {
                                     if (browse) BrowsePanel(browseRows, layout, over)
-                                    else ControlPanel(player, title, tick, layout, over, subsOn, sizes[sizeIdx].first, smooth, fixed, pointerX)
+                                    else ControlPanel(player, title, tick, layout, over, subsOn, sizes[sizeIdx].first, smooth, fixed, pointerX,
+                                        threeDLabel = when { stereo != 0 -> "3D · playing a real 3D copy"; threeD != null -> "3D · switch to the 3D copy"
+                                            else -> "3D depth · ${if (depth) "on" else "off"} (no 3D copy of this film)" })
                                 }
                                 // The pointer: always in the middle of your view.
                                 Box(Modifier.offset((cx - 5).dp, (cy - 5).dp).size(10.dp).clip(CircleShape)
                                     .background(Color.White).border(2.dp, Color(0xFF6A6FF0), CircleShape))
+                                if (dwell.value > 0f) androidx.compose.foundation.Canvas(Modifier.offset((cx - 11).dp, (cy - 11).dp).size(22.dp)) {
+                                    drawArc(Color.White, -90f, 360f * dwell.value, false, style = androidx.compose.ui.graphics.drawscope.Stroke(2.5.dp.toPx()))
+                                }
                             } else if (hint) Text("Press the headset button for controls", Modifier.align(Alignment.BottomCenter).padding(bottom = (eyeH * 0.12f).dp)
                                 .clip(RoundedCornerShape(12.dp)).background(Color(0xAA000000)).padding(horizontal = 10.dp, vertical = 4.dp), fontSize = 10.sp, color = Color.White)
                         }
@@ -356,7 +397,7 @@ private fun fmt(ms: Long): String { val s = (ms / 1000).coerceAtLeast(0); return
 
 @Composable
 private fun ControlPanel(player: Player, title: String, tick: Int, layout: List<VrCtl>, over: VrCtl?, subsOn: Boolean, size: String,
-    smooth: Boolean, fixed: Boolean, px: Float) {
+    smooth: Boolean, fixed: Boolean, px: Float, threeDLabel: String = "3D") {
     @Suppress("UNUSED_VARIABLE") val t = tick
     Text(title, Modifier.offset(8.dp, 5.dp).width((PANEL_W - 16f).dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
     val dur = player.duration.coerceAtLeast(1); val pos = player.currentPosition
@@ -396,6 +437,7 @@ private fun ControlPanel(player: Player, title: String, tick: Int, layout: List<
         over.id == "size" -> "Screen size · $size"
         over.id == "pic" -> "Picture · ${if (smooth) "Smooth" else "Sharp"}"
         over.id == "fixed" -> "Fixed screen · ${if (fixed) "on" else "off"}"
+        over.id == "3d" -> threeDLabel
         else -> over.label
     }, Modifier.offset(0.dp, (last + 3f).dp).width(PANEL_W.dp), fontSize = 8.sp, color = Color(0xFFC9CEDE), textAlign = TextAlign.Center, maxLines = 1)
 }
@@ -440,6 +482,7 @@ private class VrGlView(ctx: Context, private val player: Player) : GLSurfaceView
     fun setSharp(f: Float) { renderer.sharp = f; requestRender() }
     fun setStereo(k: Int) { renderer.stereo = k; requestRender() }
     fun setLamps(f: Float) { renderer.lamps = f; requestRender() }
+    fun setDepth(on: Boolean) { renderer.ipd = if (on) 0.008f else 0f; requestRender() }
     /** With a fixed screen the picture is redrawn as the head turns (every frame); otherwise only when a new frame comes. */
     fun setHead(yaw: Float, pitch: Float, fixed: Boolean) {
         renderer.yaw = yaw; renderer.pitch = pitch
@@ -469,6 +512,7 @@ private class VrRenderer(private val view: VrGlView) : GLSurfaceView.Renderer {
     @Volatile var sharp = 0.35f
     @Volatile var stereo = 0
     @Volatile var lamps = 0.12f
+    @Volatile var ipd = 0.008f
     @Volatile var yaw = 0f
     @Volatile var pitch = 0f
     private var w = 1; private var h = 1
@@ -525,6 +569,7 @@ private class VrRenderer(private val view: VrGlView) : GLSurfaceView.Renderer {
         GLES20.glUniform1f(GLES20.glGetUniformLocation(prog, "uYaw"), yaw)
         GLES20.glUniform1f(GLES20.glGetUniformLocation(prog, "uPitch"), pitch)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(prog, "uStereo"), stereo)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(prog, "uIpd"), ipd)
         for (eye in 0..1) {
             GLES20.glViewport(eye * half, 0, half, h)
             // Lens centre a little towards the nose (phone headsets' lenses sit closer together than half the screen).
@@ -566,7 +611,7 @@ precision highp float;
 varying vec2 vUv;
 uniform samplerExternalOES sTex; uniform mat4 uTex;
 uniform float uHalfW; uniform float uHalfH; uniform float uShift; uniform float uAspect; uniform vec2 uTexel;
-uniform float uSharp; uniform float uLamps; uniform float uYaw; uniform float uPitch; uniform float uEye; uniform int uStereo;
+uniform float uSharp; uniform float uLamps; uniform float uYaw; uniform float uPitch; uniform float uEye; uniform int uStereo; uniform float uIpd;
 vec3 tap(vec2 p) { return texture2D(sTex, (uTex * vec4(p, 0.0, 1.0)).xy).rgb; }
 vec2 pick(vec2 q) {
     if (uStereo == 1) return vec2(q.x * 0.5 + (uEye > 0.0 ? 0.5 : 0.0), q.y);
@@ -585,7 +630,7 @@ void main() {
     d = vec3(d.x, d.y * cp + d.z * sp, -d.y * sp + d.z * cp);
     float cy = cos(uYaw), sy = sin(uYaw);
     d = vec3(d.x * cy - d.z * sy, d.y, d.x * sy + d.z * cy);
-    vec3 o = vec3(uEye * 0.008, 0.0, 0.0);
+    vec3 o = vec3(uEye * uIpd, 0.0, 0.0);
     float best = 1e9; vec3 col = vec3(0.0);
     // Screen light (average of the film) that falls on the room.
     vec3 glow = (tap(pick(vec2(0.3, 0.5))) + tap(pick(vec2(0.7, 0.5))) + tap(pick(vec2(0.5, 0.3))) + tap(pick(vec2(0.5, 0.7)))) * 0.25;

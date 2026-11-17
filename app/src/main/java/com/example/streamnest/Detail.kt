@@ -1113,11 +1113,12 @@ private fun TrailerTip(text: String?, modifier: Modifier, onGone: () -> Unit) {
         // Takes no room in the row (the Play button and the others never shrink): it floats above the Trailer button.
         modifier.layout { m, _ ->
             val pl = m.measure(androidx.compose.ui.unit.Constraints())
-            layout(0, 0) { pl.place(-pl.width / 2, -pl.height - 6.dp.roundToPx()) }
+            // Grows out to the left of the Trailer button (it sits at the right edge, so a centred bubble was cut off).
+            layout(0, 0) { pl.place(-pl.width + 30.dp.roundToPx(), -pl.height - 6.dp.roundToPx()) }
         }.graphicsLayer {
             val v = pop.value
             alpha = v.coerceIn(0f, 1f); scaleX = 0.3f + 0.7f * v; scaleY = scaleX
-            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.9f, 1f)
         },
     ) {
         Text(buildAnnotatedString {

@@ -89,8 +89,9 @@ object YtDirect {
     private val JSONT = "application/json".toMediaType()
 
     /** Tallest picture to ask for: small on TV sticks (a second decoder next to the movie's), sharper on phones. */
-    private val maxHeight: Int get() = if (BuildConfig.IS_TV) 480 else if (BuildConfig.LIVE_ONLY && metered()) 360 else 720
-    /** Xstream Live: trailers at 360p on mobile data (20 trailers at 720p were ~235 MB). */
+    fun limitHeight(): Int = maxHeight
+    private val maxHeight: Int get() = if (BuildConfig.IS_TV) 480 else if (BuildConfig.LIVE_ONLY && metered()) 480 else 720
+    /** Xstream Live: trailers at 480p on mobile data, 720p on Wi-Fi. */
     private fun metered(): Boolean = runCatching {
         (Public.vm!!.appContext.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered
     }.getOrDefault(true)
@@ -135,10 +136,14 @@ object YtDirect {
         var out: Src? = null
         if (pool.isNotEmpty()) {
             // Each candidate's link is checked (and moved to a backup server that answers) in parallel; the best that works wins.
-            val checked = coroutineScope { pool.take(6).map { (n, s) -> async { n to reachable(s) } }.awaitAll() }
-            val ok = checked.firstOrNull { it.second != null }
+            val checked = coroutineScope { pool.take(10).map { (n, s) -> async { n to reachable(s) } }.awaitAll() }
+            // The sharpest that works (up to 720p on Wi-Fi / 480p on mobile data; a playlist adapts up to that), not
+            // simply the first — the first was often a 360p file.
+            fun score(x: Src) = if (x.hls) maxHeight else x.height.coerceAtMost(maxHeight)
+            val good = checked.filter { it.second != null }
+            val ok = good.maxByOrNull { score(it.second!!) }?.takeIf { true } ?: checked.firstOrNull { it.second != null }
             out = ok?.second
-            if (ok != null) ActLog.add("TRAILER", "$videoId · ${ok.first} · ${if (out!!.hls) "HLS" else "${out.height}p"}${if (visitor != null) " · visitor" else ""}")
+            if (ok != null) ActLog.add("TRAILER", "$videoId · ${ok.first} · ${if (out!!.hls) "HLS ≤${maxHeight}p" else "${out.height}p"}${if (visitor != null) " · visitor" else ""}")
             else ActLog.add("TRAILER", "$videoId · ${pool.size} links, none answered")
         }
         // YouTube said no to every app client: ask public Piped / Invidious mirrors (they hand out playable addresses).
@@ -512,6 +517,8 @@ fun DirectTrailer(
         // A small buffer: trailers start fast and leave memory for the app (and the movie, on TV).
         val load = DefaultLoadControl.Builder().setBufferDurationsMs(4_000, 15_000, 800, 1_500).build()
         ExoPlayer.Builder(ctx).setLoadControl(load).build().apply {
+            // A playlist never climbs above the trailer limit (480p on mobile data, 720p on Wi-Fi).
+            trackSelectionParameters = trackSelectionParameters.buildUpon().setMaxVideoSize(Int.MAX_VALUE, YtDirect.limitHeight()).build()
             setMediaSource(source); repeatMode = Player.REPEAT_MODE_OFF; volume = if (muted) 0f else 1f
             prepare(); playWhenReady = true
         }

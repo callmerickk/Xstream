@@ -1,5 +1,5 @@
-Xstream Live 1.0.7
+Xstream Live 1.0.8
 
-• VR: every control works now; a cinema with seats and wall lamps around a curved screen; Fixed screen mode.
-• VR: bigger screen sizes, Sharp / Smooth picture, 4K on Wi-Fi, subtitles like the normal player.
-• Home rows exactly like StreamX. Trailers stop when you leave the app.
+• VR controls work: point with your head and press, or hold the dot on a control for 1.5 s.
+• A 3D button in VR. Sharper Home trailers (720p on Wi-Fi).
+• Trailer bubble fits on screen; water rings in the profile switcher.

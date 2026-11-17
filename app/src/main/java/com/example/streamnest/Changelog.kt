@@ -13,6 +13,12 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("1.0.8", "18 Nov 2026", "VR controls really work", listOf(
+        "VR: a click reads your head direction at that instant (it kept the first position); hold the dot on a control 1.5 s to click too",
+        "VR: a 3D button — plays a real 3D copy when there is one, otherwise turns the cinema's depth on / off",
+        "Trailers on Home look sharper: the best copy that works (720p on Wi-Fi, 480p on mobile data)",
+        "Title page: the trailer bubble grows out to the left so it fits; hold Me: water rings under the profile like StreamX",
+    )),
     Release("1.0.7", "18 Nov 2026", "VR cinema, StreamX Home", listOf(
         "VR: controls click what the dot is on (only Forward 10 s worked before); every VR action is in the log",
         "VR: a cinema around you — curved screen, seats, wall lamps that glow when you pause; real depth for each eye",
