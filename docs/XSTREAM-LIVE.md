@@ -22,3 +22,11 @@ Removed from Xstream in 0.8.0 because plugins start streams faster. Kept here as
 - Player buffer ~60 s ahead, minimal back buffer.
 - Trailers only on the home card; 360p on mobile data, 720p on Wi-Fi.
 - Plugin warm-up at start fully blocked in Live-only mode.
+
+## Agreed 17 Nov — VR controls (headset button + gyro pointer)
+- Headset button press (it touches the screen) while controls are hidden → controls appear, gyro on, pointer dot in the centre.
+- Head moves the pointer; every control reachable; button press = click on whatever the pointer is on (no dwell timer).
+- Button press with the pointer on empty space → controls disappear, gyro off, big screen stays fixed.
+- Controls: play/pause, −10/+10 s, timeline, volume, brightness, audio/subtitles, next episode / episodes,
+  screen size (Small / Big / IMAX), recenter, Browse (poster wall: Continue, Top 10, Watchlist), leave VR.
+- Dark cinema room, subtitles in both eyes, Bluetooth remote / earphone keys keep working.
