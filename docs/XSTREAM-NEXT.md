@@ -48,3 +48,11 @@ Player (keep the current layout)
 18. Seek preview thumbnails per title (HLS first, MKV/MP4 anchor-aligned) — not built before.
 Logs
 19. Log browser apps: Xstream Mobile, Xstream Live, StreamX Mobile (needs StreamX to send to the shared logs), StreamX TV (now shown as "Xstream TV").
+
+### Updates to the 0.8.7 plan (19 Nov, 05:04)
+- 10 → the ‹ button sits between the clock and the lock; ICONS ONLY (Watch together, VR headset) slide out leftwards ~3 s at start and back in. No ⋯ there.
+- 12 → keep today's quality sheet frame but narrower (fits content); no source name in the main list; only the red tick marks what plays; badge text "60fps" in full; Other streams (folded) shows sources with the same red tick on the playing one.
+- 13/14 + HLS itself: within HLS, drop 1080p → 720p → 480p and back automatically with bandwidth (like Netflix/Hotstar), never a loading screen.
+- 20. Poster cache: posters/backdrops kept on disk; at launch Home shows from cache at once (no shimmer), refresh in background, cached set shuffled for next launch.
+- 8 → "Cascade" rejected — offer new names.
+- 16 → VR icon = headset (A). Look around OFF by default (user turns it on).
