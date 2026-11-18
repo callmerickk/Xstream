@@ -123,12 +123,12 @@ fun AppLogo(vm: AppViewModel, size: Dp, modifier: Modifier = Modifier) {
 
 internal data class DeckItem(val meta: Meta, val catalog: String)
 /** The top cards AIDEN picked for this profile. */
-private const val AIDEN_PICK = "\u0001aiden"
+internal const val AIDEN_PICK = "\u0001aiden"
 
 /** LazyColumn key of the top cards (also used to find them in the list's layout info). */
 private const val DeckKey = "deck"
 /** The endless deck repeats its cards this many times (and starts in the middle). */
-private const val DeckLoops = 2000
+internal const val DeckLoops = 2000
 
 /**
  * A soft drop shadow drawn as a few stacked translucent rounded rects behind the content.
@@ -309,6 +309,17 @@ fun HomeScreen(
         if (deckIds.isEmpty() || !vm.liveMode()) return@LaunchedEffect
         delay(6_000)
         deckIds.forEach { id -> runCatching { LiveServer.streams(vm.appContext, "movie", id, ahead = true) } }
+    }
+    // Xstream (plugins / addons): the same look-ahead — the first cards and the top of Pick up where you left off are
+    // looked up quietly, two at a time, after Home has settled; opening one turns the light green at once.
+    val aheadIds = remember(deck, progress.take(2).map { it.key }) {
+        deck.take(4).map { it.meta }.filter { it.type == "movie" && it.id.startsWith("tt") }.map { "movie" to it.id } +
+            progress.take(2).map { p -> (if (p.key.contains(":")) "series" else "movie") to p.key }
+    }
+    LaunchedEffect(aheadIds) {
+        if (aheadIds.isEmpty() || vm.liveMode() || BuildConfig.LIVE_ONLY) return@LaunchedEffect
+        delay(5_000)
+        aheadIds.forEach { (type, id) -> launch { LinkMemory.lookAhead(vm, type, id) } }
     }
     // True while at least half of the top cards are on screen. Recomputed on scroll, but only notifies readers
     // when the answer flips, so it costs nothing per frame. Trailers / auto-slide stop when the deck scrolls away.

@@ -2522,6 +2522,22 @@ fun PlayerScreen(
         )
     }
     fun playNext() { nextEp?.let { playEpisode(it) } }
+    // Next episode ready: at 75 % of this episode the next one is found and opened in a paused, hidden player (its first
+    // seconds loaded), so Next episode starts at once — no loading, no buffering. Dropped if you don't go on.
+    LaunchedEffect(nextEp?.id) {
+        val ep = nextEp ?: return@LaunchedEffect
+        if (BuildConfig.IS_TV || type != "series") return@LaunchedEffect
+        while (true) {
+            delay(5_000)
+            val d = curDur(); val at = curPos()
+            if (d > 5 * 60_000 && at >= d * 0.75) break
+        }
+        val saved = (vm.progress.value.firstOrNull { it.key == ep.id } ?: vm.epProgress.value[ep.id])
+            ?.takeIf { it.durationMs <= 0 || it.positionMs < it.durationMs * 0.95 }?.positionMs ?: 0L
+        val level = vm.playerPref("quality").ifEmpty { vm.texts.value["qsQuality"] ?: "auto" }
+        ActLog.add("PLAY", "next episode: getting S${ep.season}E${ep.episode} ready (75 % of this one watched)")
+        Prepare.start(vm, ctx, "series", ep.id, saved, null, p.quick, level, meta)
+    }
     // The AI card: voice commands for this video ("pause", "next episode", "forward 30"); it pauses the video while you talk.
     DisposableEffect(Unit) { AiPlayerBus.open = true; AiPlayerBus.title = p.title; onDispose { AiPlayerBus.open = false; AiPlayerBus.wasPlaying = false } }
     LaunchedEffect(Unit) {
@@ -3850,7 +3866,8 @@ fun PlayerScreen(
                         }
                     }
                 }
-                AnimatedVisibility(nearEnd && !locked,
+                // Not while Watch Next is open (two posters of the next episode showed at once).
+                AnimatedVisibility(nearEnd && !locked && !watchNext,
                     enter = fadeIn(tween(260)) + slideInHorizontally(tween(360)) { it / 3 },
                     exit = fadeOut(tween(200))) {
                     val windowStart = s?.outro?.start_ms ?: (dur - 120_000)

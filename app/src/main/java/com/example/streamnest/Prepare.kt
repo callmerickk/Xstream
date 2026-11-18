@@ -72,7 +72,14 @@ object Prepare {
             csWonFor = null
             /** Plugin mode: a Netflix-type link being checked while MovieBox is already ready keeps the "Ready" showing. */
             var quiet = false
-            fun put(p: Prepared) { if (csWonFor != id && !(quiet && !p.ready)) state.value = p }
+            fun put(p: Prepared) {
+                if (csWonFor != id && !(quiet && !p.ready)) state.value = p
+                // Remembered for next time (the light turns green at once when this title opens again).
+                if (p.ready && p.item != null) LinkMemory.put(ctx, id, listOf(p.item) + p.list)
+            }
+            // Links remembered from an earlier visit (or Home's look-ahead): checked first, while a fresh search runs.
+            val remembered = if (BuildConfig.LIVE_ONLY) null else LinkMemory.get(ctx, id)
+            if (remembered != null) PlayTiming.mark("remembered links: ${remembered.size} — checked first")
             // The 20-second CloudStream race is off: plugin mode's Quick Play is plugins already, addon mode never loads them.
             val csPicked = emptySet<String>()
             if (csPicked.isNotEmpty() && meta != null) launch {
@@ -106,6 +113,7 @@ object Prepare {
                     wideDone = true; publish()
                 }
             }
+            if (remembered != null) live.value = remembered to false
             val feeder = launch {
                 if (!quick) {
                     runCatching { vm.progressiveStreams(type, id, false).collect { live.value = it } }
@@ -138,9 +146,9 @@ object Prepare {
             // Wait for the first links, then up to 2 s more so a better addon can still answer.
             val plugMode = vm.pluginMode()
             val ottFirst = plugMode
-            val first = if (ottFirst) null else withTimeoutOrNull(if (plugMode) 45_000 else 30_000) { live.first { (l, d) -> d || (if (quick && !wideOn && !plugMode) l.any { it.startsFast() } else l.isNotEmpty()) } }
+            val first = if (ottFirst && remembered == null) null else withTimeoutOrNull(if (plugMode) 45_000 else 30_000) { live.first { (l, d) -> d || (if (quick && !wideOn && !plugMode) l.any { it.startsFast() } else l.isNotEmpty()) } }
             // A link in your top language that starts at once (MovieBox playlist) needs no waiting; otherwise ~1 s more.
-            val instant = live.value.first.any { vm.langRank(it) == 0 && it.startsFast() && (!quick || vm.isQuick(it)) }
+            val instant = remembered != null || live.value.first.any { vm.langRank(it) == 0 && it.startsFast() && (!quick || vm.isQuick(it)) }
             // Plugin mode: a few seconds more so the best quality (not just the fastest plugin) goes first.
             if (first != null && !first.second && !instant) withTimeoutOrNull(if (plugMode) 4_000 else 1_000) { live.first { it.second } }
             var list = live.value.first

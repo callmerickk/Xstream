@@ -42,6 +42,9 @@ import java.security.SecureRandom
 const val CINEMETA = "https://v3-cinemeta.strem.io"
 
 class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
+    /** The open screens (kept here so a phone rebuilding the screen doesn't close the player — vivo). */
+    val navStack = androidx.compose.runtime.mutableStateListOf<Screen>()
+
     private val ctx: Context get() = getApplication<Application>()
     private val sp = app.getSharedPreferences("addons", Context.MODE_PRIVATE)
     // "library" holds app-wide settings (custom texts, playlist) and also the FIRST profile's watch data,

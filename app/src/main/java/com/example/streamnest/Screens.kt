@@ -123,7 +123,9 @@ sealed interface Screen {
 
 @Composable
 fun App(vm: AppViewModel = viewModel()) {
-    val stack = remember { mutableStateListOf<Screen>() }
+    // Kept in the ViewModel (from StreamX): if a phone rebuilds the screen (vivo turning to landscape for the player), the
+    // open screen — the player — stays instead of falling back to the page underneath.
+    val stack = vm.navStack
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var voiceOpen by rememberSaveable { mutableStateOf(false) }
     val pop = { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex); Unit }

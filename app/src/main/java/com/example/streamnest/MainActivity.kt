@@ -72,7 +72,18 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 }
             }
         }
+        // From StreamX: vivo (Android 16) takes the app's screen off the window for a moment when the player turns
+        // sideways; by default that throws the whole screen away (the player closed). Kept until the app itself closes.
+        runCatching {
+            val cv = (window.decorView.findViewById<android.view.ViewGroup>(android.R.id.content)).getChildAt(0) as androidx.compose.ui.platform.ComposeView
+            cv.setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnLifecycleDestroyed(this))
+            cv.addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: android.view.View) { if (detachedOnce) ActLog.add("APP", "screen detached and re-attached by the phone (kept)") }
+                override fun onViewDetachedFromWindow(v: android.view.View) { if (!isFinishing) detachedOnce = true }
+            })
+        }
     }
+    private var detachedOnce = false
 
     // Activity log: every tap and remote key, with the button it hit.
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {

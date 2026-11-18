@@ -451,6 +451,3 @@ private fun SxGlassButton(modifier: Modifier, onClick: () -> Unit, content: @Com
     Row(modifier.clip(shape).background(Color(0x3DFFFFFF)).border(1.dp, Color(0x26FFFFFF), shape).clickable(onClick = onClick),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically, content = content)
 }
-
-/** Continue Watching card. style: "card" (TV-style), "wide" (info on the artwork) or "poster" (tall). */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
