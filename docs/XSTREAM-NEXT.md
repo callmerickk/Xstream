@@ -23,3 +23,28 @@ buttery smooth; how to bring in: new Home looks (Live / Cascade / Classic) with 
 preview, first-run Choose your look (OK = animated preview, OK again = keep, Back = choices), Horizon profile page,
 quick start with little data, seek preview thumbnails, Watch next corner, Next episode ready — and how to make it better."
 The TV look plan canvas (claude.ai artifact "Xstream TV look plan") has the boards; adapt them to StreamX TV.
+
+## Next Xstream mobile build (0.8.7) — merged list, build only when the user says "build"
+Fixes from logs
+1. OOM crashes: buffer budget from Runtime.maxMemory() (≈35 % of heap), split when a 2nd player (swap / preload / Watch next) runs.
+2. HostDown: never 127.0.0.1 / private IPs; ignore when ≥3 hosts fail within 5 s (network drop); log once per host.
+3. Watch next card: hand over as soon as a link works (≤6 s); smaller landscape card further in the corner with a progress line; tap = normal loading screen.
+4. Continue watching: last episode / movie ≥90 % (or credits) → out of the row and into Watched (VisionQuest S1E8 stayed).
+5. Search: hide addon error items (ids "aiostreamserror", names with [❌]); collections + posters/years from TMDB / Cinemeta.
+6. Back = one step back (search results, collection), keep query + scroll.
+Home / look
+7. Live: smaller IMDb badge; More Info replaced by round ▶ Trailer + ＋ My List (labels under); no automatic trailers; tap = 720p/1080p in the card, pause/mute while playing.
+8. Rename the "StreamX" home style (Cascade?) — user to confirm the name.
+9. Look pickers + first-run "Choose your look" with moving previews copied from the real three styles (screenshots 19 Nov).
+Player (keep the current layout)
+10. Remove the source icon. Watch together + VR + ⋯ go inside a ‹ button that slides them out leftwards for ~3 s at start, then folds back.
+11. Red dot on the progress bar. While seeking hide everything except the bar + preview thumbnail.
+12. Quality sheet: Auto, 4K 60, 4K, 1080p 60, 1080p, 720p, 480p… playing row always marked, 60 fps yellow badge (StreamX TV), "Other streams" folded; list prebuilt so it opens instantly (as fixed on StreamX TV).
+13. Quality changes by fade (frame-matched swap); a freeze + small ring only when unavoidable — never the loading screen.
+14. Slow internet on file sources (Vega / 4KHDHub): fade to HLS Auto; back to the file after ~3 min stable fast; menu keeps the chosen quality.
+15. Touch zones copied from StreamX: dead top/bottom strips, narrower brightness/volume, middle swipe-up = Watch next (one-hand).
+16. VR: new headset icon (A unless the user picks another); "Fixed screen" → "Look around" (360° icon, on by default?).
+17. Post-credit scene button (TMDB stinger keywords + credits detection) — not built before.
+18. Seek preview thumbnails per title (HLS first, MKV/MP4 anchor-aligned) — not built before.
+Logs
+19. Log browser apps: Xstream Mobile, Xstream Live, StreamX Mobile (needs StreamX to send to the shared logs), StreamX TV (now shown as "Xstream TV").
