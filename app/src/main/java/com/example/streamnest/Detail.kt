@@ -163,20 +163,27 @@ fun DetailScreen(
 
     var pick by remember { mutableStateOf<SourceTarget?>(null) }
     var notOutAsk by remember { mutableStateOf(false) }
+    var pendingCinema by remember { mutableStateOf<SourceTarget?>(null) }
+    var playCinema by remember { mutableStateOf<SourceTarget?>(null) }
     if (notOutAsk) {
         var followed by remember { mutableStateOf(AvailableNow.following(ctx, meta.id)) }
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { notOutAsk = false },
-            title = { Text("Not out online yet") },
-            text = { Text("${meta.name} is only in cinemas or not released yet, so there's nothing right to play. " +
-                if (followed) "You'll get a notification the day it's out." else "Want a notification the day it's out at home?") },
+            title = { Text("In cinemas only — not online yet") },
+            text = { Text("${meta.name} is only in cinemas so far. A cinema recording may exist, but the picture and sound are poor. " +
+                if (followed) "You'll get a notification the day it's out at home." else "Want a notification the day it's out at home?") },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
                     followed = !followed; AvailableNow.follow(ctx, vm, meta, followed)
                     Snack.show(if (followed) "We'll tell you when ${meta.name} is out" else "Reminder off"); notOutAsk = false
                 }) { Text(if (followed) "Stop reminding me" else "Remind me") }
             },
-            dismissButton = { androidx.compose.material3.TextButton(onClick = { notOutAsk = false }) { Text("Close") } },
+            dismissButton = {
+                Row {
+                    androidx.compose.material3.TextButton(onClick = { notOutAsk = false; playCinema = pendingCinema }) { Text("Play cinema copy") }
+                    androidx.compose.material3.TextButton(onClick = { notOutAsk = false }) { Text("Close") }
+                }
+            },
         )
     }
     var actions by remember { mutableStateOf(false) }
@@ -252,9 +259,15 @@ fun DetailScreen(
     DisposableEffect(Unit) { onDispose { Preloader.release(prepKey) } }
 
     /** Play button / episode tap: Quick Start or auto modes go straight to the player, manual opens the sources page. */
-    fun start(t: SourceTarget, forceSources: Boolean = false, fromStart: Boolean = false) {
+    fun start(t: SourceTarget, forceSources: Boolean = false, fromStart: Boolean = false, cinemaOk: Boolean = false) {
         // Not out online yet (only in cinemas, or not released): no searching for links that would be the wrong film.
-        if (meta.type == "movie" && !forceSources && meta.id.substringBefore(":") in CinemaOnly.hidden.value) { notOutAsk = true; return }
+        // From StreamX's plan: a clean copy (web / Blu-ray) already found on this page just plays; only without one comes
+        // "In cinemas only", with Remind me · Play cinema copy · Close.
+        if (meta.type == "movie" && !forceSources && !cinemaOk && meta.id.substringBefore(":") in CinemaOnly.hidden.value) {
+            val st = Prepare.state.value
+            val clean = st != null && st.key == t.videoId && st.ready && st.item?.let { !isCinemaCopy(it) } == true
+            if (!clean) { notOutAsk = true; pendingCinema = t; return }
+        }
         // Not out yet: say when it airs instead of searching every server for nothing.
         episodes.firstOrNull { it.id == t.videoId }?.let { ep -> airsIn(ep.released)?.let { Snack.show("${t.epLabel ?: "This episode"} · $it"); return } }
         // Downloaded: play the file on the phone (no internet needed).
@@ -463,6 +476,7 @@ fun DetailScreen(
         }
     }
 
+    LaunchedEffect(playCinema) { playCinema?.let { t -> playCinema = null; start(t, cinemaOk = true) } }
     val saved = myList.any { it.id == meta.id }
     var expanded by remember { mutableStateOf(false) }
     var castOpen by remember { mutableStateOf(false) }
@@ -1134,3 +1148,8 @@ private fun TrailerTip(text: String?, modifier: Modifier, onGone: () -> Unit) {
 
 /** Trailers play inside the title card when you tap Trailer (phones; Xstream and Xstream Live). */
 private val TrailerInCard: Boolean get() = !BuildConfig.IS_TV
+
+/** A cinema recording, by its name (CAM, HDCAM, TS, HDTS, TC, HDTC, PreDVD). */
+private val cinemaRx = Regex("(?i)(^|[^a-z0-9])(cam|camrip|hdcam|hd-cam|ts|hdts|hd-ts|telesync|tc|hdtc|telecine|pre-?dvd|predvdrip)([^a-z0-9]|$)")
+internal fun isCinemaCopy(s: StreamItem): Boolean = listOfNotNull(s.stream.name, s.stream.title, s.stream.description, s.stream.behaviorHints?.filename)
+    .any { cinemaRx.containsMatchIn(it) }
