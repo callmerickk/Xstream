@@ -116,7 +116,8 @@ object Updater {
         checkedThisRun = true
         lastCheck = now
         error.value = null
-        val base = "https://github.com/$REPO/releases/latest/download"
+        // Xstream Live: its versions.json sits in the fixed "xstream-live" release (Xstream's own releases stay "latest").
+        val base = if (BuildConfig.LIVE_ONLY) "https://github.com/$REPO/releases/download/xstream-live" else "https://github.com/$REPO/releases/latest/download"
         suspend fun fetch(u: String): String? = runCatching { Api.get(u) }.getOrNull()
             ?: run { kotlinx.coroutines.delay(1500); runCatching { Api.get(u) }.getOrNull() }
         var versions = fetch("$base/versions.json?t=$now")?.let { runCatching { Api.json.parseToJsonElement(it).jsonObject }.getOrNull() }
@@ -135,7 +136,7 @@ object Updater {
         val name = versions.s(if (tv) "tvName" else "phoneName") ?: ""
         // The APK of exactly this release (its tag), so the version shown is the version installed.
         val tag = versions.s("tag")
-        val url = (if (tag != null) "https://github.com/$REPO/releases/download/$tag" else base) + "/${if (tv) "Xstream-TV.apk" else if (BuildConfig.HAS_MUSIC) "Xstream-phone.apk" else "Xstream-phone-universal.apk"}"
+        val url = (if (tag != null) "https://github.com/$REPO/releases/download/$tag" else base) + "/${if (BuildConfig.LIVE_ONLY) "Xstream-Live.apk" else if (tv) "Xstream-TV.apk" else if (BuildConfig.HAS_MUSIC) "Xstream-phone.apk" else "Xstream-phone-universal.apk"}"
         val info = if (code > installedCode(ctx)) {
             val notes = fetch((if (tag != null) "https://github.com/$REPO/releases/download/$tag" else base) + "/notes.md?t=$now")?.takeIf { !it.trimStart().startsWith("<") }
                 ?: rel?.s("body")

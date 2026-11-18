@@ -173,6 +173,13 @@ object Prepare {
                     return true
                 }
                 if (!pr.seekable) { lastWhy = "file can't be jumped inside (not seekable)"; bad += url; return false }
+                // Live server (on this phone): no saving step — a paused player opens it now and the light turns green as
+                // soon as the first frame is ready.
+                if (s.addonName == LiveServer.NAME) {
+                    put(Prepared(id, "Ready · Live server · $label", 1f, ready = true, item = s, list = list, subs = subs))
+                    readyPlayer(vm, ctx, id, s, url, null, subs, list, resumeMs, replace)
+                    return true
+                }
                 // One minute from the start (or from your resume point); very big files: ~15 seconds.
                 val perMin = minuteBytes(s, pr.size, durMs)
                 val big = perMin > 150L * 1024 * 1024
@@ -278,7 +285,7 @@ object Prepare {
                 list = live.value.first.ifEmpty { list }
                 val all0 = withContext(Dispatchers.Default) { vm.rankedCandidates(list, level, quickOnly = useQuick) }.filter { it.stream.url !in tried }
                     .let { if (quick && level == "auto" && !plugMode) vm.movieBoxFirst(it) else it }
-                    .let { l -> if (quick && !wideOn && !plugMode) l.filter { it.isPlaylist() } else l }
+                    .let { l -> if (quick && !wideOn && !plugMode) l.filter { it.startsFast() } else l }
                 // MovieBox MP4s through PenguPlay's server: only when nothing else can play.
                 val cands = (all0.filter { !it.slowMp4() }.ifEmpty { all0 }).take(5)
                 // Race the best three at once: the first server to answer with a video is prepared first.

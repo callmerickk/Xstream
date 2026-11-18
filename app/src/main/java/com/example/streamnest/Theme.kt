@@ -146,6 +146,7 @@ fun Wordmark(name: String, fontSize: TextUnit = 18.sp, animated: Boolean = false
             buildAnnotatedString {
                 withStyle(SpanStyle(color = BrandRed)) { append("X") }
                 append("stream")
+                if (BuildConfig.LIVE_ONLY) withStyle(SpanStyle(fontWeight = FontWeight.Medium, color = Color(0xFFDADDE8))) { append(" Live") }
             },
             fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = fontSize, letterSpacing = (-0.5).sp, color = Color.White,
         )
@@ -209,5 +210,6 @@ private fun HangingWordmark(n: String, fontSize: TextUnit) {
             fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = fontSize, letterSpacing = (-0.5).sp, color = BrandRed,
         )
         Text(n.drop(1), fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = fontSize, letterSpacing = (-0.5).sp, color = Color.White)
+        if (BuildConfig.LIVE_ONLY) Text(" Live", fontFamily = BrandFont, fontWeight = FontWeight.Medium, fontSize = fontSize, letterSpacing = (-0.5).sp, color = Color(0xFFDADDE8))
     }
 }

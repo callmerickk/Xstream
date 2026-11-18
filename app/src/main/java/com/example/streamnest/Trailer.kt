@@ -37,7 +37,11 @@ fun TrailerVideo(
     onPlaying: () -> Unit,
     onEnded: () -> Unit,
     onError: () -> Unit,
+    trimBars: Boolean = false,
 ) {
+    // The app went to the background (home button, another app): the trailer stops at once — no sound behind you.
+    val life by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+    if (!life.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
     if (!DirectTrailers) { TrailerWebVideo(videoId, muted, modifier, fitWhole, backdrop, zoom, onPlaying, onEnded, onError); return }
     var src by remember(videoId) { mutableStateOf<YtDirect.Src?>(null) }
     var noDirect by remember(videoId) { mutableStateOf(false) }
@@ -55,7 +59,7 @@ fun TrailerVideo(
         }
         s != null -> androidx.compose.foundation.layout.Box(modifier) {
             if (fitWhole && backdrop != null) coil.compose.AsyncImage(backdrop, null, Modifier.matchParentSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-            DirectTrailer(s, muted, Modifier.matchParentSize(), crop = !fitWhole, zoom = zoom, onPlaying = onPlaying, onEnded = onEnded, onError = { noDirect = true })
+            DirectTrailer(s, muted, Modifier.matchParentSize(), crop = !fitWhole, zoom = zoom, onPlaying = onPlaying, onEnded = onEnded, onError = { noDirect = true }, trimBars = trimBars)
         }
     }
 }

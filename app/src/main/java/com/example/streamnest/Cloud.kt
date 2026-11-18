@@ -290,6 +290,7 @@ object Cloud {
     }
 
     fun signOut() {
+        user.value?.let { ActLog.sendBeforeSignOut(it, idToken) }
         stopSync()
         idToken = null; refreshToken = null; idExp = 0L
         waitingForCloud = false

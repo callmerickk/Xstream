@@ -1,3 +1,5 @@
-Xstream 0.8.4
+Xstream Live 1.0.8
 
-• Xstream Music now records what happens while you listen (songs, start times, buffering, errors, taps), so music problems can be found and fixed quickly.
+• VR controls work: point with your head and press, or hold the dot on a control for 1.5 s.
+• A 3D button in VR. Sharper Home trailers (720p on Wi-Fi).
+• Trailer bubble fits on screen; water rings in the profile switcher.

@@ -68,7 +68,7 @@ object Plugins {
 
     private fun save(l: List<PluginInfo>) { list.value = l; prefs?.edit()?.putString("all", Api.json.encodeToString(l))?.apply() }
 
-    fun enabled(): List<PluginInfo> = list.value.filter { it.enabled }
+    fun enabled(): List<PluginInfo> = if (LiveLock.on) emptyList() else list.value.filter { it.enabled }
 
     fun setEnabled(id: String, on: Boolean) = save(list.value.map { if (it.id == id) it.copy(enabled = on) else it })
     fun remove(id: String) = save(list.value.filter { it.id != id })

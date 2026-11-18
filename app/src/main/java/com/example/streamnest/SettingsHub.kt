@@ -47,11 +47,11 @@ private const val REPO_URL = "https://github.com/callmerickk/Xstream"
 @Composable
 fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) {
     val pages = remember { mutableStateListOf(start) }
-    var devUnlocked by remember { mutableStateOf(false) }
+    var devUnlocked by remember { mutableStateOf(BuildConfig.LIVE_ONLY) }
     var query by remember { mutableStateOf("") } // kept while you open a result and come back
     val back: () -> Unit = {
         if (pages.size > 1) {
-            if (pages.last() == "dev") devUnlocked = false
+            if (pages.last() == "dev" && !BuildConfig.LIVE_ONLY) devUnlocked = false
             pages.removeAt(pages.lastIndex)
         } else onClose()
     }
@@ -273,8 +273,10 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
             SettingRow(null, "Navigation Bar", navNames[navStyle] ?: "Adaptive") { navDialog = true }
             if (!BuildConfig.IS_TV) {
                 RowDivider(20.dp)
-                val bar = texts["navBar"] ?: "streamx"
-                SettingRow(null, "Bottom bar", if (bar == "streamx") "StreamX bar" else "Capsule") { vm.setText("navBar", if (bar == "streamx") "capsule" else "streamx") }
+                val bar = texts["navBar"] ?: (if (BuildConfig.LIVE_ONLY) "orbit" else "streamx")
+                SettingRow(null, "Bottom bar", when (bar) { "streamx" -> "StreamX bar"; "orbit" -> "Orbit"; else -> "Capsule" }) {
+                    vm.setText("navBar", when (bar) { "streamx" -> "capsule"; "capsule" -> "orbit"; else -> "streamx" })
+                }
                 RowDivider(20.dp)
                 ToggleRow("Card border", "White edge and glow around the top cards on Home.", texts["deckBorder"] == "on") { vm.setText("deckBorder", if (it) "on" else "off") }
                 RowDivider(20.dp)
@@ -710,16 +712,18 @@ private fun AppIconPicker() {
 private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> Unit) {
     Page("Sources & Extensions", onBack) {
         // 1 · How you watch (Turbo / Classic), 2 · Sources, Extensions and Filters, 3 · Recommendations — each its own card.
-        if (!BuildConfig.IS_TV) {
+        // Xstream Live: plugins / addons stay hidden unless Developer's Corner turns them on.
+        val liveOnly = BuildConfig.LIVE_ONLY && vm.texts.collectAsStateWithLifecycle().value["devSources"] != "on"
+        if (!BuildConfig.IS_TV && !liveOnly) {
             SectionLabel("How you watch")
             WatchModeCard(vm)
         }
-        SectionLabel("Sources & extensions")
+        SectionLabel(if (liveOnly) "Live server" else "Sources & extensions")
         SettingsCard {
-            SettingRow(null, "Sources", "Install, remove, refresh and sort your add-ons.") { open("addons") }
+            if (!liveOnly) SettingRow(null, "Sources", "Install, remove, refresh and sort your add-ons.") { open("addons") }
             if (!BuildConfig.IS_TV) {
-                RowDivider(20.dp)
-                SettingRow(null, "Extensions", "Add Nuvio extension repositories and switch providers on or off.") { open("extensions") }
+                if (!liveOnly) RowDivider(20.dp)
+                if (!liveOnly) SettingRow(null, "Extensions", "Add Nuvio extension repositories and switch providers on or off.") { open("extensions") }
                 if (BuildConfig.HAS_LIVE) {
                     RowDivider(20.dp)
                     val ls by LiveServer.state.collectAsStateWithLifecycle()

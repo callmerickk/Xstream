@@ -384,10 +384,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     // ───────────── Custom texts & colors ─────────────
     init {
         Public.vm = this
+        viewModelScope.launch { texts.collect { LiveLock.on = BuildConfig.LIVE_ONLY && it["devSources"] != "on" } }
         StreamHeaders.init(app); AddonSpeed.init(app); Relay.warmUp()
         // Source ranking: this phone's copy now, the shared one from the cloud in the background.
         AutoPlayRules.init(app); Ranker.init(app); HostStats.init(app)
-        if (!BuildConfig.IS_TV) { Buddies.init(app); Invites.start(app) }
+        if (!BuildConfig.IS_TV && BuildConfig.HAS_SOCIAL) { Buddies.init(app); Invites.start(app) }
         ProfileLock.init(app)
         AppLook.init(app); Call.init(app); Vpn.resume(app)
         Downloads.init(app)
@@ -422,6 +423,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         parseColor(m["deckTint"]!!)?.let { Palette.tint = it }
         parseColor(m["accent2"]!!)?.let { Palette.accent2 = it }
         if (isOn(m["amoled"]!!)) Palette.bg = Color.Black
+        // Xstream Live: always the navy-black page with a dark navy glow at the top (the account's Xstream colours aren't used).
+        if (BuildConfig.LIVE_ONLY) { Palette.bg = Color(0xFF0F1014); Palette.tint = Color(0xFF16204A) }
         m["cardCorner"]!!.trim().toIntOrNull()?.let { Palette.corner = it.coerceIn(0, 50) }
         // Buttons: the theme's own button colours, else the accent with readable text.
         Palette.button = parseColor(m["btnColor"].orEmpty()) ?: Palette.accent
@@ -481,6 +484,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         val done = p.durationMs > 0 && p.positionMs > p.durationMs * (if (series) 0.95 else 0.92)
         // No limit: every title you started stays (and syncs with your cloud) until it is finished or removed.
         progress.value = (if (done && !series) others else listOf(if (done) p.copy(positionMs = p.durationMs) else p) + others)
+        if (done && !series) addWatched(p)
         val ed = lib.edit().putString("progress", Api.json.encodeToString(progress.value))
         if (done && p.key !in doneKeys.value) {
             doneKeys.value = doneKeys.value + p.key
@@ -490,6 +494,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
         ed.apply()
         markCur("prog")
+    }
+
+    // ───────────── Library › Watched (finished movies) ─────────────
+    val watched = MutableStateFlow<List<Progress>>(emptyList())
+    fun loadWatched() { watched.value = runCatching { Api.json.decodeFromString<List<Progress>>(lib.getString("watched", null) ?: "[]") }.getOrDefault(emptyList()) }
+    private fun addWatched(p: Progress) {
+        loadWatched()
+        watched.value = (listOf(p.copy(positionMs = 0, updated = System.currentTimeMillis())) + watched.value.filter { it.key != p.key }).take(300)
+        lib.edit().putString("watched", Api.json.encodeToString(watched.value)).apply()
+    }
+    fun removeWatched(key: String) {
+        watched.value = watched.value.filter { it.key != key }
+        lib.edit().putString("watched", Api.json.encodeToString(watched.value)).apply()
     }
 
     fun removeProgress(key: String) {
@@ -579,7 +596,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     /** Addons switched on in Help & Settings > Content & Discovery > Addons. */
     private val active: List<Addon> get() {
         val off = texts.value["addonsOff"].orEmpty().split("|").filter { it.isNotBlank() }.toSet()
-        return addons.value.filter { it.baseUrl !in off }
+        val on = addons.value.filter { it.baseUrl !in off }
+        // Xstream Live: the account's addons are ignored (only the title details and subtitles stay).
+        return if (liveLocked()) on.filter { isPinnedFixed(it) || isPostersPlus(it) } else on
     }
 
     /** Base URLs of the switched-on addons that can describe this title (used by the episode-alert check). */
@@ -595,6 +614,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     /** Cinemeta (all the titles' details) and OpenSubtitles always stay at the top; other addons can be pinned too. */
+    /** Xstream Live: Posters+ is the one addon whose rows show on Home. */
+    fun isPostersPlus(a: Addon) = "slokker" in a.baseUrl || "postersplus" in a.baseUrl || a.manifest.name.contains("posters+", true) || a.manifest.name.contains("posters plus", true)
     fun isPinnedFixed(a: Addon) = a.baseUrl == CINEMETA || a.manifest.id.contains("opensubtitles", true) || a.manifest.name.contains("opensubtitles", true)
     fun isPinned(a: Addon) = isPinnedFixed(a) || a.baseUrl in texts.value["addonsPinned"].orEmpty().split("|")
     private fun pinFirst(list: List<Addon>): List<Addon> =
@@ -710,7 +731,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     /** Switched-on addons that keep loading on their server (CNCVerse): asked again every 5 s (SlowAddons.kt). */
-    fun slowStreamAddons(type: String, id: String): List<Addon> = if (pluginMode()) emptyList() else active.filter { it.supports("stream", type, id) && SlowAddons.isSlow(it) }
+    fun slowStreamAddons(type: String, id: String): List<Addon> = if (pluginMode() || liveMode()) emptyList() else active.filter { it.supports("stream", type, id) && SlowAddons.isSlow(it) }
     fun streamUrl(a: Addon, type: String, id: String) = "${a.baseUrl}/stream/$type/${enc(id)}.json"
 
     /** Puts the addons in this order (by name; the ones not named keep their place after them). Source Test uses it. */
@@ -759,7 +780,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             // Home posters only from catalogue addons (Cinemeta, TMDB, Posters+…), never from streaming addons
             // (CNCVerse Bridge / AIOStreams put error cards like "[❌] … 404" in their lists). If every addon streams,
             // they are used after all so Home is never empty.
-            val catalogOnly = active.filter { !it.streams && it.manifest.catalogs.isNotEmpty() }.ifEmpty { active }
+            // Xstream Live: Home rows only from Posters+ (Cinemeta stays only for title details and episodes).
+            val catalogOnly = if (liveLocked() && active.any { isPostersPlus(it) }) active.filter { isPostersPlus(it) }
+                else active.filter { !it.streams && it.manifest.catalogs.isNotEmpty() }.ifEmpty { active }
             val result = if (current.value?.kids == true) kidsShelves() else coroutineScope {
                 catalogOnly.flatMap { a ->
                     a.manifest.catalogs
@@ -780,7 +803,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 }.take(48).awaitAll()
             }
             // The developer's published rows (Home Layout › Publish): fetched for every account, shown first and locked.
-            val pushed = if (current.value?.kids == true || BuildConfig.IS_TV || Public.dev) emptyList() else pushedRows().map { r ->
+            val pushed = if (current.value?.kids == true || BuildConfig.IS_TV || (Public.dev && !BuildConfig.LIVE_ONLY)) emptyList() else pushedRows().map { r ->
                 async { runCatching {
                     val items = Api.fetch<CatalogResponse>(r.src).metas.map { m -> if (m.posterShape == null && r.shape != null) m.copy(posterShape = r.shape) else m }
                     Shelf(r.title, items, src = r.src, pinned = true)
@@ -792,7 +815,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 else kotlinx.coroutines.withTimeoutOrNull(5_000) { runCatching { ServiceRows.rows() }.getOrNull() }.orEmpty()
             // 0.8: Home is managed by the developer. When a layout is published, every other account shows only those rows
             // (its own catalogue addons no longer add rows); the developer still sees everything.
-            val own = if (pushed.isNotEmpty() && !Public.dev) emptyList() else result.filterNotNull()
+            val own = if (pushed.isNotEmpty() && (!Public.dev || BuildConfig.LIVE_ONLY)) emptyList() else result.filterNotNull()
             shelves.value = (pushed + own.filter { it.src == null || it.src !in pushedSrc }).let { l -> if (svc.isEmpty()) l else l.take(3) + svc + l.drop(3) }
                 .filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.filter { !isErrorCard(it) }.map { posterFromPattern(it) }.distinctBy { it.type + it.id }) }
             loading.value = false
@@ -1005,6 +1028,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     fun lastLink(key: String): LastLink? = lib.getString("link_$key", null)?.let { runCatching { Api.json.decodeFromString<LastLink>(it) }.getOrNull() }
         ?.takeIf { !isLocalUrl(it.url) }
+        ?.takeIf { !liveLocked() || it.addon == LiveServer.NAME }
         ?.takeIf { System.currentTimeMillis() - it.at < 6L * 3600 * 1000 } // provider links expire; reuse for 6 hours (a refused link is refreshed automatically)
     /** The app's own local relay (127.0.0.1:port): its port changes every start, so it is never saved for Continue Watching. */
     private fun isLocalUrl(u: String) = Regex("^https?://(127\\.0\\.0\\.1|localhost)(:|/)", RegexOption.IGNORE_CASE).containsMatchIn(u)

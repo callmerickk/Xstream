@@ -58,7 +58,7 @@ private fun aiHttp() = Api.http.newBuilder().readTimeout(45, TimeUnit.SECONDS).c
 fun AppViewModel.aiProvider(): AiProvider = AiProviders.firstOrNull { it.id == (texts.value["aiProvider"] ?: "groq") } ?: AiProviders[0]
 fun AppViewModel.aiKey(p: AiProvider = aiProvider()): String = (texts.value["aiKey_${p.id}"] ?: "").trim()
 fun AppViewModel.aiModel(p: AiProvider = aiProvider()): String = (texts.value["aiModel_${p.id}"] ?: "").trim().ifEmpty { p.model }
-fun AppViewModel.aiReady(): Boolean = aiKey().isNotEmpty() && isOn(texts.value["aiOn"] ?: "yes")
+fun AppViewModel.aiReady(): Boolean = BuildConfig.HAS_AI && aiKey().isNotEmpty() && isOn(texts.value["aiOn"] ?: "yes")
 
 private class AiHttpError(val code: Int, val msg: String) : Exception(msg)
 
@@ -98,6 +98,8 @@ private suspend fun AppViewModel.rawChat(
     p: AiProvider, key: String, model: String, json: Boolean, system: String, history: List<Pair<String, String>>, user: String,
     maxTokens: Int? = null, lowEffort: Boolean = false,
 ): String {
+    // Xstream Live has no AI: nothing is ever sent (it was still asked on title pages and failed / hung for 45 s).
+    if (!BuildConfig.HAS_AI) throw java.io.IOException("AI is off in this app")
     val body = buildJsonObject {
         put("model", model)
         put("temperature", 0.7)

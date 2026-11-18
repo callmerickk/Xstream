@@ -234,11 +234,14 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     // few seconds buffered.
     val budgetMb = when { tv -> if (ramGb >= 1.6) 96 else 72; ramGb < 3.2 -> 96; ramGb < 4.8 -> 160; ramGb < 6.8 -> 220; else -> 300 }
     val load = DefaultLoadControl.Builder()
-        // Phones with the Live server keep up to 2 minutes loaded ahead (Telegram files come in bursts).
-        .setBufferDurationsMs(if (tv) 30_000 else 25_000, if (tv) 60_000 else if (BuildConfig.HAS_LIVE) 120_000 else 60_000, if (fast) 1_500 else 2_500, if (fast) 3_000 else 5_000)
+        // About a minute ahead (like Nuvio): more was downloaded and thrown away at every seek.
+        // Xstream Live: start after ~1 s of video (and ~1.5 s after a seek) — the Live server keeps delivering steadily, so
+        // waiting for 5 s before playing only made every jump slower.
+        .setBufferDurationsMs(if (tv) 30_000 else 25_000, 60_000, if (BuildConfig.LIVE_ONLY) 1_000 else if (fast) 1_500 else 2_500,
+            if (BuildConfig.LIVE_ONLY) 1_500 else if (fast) 3_000 else 5_000)
         .setTargetBufferBytes(budgetMb * 1024 * 1024)
         .setPrioritizeTimeOverSizeThresholds(false)
-        .setBackBuffer(if (tv) 10_000 else 20_000, true)
+        .setBackBuffer(if (tv) 10_000 else if (BuildConfig.LIVE_ONLY) 5_000 else 20_000, true)
         .build()
     // Streams go through the app's HTTP client (DNS setting) with the addon's request headers.
     val http = OkHttpDataSource.Factory(Api.http).setUserAgent(PlayerUserAgent)
@@ -275,7 +278,8 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
         androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection.Factory(3_000, 25_000, 6_000, 0.7f))
     return ExoPlayer.Builder(ctx, renderers).setLoadControl(load).setTrackSelector(selector).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
         // Seeking may land up to 0.3 s off the exact spot: much faster jumps on big files (as CloudStream does).
-        .setSeekParameters(androidx.media3.exoplayer.SeekParameters(300_000L, 0L))
+        // Xstream Live: a jump lands on the nearest keyframe — no extra video to fetch and decode before the picture shows.
+        .setSeekParameters(if (BuildConfig.LIVE_ONLY) androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC else androidx.media3.exoplayer.SeekParameters(300_000L, 0L))
         .build().apply {
         val aLang = vm.playerPref("audio")
         val sLang = vm.playerPref("subs")
@@ -644,7 +648,8 @@ fun PlayerScreen(
     val nowUrl = now?.url
     val thumbsOn = isOn(opt("seekThumbs"))
     val thumbs = remember(nowUrl, thumbsOn) {
-        if (thumbsOn && nowUrl != null) SeekThumbs(nowUrl, StreamHeaders.forUrl(nowUrl), p.key, ctx.cacheDir,
+        // Live server links: no preview frames (each one pulled ~2 MB through the server and held up the real seek).
+        if (thumbsOn && nowUrl != null && !nowUrl.startsWith("http://127.0.0.1")) SeekThumbs(nowUrl, StreamHeaders.forUrl(nowUrl), p.key, ctx.cacheDir,
             // MovieBox DASH: previews from the same title's MovieBox MP4 (same cut).
             alt = known.firstOrNull { it.isMovieBox() && it.mbKind() == 2 && it.stream.url != nowUrl }?.stream?.url) else null
     }
@@ -753,6 +758,10 @@ fun PlayerScreen(
     var videoView by remember { mutableStateOf<View?>(null) }
     /** The main video view (a SurfaceView inside): after a fade the new player moves back onto it (smooth 60 fps). */
     val mainPv = remember { arrayOfNulls<PlayerView>(1) }
+    /** Xstream Live: VR headset mode (side by side, one picture per lens). */
+    var vrOn by remember { mutableStateOf(BuildConfig.LIVE_ONLY && VrState.resume.also { VrState.resume = false }) }
+    var vrWas by remember { mutableStateOf(false) }
+    LaunchedEffect(vrOn) { if (vrOn) vrWas = true else if (vrWas) { vrWas = false; delay(60); mainPv[0]?.let { pv -> if (pv.player === player) { pv.player = null; pv.player = player } } } }
     /** The picture turned out HDR while "no HDR" is set, after a switch the app made: go back (handled further down). */
     var hdrHit by remember { mutableStateOf(false) }
     /** Where an app-made switch came from (for going back if the new picture is HDR). */
@@ -1593,7 +1602,7 @@ fun PlayerScreen(
                         val el = SystemClock.elapsedRealtime() - findT0
                         // Nothing playing 10 s after Play: CNCVerse is asked again (every 2 s until it returns links).
                         // Turbo has no slow server to ask again: "not available" can show as soon as everything answered.
-                        if (!askedAgain && vm.pluginMode()) askedAgain = true
+                        if (!askedAgain && (vm.pluginMode() || vm.liveMode())) askedAgain = true
                         if (!askedAgain && el >= 10_000 && !vm.pluginMode() && !vm.liveMode()) {
                             askedAgain = true
                             PlayTiming.mark("nothing playing 10 s — CNCVerse asked again", once = "cnc10")
@@ -2550,6 +2559,21 @@ fun PlayerScreen(
         val addonSubs = now?.subs.orEmpty().filter { sub -> st.stream.subtitles.orEmpty().none { it.url == sub.url } }
         load(Now(st.stream.url!!, st.stream.subtitles.orEmpty() + addonSubs, st.stream.name ?: st.addonName, st.addonName), keep, label)
     }
+    // VR magnifies every pixel: when VR starts on a picture below 1080p, the best Live server copy (1080p, never 4K —
+    // too heavy for a phone stream) takes over from the same second.
+    LaunchedEffect(vrOn) {
+        if (!vrOn || !BuildConfig.LIVE_ONLY) return@LaunchedEffect
+        delay(800)
+        val curH = player.videoSize.height
+        // On Wi-Fi a 4K copy (scaled down to the phone it gives the cleanest picture in the lenses); else 1080p.
+        val wifi = runCatching { !(ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered }.getOrDefault(false)
+        val want = if (wifi) 2000..2300 else 1000..1200
+        if (curH in 1 until want.first) {
+            val best = known.filter { it.resolution() in want && it.stream.url != now?.url }.firstOrNull()
+                ?: if (curH < 1000) known.filter { it.resolution() in 1000..1200 && it.stream.url != now?.url }.firstOrNull() else null
+            if (best != null) switchTo(best, "VR: best picture", auto = true, why = "VR: best picture (was ${curH}p${if (wifi) ", Wi-Fi" else ""})")
+        }
+    }
     /** The upgraded HD file failed: straight back to the MovieBox link at the same second (no hunting through other HD files). */
     backToMovieBox = fun(why: String): Boolean {
         val from = upgradedFrom ?: return false
@@ -2587,6 +2611,9 @@ fun PlayerScreen(
         val name = Public.streamName(c)
         val startUrl = now?.url
         val auto = !asked
+        // Live server → Live server: no second hidden player streaming the same film in parallel (data); the caller
+        // switches the usual way, from the same second.
+        if (BuildConfig.LIVE_ONLY && url.startsWith("http://127.0.0.1")) { swapFail = "live"; return false }
         if (HdrRule.banned(vm) && (HdrRule.named(c) || url in hdrBlocked)) { swLog(auto, "$why — blocked", url, "not switched: HDR isn't allowed"); hdrBlocked += url; return false }
         // A file you can't jump inside is never switched to (the picture went back to 0:01 after every jump).
         if (!isPlaylistLink(c, url) && StreamType.mimeFor(url, c.fileName()) == null) {
@@ -3366,6 +3393,15 @@ fun PlayerScreen(
                         when (aspectIdx) { 1 -> { scaleX = 1.33f; scaleY = 1.33f }; 2 -> { scaleX = 1f; scaleY = 1.33f }; else -> { scaleX = 1f; scaleY = 1f } }
                     } else Modifier.graphicsLayer { scaleX = vScale; scaleY = vScale; if (freeZoom) { translationX = fzX; translationY = fzY } }),
                 )
+                if (vrOn && !usingVlc) key(player) {
+                    // A real 3D copy (side by side / top-bottom) plays as 3D in VR; another 3D copy offers a 3D button.
+                    val curItem = known.firstOrNull { it.stream.url == now?.url }
+                    val stereo = stereoKind(listOfNotNull(curItem?.stream?.name, curItem?.stream?.title, curItem?.stream?.behaviorHints?.filename, now?.source).joinToString(" "))
+                    val other3d = if (stereo != 0) null else known.firstOrNull { k -> stereoKind(listOfNotNull(k.stream.name, k.stream.title, k.stream.behaviorHints?.filename).joinToString(" ")) != 0 }
+                    VrHeadsetView(vm, player, p.title, subText = { cues.joinToString("\n") { c -> c.text?.toString().orEmpty() }.trim() },
+                        stereo = stereo, threeD = other3d?.let { o -> { switchTo(o, "VR: 3D copy") } },
+                        onSeekTo = { seekAbs(it); poke++ }, onNext = if (nextEp != null) ({ playNext() }) else null) { ActLog.add("PLAY", "VR: left"); vrOn = false }
+                }
                 // Plugin mode's quiet swap: the second player's picture, above the main one (fades in, then stays).
                 val sh = shadow
                 if (sh != null && !usingVlc) key(sh) {
@@ -3856,7 +3892,7 @@ fun PlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(clockNow(), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E8EE))
-                        if (!BuildConfig.IS_TV) Box {
+                        if (!BuildConfig.IS_TV && BuildConfig.HAS_SOCIAL) Box {
                             GlassBtn(Icons.Default.Groups, null, "Watch together", at("together")) { panel = "together" }
                             // In a room: a small green dot.
                             val unread by Together.unread.collectAsState()
@@ -3864,6 +3900,7 @@ fun PlayerScreen(
                                 .border(1.5.dp, Color.Black, CircleShape).padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             else if (roomNow != null) Box(Modifier.align(Alignment.TopEnd).padding(top = 5.dp, end = 5.dp).size(9.dp).clip(CircleShape).background(Color(0xFF3CCF7A)).border(2.dp, Color.Black, CircleShape))
                         }
+                        if (!BuildConfig.IS_TV && BuildConfig.LIVE_ONLY && !usingVlc) GlassBtn(Icons.Default.Vrpano, null, "VR headset") { vrOn = true; controls = false }
                         if (!BuildConfig.IS_TV) GlassBtn(Icons.Default.LockOpen, null, "Lock") { locked = true; controls = true; poke++ }
                         // Phones: plugin mode and Sources (addon) mode share the same quality button and menu.
                         val plugQ = !BuildConfig.IS_TV
@@ -4135,7 +4172,7 @@ fun PlayerScreen(
                                     aspectLabel = if (freeZoom) "Free zoom: pinch anywhere, drag to move" else "Free zoom off: pinch to fill"
                                 })
                                 add(Triple(Icons.Default.GraphicEq, "Sound") { pick { panel = "sound" } })
-                                add(Triple(Icons.Default.Groups, "Watch together") { pick { panel = "together" } })
+                                if (BuildConfig.HAS_SOCIAL) add(Triple(Icons.Default.Groups, "Watch together") { pick { panel = "together" } })
                                 if (type == "series" && episodes.isNotEmpty()) add(Triple(Icons.Default.VideoLibrary, "Episodes") { pick { showEpisodes = true; controls = false } })
                                 if (nextEp != null) add(Triple(Icons.Default.SkipNext, "Next episode") { pick { playNext() } })
                                 if (type != "series") add(Triple(Icons.Default.SkipNext, "Next title") { pick { tvNext() } })
@@ -5775,7 +5812,7 @@ private fun SubStyleColumn(
         SubSection("Look")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SubChip("Netflix style", isOn(v("subNetflix"))) { vm.setText("subNetflix", if (isOn(v("subNetflix"))) "no" else "yes") }
-            if (!BuildConfig.IS_TV) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
+            if (!BuildConfig.IS_TV && !BuildConfig.LIVE_ONLY) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
         }
         if (isOn(v("subNetflix"))) Text("Netflix style sets the font, colour and shadow; turn it off to choose your own below.", fontSize = 11.5.sp, color = Color(0xFF8A94A8))
         SubSection("Text colour")
@@ -5875,7 +5912,7 @@ private fun SubsPanel(
         SubSection("Look")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SubChip("Netflix style", isOn(v("subNetflix"))) { vm.setText("subNetflix", if (isOn(v("subNetflix"))) "no" else "yes") }
-            if (!BuildConfig.IS_TV) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
+            if (!BuildConfig.IS_TV && !BuildConfig.LIVE_ONLY) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
         }
         if (isOn(v("subNetflix"))) Text("Netflix style sets the font, colour and shadow; turn it off to choose your own below.", fontSize = 11.5.sp, color = Color(0xFF8A94A8))
         SubSection("Text colour")

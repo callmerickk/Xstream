@@ -452,7 +452,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             }
         }
         item { DevFold("AI assistant", "Analyse logs, tune auto-play, design the AI's name — with the app's AI or by copy & paste", false) { subPage = "assistant" } }
-        item { DevFold("Payments & donations", "UPI ID, PayPal / Ko-fi, monthly goal — the Support Xstream bubble for everyone", false) { subPage = "donate" } }
+        if (!BuildConfig.NO_PUBLISH) item { DevFold("Payments & donations", "UPI ID, PayPal / Ko-fi, monthly goal — the Support Xstream bubble for everyone", false) { subPage = "donate" } }
         if (!BuildConfig.IS_TV) item {
             // Gemini Live (developer only): the AI card talks in real time with Google's live voice (your Gemini key).
             val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -468,10 +468,19 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         if (devOpen == "src") {
         item {
             SettingsCard {
-                SettingRow(Icons.Default.Public, "Official set for everyone", "The add-ons and plugins every account gets. Anything else stays a test.") { subPage = "official" }
+                if (!BuildConfig.NO_PUBLISH) SettingRow(Icons.Default.Public, "Official set for everyone", "The add-ons and plugins every account gets. Anything else stays a test.") { subPage = "official" }
                 SettingRow(Icons.Default.Extension, "CloudStream plugins", "Repositories and plugins (developer only).") { subPage = "plugins" }
                 SettingRow(Icons.Default.Speed, "Quick Start servers", "Quick Play add-ons / plugins and their speed.") { subPage = "quickStart" }
                 SettingRow(Icons.Default.FilterList, "Stream filters (all)", "Include, exclude or force every tag — the defaults users build on.") { subPage = "streamFilters" }
+            }
+        }
+        if (BuildConfig.LIVE_ONLY) {
+            item { SectionLabel("Xstream Live") }
+            item {
+                SettingsCard {
+                    ToggleRow("Plugins and addons", "Off: the Live server is the only source and Sources & Extensions stay hidden.",
+                        texts["devSources"] == "on") { vm.setText("devSources", if (it) "on" else "off") }
+                }
             }
         }
         item { SectionLabel("Built-in servers for everyone") }
@@ -514,7 +523,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                 TmdbKeyStatus(vm)
                 SettingRow(Icons.Default.Restore, "Auto-play logic", "CNCVerse refresh schedule and upgrade servers. Undo last change, restore any saved logic, classic switch.") { autoPlay = true }
                 SettingRow(Icons.Default.Timer, "Refresh Lab", "Measure when CNCVerse links appear and play, for the Refresh Lab Analyzer page.") { refreshLab = true }
-                SettingRow(Icons.Default.Key, "Defaults for everyone", "API keys, the AI's logo and voice — publish them so users need no setup.") { defaultsPage = true }
+                if (!BuildConfig.NO_PUBLISH) SettingRow(Icons.Default.Key, "Defaults for everyone", "API keys, the AI's logo and voice — publish them so users need no setup.") { defaultsPage = true }
             }
         }
 

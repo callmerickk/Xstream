@@ -209,9 +209,20 @@ object ActLog {
 
     // ── TV → account (so the phone can read it); phone ← account ──
 
+    /** One id per phone that survives "Clear data" (Android's own id for this app), so a phone never shows up twice. */
     private fun devId(): String {
         val p = app!!.getSharedPreferences("actlog", Context.MODE_PRIVATE)
-        return p.getString("dev", null) ?: ((if (BuildConfig.IS_TV) "tv-" else "ph-") + java.util.UUID.randomUUID().toString().take(6)).also { p.edit().putString("dev", it).apply() }
+        val pre = if (BuildConfig.IS_TV) "tv-" else "ph-"
+        val aid = runCatching { android.provider.Settings.Secure.getString(app!!.contentResolver, android.provider.Settings.Secure.ANDROID_ID) }.getOrNull()
+            ?.takeIf { it.isNotBlank() && it != "9774d56d682e549c" }
+        if (aid != null) return (pre + aid.take(10)).also { if (p.getString("dev", null) != it) p.edit().putString("dev", it).apply() }
+        return p.getString("dev", null) ?: (pre + java.util.UUID.randomUUID().toString().take(6)).also { p.edit().putString("dev", it).apply() }
+    }
+
+    /** Right before signing out: what hasn't been sent yet goes now, with the account that is leaving. */
+    fun sendBeforeSignOut(u: CloudUser, token: String?) {
+        if (token == null) return
+        io.launch { runCatching { uploadImportant(u, token) } }
     }
 
     // ── Cloud logs for the developer (all accounts) ──
@@ -220,12 +231,27 @@ object ActLog {
     private val importantRx = Regex("(?i)(\\bERROR\\b|crash|app ended|froze|not responding|exception|failed|refused|can't play|cannot play|no streams|no links|nothing found|first picture|= ✓|stopped|gave up|timeout|timed out|HTTP [45]\\d\\d|wake word|live (closed|failed)|APP +opened|MUSIC |Music ›)")
 
     /** Sends the important lines written since the last upload (errors, crashes, play results) to xshared/logs. */
-    private suspend fun uploadImportant() {
+    private suspend fun uploadImportant(u0: CloudUser? = null, t0: String? = null) {
         flush()
-        val user = Cloud.user.value ?: return
-        val t = Cloud.token() ?: return
+        val user = u0 ?: Cloud.user.value ?: return
+        val t = t0 ?: Cloud.token() ?: return
         val p = app!!.getSharedPreferences("actlog", Context.MODE_PRIVATE)
         val day = today()
+        // Lines of an earlier day that weren't sent (signed out, no network): sent to that day first — nothing is lost.
+        p.getString("cUpDay", null)?.takeIf { it != day }?.let { old ->
+            val f0 = fileFor(old)
+            val sent0 = p.getLong("cUpAt", 0)
+            if (f0.exists() && f0.length() > sent0) runCatching {
+                val chunk0 = f0.inputStream().use { it.skip(sent0); it.readBytes() }.decodeToString()
+                val keep0 = chunk0.lines().filter { it.isNotBlank() && importantRx.containsMatchIn(it) }.joinToString("\n").take(120_000)
+                if (keep0.isNotBlank()) {
+                    val b0 = XNs.url("logs/${user.uid}/${devId()}").removeSuffix(".json")
+                    val body0 = buildJsonObject { put("t", keep0); put("at", System.currentTimeMillis()) }
+                    Api.http.newCall(Request.Builder().url("$b0/days/$old.json?auth=$t").post(body0.toString().toRequestBody("application/json".toMediaType())).build()).execute().close()
+                }
+            }
+            p.edit().putString("cUpDay", day).putLong("cUpAt", 0).apply()
+        }
         val f = fileFor(day)
         val sent = if (p.getString("cUpDay", "") == day) p.getLong("cUpAt", 0) else 0L
         val len = f.length()

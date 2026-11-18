@@ -3,12 +3,14 @@ package com.example.streamnest
 import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -118,14 +120,19 @@ object LiveServer {
         val root = File(ctx.filesDir, "live").apply { mkdirs() }
         val tmp = File(ctx.cacheDir, "live-tmp").apply { mkdirs() }
         state.value = State("Starting", false, port)
-        // Speed: 8 Telegram connections × 32 parts in flight and 32 one-MB windows ahead per stream (the server's
-        // defaults are 4 × 8 and 16; its own measurements: 8 × 32 is about twice as fast on phones).
+        // Data: like Nuvio — only what is about to play is fetched. 8 × 32 parts with 32 MB read-ahead pulled ~20 MB/s and
+        // threw it away at every seek. Wi-Fi: the server's own defaults (4 × 8, 8 windows); mobile data: lighter (2 × 4, 4).
+        val metered = runCatching { (ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered }.getOrDefault(true)
+        // 1.0.3 lesson: with only 2 × 4 slots one slow file held every slot, so searches failed and other links were
+        // refused at once. Slots stay at the server's normal 4 × 8; only the read-ahead is smaller on mobile data.
+        val (wk, inf, pipe) = if (metered) Triple(4, 8, 4) else Triple(4, 8, 8)
+        note("Speed: $wk connections × $inf parts, $pipe MB ahead (${if (metered) "mobile data" else "Wi-Fi"})")
         val pb = ProcessBuilder(binary(ctx).absolutePath, "--port", "$port", "--host", "127.0.0.1", "--no-open",
-            "--workers", "8", "--inflight", "32",
+            "--workers", "$wk", "--inflight", "$inf",
             "--app-version", BuildConfig.VERSION_NAME).directory(root).redirectErrorStream(true)
         pb.environment().apply {
             put("PM_APP_ROOT", root.absolutePath); put("HOME", root.absolutePath); put("TMPDIR", tmp.absolutePath)
-            put("PM_NO_TRAY", "1"); put("PM_PIPELINE", "32")
+            put("PM_NO_TRAY", "1"); put("PM_PIPELINE", "$pipe")
         }
         val p = runCatching { pb.start() }.getOrElse { e ->
             state.value = State("Could not start", note = e.message ?: ""); note("Could not start: ${e.message}"); return
@@ -164,15 +171,64 @@ object LiveServer {
     private val warmed = java.util.Collections.synchronizedSet(HashSet<String>())
 
     /** Streams for a title (an IMDb id, "tt…:season:episode" for episodes). */
-    suspend fun streams(ctx: Context, type: String, id: String): List<StreamItem> = withContext(Dispatchers.IO) {
+    // One search per title: the same title asked 2–3 times at once (title page, hero, prepare) shares one request, and
+    // the answer is kept on the phone for 6 hours, so reopening a title — even after a restart — is instant.
+    private val linkJobs = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
+    private val linkScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private val linkMem = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String>>()
+    private const val LINKS_TTL = 6 * 3600_000L
+
+    private suspend fun linksBody(ctx: Context, type: String, streamId: String): String? {
+        val key = "$type/$streamId"
+        val now = System.currentTimeMillis()
+        linkMem[key]?.let { (at, b) -> if (now - at < LINKS_TTL) return b }
+        val f = java.io.File(ctx.cacheDir, "livelinks/" + key.hashCode().toUInt().toString(16) + ".json")
+        if (f.exists() && now - f.lastModified() < LINKS_TTL) runCatching { f.readText() }.getOrNull()?.takeIf { it.isNotBlank() }?.let { b0 ->
+            // Saved links point at this phone's server; only the port can differ after a restart.
+            val b = b0.replace(Regex("http://127\\.0\\.0\\.1:\\d+"), base)
+            linkMem[key] = f.lastModified() to b
+            return b
+        }
+        val job = linkJobs.computeIfAbsent(key) {
+            linkScope.async {
+                try {
+                    // A failed search is tried once more (a slow moment on the network or the server); the reason is logged.
+                    var why = ""
+                    var got: String? = null
+                    for (attempt in 1..2) {
+                        got = runCatching {
+                            http.newBuilder().readTimeout(25, TimeUnit.SECONDS).build()
+                                .newCall(Request.Builder().url("$base/stream/$type/${enc(streamId)}.json").build()).execute()
+                                .use { if (it.isSuccessful) it.body!!.string() else { why = "HTTP ${it.code}"; null } }
+                        }.onFailure { why = it.javaClass.simpleName + (it.message?.let { m -> ": " + m.take(60) } ?: "") }.getOrNull()
+                        if (got != null) break
+                        ActLog.add("LIVE", "search failed (attempt $attempt) · $streamId · $why")
+                        if (attempt == 1) delay(1_500)
+                    }
+                    got?.also { b ->
+                        // Only real results are kept (a "setting up" / nothing-found answer is asked again next time).
+                        if (b.contains("\"url\"")) {
+                            linkMem[key] = System.currentTimeMillis() to b
+                            runCatching { f.parentFile?.mkdirs(); f.writeText(b) }
+                        }
+                    }
+                } finally { linkJobs.remove(key) }
+            }
+        }
+        return job.await()
+    }
+
+    /** Searches made ahead of time (Home cards) go two at a time, so they never crowd out the title you open. */
+    private val background = kotlinx.coroutines.sync.Semaphore(2)
+
+    suspend fun streams(ctx: Context, type: String, id: String, ahead: Boolean = false): List<StreamItem> =
+        if (ahead) background.withPermit { streams(ctx, type, id) } else streamsNow(ctx, type, id)
+
+    private suspend fun streamsNow(ctx: Context, type: String, id: String): List<StreamItem> = withContext(Dispatchers.IO) {
         if (!awaitReady(ctx)) return@withContext emptyList()
         val streamId = if (type == "series" && !id.contains(':')) "$id:1:1" else id
         val t0 = System.currentTimeMillis()
-        val body = runCatching {
-            http.newBuilder().readTimeout(20, TimeUnit.SECONDS).build()
-                .newCall(Request.Builder().url("$base/stream/$type/${enc(streamId)}.json").build()).execute()
-                .use { if (it.isSuccessful) it.body!!.string() else null }
-        }.getOrNull() ?: return@withContext emptyList()
+        val body = linksBody(ctx, type, streamId) ?: return@withContext emptyList()
         val raw = runCatching { (Api.json.parseToJsonElement(body).jsonObject["streams"] as? JsonArray).orEmpty() }.getOrDefault(emptyList())
         val out = ArrayList<StreamItem>()
         var noteText = ""

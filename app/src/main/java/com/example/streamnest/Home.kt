@@ -66,6 +66,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,6 +78,8 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.sign
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.ClipOp
@@ -95,10 +98,16 @@ import androidx.compose.ui.unit.Constraints
 import kotlin.math.roundToInt
 
 @Composable
-private fun SectionTitle(text: String) =
-    Text(text, fontSize = 21.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E9F2),
-        maxLines = 1, overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 12.dp))
+private fun SectionTitle(text: String) = Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    // Xstream Live: a small red tick before every row title.
+    if (BuildConfig.LIVE_ONLY) Box(Modifier.padding(end = 9.dp).size(3.dp, 18.dp).clip(RoundedCornerShape(2.dp)).background(BrandRed))
+    Text(text.replace("StreamX", "Xstream"), fontSize = 21.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E9F2),
+        maxLines = 1, overflow = TextOverflow.Ellipsis)
+}
+
+/** Xstream Live: a thin edge on cards, faint white at the top fading into red at the bottom, so frames don't melt into the dark page. */
+private val liveEdgeBrush = Brush.verticalGradient(listOf(Color(0x1FFFFFFF), Color(0x14FFFFFF), Color(0x8CE50914)))
+fun Modifier.liveEdge(shape: androidx.compose.ui.graphics.Shape): Modifier = if (BuildConfig.LIVE_ONLY) this.border(1.dp, liveEdgeBrush, shape) else this
 
 /** The app's logo: the uploaded one from Developer's Corner, or the built-in red mark. */
 @Composable
@@ -200,6 +209,7 @@ fun HomeScreen(
     val recsFirst = false
     // Old default names (kept by phones that saved them) give way to the new ones.
     val recTitle = t("recommendedFor").let { if (it == "Recommended for {name}") "{ai} picked for {name}" else it }
+        .let { if (!BuildConfig.HAS_AI) it.replace("{ai} picked", "Picked") else it }
         .replace("{ai}", aiName().lowercase().replaceFirstChar { it.uppercase() }).replace("{name}", profile?.name?.takeIf { it.isNotBlank() && it != "Me" } ?: "you")
     var filter by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -297,7 +307,7 @@ fun HomeScreen(
     LaunchedEffect(deckIds) {
         if (deckIds.isEmpty() || !vm.liveMode()) return@LaunchedEffect
         delay(6_000)
-        deckIds.forEach { id -> runCatching { LiveServer.streams(vm.appContext, "movie", id) } }
+        deckIds.forEach { id -> runCatching { LiveServer.streams(vm.appContext, "movie", id, ahead = true) } }
     }
     // True while at least half of the top cards are on screen. Recomputed on scroll, but only notifies readers
     // when the answer flips, so it costs nothing per frame. Trailers / auto-slide stop when the deck scrolls away.
@@ -310,7 +320,11 @@ fun HomeScreen(
     }
     val tint = Palette.tint
     val bg = Bg
-    val topBrush = remember(tint, bg) { Brush.verticalGradient(listOf(tint, bg)) }
+    val topBrush = remember(tint, bg) {
+        // Xstream Live: a dark navy glow at the very top fading into the #0F1014 page.
+        if (BuildConfig.LIVE_ONLY) Brush.verticalGradient(0f to tint, 0.22f to Color(0xFF141B36).copy(alpha = 0.6f), 0.5f to bg, 1f to bg)
+        else Brush.verticalGradient(listOf(tint, bg))
+    }
     val accent = Accent
     val brandRim = remember(accent) { Brush.horizontalGradient(listOf(accent, accent.copy(alpha = 0.25f))) }
     val onFilter: (String) -> Unit = remember(onLive) {
@@ -365,7 +379,11 @@ fun HomeScreen(
                 }
             } else {
                 if (showHero) item(key = DeckKey, contentType = DeckKey) {
-                    Box(Modifier.tourTarget("deck")) { Deck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { WatchlistAsk.toggle(vm, it) } }
+                    Box(Modifier.tourTarget("deck")) {
+                        // Xstream Live: one big card at a time with its trailer inside, the logo, Play and More Info.
+                        if (BuildConfig.LIVE_ONLY) LiveHero(vm, deck, deckOnScreen, onOpen)
+                        else Deck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { WatchlistAsk.toggle(vm, it) }
+                    }
                 }
             }
             if (progress.isNotEmpty() && filter == null && cwShow) {
@@ -487,7 +505,11 @@ val PosterCorners = linkedMapOf("Sharp" to 0, "Subtle" to 4, "Classic" to 8, "Ro
 @Composable fun posterCorner(): Dp = (PosterCorners[t("posterCorner")] ?: 12).dp
 
 /** Rows are shuffled once per app start. */
-object HomeShuffle { val seed: Long = System.nanoTime() }
+object HomeShuffle {
+    val seed: Long = System.nanoTime()
+    /** Rows are shuffled once per app start (while a profile is being picked); after they first show, they never move. */
+    val frozen = java.util.concurrent.ConcurrentHashMap<String, List<Meta>>()
+}
 
 /** How each Home row looks: "numbered" (top 10 style), "portrait", "landscape" or "auto"; set in Home Layout by the developer. */
 object RowStyles {
@@ -524,7 +546,11 @@ fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     // Hindi trending titles are checked too: a film not out online never takes a place in the top 10.
     val notOut by CinemaOnly.hidden.collectAsState()
     LaunchedEffect(h) { Public.vm?.let { v -> if (h.isNotEmpty()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CinemaOnly.check(v, h) } } } }
-    val top = remember(items, h, notOut) { HindiTrending.mix(items, h).filter { it.id.substringBefore(":") !in notOut }.take(10) }
+    val top = remember(items, h, notOut) {
+        val fresh = HindiTrending.mix(items, h).filter { it.id.substringBefore(":") !in notOut }.take(10)
+        // Once shown, the top 10 stays exactly as it is until the app is closed (no reshuffle in front of you).
+        HomeShuffle.frozen[kind]?.takeIf { it.isNotEmpty() } ?: fresh.also { if (it.size >= 10 || (items.isNotEmpty() && it.isNotEmpty())) HomeShuffle.frozen[kind] = it }
+    }
     // All ten posters are asked for at once (one quick TMDB call each, remembered), so the row fills in together.
     LaunchedEffect(top) { top.forEach { m -> launch { runCatching { TmdbPosters.portrait(m) } } } }
     // Same numbers, a little dimmer (soft grey), so the eye goes to the posters first.
@@ -545,7 +571,7 @@ fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
                         shadow = androidx.compose.ui.graphics.Shadow(Color(0xCC000000), androidx.compose.ui.geometry.Offset(0f, 6f), 18f))), softWrap = false)
                 }
                 TallPoster(m, Modifier.align(Alignment.BottomEnd).width(120.dp).aspectRatio(2f / 3f)
-                    .softHalo(corner, spread = 10.dp, strength = 0.8f, dy = 5.dp).clip(shape).titleTap(m) { onOpen(m) })
+                    .softHalo(corner, spread = 10.dp, strength = 0.8f, dy = 5.dp).clip(shape).liveEdge(shape).titleTap(m) { onOpen(m) })
             }
         }
     }
@@ -605,7 +631,7 @@ fun PortraitRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     val shape = remember(corner) { RoundedCornerShape(corner) }
     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items(items, key = { "p" + it.type + it.id }) { m ->
-            AsyncImage(hiResArt(m.poster ?: hdPoster(m)), m.name, Modifier.width(posterWidth()).aspectRatio(2f / 3f).clip(shape).background(Surface1).titleTap(m) { onOpen(m) },
+            AsyncImage(hiResArt(m.poster ?: hdPoster(m)), m.name, Modifier.width(posterWidth()).aspectRatio(2f / 3f).clip(shape).background(Surface1).liveEdge(shape).titleTap(m) { onOpen(m) },
                 contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
         }
     }
@@ -714,7 +740,7 @@ fun LandscapeRow(items: List<Meta>, onOpen: (Meta) -> Unit) =
 fun LandscapeCard(m: Meta, width: Dp = 236.dp, onClick: () -> Unit) {
     var logoFailed by remember(m.id) { mutableStateOf(false) }
     val hideLabels = isOn(t("hideLabels"))
-    Box(Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(posterCorner())).background(Surface1).titleTap(m, onClick)) {
+    Box(Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(posterCorner())).background(Surface1).liveEdge(RoundedCornerShape(posterCorner())).titleTap(m, onClick)) {
         AsyncImage(hiResArt(backdropOf(m)), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xCC000000), 0.65f to Color.Transparent)))
         val logo = logoOf(m)
@@ -1227,9 +1253,9 @@ private fun FloatingFilters(
     val maxCapsule = (LocalConfiguration.current.screenWidthDp - 2 * (12 + 52 + 8)).dp
     Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         // Xstream: no TV / Movies / Live capsule — only the AI voice button.
-        Box(Modifier.align(Alignment.CenterEnd).tourTarget("ai")) { AiOrbButton(vm, 52.dp, hide, onAi) }
+        if (BuildConfig.HAS_AI) Box(Modifier.align(Alignment.CenterEnd).tourTarget("ai")) { AiOrbButton(vm, 52.dp, hide, onAi) }
         // AIDEN wakes up when the app opens: slides out of the button, says hello, and goes back to sleep.
-        Box(Modifier.align(Alignment.CenterEnd).padding(end = 56.dp).offset(y = (-58).dp)) { AidenWake(vm, onAi) }
+        if (BuildConfig.HAS_AI) Box(Modifier.align(Alignment.CenterEnd).padding(end = 56.dp).offset(y = (-58).dp)) { AidenWake(vm, onAi) }
     }
 }
 
@@ -1387,4 +1413,141 @@ object HomeFreeze {
     /** Films found to be unreleased are taken off (never put back during the session); the rest of Home stays frozen. */
     fun hidden(now: Set<String>): Set<String> = ((hid ?: emptySet()) + now).also { hid = it }
     fun recs(live: List<Meta>): List<Meta> { if (recSnap.isEmpty() && live.isNotEmpty()) recSnap = live; return recSnap }
+}
+
+
+/**
+ * Xstream Live home card: one wide rounded picture at a time — its trailer plays inside it (muted; the ring at the top
+ * right pauses / resumes and shows the trailer's progress) — then the title's logo, "Genre · Year · Series", and
+ * Play / More Info. Swipe for the next one; it moves on by itself when a trailer ends (or after 9 s without one).
+ */
+@Composable
+private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Boolean>, onOpen: (Meta) -> Unit) {
+    if (items.isEmpty()) return
+    // Never-ending: a very long strip that starts in its middle, so there is always a card on both sides.
+    val n = items.size
+    val loops = if (n > 1) 2_000 else 1
+    val pager = rememberPagerState(initialPage = if (n > 1) (loops / 2) * n else 0) { n * loops }
+    var muted by remember { mutableStateOf(true) }
+    var tid by remember { mutableStateOf<String?>(null) }
+    var videoOn by remember { mutableStateOf(false) }
+    val ring = remember { androidx.compose.animation.core.Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    fun next() = scope.launch { if (n > 1) pager.animateScrollToPage(pager.currentPage + 1, animationSpec = tween(700)) }
+    LaunchedEffect(pager.settledPage, onScreen.value) {
+        tid = null; videoOn = false; ring.snapTo(0f)
+        if (!onScreen.value) return@LaunchedEffect
+        delay(700)
+        tid = runCatching { vm.trailerId(items[pager.settledPage % n].meta) }.getOrNull()
+        if (tid == null) { ring.animateTo(1f, tween(9_000, easing = androidx.compose.animation.core.LinearEasing)); next() }
+    }
+    // While the trailer plays the ring fills over ~60 s (trailers are about that long); it ends with the trailer.
+    LaunchedEffect(videoOn) {
+        if (videoOn) ring.animateTo(1f, tween(((1f - ring.value) * 60_000).toInt().coerceAtLeast(1), easing = androidx.compose.animation.core.LinearEasing))
+        else ring.stop()
+    }
+    androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 18.dp), pageSpacing = 12.dp,
+        beyondViewportPageCount = 1) { page ->
+        val m = items[page % n].meta
+        val front = page == pager.settledPage
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.fillMaxWidth().aspectRatio(16f / 9.6f)
+                // A soft red light under the curved bottom edge: the curve itself, blurred (drawn before the card is clipped).
+                .drawBehind {
+                    val w = size.width; val h = size.height
+                    val r = 26.dp.toPx(); val dip = h * 0.045f
+                    val curve = android.graphics.Path().apply { moveTo(r, h); quadTo(w / 2f, h - dip * 2f, w - r, h) }
+                    drawIntoCanvas { c ->
+                        val glow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                            style = android.graphics.Paint.Style.STROKE; strokeCap = android.graphics.Paint.Cap.ROUND
+                            color = 0xFFE50914.toInt()
+                        }
+                        c.nativeCanvas.save(); c.nativeCanvas.translate(0f, 10.dp.toPx())
+                        glow.strokeWidth = 26.dp.toPx(); glow.alpha = 70; glow.maskFilter = android.graphics.BlurMaskFilter(22.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+                        c.nativeCanvas.drawPath(curve, glow)
+                        glow.strokeWidth = 8.dp.toPx(); glow.alpha = 120; glow.maskFilter = android.graphics.BlurMaskFilter(8.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+                        c.nativeCanvas.drawPath(curve, glow)
+                        c.nativeCanvas.restore()
+                    }
+                }
+                .clip(LiveHeroShape).background(Color(0xFF05070C))
+                // Red rim light: bright at the top, faint down the sides, red again along the curve.
+                .border(1.5.dp, Brush.verticalGradient(0f to Color(0xD9E50914), 0.55f to Color(0x1AE50914), 1f to Color(0xA6E50914)), LiveHeroShape)
+                .clickable { onOpen(m) }) {
+                val id = tid
+                // Stops when the card leaves the screen; silent while you swipe to the next card.
+                if (front && id != null && onScreen.value) TrailerVideo(id, muted || pager.isScrollInProgress, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
+                    backdrop = backdropOf(m) ?: m.poster, onPlaying = { videoOn = true }, onEnded = { videoOn = false; next() }, onError = { videoOn = false },
+                    trimBars = true)
+                val artAlpha by animateFloatAsState(if (front && videoOn) 0f else 1f, tween(450), label = "liveArt")
+                AsyncImage(hiResArt(backdropOf(m) ?: m.poster), m.name, Modifier.fillMaxSize().graphicsLayer { alpha = artAlpha },
+                    contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.7f to Color.Transparent, 1f to Color(0x80000000))))
+                // Speaker: sound on / off for the trailer (starts muted).
+                if (front && videoOn) Box(Modifier.align(Alignment.TopEnd).padding(14.dp).size(42.dp).clip(CircleShape)
+                    .background(Color(0x66000000)).border(1.dp, Color(0x40FFFFFF), CircleShape).clickable { muted = !muted }, Alignment.Center) {
+                    Icon(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp, if (muted) "Sound on" else "Sound off",
+                        Modifier.size(20.dp), tint = Color.White)
+                }
+            }
+            var logoFailed by remember(m.id) { mutableStateOf(false) }
+            Box(Modifier.padding(top = 18.dp).height(64.dp).fillMaxWidth(0.82f), Alignment.Center) {
+                if (m.logo != null && !logoFailed) AsyncImage(m.logo, m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Fit, onError = { logoFailed = true })
+                else Text(m.name, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, textAlign = TextAlign.Center, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis)
+            }
+            val info = listOfNotNull(m.genres?.firstOrNull(), m.releaseInfo?.take(4), if (m.type == "series") "Series" else m.runtime)
+            Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(info.joinToString("  ·  "), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFC9CCD6))
+                // IMDb rating, as a small yellow badge.
+                val rating by produceState(m.imdbRating?.toDoubleOrNull(), m.id) {
+                    if (value == null && m.id.startsWith("tt")) value = HeroRatings.get(vm, m)
+                }
+                rating?.takeIf { it > 0 }?.let { r ->
+                    Text("  ·  ", fontSize = 16.sp, color = Color(0xFFC9CCD6))
+                    Text("IMDb", Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFF5C518)).padding(horizontal = 5.dp, vertical = 1.dp),
+                        fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color.Black)
+                    Text(" ★ ${"%.1f".format(r)}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF5C518))
+                }
+            }
+            Row(Modifier.padding(top = 16.dp).fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.weight(1.7f).height(56.dp).clip(RoundedCornerShape(28.dp)).background(Color(0xFFE6E7EB))
+                    .clickable { pendingDetailPlay.value = m.id; onOpen(m) }, horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.PlayArrow, null, Modifier.size(28.dp), tint = Color.Black)
+                    Text("Play", Modifier.padding(start = 8.dp), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                }
+                Box(Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(28.dp)).background(Color(0x40FFFFFF)).clickable { onOpen(m) }, Alignment.Center) {
+                    Text("More Info", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+        }
+    }
+}
+
+/** Hero card: rounded top corners and a bottom edge that curves up in the middle. */
+private val LiveHeroShape = object : androidx.compose.ui.graphics.Shape {
+    override fun createOutline(size: androidx.compose.ui.geometry.Size, layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+        density: androidx.compose.ui.unit.Density): androidx.compose.ui.graphics.Outline {
+        val r = with(density) { 26.dp.toPx() }
+        val dip = size.height * 0.045f
+        val w = size.width; val h = size.height
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(0f, r)
+            quadraticTo(0f, 0f, r, 0f)
+            lineTo(w - r, 0f)
+            quadraticTo(w, 0f, w, r)
+            lineTo(w, h - r * 0.6f)
+            quadraticTo(w, h, w - r, h)
+            quadraticTo(w / 2f, h - dip * 2f, r, h)
+            quadraticTo(0f, h, 0f, h - r * 0.6f)
+            close()
+        }
+        return androidx.compose.ui.graphics.Outline.Generic(path)
+    }
+}
+
+/** IMDb ratings for the Home card (Cinemeta has them; asked once per title while the app is open). */
+private object HeroRatings {
+    private val seen = java.util.concurrent.ConcurrentHashMap<String, Double>()
+    suspend fun get(vm: AppViewModel, m: Meta): Double? = seen[m.id] ?: runCatching { vm.fullMeta(m)?.imdbRating?.toDoubleOrNull() }.getOrNull()?.also { seen[m.id] = it }
 }

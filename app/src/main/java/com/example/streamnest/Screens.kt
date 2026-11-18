@@ -228,11 +228,28 @@ fun App(vm: AppViewModel = viewModel()) {
     var sawRestore by remember { mutableStateOf(false) }
     LaunchedEffect(restoringCloud, restoredN) {
         if (restoringCloud) sawRestore = true
-        else if (sawRestore) { sawRestore = false; emptyAccount = restoredN == 0 }
+        else if (sawRestore) {
+            sawRestore = false
+            // No "this account has no profiles" screen: the first profile simply takes the account's name.
+            if (restoredN == 0) {
+                val nm = Cloud.user.value?.email?.substringBefore("@")?.replace(Regex("[._\\d]+"), " ")?.trim()
+                    ?.split(" ")?.firstOrNull { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
+                vm.profiles.value.firstOrNull { !it.kids && it.name == "Me" }?.let { p -> if (!nm.isNullOrBlank()) vm.renameProfile(p, nm, false) }
+            }
+        }
     }
     CompositionLocalProvider(LocalTexts provides texts) {
         LaunchedEffect(profile == null) { if (profile == null) stack.clear() }
         val open: (Meta) -> Unit = { stack.add(Screen.Detail(it)) }
+        // VR › Browse picked a title: leave this player, open its page, which starts it (again in VR).
+        val vrPick by VrState.openTitle.collectAsState()
+        LaunchedEffect(vrPick) {
+            val m = vrPick ?: return@LaunchedEffect
+            VrState.openTitle.value = null
+            while (stack.lastOrNull() is Screen.Player) stack.removeAt(stack.lastIndex)
+            pendingDetailPlay.value = m.id
+            stack.add(Screen.Detail(m))
+        }
         // "Hey Aiden": the offline wake word opens the AI card (anywhere in the app, also during a movie).
         val buddyCtx = androidx.compose.ui.platform.LocalContext.current
         val callMic by Call.micOn.collectAsState()
@@ -258,11 +275,12 @@ fun App(vm: AppViewModel = viewModel()) {
         LaunchedEffect(profile?.id, aiBusy, callMic, appResumed, texts["wakeOn"], musicLib, musicNow, songOn, micHeld, onPlayer) {
             WakeWord.onName = { if (!voiceOpen) { AiPlayerBus.duck(); voiceOpen = true } }
             // Not during a video either: the listening microphone showed Android's green privacy dot over the film.
-            val on = !BuildConfig.IS_TV && profile != null && !onPlayer && !aiBusy && !callMic && appResumed && !musicLib && !musicNow && !songOn && micHeld == 0 && isOn(texts["wakeOn"] ?: "yes")
+            val on = BuildConfig.HAS_AI && !BuildConfig.IS_TV && profile != null && !onPlayer && !aiBusy && !callMic && appResumed && !musicLib && !musicNow && !songOn && micHeld == 0 && isOn(texts["wakeOn"] ?: "yes")
             if (on) { delay(700); WakeWord.start(buddyCtx) } else WakeWord.stop()
         }
         if (profile == null && gateOpen) CloudGate(onDone = { gateOpen = false })
         else if (profile == null && (restoringCloud || emptyAccount)) RestoreScreen(restoringCloud, onDifferent = { Cloud.signOut(); Cloud.restoring.value = false; emptyAccount = false; gateOpen = true }) { Cloud.restoring.value = false; emptyAccount = false }
+        else if (profile == null && texts["streamMode"] == null && BuildConfig.LIVE_ONLY) LaunchedEffect(Unit) { vm.setText("streamMode", "elite") }
         else if (profile == null && texts["streamMode"] == null) ModeChooser(vm) {}
         else if (profile == null) WhoIsWatchingScreen(vm, active = !showSplash) { tab = 0; scrolledDown = false }
         else when (val top = stack.lastOrNull()) {
@@ -342,9 +360,11 @@ fun App(vm: AppViewModel = viewModel()) {
                     if (it == 0 && tab == 0) { scope.launch { homeList.animateScrollToItem(0) }; vm.refresh() } else tab = it
                 }
                 // Bottom bar: StreamX's bar (default on phones) or the capsule dock. Both get out of the way while scrolling.
-                val sxBar = !BuildConfig.IS_TV && (texts["navBar"] ?: "streamx") == "streamx"
+                val barKind = texts["navBar"] ?: (if (BuildConfig.LIVE_ONLY) "orbit" else "streamx")
+                val sxBar = !BuildConfig.IS_TV && barKind == "streamx"
                 if (!(navHidden && tab == 3)) {
-                    if (sxBar) StreamXBar(tab, vm, compact = capsuleAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
+                    if (!BuildConfig.IS_TV && barKind == "orbit") LiveBar(tab, vm, compact = capsuleAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
+                    else if (sxBar) StreamXBar(tab, vm, compact = capsuleAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
                     else BottomNav(tab, vm, compact = barAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
                 }
                 // Music (Live server): the small player sits just above the dock while songs are queued.
@@ -467,6 +487,8 @@ fun App(vm: AppViewModel = viewModel()) {
             // starts its own plugins at once, so playing is never slower. Plugins are checked (repaired, updated) and
             // woken on every start whenever any are switched on.
             delay(4_000)
+            // Xstream Live: no plugins are used, so none are loaded or woken (it cost data and battery at every start).
+            if (LiveLock.on) return@LaunchedEffect
             runCatching { CsPlugins.init(vm.appContext); CsPlugins.upkeep(); if (CsPlugins.enabled.value.isNotEmpty()) CsPlugins.warmAll() }
             if (!(vm.store("csWarm") == "yes" || vm.pluginMode())) return@LaunchedEffect
             // Plugin mode: the first two Continue Watching titles get their Quick Play links fetched now (kept 10 minutes),

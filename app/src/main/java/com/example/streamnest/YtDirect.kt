@@ -27,6 +27,7 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -88,7 +89,12 @@ object YtDirect {
     private val JSONT = "application/json".toMediaType()
 
     /** Tallest picture to ask for: small on TV sticks (a second decoder next to the movie's), sharper on phones. */
-    private val maxHeight: Int get() = if (BuildConfig.IS_TV) 480 else 720
+    fun limitHeight(): Int = maxHeight
+    private val maxHeight: Int get() = if (BuildConfig.IS_TV) 480 else if (BuildConfig.LIVE_ONLY && metered()) 480 else 720
+    /** Xstream Live: trailers at 480p on mobile data, 720p on Wi-Fi. */
+    private fun metered(): Boolean = runCatching {
+        (Public.vm!!.appContext.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered
+    }.getOrDefault(true)
 
     /** IPv4 first for YouTube (IPv6 to googlevideo is slow on some networks, e.g. Jio). Keeps the app's DNS choice. */
     val http: okhttp3.OkHttpClient by lazy {
@@ -130,10 +136,14 @@ object YtDirect {
         var out: Src? = null
         if (pool.isNotEmpty()) {
             // Each candidate's link is checked (and moved to a backup server that answers) in parallel; the best that works wins.
-            val checked = coroutineScope { pool.take(6).map { (n, s) -> async { n to reachable(s) } }.awaitAll() }
-            val ok = checked.firstOrNull { it.second != null }
+            val checked = coroutineScope { pool.take(10).map { (n, s) -> async { n to reachable(s) } }.awaitAll() }
+            // The sharpest that works (up to 720p on Wi-Fi / 480p on mobile data; a playlist adapts up to that), not
+            // simply the first — the first was often a 360p file.
+            fun score(x: Src) = if (x.hls) maxHeight else x.height.coerceAtMost(maxHeight)
+            val good = checked.filter { it.second != null }
+            val ok = good.maxByOrNull { score(it.second!!) }?.takeIf { true } ?: checked.firstOrNull { it.second != null }
             out = ok?.second
-            if (ok != null) ActLog.add("TRAILER", "$videoId · ${ok.first} · ${if (out!!.hls) "HLS" else "${out.height}p"}${if (visitor != null) " · visitor" else ""}")
+            if (ok != null) ActLog.add("TRAILER", "$videoId · ${ok.first} · ${if (out!!.hls) "HLS ≤${maxHeight}p" else "${out.height}p"}${if (visitor != null) " · visitor" else ""}")
             else ActLog.add("TRAILER", "$videoId · ${pool.size} links, none answered")
         }
         // YouTube said no to every app client: ask public Piped / Invidious mirrors (they hand out playable addresses).
@@ -496,7 +506,7 @@ internal class YtChunked(private val up: androidx.media3.datasource.DataSource) 
 @Composable
 fun DirectTrailer(
     src: YtDirect.Src, muted: Boolean, modifier: Modifier = Modifier, crop: Boolean = true, zoom: Float = 1f,
-    onPlaying: () -> Unit = {}, onEnded: () -> Unit = {}, onError: () -> Unit = {},
+    onPlaying: () -> Unit = {}, onEnded: () -> Unit = {}, onError: () -> Unit = {}, trimBars: Boolean = false,
 ) {
     val ctx = LocalContext.current
     val playing by rememberUpdatedState(onPlaying)
@@ -507,6 +517,8 @@ fun DirectTrailer(
         // A small buffer: trailers start fast and leave memory for the app (and the movie, on TV).
         val load = DefaultLoadControl.Builder().setBufferDurationsMs(4_000, 15_000, 800, 1_500).build()
         ExoPlayer.Builder(ctx).setLoadControl(load).build().apply {
+            // A playlist never climbs above the trailer limit (480p on mobile data, 720p on Wi-Fi).
+            trackSelectionParameters = trackSelectionParameters.buildUpon().setMaxVideoSize(Int.MAX_VALUE, YtDirect.limitHeight()).build()
             setMediaSource(source); repeatMode = Player.REPEAT_MODE_OFF; volume = if (muted) 0f else 1f
             prepare(); playWhenReady = true
         }
@@ -541,6 +553,24 @@ fun DirectTrailer(
         player.addListener(l)
         onDispose { player.removeListener(l); player.release() }
     }
+    // [trimBars]: many trailers have black bars baked into the picture (a wide film inside a 16:9 video). A few small
+    // frames are checked; when both show the same bars, the picture is enlarged just enough to push them out of the box.
+    val bars = remember(src) { androidx.compose.animation.core.Animatable(1f) }
+    LaunchedEffect(first, trimBars) {
+        if (!first || !trimBars) return@LaunchedEffect
+        fun barShare(): Float? {
+            val bm = view[0]?.getBitmap(48, 64) ?: return null
+            fun dark(y: Int): Boolean { var sum = 0; for (x in 0 until bm.width) { val c = bm.getPixel(x, y); sum += (android.graphics.Color.red(c) + android.graphics.Color.green(c) + android.graphics.Color.blue(c)) / 3 }; return sum / bm.width < 18 }
+            var top = 0; while (top < bm.height / 3 && dark(top)) top++
+            var bot = 0; while (bot < bm.height / 3 && dark(bm.height - 1 - bot)) bot++
+            bm.recycle()
+            return minOf(top, bot).toFloat() / 64f
+        }
+        delay(2_500); val a = barShare() ?: return@LaunchedEffect
+        delay(3_500); val b = barShare() ?: return@LaunchedEffect
+        val share = minOf(a, b)
+        if (share >= 0.05f) bars.animateTo((1f / (1f - 2f * share)).coerceAtMost(1.6f), androidx.compose.animation.core.tween(600))
+    }
     AndroidView(
         factory = { c ->
             TextureView(c).also { tv ->
@@ -549,7 +579,7 @@ fun DirectTrailer(
                 player.setVideoTextureView(tv)
             }
         },
-        modifier = modifier.graphicsLayer { scaleX = zoom; scaleY = zoom; alpha = shown.value },
+        modifier = modifier.graphicsLayer { scaleX = zoom * bars.value; scaleY = zoom * bars.value; alpha = shown.value },
     )
 }
 

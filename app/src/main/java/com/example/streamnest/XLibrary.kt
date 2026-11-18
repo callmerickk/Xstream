@@ -261,7 +261,7 @@ fun XLibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit
         Row(Modifier.statusBarsPadding().padding(start = if (onBack != null || tab != "home") 6.dp else 16.dp, end = 16.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             val back = if (tab != "home") ({ tab = "home" }) else onBack
             if (back != null) Box(Modifier.size(44.dp).clip(CircleShape).clickable(onClick = back), Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text(when (tab) { "watchlist" -> "Watchlist"; "calendar" -> "Calendar"; "together" -> "Watch Together"; "downloads" -> "Downloads"; else -> "Library" },
+            Text(when (tab) { "watchlist" -> "Watchlist"; "calendar" -> "Calendar"; "together" -> "Watch Together"; "downloads" -> "Downloads"; "watched" -> "Watched"; else -> "Library" },
                 fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
         }
         if (tab == "watchlist" || tab == "calendar") Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -292,6 +292,7 @@ fun XLibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Meta) -> Unit
                     else FriendRoom(vm, p, onOpen)
                 }
                 "calendar" -> WatchlistPage(vm, onBack = {}, onOpen = onOpen, startCalendar = true, embedded = true)
+                "watched" -> WatchedPage(vm, onOpen)
                 "downloads" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 140.dp)) {
                     if (onPlay != null) DownloadsSection(onPlay) else Text("Downloads open from the title page.", Modifier.padding(16.dp), color = LMuted)
                 }
@@ -317,8 +318,9 @@ private fun LibraryHome(vm: AppViewModel, friends: List<Person>, onOpen: (Meta) 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 150.dp)) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (!BuildConfig.IS_TV) LibTile("Xstream Music", "Songs, albums, videos", Icons.Default.MusicNote, true, Modifier.weight(1f)) { MusicPlayer.openLibrary.value = true }
-                LibTile("Watch Together", "${friends.size} friend${if (friends.size == 1) "" else "s"} · ${shared.size} shared", Icons.Default.Groups, false, Modifier.weight(1f)) { onTile("together") }
+                if (!BuildConfig.IS_TV && BuildConfig.HAS_MUSIC) LibTile("Xstream Music", "Songs, albums, videos", Icons.Default.MusicNote, true, Modifier.weight(1f)) { MusicPlayer.openLibrary.value = true }
+                if (!BuildConfig.HAS_MUSIC) LibTile("Watched", "Films you finished", Icons.Default.Check, true, Modifier.weight(1f)) { onTile("watched") }
+                if (BuildConfig.HAS_SOCIAL) LibTile("Watch Together", "${friends.size} friend${if (friends.size == 1) "" else "s"} · ${shared.size} shared", Icons.Default.Groups, false, Modifier.weight(1f)) { onTile("together") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LibTile("Watchlist", "${list.size} title${if (list.size == 1) "" else "s"} · Calendar", Icons.Default.Favorite, false, Modifier.weight(1f)) { onTile("watchlist") }
@@ -490,3 +492,30 @@ private fun WatchTogetherCard(friends: List<Person>, onOpen: () -> Unit) {
 
 /** Pages that need the whole screen (chat, calendar) hide the bottom bar while they show. */
 object NavHide { val on = kotlinx.coroutines.flow.MutableStateFlow(false) }
+
+/** Library › Watched: films you finished (they leave Pick up where you left off). Tap = details · Rewatch · Remove. */
+@Composable
+private fun WatchedPage(vm: AppViewModel, onOpen: (Meta) -> Unit) {
+    LaunchedEffect(Unit) { vm.loadWatched() }
+    val list by vm.watched.collectAsStateWithLifecycle()
+    if (list.isEmpty()) { Text("Films you finish show up here.", Modifier.padding(20.dp), color = LMuted); return }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 150.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(list, key = { it.key }) { w ->
+            val m = Meta(id = w.key, type = "movie", name = w.title, poster = w.image)
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(LCard).clickable { onOpen(m) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                AsyncImage(w.image, w.title, Modifier.width(64.dp).height(92.dp).clip(RoundedCornerShape(10.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(w.title, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 2)
+                    Text(java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(w.updated)).let { "Watched $it" },
+                        Modifier.padding(top = 3.dp), fontSize = 12.sp, color = LMuted)
+                    Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Rewatch", Modifier.clip(RoundedCornerShape(50)).background(Color(0xFFF2F4F8)).clickable { pendingDetailPlay.value = m.id; onOpen(m) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0E1014))
+                        Text("Remove", Modifier.clip(RoundedCornerShape(50)).border(1.dp, LLine, RoundedCornerShape(50)).clickable { vm.removeWatched(w.key) }
+                            .padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LMuted)
+                    }
+                }
+            }
+        }
+    }
+}

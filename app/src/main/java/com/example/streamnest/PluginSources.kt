@@ -259,6 +259,7 @@ object PluginSources {
 
     /** CloudStream: every switched-on plugin provider, results growing as each one answers. */
     fun cloudstream(ctx: Context, meta: Meta, videoId: String): Flow<List<StreamItem>> = channelFlow {
+        if (LiveLock.on) return@channelFlow
         CsPlugins.init(ctx)
         if (CsPlugins.catalog.value.isEmpty()) runCatching { CsPlugins.refresh() }
         val series = meta.type == "series"
@@ -286,6 +287,7 @@ object PluginSources {
      * sent the moment it is found.
      */
     fun selected(ctx: Context, meta: Meta, videoId: String, picked: Set<String>): Flow<StreamItem> = channelFlow {
+        if (LiveLock.on) return@channelFlow
         CsPlugins.init(ctx)
         if (CsPlugins.catalog.value.isEmpty()) runCatching { CsPlugins.refresh() }
         val series = meta.type == "series"
@@ -351,6 +353,7 @@ object PluginSources {
      * plugin, as (links so far, all answered?). [only] / [except] are link names ("CloudStream · Netflix").
      */
     fun modeStreams(vm: AppViewModel, type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
+        if (LiveLock.on) { send(emptyList<StreamItem>() to true); return@channelFlow }
         val ctx = vm.appContext
         CsPlugins.init(ctx)
         SourceHealth.init(ctx)
