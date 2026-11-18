@@ -56,3 +56,12 @@ Logs
 - 20. Poster cache: posters/backdrops kept on disk; at launch Home shows from cache at once (no shimmer), refresh in background, cached set shuffled for next launch.
 - 8 → "Cascade" rejected — offer new names.
 - 16 → VR icon = headset (A). Look around OFF by default (user turns it on).
+
+### Quality sheet — final (19 Nov, 05:21)
+- Main list always: Auto · 4K 60fps · 4K · 1080p 60fps · 1080p · 720p · 480p. Tick colour on the playing row: RED = HLS,
+  YELLOW = MovieBox / other plugin streams, GREEN = high-quality files (VegaMovies, RogMovies, 4KHDHub).
+- Other streams: UNCHANGED from today (groups + long-press to list links); only rename groups "1080p" → "Full HD",
+  "Unlabelled" → "Mid HD".
+- Chip next to the lock = the playing quality (4K, 4K 60fps, 1080p 60fps, 1080p, 720p, 480p); "Auto" while it keeps
+  switching on unstable internet; the real quality again once playback is steady.
+- Home style "StreamX" renamed to **Stack** (user approved).
