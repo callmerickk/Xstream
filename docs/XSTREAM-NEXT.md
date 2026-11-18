@@ -17,5 +17,9 @@
 - Links prepared before posting so Watch is green. Builds on EpisodeAlerts (6-hour worker).
 - Mockup image only when the user asks.
 
-## Next build — TV gets the new Xstream + "Choose your look" on first run (phone too)
-See the plan discussed on 19 Nov 2026 (TV look plan artifact).
+## REMIND THE USER right after the next Xstream mobile build is done
+"Integrate the new features into **StreamX TV** (not a new Xstream TV) — StreamX TV already has good options and runs
+buttery smooth; how to bring in: new Home looks (Live / Cascade / Classic) with a side bar, Look settings with live
+preview, first-run Choose your look (OK = animated preview, OK again = keep, Back = choices), Horizon profile page,
+quick start with little data, seek preview thumbnails, Watch next corner, Next episode ready — and how to make it better."
+The TV look plan canvas (claude.ai artifact "Xstream TV look plan") has the boards; adapt them to StreamX TV.
