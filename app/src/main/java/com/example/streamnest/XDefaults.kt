@@ -48,6 +48,13 @@ object DevDefaults {
             runCatching { Api.json.parseToJsonElement(raw!!) as? JsonObject }.getOrNull()
         } ?: return
         val changed = ArrayList<String>()
+        // Xstream: StreamX's published Home rows too, for the "Live" and "StreamX" Home styles.
+        if (!BuildConfig.LIVE_ONLY && !BuildConfig.IS_TV) withContext(Dispatchers.IO) {
+            runCatching {
+                val sx = Api.json.parseToJsonElement(Api.get("${CloudConfig.DB_URL}/shared/devDefaults.json?auth=$t")) as? JsonObject
+                sx?.get("t_homeRows")?.jsonPrimitive?.contentOrNull
+            }.getOrNull()
+        }?.let { rows -> withContext(Dispatchers.Main) { if (vm.texts.value["homeRowsSx"] != rows) { vm.setText("homeRowsSx", rows); changed += "homeRowsSx" } } }
         withContext(Dispatchers.Main) {
             o.forEach { (k, v) ->
                 val value = runCatching { v.jsonPrimitive.contentOrNull }.getOrNull() ?: return@forEach

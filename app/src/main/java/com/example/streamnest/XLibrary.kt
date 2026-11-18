@@ -326,6 +326,10 @@ private fun LibraryHome(vm: AppViewModel, friends: List<Person>, onOpen: (Meta) 
                 LibTile("Watchlist", "${list.size} title${if (list.size == 1) "" else "s"} · Calendar", Icons.Default.Favorite, false, Modifier.weight(1f)) { onTile("watchlist") }
                 if (!BuildConfig.IS_TV) LibTile("Downloads", "Watch without internet", Icons.Default.Download, false, Modifier.weight(1f)) { onTile("downloads") }
             }
+            // Xstream (with Music and Watch Together): Watched gets its own row.
+            if (BuildConfig.HAS_MUSIC && !BuildConfig.IS_TV) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                LibTile("Watched", "Films you finished", Icons.Default.Check, false, Modifier.weight(1f)) { onTile("watched") }
+            }
         }
         if (shared.isNotEmpty()) {
             Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 10.dp), verticalAlignment = Alignment.Bottom) {

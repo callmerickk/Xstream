@@ -360,7 +360,8 @@ fun App(vm: AppViewModel = viewModel()) {
                     if (it == 0 && tab == 0) { scope.launch { homeList.animateScrollToItem(0) }; vm.refresh() } else tab = it
                 }
                 // Bottom bar: StreamX's bar (default on phones) or the capsule dock. Both get out of the way while scrolling.
-                val barKind = texts["navBar"] ?: (if (BuildConfig.LIVE_ONLY) "orbit" else "streamx")
+                // Home style "Live" brings its glass Orbit bar; the other styles use the bar chosen in Settings.
+                val barKind = if (homeStyleOf(texts) == "live") "orbit" else texts["navBar"]?.takeIf { it != "orbit" } ?: "streamx"
                 val sxBar = !BuildConfig.IS_TV && barKind == "streamx"
                 if (!(navHidden && tab == 3)) {
                     if (!BuildConfig.IS_TV && barKind == "orbit") LiveBar(tab, vm, compact = capsuleAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))

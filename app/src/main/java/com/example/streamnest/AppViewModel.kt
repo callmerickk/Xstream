@@ -424,7 +424,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         parseColor(m["accent2"]!!)?.let { Palette.accent2 = it }
         if (isOn(m["amoled"]!!)) Palette.bg = Color.Black
         // Xstream Live: always the navy-black page with a dark navy glow at the top (the account's Xstream colours aren't used).
-        if (BuildConfig.LIVE_ONLY) { Palette.bg = Color(0xFF0F1014); Palette.tint = Color(0xFF16204A) }
+        if (homeStyleOf(m) == "live") { Palette.bg = Color(0xFF0F1014); Palette.tint = Color(0xFF16204A) }
         m["cardCorner"]!!.trim().toIntOrNull()?.let { Palette.corner = it.coerceIn(0, 50) }
         // Buttons: the theme's own button colours, else the accent with readable text.
         Palette.button = parseColor(m["btnColor"].orEmpty()) ?: Palette.accent
@@ -768,7 +768,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     private var refreshJob: Job? = null
 
     /** Rows the developer pushed to every account (texts["homeRows"], sent with the developer's defaults). */
-    fun pushedRows(): List<PushedRow> = runCatching { Api.json.decodeFromString<List<PushedRow>>(texts.value["homeRows"].orEmpty()) }.getOrDefault(emptyList())
+    fun pushedRows(): List<PushedRow> {
+        // Home styles "Live" and "StreamX" show StreamX's published rows; "Classic" shows Xstream's own.
+        val sx = homeStyleOf(texts.value) != "classic" && !texts.value["homeRowsSx"].isNullOrBlank()
+        val raw = if (sx) texts.value["homeRowsSx"].orEmpty() else texts.value["homeRows"].orEmpty()
+        return runCatching { Api.json.decodeFromString<List<PushedRow>>(raw) }.getOrDefault(emptyList())
+    }
 
     /** Addon error placeholders shown as titles ("[❌] CNCVerse Bridge · 404 - Not Found"). */
     private fun isErrorCard(m: Meta) = m.id.startsWith("aiostreamserror") || m.name.startsWith("[❌]") || m.name.startsWith("[\u274C]")
@@ -803,7 +808,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 }.take(48).awaitAll()
             }
             // The developer's published rows (Home Layout › Publish): fetched for every account, shown first and locked.
-            val pushed = if (current.value?.kids == true || BuildConfig.IS_TV || (Public.dev && !BuildConfig.LIVE_ONLY)) emptyList() else pushedRows().map { r ->
+            val sxLayout = homeStyleOf(texts.value) != "classic"
+            val pushed = if (current.value?.kids == true || BuildConfig.IS_TV || (Public.dev && !sxLayout)) emptyList() else pushedRows().map { r ->
                 async { runCatching {
                     val items = Api.fetch<CatalogResponse>(r.src).metas.map { m -> if (m.posterShape == null && r.shape != null) m.copy(posterShape = r.shape) else m }
                     Shelf(r.title, items, src = r.src, pinned = true)
@@ -815,7 +821,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 else kotlinx.coroutines.withTimeoutOrNull(5_000) { runCatching { ServiceRows.rows() }.getOrNull() }.orEmpty()
             // 0.8: Home is managed by the developer. When a layout is published, every other account shows only those rows
             // (its own catalogue addons no longer add rows); the developer still sees everything.
-            val own = if (pushed.isNotEmpty() && (!Public.dev || BuildConfig.LIVE_ONLY)) emptyList() else result.filterNotNull()
+            val own = if (pushed.isNotEmpty() && (!Public.dev || sxLayout)) emptyList() else result.filterNotNull()
             shelves.value = (pushed + own.filter { it.src == null || it.src !in pushedSrc }).let { l -> if (svc.isEmpty()) l else l.take(3) + svc + l.drop(3) }
                 .filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.filter { !isErrorCard(it) }.map { posterFromPattern(it) }.distinctBy { it.type + it.id }) }
             loading.value = false

@@ -10,11 +10,11 @@ android {
     namespace = "com.example.streamnest"
     compileSdk = 35
     defaultConfig {
-        applicationId = "com.example.xstreamlive"
+        applicationId = "com.example.xstream"
         minSdk = 24
         targetSdk = 34
-        versionCode = 9
-        versionName = "1.0.8"
+        versionCode = 39
+        versionName = "0.8.5"
     }
     // Two apps from one project: the phone app and StreamX TV (Fire TV / Android TV).
     // "gradle assembleDebug" builds both APKs.
@@ -23,18 +23,17 @@ android {
         create("phone") {
             dimension = "device"
             buildConfigField("boolean", "IS_TV", "false")
-            // Xstream Live: the Live server is the only source (plugins / addons only from Developer's Corner).
-            buildConfigField("boolean", "HAS_LIVE", "true")
-            buildConfigField("boolean", "LIVE_ONLY", "true")
-            // No AI, no Watch together: this app is for playing.
-            buildConfigField("boolean", "HAS_AI", "false")
-            buildConfigField("boolean", "HAS_SOCIAL", "false")
-            // Music is off in Xstream Live for now.
-            buildConfigField("boolean", "HAS_MUSIC", "false")
+            // Xstream: plugins and addons (no Live server — that is the separate app Xstream Live, branch "live").
+            buildConfigField("boolean", "HAS_LIVE", "false")
+            buildConfigField("boolean", "LIVE_ONLY", "false")
+            buildConfigField("boolean", "HAS_AI", "true")
+            buildConfigField("boolean", "HAS_SOCIAL", "true")
+            // Xstream Music (its own launcher entry, widget, YouTube Music data).
+            buildConfigField("boolean", "HAS_MUSIC", "true")
             // Testing app: no "Publish for everyone" buttons.
             buildConfigField("boolean", "NO_PUBLISH", "true")
             // Universal: 64-bit and 32-bit ARM phones.
-            ndk { abiFilters += listOf("arm64-v8a") }
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
             // The app's own words are in its code; the libraries' translations into ~80 languages are left out (smaller APK).
             resourceConfigurations += listOf("en")
         }
@@ -106,6 +105,7 @@ android {
     buildFeatures { compose = true; buildConfig = true }
     // Offline voice (Vosk) and face detection live here: universal and TV only.
     sourceSets {
+        getByName("phone").java.srcDir("src/full/java")
         getByName("universal").java.srcDir("src/full/java")
         getByName("tv").java.srcDir("src/full/java")
     }
@@ -114,7 +114,6 @@ android {
         jniLibs {
             pickFirsts += listOf("**/libc++_shared.so")
             // Xstream Live: no Watch together (video calls) — its 11 MB calling library is left out.
-            excludes += listOf("**/libjingle_peerconnection_so.so")
             useLegacyPackaging = true
         }
     }
@@ -151,6 +150,8 @@ dependencies {
     implementation("org.videolan.android:libvlc-all:3.6.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.2")
     // "Hey Aiden": offline wake word, Vosk (Apache 2.0) + JNA.
+    "phoneImplementation"("com.alphacephei:vosk-android:0.3.47@aar")
+    "phoneImplementation"("net.java.dev.jna:jna:5.13.0@aar")
     "universalImplementation"("com.alphacephei:vosk-android:0.3.47@aar")
     "universalImplementation"("net.java.dev.jna:jna:5.13.0@aar")
     "tvImplementation"("com.alphacephei:vosk-android:0.3.47@aar")
@@ -182,6 +183,7 @@ dependencies {
     implementation("com.google.code.gson:gson:2.11.0")
     // Subtitles › Follow the speaker (beta): on-device face + lip contours (Apache-licensed ML Kit client, no network).
     // Xstream Live (phone) leaves it out (stub in src/phone).
+    "phoneImplementation"("com.google.mlkit:face-detection:16.1.6")
     "universalImplementation"("com.google.mlkit:face-detection:16.1.6")
     "tvImplementation"("com.google.mlkit:face-detection:16.1.6")
     implementation("io.ktor:ktor-http:2.3.12")

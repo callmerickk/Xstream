@@ -100,14 +100,14 @@ import kotlin.math.roundToInt
 @Composable
 private fun SectionTitle(text: String) = Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
     // Xstream Live: a small red tick before every row title.
-    if (BuildConfig.LIVE_ONLY) Box(Modifier.padding(end = 9.dp).size(3.dp, 18.dp).clip(RoundedCornerShape(2.dp)).background(BrandRed))
+    if (liveLookNow()) Box(Modifier.padding(end = 9.dp).size(3.dp, 18.dp).clip(RoundedCornerShape(2.dp)).background(BrandRed))
     Text(text.replace("StreamX", "Xstream"), fontSize = 21.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E9F2),
         maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
 /** Xstream Live: a thin edge on cards, faint white at the top fading into red at the bottom, so frames don't melt into the dark page. */
 private val liveEdgeBrush = Brush.verticalGradient(listOf(Color(0x1FFFFFFF), Color(0x14FFFFFF), Color(0x8CE50914)))
-fun Modifier.liveEdge(shape: androidx.compose.ui.graphics.Shape): Modifier = if (BuildConfig.LIVE_ONLY) this.border(1.dp, liveEdgeBrush, shape) else this
+fun Modifier.liveEdge(shape: androidx.compose.ui.graphics.Shape): Modifier = if (liveLook()) this.border(1.dp, liveEdgeBrush, shape) else this
 
 /** The app's logo: the uploaded one from Developer's Corner, or the built-in red mark. */
 @Composable
@@ -121,7 +121,7 @@ fun AppLogo(vm: AppViewModel, size: Dp, modifier: Modifier = Modifier) {
     }
 }
 
-private data class DeckItem(val meta: Meta, val catalog: String)
+internal data class DeckItem(val meta: Meta, val catalog: String)
 /** The top cards AIDEN picked for this profile. */
 private const val AIDEN_PICK = "\u0001aiden"
 
@@ -170,6 +170,7 @@ fun HomeScreen(
 ) {
     val liveShelves by vm.shelves.collectAsStateWithLifecycle()
     val profileNow by vm.current.collectAsStateWithLifecycle()
+    val texts by vm.texts.collectAsStateWithLifecycle()
     // 0.8: Home is fixed for the session once you see it (no posters swapping in front of you). A new addon or another
     // profile builds it again; fresh catalogue data is used the next time the app opens.
     val allShelves = remember(liveShelves, profileNow?.id) { HomeFreeze.shelves(liveShelves, profileNow?.id) }
@@ -320,9 +321,10 @@ fun HomeScreen(
     }
     val tint = Palette.tint
     val bg = Bg
-    val topBrush = remember(tint, bg) {
+    val style = homeStyleOf(texts)
+    val topBrush = remember(tint, bg, style) {
         // Xstream Live: a dark navy glow at the very top fading into the #0F1014 page.
-        if (BuildConfig.LIVE_ONLY) Brush.verticalGradient(0f to tint, 0.22f to Color(0xFF141B36).copy(alpha = 0.6f), 0.5f to bg, 1f to bg)
+        if (style == "live") Brush.verticalGradient(0f to tint, 0.22f to Color(0xFF141B36).copy(alpha = 0.6f), 0.5f to bg, 1f to bg)
         else Brush.verticalGradient(listOf(tint, bg))
     }
     val accent = Accent
@@ -381,8 +383,11 @@ fun HomeScreen(
                 if (showHero) item(key = DeckKey, contentType = DeckKey) {
                     Box(Modifier.tourTarget("deck")) {
                         // Xstream Live: one big card at a time with its trailer inside, the logo, Play and More Info.
-                        if (BuildConfig.LIVE_ONLY) LiveHero(vm, deck, deckOnScreen, onOpen)
-                        else Deck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { WatchlistAsk.toggle(vm, it) }
+                        when (style) {
+                            "live" -> LiveHero(vm, deck, deckOnScreen, onOpen)
+                            "streamx" -> SxDeck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { WatchlistAsk.toggle(vm, it) }
+                            else -> Deck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { WatchlistAsk.toggle(vm, it) }
+                        }
                     }
                 }
             }
@@ -1002,7 +1007,7 @@ private fun DeckArt(
  * it and a light sweep, then floats away after ~3 s.
  */
 @Composable
-private fun TrailerModeBanner(on: Boolean, modifier: Modifier = Modifier, onDone: () -> Unit) {
+internal fun TrailerModeBanner(on: Boolean, modifier: Modifier = Modifier, onDone: () -> Unit) {
     val appear = remember { androidx.compose.animation.core.Animatable(0f) }
     val inf = rememberInfiniteTransition(label = "tmb")
     val glow by inf.animateFloat(0.35f, 0.9f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "glow")

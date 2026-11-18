@@ -237,8 +237,8 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
         // About a minute ahead (like Nuvio): more was downloaded and thrown away at every seek.
         // Xstream Live: start after ~1 s of video (and ~1.5 s after a seek) — the Live server keeps delivering steadily, so
         // waiting for 5 s before playing only made every jump slower.
-        .setBufferDurationsMs(if (tv) 30_000 else 25_000, 60_000, if (BuildConfig.LIVE_ONLY) 1_000 else if (fast) 1_500 else 2_500,
-            if (BuildConfig.LIVE_ONLY) 1_500 else if (fast) 3_000 else 5_000)
+        .setBufferDurationsMs(if (tv) 30_000 else 25_000, 60_000, if (!tv) 1_000 else if (fast) 1_500 else 2_500,
+            if (BuildConfig.LIVE_ONLY) 1_500 else if (!tv) 2_000 else if (fast) 3_000 else 5_000)
         .setTargetBufferBytes(budgetMb * 1024 * 1024)
         .setPrioritizeTimeOverSizeThresholds(false)
         .setBackBuffer(if (tv) 10_000 else if (BuildConfig.LIVE_ONLY) 5_000 else 20_000, true)
@@ -279,7 +279,7 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     return ExoPlayer.Builder(ctx, renderers).setLoadControl(load).setTrackSelector(selector).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
         // Seeking may land up to 0.3 s off the exact spot: much faster jumps on big files (as CloudStream does).
         // Xstream Live: a jump lands on the nearest keyframe — no extra video to fetch and decode before the picture shows.
-        .setSeekParameters(if (BuildConfig.LIVE_ONLY) androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC else androidx.media3.exoplayer.SeekParameters(300_000L, 0L))
+        .setSeekParameters(if (!BuildConfig.IS_TV) androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC else androidx.media3.exoplayer.SeekParameters(300_000L, 0L))
         .build().apply {
         val aLang = vm.playerPref("audio")
         val sLang = vm.playerPref("subs")
@@ -759,7 +759,7 @@ fun PlayerScreen(
     /** The main video view (a SurfaceView inside): after a fade the new player moves back onto it (smooth 60 fps). */
     val mainPv = remember { arrayOfNulls<PlayerView>(1) }
     /** Xstream Live: VR headset mode (side by side, one picture per lens). */
-    var vrOn by remember { mutableStateOf(BuildConfig.LIVE_ONLY && VrState.resume.also { VrState.resume = false }) }
+    var vrOn by remember { mutableStateOf(!BuildConfig.IS_TV && VrState.resume.also { VrState.resume = false }) }
     var vrWas by remember { mutableStateOf(false) }
     LaunchedEffect(vrOn) { if (vrOn) vrWas = true else if (vrWas) { vrWas = false; delay(60); mainPv[0]?.let { pv -> if (pv.player === player) { pv.player = null; pv.player = player } } } }
     /** The picture turned out HDR while "no HDR" is set, after a switch the app made: go back (handled further down). */
@@ -2562,7 +2562,7 @@ fun PlayerScreen(
     // VR magnifies every pixel: when VR starts on a picture below 1080p, the best Live server copy (1080p, never 4K —
     // too heavy for a phone stream) takes over from the same second.
     LaunchedEffect(vrOn) {
-        if (!vrOn || !BuildConfig.LIVE_ONLY) return@LaunchedEffect
+        if (!vrOn || BuildConfig.IS_TV) return@LaunchedEffect
         delay(800)
         val curH = player.videoSize.height
         // On Wi-Fi a 4K copy (scaled down to the phone it gives the cleanest picture in the lenses); else 1080p.
@@ -3900,7 +3900,7 @@ fun PlayerScreen(
                                 .border(1.5.dp, Color.Black, CircleShape).padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             else if (roomNow != null) Box(Modifier.align(Alignment.TopEnd).padding(top = 5.dp, end = 5.dp).size(9.dp).clip(CircleShape).background(Color(0xFF3CCF7A)).border(2.dp, Color.Black, CircleShape))
                         }
-                        if (!BuildConfig.IS_TV && BuildConfig.LIVE_ONLY && !usingVlc) GlassBtn(Icons.Default.Vrpano, null, "VR headset") { vrOn = true; controls = false }
+                        if (!BuildConfig.IS_TV && !usingVlc) GlassBtn(Icons.Default.Vrpano, null, "VR headset") { vrOn = true; controls = false }
                         if (!BuildConfig.IS_TV) GlassBtn(Icons.Default.LockOpen, null, "Lock") { locked = true; controls = true; poke++ }
                         // Phones: plugin mode and Sources (addon) mode share the same quality button and menu.
                         val plugQ = !BuildConfig.IS_TV

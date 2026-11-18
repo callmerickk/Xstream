@@ -1,5 +1,7 @@
 package com.example.streamnest
 
+import androidx.compose.runtime.collectAsState
+
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -101,6 +103,17 @@ fun StreamItem.languages(): List<String> {
  * and no addon is asked. Addon mode (default): addons only, plugins are never loaded.
  */
 fun AppViewModel.pluginMode(): Boolean = !BuildConfig.IS_TV && !(BuildConfig.LIVE_ONLY && texts.value["devSources"] != "on") && (texts.value["srcMode"] == "plugins" || (texts.value["srcMode"] == "live" && !BuildConfig.HAS_LIVE))
+/**
+ * Home style (Settings › Layout › Home style): "live" (Xstream Live's Home — the curved card with its trailer, red accents,
+ * the glass bar, the navy-black page), "classic" (Xstream's own Home) or "streamx" (StreamX's Home). Xstream Live is
+ * always "live". Default: live.
+ */
+fun homeStyleOf(texts: Map<String, String>?): String = if (BuildConfig.LIVE_ONLY) "live" else if (BuildConfig.IS_TV) "classic"
+    else texts?.get("homeStyle")?.takeIf { it in setOf("live", "classic", "streamx") } ?: "live"
+fun liveLook(): Boolean = homeStyleOf(Public.vm?.texts?.value) == "live"
+@androidx.compose.runtime.Composable
+fun liveLookNow(): Boolean = homeStyleOf(Public.vm?.texts?.collectAsState()?.value) == "live"
+
 /** Xstream Live: the Live server is the only source unless Developer's Corner › Plugins and addons is on. */
 object LiveLock { @Volatile var on: Boolean = BuildConfig.LIVE_ONLY }
 fun AppViewModel.liveLocked(): Boolean = BuildConfig.LIVE_ONLY && texts.value["devSources"] != "on"

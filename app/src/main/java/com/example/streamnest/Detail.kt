@@ -436,7 +436,7 @@ fun DetailScreen(
     }
     /** Trailer button tap: the newest official trailer in your language (then the other trailers and teasers). */
     fun playTrailer() {
-        if (BuildConfig.LIVE_ONLY) {
+        if (TrailerInCard) {
             val v = trailerChain().firstOrNull() ?: trailer?.let { TmVideo(it, "Trailer", "Trailer", null) }
             if (v == null) Snack.show("No trailer found for this title") else if (cardTrailer?.key == v.key) { cardTrailer = null; cardPlaying = false } else playInCard(v)
             return
@@ -500,23 +500,23 @@ fun DetailScreen(
                     var tStop by remember(meta.id) { mutableStateOf(meta.id in HeroSound.played) }
                     var tMuted by remember { mutableStateOf(true) }
                     LaunchedEffect(heroId) { tArm = false; if (heroId != null) { delay(1_800); tArm = true } }
-                    val grow by animateFloatAsState(if ((tPlay && !tStop) || (BuildConfig.LIVE_ONLY && cardPlaying && cardTrailer != null)) 1f else 0f, tween(650, easing = FastOutSlowInEasing), label = "trailerMode")
+                    val grow by animateFloatAsState(if ((tPlay && !tStop) || (TrailerInCard && cardPlaying && cardTrailer != null)) 1f else 0f, tween(650, easing = FastOutSlowInEasing), label = "trailerMode")
                     val extra = 170f * grow
                     Box(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(shape).background(TitleCardBg).border(1.dp, CardRim, shape)) {
                         AsyncImage(artwork, meta.name, Modifier.fillMaxWidth().height((300f + extra).dp).background(Surface1).graphicsLayer { alpha = 1f - grow },
                             alignment = BiasAlignment(0f, -0.4f), contentScale = ContentScale.Crop)
-                        if (heroId != null && tArm && !tStop && !BuildConfig.LIVE_ONLY && isOn(texts["cardTrailers"] ?: "yes")) {
+                        if (heroId != null && tArm && !tStop && !TrailerInCard && isOn(texts["cardTrailers"] ?: "yes")) {
                             TrailerVideo(heroId, tMuted, Modifier.fillMaxWidth().height((300f + extra).dp), fitWhole = false, backdrop = backdrop,
                                 onPlaying = { tPlay = true; HeroSound.played += meta.id }, onEnded = { tStop = true; tPlay = false }, onError = { tStop = true; tPlay = false })
                         }
                         val ct = cardTrailer
-                        if (BuildConfig.LIVE_ONLY && ct != null) key(ct.key) {
+                        if (TrailerInCard && ct != null) key(ct.key) {
                             TrailerVideo(ct.key, cardMuted, Modifier.fillMaxWidth().height((300f + extra).dp), fitWhole = false, backdrop = backdrop,
                                 onPlaying = { cardPlaying = true }, onEnded = { cardTrailer = null; cardPlaying = false },
                                 onError = { cardTrailer = null; cardPlaying = false; Snack.show("This trailer couldn't play") })
                         }
                         Box(Modifier.padding(top = (150f + extra).dp).fillMaxWidth().height(160.dp).background(Brush.verticalGradient(listOf(Color.Transparent, TitleCardBg))))
-                        if (BuildConfig.LIVE_ONLY && ct != null) {
+                        if (TrailerInCard && ct != null) {
                             // Sound, full screen and stop on the card; which trailer is playing; a thin red progress line.
                             Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Box(Modifier.size(38.dp).clip(CircleShape).background(Color(0x88000000)).clickable { cardMuted = !cardMuted }, Alignment.Center) {
@@ -535,7 +535,7 @@ fun DetailScreen(
                                 Modifier.padding(start = 14.dp, top = (252f + extra).dp).clip(RoundedCornerShape(10.dp)).background(Color(0x77000000)).padding(horizontal = 8.dp, vertical = 3.dp),
                                 fontSize = 11.sp, color = Color(0xFFE6E9F2), maxLines = 1)
                         }
-                        if (tStop && heroId != null && !BuildConfig.LIVE_ONLY && isOn(texts["cardTrailers"] ?: "yes")) Row(
+                        if (tStop && heroId != null && !TrailerInCard && isOn(texts["cardTrailers"] ?: "yes")) Row(
                             Modifier.align(Alignment.TopEnd).padding(12.dp).clip(RoundedCornerShape(50)).background(Color(0x88000000))
                                 .clickable { tStop = false; tPlay = false; tArm = true }.padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -622,7 +622,7 @@ fun DetailScreen(
                                 Icon(if (dlDone) Icons.Default.DownloadDone else Icons.Default.Download, "Download", Modifier.size(24.dp), tint = Color.White)
                             }
                         }
-                        if (BuildConfig.LIVE_ONLY) Box {
+                        if (TrailerInCard) Box {
                             // Tap = trailer in the card · hold = every trailer. A small bubble explains it the first few times.
                             LaunchedEffect(hasTrailer) { if (hasTrailer) { delay(700); tipOnce("tipTapTrailer", "Tap to watch the trailer") } }
                             val on = cardTrailer != null
@@ -782,7 +782,7 @@ fun DetailScreen(
         if (shareFriends) ShareWithFriends(meta, Social.friends.collectAsState().value) { shareFriends = false }
         if (planWatch) PlanFlow(meta, null, Social.friends.collectAsState().value, null, onDone = { planWatch = false })
 
-        if (showVideos) VideosSheet(meta.name, videos, anyOfficial, onDismiss = { showVideos = false }) { list, i -> if (BuildConfig.LIVE_ONLY) playInCard(list[i]) else openTrailers(list, i) }
+        if (showVideos) VideosSheet(meta.name, videos, anyOfficial, onDismiss = { showVideos = false }) { list, i -> if (TrailerInCard) playInCard(list[i]) else openTrailers(list, i) }
 
         // Full-screen sources page slides up over the details.
         val tgt = pick
@@ -1022,8 +1022,10 @@ private fun EpisodeRow(ep: Video, watched: Boolean, frac: Float, isNext: Boolean
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("E${ep.episode}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF9AA3B5))
                 // Pilot / Season Finale / Series Finale (a pilot is never called "Up next").
-                if (tag != null && !(isNext && frac > 0f)) Text(tag, Modifier.padding(start = 8.dp).clip(RoundedCornerShape(5.dp)).background(Color(0x334B6BFF))
-                    .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF9DB2FF), letterSpacing = 0.5.sp)
+                // Red accent tags: Pilot · Season Finale · Series Finale.
+                if (tag != null && !(isNext && frac > 0f)) Text(tag, Modifier.padding(start = 8.dp).clip(RoundedCornerShape(5.dp)).background(Color(0x33E50914))
+                    .border(1.dp, Color(0x99E50914), RoundedCornerShape(5.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF5A62), letterSpacing = 0.5.sp)
                 if (isNext && !(tag == "PILOT" && frac == 0f)) Text(if (frac > 0f) "CONTINUE" else "UP NEXT", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(5.dp)).background(Accent.copy(alpha = 0.2f))
                     .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Accent, letterSpacing = 0.5.sp)
             }
@@ -1129,3 +1131,6 @@ private fun TrailerTip(text: String?, modifier: Modifier, onGone: () -> Unit) {
             fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, softWrap = false)
     }
 }
+
+/** Trailers play inside the title card when you tap Trailer (phones; Xstream and Xstream Live). */
+private val TrailerInCard: Boolean get() = !BuildConfig.IS_TV

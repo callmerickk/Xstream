@@ -273,9 +273,20 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
             SettingRow(null, "Navigation Bar", navNames[navStyle] ?: "Adaptive") { navDialog = true }
             if (!BuildConfig.IS_TV) {
                 RowDivider(20.dp)
-                val bar = texts["navBar"] ?: (if (BuildConfig.LIVE_ONLY) "orbit" else "streamx")
-                SettingRow(null, "Bottom bar", when (bar) { "streamx" -> "StreamX bar"; "orbit" -> "Orbit"; else -> "Capsule" }) {
-                    vm.setText("navBar", when (bar) { "streamx" -> "capsule"; "capsule" -> "orbit"; else -> "streamx" })
+                // Home style: Live (Xstream Live's Home and glass bar) · Classic (Xstream) · StreamX — applied at once.
+                if (!BuildConfig.LIVE_ONLY) {
+                    val hs = homeStyleOf(texts)
+                    SettingRow(null, "Home style", when (hs) { "live" -> "Live"; "streamx" -> "StreamX"; else -> "Classic" }) {
+                        vm.setText("homeStyle", when (hs) { "live" -> "classic"; "classic" -> "streamx"; else -> "live" })
+                        vm.refresh()
+                        Snack.show("Home style changed — its rows fully apply the next time the app opens")
+                    }
+                    RowDivider(20.dp)
+                }
+                val bar = if (homeStyleOf(texts) == "live") "orbit" else texts["navBar"]?.takeIf { it != "orbit" } ?: "streamx"
+                if (homeStyleOf(texts) == "live") SettingRow(null, "Bottom bar", "Orbit (part of the Live style)") { }
+                else SettingRow(null, "Bottom bar", when (bar) { "streamx" -> "StreamX bar"; else -> "Capsule" }) {
+                    vm.setText("navBar", when (bar) { "streamx" -> "capsule"; else -> "streamx" })
                 }
                 RowDivider(20.dp)
                 ToggleRow("Card border", "White edge and glow around the top cards on Home.", texts["deckBorder"] == "on") { vm.setText("deckBorder", if (it) "on" else "off") }
