@@ -189,6 +189,7 @@ object ActLog {
     // ── Network: every request (images left out), its answer and time ──
 
     object Net : Interceptor {
+        private val mediaRx = Regex("(?i)\\.(m4s|ts|mp4|mkv|m3u8|mpd|aac|vtt|srt)$|/dash/|/hls/|/videoplayback")
         private val imgRx = Regex("(?i)\\.(jpe?g|png|webp|gif|svg|avif)(\\?|$)|image\\.tmdb\\.org|images\\.metahub|/t/p/w\\d+/|/poster/|/background/|/logo/")
         override fun intercept(chain: Interceptor.Chain): Response {
             val req = chain.request()
@@ -196,12 +197,21 @@ object ActLog {
             val skip = imgRx.containsMatchIn(u.toString()) || u.host.endsWith("firebaseio.com") || u.host.endsWith("firebasedatabase.app")
             val t0 = SystemClock.elapsedRealtime()
             val what = "${req.method} ${u.host}${u.encodedPath.take(90)}"
+            // A server that can't be reached twice in a row (while others answer) is skipped for 10 minutes, so dead
+            // mirrors (vegamovies.mq, net52.cc, video-plex.xyz…) stop costing 15–45 s on every search.
+            val media = mediaRx.containsMatchIn(u.encodedPath)
+            if (!media) HostDown.check(u.host)?.let { left ->
+                if (!skip) add("NET", "$what · skipped (server down, retry in ${left / 1000} s)")
+                throw java.io.IOException("skipped: ${u.host} is down")
+            }
             return try {
                 val r = chain.proceed(req)
+                HostDown.ok(u.host)
                 if (!skip) add("NET", "$what · ${r.code} · ${SystemClock.elapsedRealtime() - t0} ms" + (r.body?.contentLength()?.takeIf { it > 0 }?.let { " · ${it / 1024} KB" } ?: ""))
                 r
             } catch (e: Exception) {
                 if (!skip) add("NET", "$what · failed (${e.javaClass.simpleName}: ${e.message?.take(80)}) · ${SystemClock.elapsedRealtime() - t0} ms")
+                if (!media) HostDown.failed(u.host, e)
                 throw e
             }
         }
@@ -354,6 +364,37 @@ object ActLog {
         o.entries.filter { it.key in keep }.sortedBy { it.key }.joinToString("\n") { (day, v) ->
             "===== $day =====\n" + ((v as? JsonObject)?.values?.mapNotNull { c -> (c as? JsonObject)?.let { (it["at"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L) to (it["t"]?.jsonPrimitive?.contentOrNull ?: "") } }
                 ?.sortedBy { it.first }?.joinToString("") { it.second } ?: "")
+        }
+    }
+}
+
+
+/** Servers that can't be reached: after 2 connection failures in a row they are skipped for 10 minutes. */
+object HostDown {
+    private val fails = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val until = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    @Volatile private var lastOkAt = 0L
+    private val never = Regex("(?i)(firebase|googleapis|google\\.com|gstatic|themoviedb|strem\\.io|github|tmdb|metahub|googlevideo|youtube)")
+    /** Milliseconds left while [host] is skipped, or null. */
+    fun check(host: String): Long? {
+        val t = until[host] ?: return null
+        val left = t - SystemClock.elapsedRealtime()
+        if (left <= 0) { until.remove(host); fails.remove(host); return null }
+        return left
+    }
+    fun ok(host: String) { fails.remove(host); lastOkAt = SystemClock.elapsedRealtime() }
+    fun failed(host: String, e: Exception) {
+        val connect = e is java.net.UnknownHostException || e is java.net.ConnectException ||
+            (e is java.net.SocketTimeoutException && e.message?.contains("failed to connect") == true) ||
+            e is javax.net.ssl.SSLHandshakeException
+        if (!connect || never.containsMatchIn(host)) return
+        // Only when the internet itself works (something else answered in the last minute).
+        if (SystemClock.elapsedRealtime() - lastOkAt > 60_000) return
+        val n = (fails[host] ?: 0) + 1
+        fails[host] = n
+        if (n >= 2) {
+            until[host] = SystemClock.elapsedRealtime() + 10 * 60_000L
+            ActLog.add("NET", "$host can't be reached twice — skipped for 10 min")
         }
     }
 }

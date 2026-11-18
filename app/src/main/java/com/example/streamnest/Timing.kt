@@ -45,6 +45,8 @@ object PlayTiming {
     }
 
     fun active(): Boolean = cur != null
+    /** The play being timed is for [what] (a player closing must not end the next title's timing). */
+    fun activeFor(what: String): Boolean = cur != null && title == what
 
     /** The play ended (first picture, error or left): saved to the log. */
     fun finish(result: String) {

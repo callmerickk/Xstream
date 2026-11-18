@@ -43,9 +43,11 @@ object PluginSources {
     private val MUSIC_TYPES = setOf(TvType.Music, TvType.AudioBook, TvType.Audio, TvType.Podcast)
     fun apiKey(api: MainAPI): String = "${api.javaClass.name}|${api.name}|${runCatching { api.mainUrl }.getOrDefault("")}"
     private fun words(s: String) = s.lowercase().replace(Regex("[^a-z0-9 ]"), " ").split(" ").filter { it.isNotBlank() && it !in setOf("the", "a", "an", "of", "and") }.toSet()
-    private fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
+    private fun norm(s: String) = deaccent(s).lowercase().replace("aa", "a").replace(Regex("[^a-z0-9]"), "")
+    /** "Bāhubali" → "Bahubali" (sites spell names without the marks). */
+    fun deaccent(s: String): String = java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
     /** The name without "and" / "&" / "the": "Pritam Pedro" = "Pritam and Pedro" = "Pritam & Pedro". */
-    private fun core(s: String) = s.lowercase().replace("&", " ").replace(Regex("[^a-z0-9 ]"), "").split(" ")
+    private fun core(s: String) = deaccent(s).lowercase().replace("aa", "a").replace("&", " ").replace(Regex("[^a-z0-9 ]"), "").split(" ")
         .filter { it.isNotBlank() && it != "and" && it != "the" }.joinToString("")
     /** core() without a studio prefix: "Marvel's Agents of S.H.I.E.L.D." = "Agents of SHIELD". */
     private fun bare(s: String) = core(s).removePrefix("marvels").removePrefix("marvel").removePrefix("dcs").removePrefix("disneys").removePrefix("tomclancys")
@@ -61,7 +63,11 @@ object PluginSources {
         out += name.replace(Regex("^(?i)(marvel's|marvel|dc's|disney's|tom clancy's)\\s+"), "").replace(".", "").trim()
         if (':' in name) out += name.substringBefore(':').trim()
         if ('&' in name) out += name.replace("&", "and")
-        return out.filter { it.length >= 2 }.take(4)
+        // Indian titles are spelt many ways: "Bāhubali" / "Baahubali" / "Bahubali".
+        val plain = deaccent(name)
+        if (plain != name) out += plain
+        if (Regex("(?i)aa").containsMatchIn(plain)) out += plain.replace(Regex("(?i)aa"), "a").substringBefore(':').trim()
+        return out.filter { it.length >= 2 }.take(5)
     }
 
     /** "This site doesn't have this title" (it searched and nothing matched), kept 3 hours: not asked again 20 times. */
