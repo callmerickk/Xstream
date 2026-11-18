@@ -223,6 +223,10 @@ internal fun AppViewModel.tasteSummary(): String {
         if (skipped.isNotEmpty()) append("Did not like: $skipped.\n")
         if (watching.isNotEmpty()) append("Recently watching: $watching.\n")
         if (saved.isNotEmpty()) append("Watchlist: $saved.\n")
+        // Picked on the taste screen (sign-up / new profile).
+        tasteLangs().takeIf { it.isNotEmpty() }?.let { l -> append("Favourite languages: ${l.joinToString { c -> TasteLangs.firstOrNull { it.code == c }?.name ?: c }}.\n") }
+        texts.value["tasteGenres"]?.takeIf { it.isNotBlank() }?.let { append("Favourite genres: $it.\n") }
+        texts.value["tasteSearched"]?.takeIf { it.isNotBlank() }?.let { append("Titles they searched for and love: $it.\n") }
     }.ifEmpty { "No history yet.\n" }
 }
 

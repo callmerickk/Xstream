@@ -38,6 +38,8 @@ fun ActLogScreen(onClose: () -> Unit) {
     var text by remember { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf("ALL") }
     var query by remember { mutableStateOf("") }
+    var browser by remember { mutableStateOf(false) }
+    if (browser) LogBrowser { browser = false }
     LaunchedEffect(Unit) {
         // Phones: only Xstream's own logs (the account's TV logs there are written by StreamX TV as well).
         devices = listOf("phone" to "This phone") + if (BuildConfig.IS_TV) ActLog.cloudDevices() else emptyList()
@@ -54,6 +56,9 @@ fun ActLogScreen(onClose: () -> Unit) {
         Column(Modifier.fillMaxSize().background(Color(0xFF0B0B0F)).systemBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Activity log", Modifier.weight(1f), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                // Developer: every account's logs, organised by app › version › device.
+                if (Public.dev) Text("All accounts", Modifier.padding(end = 8.dp).clip(RoundedCornerShape(50)).background(Color(0xFF23242B)).clickable { browser = true }
+                    .padding(horizontal = 12.dp, vertical = 7.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 Text("Share", Modifier.clip(RoundedCornerShape(50)).background(Color(0xFFE50914)).clickable {
                     scope.launch {
                         val f = withContext(Dispatchers.IO) {

@@ -1,7 +1,7 @@
-Xstream 0.8.5
+Xstream 0.8.6
 
-• Home style: Live (new, default), Classic or StreamX — Settings › Layout › Home style.
-• Faster: remembered links and Home look-ahead turn the Play light green almost at once; 1 s start, keyframe seeks.
-• Next episode is ready at 75 % — it starts instantly.
-• VR headset mode, trailers inside the title card, Library › Watched, red Pilot / Finale tags.
-• In cinemas only: Remind me · Play cinema copy · Close. vivo fixes from StreamX.
+• Settings › Layout › Look: pick Home style, Bottom bar and Theme separately from preview cards — any mix. New theme Midnight (Live colours) and Quick looks.
+• New profile page: your last profile's Continue watching above a glowing horizon — tap to play straight away; Picked for you when there's nothing to continue. Opens by itself after 10 s.
+• Tell us what you love: pick or search titles once; the AI and Picked for you learn from them.
+• Watch next gets ready in a corner card ("Preparing next…") while the film keeps playing.
+• Faster searches: unreachable servers are skipped; Bāhubali / Baahubali spellings are found.

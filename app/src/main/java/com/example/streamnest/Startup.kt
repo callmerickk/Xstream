@@ -175,7 +175,9 @@ fun StartupSplash(onDone: () -> Unit) {
 // ───────────── "Who's watching?" (Hotstar TV style) ─────────────
 
 @Composable
-fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPicked: () -> Unit) {
+fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPlay: (Screen.Player) -> Unit = {}, onOpen: (Meta) -> Unit = {}, onPicked: () -> Unit) {
+    // Xstream phones: the Horizon profile page (Continue watching / Picked for you above the glowing ground).
+    if (!BuildConfig.IS_TV && !BuildConfig.LIVE_ONLY) { HorizonWhoIsWatching(vm, active, onPicked, onPlay, onOpen); return }
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val texts by vm.texts.collectAsStateWithLifecycle()
     val posters by vm.wallPosters.collectAsStateWithLifecycle()

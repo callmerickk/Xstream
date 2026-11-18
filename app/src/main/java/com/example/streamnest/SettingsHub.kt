@@ -156,12 +156,15 @@ private fun SettingsRootPage(vm: AppViewModel, onClose: () -> Unit, open: (Strin
 
 // ───────────── Layout ─────────────
 
-private data class ThemeOpt(val name: String, val c1: Long, val c2: Long, val enhanced: Boolean = false, val bg: String = "#07080C")
+internal data class ThemeOpt(val name: String, val c1: Long, val c2: Long, val enhanced: Boolean = false, val bg: String = "#07080C",
+                              val tint: String? = null, val note: String = "")
 
-private val Themes = listOf(
+internal val Themes = listOf(
+    // Midnight: Xstream Live's colours (navy-black page, dark navy glow at the top, red accent) — usable on any Home style.
+    ThemeOpt("Midnight", 0xFFE50914, 0xFFFF6A5C, bg = "#0F1014", tint = "#16204A", note = "Live colours"),
     // Elegant (the default): Hotstar's deep blue-black background with the red accent and its shine.
-    ThemeOpt("Elegant", 0xFFE50914, 0xFFFF6A5C, bg = "#0F1014"),
-    ThemeOpt("White", 0xFFF2F2F2, 0xFFFFFFFF), ThemeOpt("Crimson", 0xFFE8323C, 0xFFFF6A5C),
+    ThemeOpt("Elegant", 0xFFE50914, 0xFFFF6A5C, bg = "#0F1014", note = "Xstream original"),
+    ThemeOpt("White", 0xFFF2F2F2, 0xFFFFFFFF), ThemeOpt("Crimson", 0xFFE8323C, 0xFFFF6A5C, note = "StreamX colours"),
     ThemeOpt("Ocean", 0xFF2E86DE, 0xFF5AB0FF), ThemeOpt("Violet", 0xFF9B3FD1, 0xFFC27BFF),
     ThemeOpt("Emerald", 0xFF2EAD5B, 0xFF5CD98A), ThemeOpt("Amber", 0xFFF5A20A, 0xFFFFC857),
     ThemeOpt("Rose", 0xFFE3376F, 0xFFFF7AA6),
@@ -172,7 +175,14 @@ private val Themes = listOf(
 
 private fun hex(c: Color) = String.format("#%06X", c.toArgb() and 0xFFFFFF)
 
-private fun applyTheme(vm: AppViewModel, name: String, c1: Color, c2: Color, bg: String = "#07080C") {
+internal fun themeTint(th: ThemeOpt): Color = th.tint?.let { parseColor(it) } ?: lerp(Color(0xFF0B0F1A), Color(th.c1), 0.22f)
+internal fun applyThemeOpt(vm: AppViewModel, th: ThemeOpt) {
+    applyTheme(vm, th.name, Color(th.c1), Color(th.c2), th.bg)
+    th.tint?.let { vm.setText("deckTint", it) }
+}
+
+internal fun applyTheme(vm: AppViewModel, name: String, c1: Color, c2: Color, bg: String = "#07080C") {
+    vm.setText("themePicked", "1")
     vm.setText("theme", name)
     // A built-in theme: its background and buttons in the accent (a saved custom theme may have changed them).
     vm.setText("background", bg)
@@ -220,6 +230,11 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
     val navNames = linkedMapOf("adaptive" to "Adaptive", "expanded" to "Always Expanded", "compact" to "Always Compact")
 
     Page("Layout", onBack) {
+        // Home style, Bottom bar and Theme: each picked on its own from preview cards (any mix), plus Quick looks.
+        if (!BuildConfig.IS_TV) {
+            SectionLabel("Look")
+            LookSection(vm) { t -> if (t == null) editorNew = true else editor = t }
+        } else {
         SectionLabel("Theme")
         SettingsCard {
             Text("Classic themes", Modifier.padding(start = 20.dp, top = 18.dp, bottom = 4.dp), fontSize = 15.sp, color = Muted, letterSpacing = 1.sp)
@@ -266,28 +281,13 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
                 Text("Hold a theme to edit or delete it. Your themes are saved with your account.", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), fontSize = 12.sp, color = Muted)
             }
         }
+        }
         SectionLabel("Display")
         SettingsCard {
             ToggleRow("AMOLED Black", "Use pure black backgrounds for OLED screens.", isOn(texts["amoled"] ?: "no")) { vm.setText("amoled", if (it) "yes" else "no") }
             RowDivider(20.dp)
             SettingRow(null, "Navigation Bar", navNames[navStyle] ?: "Adaptive") { navDialog = true }
             if (!BuildConfig.IS_TV) {
-                RowDivider(20.dp)
-                // Home style: Live (Xstream Live's Home and glass bar) · Classic (Xstream) · StreamX — applied at once.
-                if (!BuildConfig.LIVE_ONLY) {
-                    val hs = homeStyleOf(texts)
-                    SettingRow(null, "Home style", when (hs) { "live" -> "Live"; "streamx" -> "StreamX"; else -> "Classic" }) {
-                        vm.setText("homeStyle", when (hs) { "live" -> "classic"; "classic" -> "streamx"; else -> "live" })
-                        vm.refresh()
-                        Snack.show("Home style changed — its rows fully apply the next time the app opens")
-                    }
-                    RowDivider(20.dp)
-                }
-                val bar = if (homeStyleOf(texts) == "live") "orbit" else texts["navBar"]?.takeIf { it != "orbit" } ?: "streamx"
-                if (homeStyleOf(texts) == "live") SettingRow(null, "Bottom bar", "Orbit (part of the Live style)") { }
-                else SettingRow(null, "Bottom bar", when (bar) { "streamx" -> "StreamX bar"; else -> "Capsule" }) {
-                    vm.setText("navBar", when (bar) { "streamx" -> "capsule"; else -> "streamx" })
-                }
                 RowDivider(20.dp)
                 ToggleRow("Card border", "White edge and glow around the top cards on Home.", texts["deckBorder"] == "on") { vm.setText("deckBorder", if (it) "on" else "off") }
                 RowDivider(20.dp)

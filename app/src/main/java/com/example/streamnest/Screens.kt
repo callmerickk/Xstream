@@ -284,7 +284,7 @@ fun App(vm: AppViewModel = viewModel()) {
         else if (profile == null && (restoringCloud || emptyAccount)) RestoreScreen(restoringCloud, onDifferent = { Cloud.signOut(); Cloud.restoring.value = false; emptyAccount = false; gateOpen = true }) { Cloud.restoring.value = false; emptyAccount = false }
         else if (profile == null && texts["streamMode"] == null && BuildConfig.LIVE_ONLY) LaunchedEffect(Unit) { vm.setText("streamMode", "elite") }
         else if (profile == null && texts["streamMode"] == null) ModeChooser(vm) {}
-        else if (profile == null) WhoIsWatchingScreen(vm, active = !showSplash) { tab = 0; scrolledDown = false }
+        else if (profile == null) WhoIsWatchingScreen(vm, active = !showSplash, onPlay = { stack.add(it) }, onOpen = { stack.add(Screen.Detail(it)) }) { tab = 0; scrolledDown = false }
         else when (val top = stack.lastOrNull()) {
             is Screen.Player -> key(top) {
                 PlayerScreen(vm, top, onBack = pop, onReplace = { next -> if (stack.isNotEmpty()) stack[stack.lastIndex] = next }, onProgress = { pos, dur, url, subs ->
@@ -363,7 +363,7 @@ fun App(vm: AppViewModel = viewModel()) {
                 }
                 // Bottom bar: StreamX's bar (default on phones) or the capsule dock. Both get out of the way while scrolling.
                 // Home style "Live" brings its glass Orbit bar; the other styles use the bar chosen in Settings.
-                val barKind = if (homeStyleOf(texts) == "live") "orbit" else texts["navBar"]?.takeIf { it != "orbit" } ?: "streamx"
+                val barKind = barKindOf(texts)
                 val sxBar = !BuildConfig.IS_TV && barKind == "streamx"
                 if (!(navHidden && tab == 3)) {
                     if (!BuildConfig.IS_TV && barKind == "orbit") LiveBar(tab, vm, compact = capsuleAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
@@ -470,6 +470,9 @@ fun App(vm: AppViewModel = viewModel()) {
         if (!BuildConfig.IS_TV && profile != null && texts["srcMode"].isNullOrEmpty()) FirstWatchChooser(vm)
         // Then once: what do you like to watch, and in which languages (Home is personalised from it).
         else if (!BuildConfig.IS_TV && profile != null && !texts["guideDone"].isNullOrEmpty() && texts["tasteDone"].isNullOrEmpty() && !showSplash) TasteOnboarding(vm) {}
+        // Then once (new and existing profiles): titles you love — tap posters or search any title.
+        else if (profile != null && !texts["guideDone"].isNullOrEmpty() && tasteTitlesDue(texts, profile) && !showSplash && stack.lastOrNull() !is Screen.Player)
+            androidx.compose.ui.window.Dialog({}, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, decorFitsSystemWindows = false)) { TasteTitlesScreen(vm) {} }
         // Built-in servers (CNCVerse / HdHub links published from Developer's Corner) and the Connect PenguPlay card.
         // The look everyone shares (app logo, AI logo, X's voice) first — it's quick, and it used to wait behind the rest.
         LaunchedEffect(profile?.id) { if (profile != null) { Public.vm = vm; runCatching { AppLook.fetch(vm.appContext) }; runCatching { BuiltIns.sync(vm) }; runCatching { DevDefaults.sync(vm) }; runCatching { Official.apply(vm, vm.appContext) } } }

@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -289,6 +290,7 @@ object ActLog {
             put("model", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}" + if (BuildConfig.IS_TV) " (TV)" else "")
             put("os", "Android ${android.os.Build.VERSION.RELEASE}"); put("ver", BuildConfig.VERSION_NAME)
             put("who", user.email ?: user.uid); put("at", System.currentTimeMillis())
+            put("app", appName())
         }
         Api.http.newCall(Request.Builder().url("$base/info.json?auth=$t").put(info.toString().toRequestBody("application/json".toMediaType())).build()).execute().close()
     }
@@ -308,6 +310,40 @@ object ActLog {
             }
         }.sortedByDescending { it.third }.map { it.first to it.second }
     }
+
+    /** Which app wrote a log: Xstream Mobile · Xstream TV · Xstream Live. */
+    fun appName(): String = when { BuildConfig.LIVE_ONLY -> "Xstream Live"; BuildConfig.IS_TV -> "Xstream TV"; else -> "Xstream Mobile" }
+
+    /** One entry of the developer's log browser: a device + account + version (the same ones merged). */
+    data class LogDev(val keys: List<String>, val app: String, val ver: String, val model: String, val who: String, val at: Long)
+
+    /** Developer: every account's devices, sorted into app › version › device (one entry per model + account + version). */
+    suspend fun logIndex(): List<LogDev> = withContext(Dispatchers.IO) {
+        val t = Cloud.token() ?: return@withContext emptyList()
+        val root = XNs.url("logs").removeSuffix(".json")
+        val uids = runCatching { Api.json.parseToJsonElement(Api.get("$root.json?shallow=true&auth=$t")).jsonObject.keys.toList() }.getOrDefault(emptyList())
+        val raw = kotlinx.coroutines.coroutineScope {
+            uids.map { uid ->
+                async {
+                    val devs = runCatching { Api.json.parseToJsonElement(Api.get("$root/$uid.json?shallow=true&auth=$t")).jsonObject.keys.toList() }.getOrDefault(emptyList())
+                    devs.mapNotNull { d ->
+                        val o = runCatching { Api.json.parseToJsonElement(Api.get("$root/$uid/$d/info.json?auth=$t")).jsonObject }.getOrNull() ?: return@mapNotNull null
+                        fun f(k: String) = o[k]?.jsonPrimitive?.contentOrNull.orEmpty()
+                        val model = f("model")
+                        val ver = f("ver").ifBlank { "?" }
+                        val app = f("app").ifBlank { if (model.endsWith("(TV)")) "Xstream TV" else if (ver.startsWith("1.0")) "Xstream Live" else "Xstream Mobile" }
+                        LogDev(listOf("x:$uid/$d"), app, ver, model.removeSuffix(" (TV)"), f("who").ifBlank { uid.take(8) }, f("at").toLongOrNull() ?: 0L)
+                    }
+                }
+            }.map { it.await() }.flatten()
+        }
+        // A "Clear data" used to make a second device id: the same model + account + version are one entry.
+        raw.groupBy { Triple(it.app, it.ver, it.model + "|" + it.who) }.map { (_, g) -> g.first().copy(keys = g.flatMap { it.keys }, at = g.maxOf { it.at }) }
+            .sortedByDescending { it.at }
+    }
+
+    /** Developer: the merged log of one browser entry. */
+    suspend fun logOf(d: LogDev): String = d.keys.map { allAccountsText(it) }.filter { it.isNotBlank() }.joinToString("\n")
 
     /** Developer: one device's cloud log (15 days). */
     suspend fun allAccountsText(key: String): String = withContext(Dispatchers.IO) {

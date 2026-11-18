@@ -455,3 +455,14 @@ object CinemaOnly {
         return dates.any { (it.first == 2 || it.first == 3) && it.second <= cut }
     }
 }
+
+/** Popular titles in a language and genres (the taste screen). kind = "movie" or "tv". */
+suspend fun AppViewModel.tmdbDiscover(kind: String, lang: String?, genreIds: List<Int>): List<TmRec> {
+    val key = tmdbKey(); if (key.isEmpty()) return emptyList()
+    val g = if (genreIds.isNotEmpty()) "&with_genres=" + java.net.URLEncoder.encode(genreIds.joinToString("|"), "UTF-8") else ""
+    val l = lang?.let { "&with_original_language=$it" } ?: ""
+    return runCatching {
+        Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/discover/$kind?api_key=$key&sort_by=popularity.desc&vote_count.gte=40$l$g&page=1"))
+            .jsonObject.arr("results").take(20).mapNotNull { parseRec(it, kind) }
+    }.getOrDefault(emptyList())
+}

@@ -110,6 +110,9 @@ fun AppViewModel.pluginMode(): Boolean = !BuildConfig.IS_TV && !(BuildConfig.LIV
  */
 fun homeStyleOf(texts: Map<String, String>?): String = if (BuildConfig.LIVE_ONLY) "live" else if (BuildConfig.IS_TV) "classic"
     else texts?.get("homeStyle")?.takeIf { it in setOf("live", "classic", "streamx") } ?: "live"
+/** The bottom bar: Orbit (Live) · StreamX glass · Capsule — any bar with any Home style. Not chosen: the style's own bar. */
+fun barKindOf(texts: Map<String, String>?): String = if (BuildConfig.LIVE_ONLY) "orbit"
+    else texts?.get("navBar")?.takeIf { it in setOf("orbit", "streamx", "capsule") } ?: if (homeStyleOf(texts) == "live") "orbit" else "streamx"
 fun liveLook(): Boolean = homeStyleOf(Public.vm?.texts?.value) == "live"
 @androidx.compose.runtime.Composable
 fun liveLookNow(): Boolean = homeStyleOf(Public.vm?.texts?.collectAsState()?.value) == "live"

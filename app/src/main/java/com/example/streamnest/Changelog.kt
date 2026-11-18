@@ -13,6 +13,15 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.6", "18 Nov 2026", "Your own look, a new profile page, Watch next in the corner", listOf(
+        "Settings › Layout › Look: Home style, Bottom bar and Theme are picked on their own from preview cards — any mix (Live Home with the StreamX bar, Crimson on Live…)",
+        "New theme Midnight (the Live colours); Quick looks set All Live / All StreamX / All Classic in one tap",
+        "New profile page: your last profile is already chosen and its Continue watching floats above a glowing horizon — tap a poster to play it straight away",
+        "No Continue watching yet? \"Picked for you\" from your taste; the main profile sits bottom-right; opens by itself after 10 s (touch to stop)",
+        "Tell us what you love: pick or search titles once — the AI and Picked for you learn from them",
+        "Watch next: the title you pick gets ready in a corner card (\"Preparing next…\") while the film keeps playing, then takes over",
+        "Faster searches: servers that don't answer are skipped for 10 minutes; names like Bāhubali / Baahubali are found",
+    )),
     Release("0.8.5", "18 Nov 2026", "Three Home styles, VR, instant green, next episode ready", listOf(
         "Home style (Settings › Layout): Live (new — the curved card with its trailer, red accents, glass bar, navy-black page), Classic (Xstream) or StreamX; Live is the default",
         "Live and StreamX styles show StreamX's Home rows; Classic keeps Xstream's",
@@ -472,6 +481,16 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.6", "18 Nov 2026", "Look pickers, Horizon profile page, taste titles, Watch next corner, log browser", listOf(
+        "LookPicker.kt: Home style / Bottom bar / Theme sheets with MiniHome previews; barKindOf() (navBar orbit|streamx|capsule) independent of homeStyle; Midnight theme (#0F1014 / #16204A); themePicked keeps 0.8.5 colours until a theme is chosen",
+        "ProfileHorizon.kt: last profile pre-selected, progressOf(pid) / pickedOf(pid) per profile, 10 s ring, tap = preview, tap again = open, poster = play after selectProfile; locked profiles hide their posters",
+        "TastePick.kt: titles step after languages (once for every profile): genre chips, TMDB discover by language, search (searchNow); picks saved as likes (vote 1), tasteGenres / tasteSearched in tasteSummary",
+        "PlayerScreen: StreamX's Watch next corner (WnLoad, wnBegin/wnOpen, WatchNextLoadingCard \"Preparing next…\"); episodes too; Watch next sheet looks up its first 4 titles (LinkMemory.lookAhead)",
+        "ActLog.Net: HostDown — 2 connection failures in a row while the internet works → host skipped 10 min (not for video segments, Google, TMDB, Cinemeta)",
+        "PluginSources: deaccent + aa→a in queries and matching (Bāhubali / Baahubali / Bahubali)",
+        "PlayTiming.activeFor: the closing player no longer ends the next title's timing (\"left the player before the first picture after 0.05 s\")",
+        "LogBrowser.kt (Developer › Activity log › All accounts): app › version › device (model + account, merged) › log with Copy and Share; info.app written by every log upload",
+    )),
     Release("0.8.4", "6 Nov 2026", "Xstream Music activity log", listOf(
         "MUSIC lines: every song started (source, reason, time to start, audio format), finished / left at, jumps, pauses with the reason, buffering, errors, quality changes",
         "Song address lookups timed; radio and pages timed (empty pages flagged); searches",

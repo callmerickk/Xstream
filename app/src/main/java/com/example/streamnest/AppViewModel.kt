@@ -112,6 +112,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     private fun prefsFor(p: Profile): SharedPreferences =
         if (p.id == "p1") glob else ctx.getSharedPreferences("library_${p.id}", Context.MODE_PRIVATE)
 
+    // ── The profile page reads another profile's things before it is opened (no switch needed) ──
+    /** That profile's Continue watching, newest first (unfinished only). */
+    fun progressOf(pid: String): List<Progress> = runCatching {
+        prefsForId(pid).getString("progress", null)?.let { Api.json.decodeFromString<List<Progress>>(it) }
+    }.getOrNull().orEmpty().filter { it.durationMs <= 0 || it.positionMs < it.durationMs * 0.95 }.sortedByDescending { it.updated }
+    /** One of that profile's own settings. */
+    fun textOf(pid: String, key: String): String? = if (pid == dataPid) profTexts[key] else runCatching {
+        prefsForId(pid).getString("pcustom", null)?.let { Api.json.decodeFromString<Map<String, String>>(it)[key] }
+    }.getOrNull()
+    /** "Picked for you" kept per profile (shown at once on the profile page; refreshed while the profile is used). */
+    fun pickedOf(pid: String): List<Meta> = runCatching {
+        prefsForId(pid).getString("pickedFor", null)?.let { Api.json.decodeFromString<List<Meta>>(it) }
+    }.getOrNull().orEmpty()
+    fun savePicked(pid: String, list: List<Meta>) {
+        if (list.isEmpty()) return
+        prefsForId(pid).edit().putString("pickedFor", Api.json.encodeToString(list.take(10).map { it.copy(videos = null) })).apply()
+    }
+
     fun selectProfile(p: Profile) {
         if (texts.value["lastProfile"] != p.id) setText("lastProfile", p.id)
         val wasKids = current.value?.kids
@@ -248,7 +266,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     fun refreshRecommended() {
         recJob?.cancel()
-        recJob = viewModelScope.launch { runCatching { recommended.value = buildRecommendations() } }
+        recJob = viewModelScope.launch {
+            runCatching { recommended.value = buildRecommendations() }
+            current.value?.let { p -> savePicked(p.id, recommended.value) }
+        }
     }
 
     /** Back to the "Who's watching?" screen. */
@@ -260,7 +281,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         dataPid?.let { src ->
             val from = prefsForId(src)
             prefsForId(p.id).edit().apply {
-                from.getString("pcustom", null)?.let { putString("pcustom", it) }
+                // (Not the taste picks: a new person picks their own.)
+                from.getString("pcustom", null)?.let { raw ->
+                    val m = runCatching { Api.json.decodeFromString<Map<String, String>>(raw) }.getOrNull()
+                    putString("pcustom", if (m == null) raw else Api.json.encodeToString(m.filterKeys { !it.startsWith("taste") }))
+                }
                 from.getString("paddons", null)?.let { putString("paddons", it) }
             }.apply()
             runCatching { colFileFor(src).takeIf { it.exists() }?.copyTo(colFileFor(p.id), overwrite = true) }
@@ -427,7 +452,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         parseColor(m["accent2"]!!)?.let { Palette.accent2 = it }
         if (isOn(m["amoled"]!!)) Palette.bg = Color.Black
         // Xstream Live: always the navy-black page with a dark navy glow at the top (the account's Xstream colours aren't used).
-        if (homeStyleOf(m) == "live") { Palette.bg = Color(0xFF0F1014); Palette.tint = Color(0xFF16204A) }
+        // (Xstream: the colours are the chosen theme — "Midnight" is the Live colours — on any Home style.)
+        // Until a theme is picked in the new Theme picker, the Live style keeps its Midnight colours (as in 0.8.5).
+        if (BuildConfig.LIVE_ONLY || homeStyleOf(m) == "live" && m["themePicked"] != "1") { Palette.bg = Color(0xFF0F1014); Palette.tint = Color(0xFF16204A) }
         m["cardCorner"]!!.trim().toIntOrNull()?.let { Palette.corner = it.coerceIn(0, 50) }
         // Buttons: the theme's own button colours, else the accent with readable text.
         Palette.button = parseColor(m["btnColor"].orEmpty()) ?: Palette.accent
