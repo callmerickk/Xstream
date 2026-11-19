@@ -92,45 +92,105 @@ private fun DrawScope.miniBar(bar: String, c: LookColors) {
             drawPath(edge, light, style = Stroke(1.8f))
         }
         else -> {
-            val l = w * 0.1f; val bw = w * 0.8f; val bh = h * 0.08f; val y = h - bh - h * 0.04f
-            drawRoundRect(Color(0xFF1C1E26), Offset(l, y), Size(bw, bh), CornerRadius(bh / 2))
-            drawRoundRect(c.accent, Offset(l + bw * 0.08f, y + bh * 0.25f), Size(bw * 0.18f, bh * 0.5f), CornerRadius(bh / 2))
+            // Capsule (Classic): a dark pill with round buttons, red edge.
+            val l = w * 0.12f; val bw = w * 0.76f; val bh = h * 0.075f; val y = h - bh - h * 0.035f
+            drawRoundRect(Color(0xE61A0F13), Offset(l, y), Size(bw, bh), CornerRadius(bh / 2))
+            drawRoundRect(c.accent.copy(alpha = 0.6f), Offset(l, y), Size(bw, bh), CornerRadius(bh / 2), style = Stroke(1.5f))
+            for (i in 0..3) drawCircle(c.accent, bh * 0.32f, Offset(l + bw * (0.14f + i * 0.24f), y + bh / 2), style = Stroke(1.6f), alpha = if (i == 0) 1f else 0.6f)
         }
     }
 }
 
-/** A tiny phone screen: the Home style's top, two rows of posters and the bar, in the theme's colours. */
+/**
+ * A tiny phone screen drawn like the real Home styles (0.8.7, from the 19 Nov screenshots):
+ * Live — a wide card with a red rim, a curved bottom and a red glow under it, the title centred, Play + two round buttons;
+ * Stack — a tall card on the left with the next cards peeking behind it on the right, "picked for you" chip, Watch Now + ＋;
+ * Classic — a centre card with a white glowing rim and cards fanned on both sides, Watch Now + ＋.
+ * Then "Pick up where you left off" and the bar. [animate] slides the cards and rows as on the real Home.
+ */
 @Composable
-internal fun MiniHome(style: String, bar: String, c: LookColors, modifier: Modifier = Modifier) {
+internal fun MiniHome(style: String, bar: String, c: LookColors, modifier: Modifier = Modifier, animate: Boolean = false) {
+    val t = if (animate) {
+        val inf = androidx.compose.animation.core.rememberInfiniteTransition(label = "mini")
+        inf.animateFloat(0f, 1f, androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(4200, easing = androidx.compose.animation.core.LinearEasing)), label = "t").value
+    } else 0f
     Canvas(modifier.clip(RoundedCornerShape(12.dp)).background(c.bg)) {
         val w = size.width; val h = size.height
-        drawRect(Brush.radialGradient(listOf(c.tint, Color.Transparent), center = Offset(w / 2, 0f), radius = w * 0.85f))
+        drawRect(Brush.radialGradient(listOf(c.tint, Color.Transparent), center = Offset(w / 2, 0f), radius = w * 0.9f))
+        // A card change every ~4 s: the cards slide over (0 → 1 during the last fifth of the cycle).
+        val slide = ((t - 0.8f) / 0.2f).coerceIn(0f, 1f)
+        val ease = slide * slide * (3 - 2 * slide)
+        val tones = listOf(Color(0xFFC46B2C), Color(0xFF2B4C7E), Color(0xFF6D2A3A), Color(0xFF3C6B4A))
+        val k = 0
+        fun art(i: Int) = Brush.linearGradient(listOf(tones[i % tones.size], Color(0xFF14161E)), Offset(0f, 0f), Offset(w, h * 0.5f))
+        val top = h * 0.07f
+        var below = 0f
         when (style) {
             "live" -> {
-                val x = w * 0.14f; val y = h * 0.06f; val cw = w * 0.72f; val ch = h * 0.4f; val dip = ch * 0.1f
-                val glow = Path().apply { moveTo(x + cw * 0.06f, y + ch + 2f); quadraticBezierTo(w / 2, y + ch - dip * 1.2f, x + cw * 0.94f, y + ch + 2f) }
-                drawPath(glow, c.accent, style = Stroke(10f), alpha = 0.35f)
-                drawPath(glow, c.accent, style = Stroke(3f), alpha = 0.8f)
-                val card = Path().apply {
-                    moveTo(x, y + 10f); quadraticBezierTo(x, y, x + 10f, y); lineTo(x + cw - 10f, y); quadraticBezierTo(x + cw, y, x + cw, y + 10f)
-                    lineTo(x + cw, y + ch - 6f); quadraticBezierTo(w / 2, y + ch - dip * 2, x, y + ch - 6f); close()
+                val cw = w * 0.84f; val ch = h * 0.3f; val y = top
+                for (d in -1..1) {
+                    val x = (w - cw) / 2 + (d - ease) * (cw + w * 0.04f)
+                    val dip = ch * 0.1f
+                    val card = Path().apply {
+                        moveTo(x, y + 12f); quadraticBezierTo(x, y, x + 12f, y); lineTo(x + cw - 12f, y); quadraticBezierTo(x + cw, y, x + cw, y + 12f)
+                        lineTo(x + cw, y + ch - 6f); quadraticBezierTo(x + cw / 2, y + ch - dip * 2, x, y + ch - 6f); close()
+                    }
+                    if (d == 0) {
+                        val glow = Path().apply { moveTo(x + cw * 0.1f, y + ch + 4f); quadraticBezierTo(x + cw / 2, y + ch - dip * 1.2f, x + cw * 0.9f, y + ch + 4f) }
+                        drawPath(glow, c.accent, style = Stroke(14f), alpha = 0.3f); drawPath(glow, c.accent, style = Stroke(4f), alpha = 0.7f)
+                    }
+                    drawPath(card, art(k + d + 1)); drawPath(card, c.accent, style = Stroke(2f), alpha = 0.9f)
                 }
-                drawPath(card, Brush.linearGradient(listOf(Color(0xFFC46B2C), Color(0xFF2A3D6E)), Offset(x, y), Offset(x + cw, y + ch)))
-                posterRows(y + ch + h * 0.06f)
+                val ty = y + ch + h * 0.05f
+                drawRoundRect(Color.White, Offset(w * 0.22f, ty), Size(w * 0.56f, h * 0.03f), CornerRadius(6f))
+                drawRoundRect(Color(0x99FFFFFF), Offset(w * 0.32f, ty + h * 0.045f), Size(w * 0.36f, h * 0.018f), CornerRadius(4f))
+                val by = ty + h * 0.09f; val bh = h * 0.055f
+                drawRoundRect(Color(0xFFE6E7EB), Offset(w * 0.08f, by), Size(w * 0.5f, bh), CornerRadius(bh / 2))
+                drawCircle(Color(0x33FFFFFF), bh / 2, Offset(w * 0.7f, by + bh / 2)); drawCircle(Color(0x33FFFFFF), bh / 2, Offset(w * 0.86f, by + bh / 2))
+                below = by + bh + h * 0.04f
             }
             "streamx" -> {
-                val cw = w * 0.5f; val ch = h * 0.42f; val x = (w - cw) / 2; val y = h * 0.06f
-                drawRoundRect(Color(0xFF2B2F3C), Offset(x + cw * 0.12f, y + 8f), Size(cw, ch), CornerRadius(14f))
-                drawRoundRect(Color(0xFF3B3445), Offset(x - cw * 0.08f, y + 4f), Size(cw, ch), CornerRadius(14f))
-                drawRoundRect(Brush.linearGradient(listOf(Color(0xFF7A4B2A), Color(0xFF2A1A12)), Offset(x, y), Offset(x + cw, y + ch)), Offset(x, y), Size(cw, ch), CornerRadius(14f))
-                drawRoundRect(c.accent, Offset(x + cw * 0.2f, y + ch * 0.86f), Size(cw * 0.6f, ch * 0.06f), CornerRadius(8f))
-                posterRows(y + ch + h * 0.06f)
+                val cw = w * 0.74f; val ch = h * 0.46f; val x = w * 0.05f; val y = top
+                for (b in 2 downTo 1) drawRoundRect(art(k + b + (if (ease > 0.5f) 1 else 0)), Offset(x + cw - cw * 0.25f + b * w * 0.06f, y + b * h * 0.012f),
+                    Size(cw * 0.3f, ch - b * h * 0.024f), CornerRadius(18f), alpha = 0.9f - b * 0.2f)
+                val fx = x - ease * w * 0.9f
+                drawRoundRect(art(k), Offset(fx, y), Size(cw, ch), CornerRadius(20f))
+                if (ease > 0f) drawRoundRect(art(k + 1), Offset(fx + w * 0.9f, y), Size(cw, ch), CornerRadius(20f))
+                drawRoundRect(Color(0x66000000), Offset(x + cw * 0.06f, y + ch * 0.05f), Size(cw * 0.55f, h * 0.035f), CornerRadius(20f))
+                drawRoundRect(c.accent.copy(alpha = 0.8f), Offset(x + cw * 0.06f, y + ch * 0.05f), Size(cw * 0.55f, h * 0.035f), CornerRadius(20f), style = Stroke(1.5f))
+                val by = y + ch - h * 0.075f; val bh = h * 0.05f
+                drawRoundRect(Color(0x66FFFFFF), Offset(x + cw * 0.06f, by), Size(cw * 0.66f, bh), CornerRadius(bh / 2))
+                drawRoundRect(Color(0x66FFFFFF), Offset(x + cw * 0.76f, by), Size(cw * 0.18f, bh), CornerRadius(bh / 2))
+                below = y + ch + h * 0.04f
             }
-            "rows", "none" -> posterRows(h * 0.1f)
+            "rows", "none" -> below = h * 0.1f
             else -> {
-                drawRect(Brush.verticalGradient(listOf(Color(0xFF5A6B85), Color(0xFF253049), c.bg), endY = h * 0.5f), size = Size(w, h * 0.5f))
-                drawRoundRect(Color.White, Offset(w * 0.3f, h * 0.38f), Size(w * 0.4f, h * 0.045f), CornerRadius(10f))
-                posterRows(h * 0.52f)
+                val cw = w * 0.72f; val ch = h * 0.47f; val y = top
+                drawRoundRect(art(k + 2), Offset(-cw * 0.82f + w * 0.08f, y + h * 0.03f), Size(cw, ch - h * 0.06f), CornerRadius(18f), alpha = 0.6f)
+                drawRoundRect(art(k + 3), Offset(w - w * 0.08f, y + h * 0.03f), Size(cw, ch - h * 0.06f), CornerRadius(18f), alpha = 0.6f)
+                val x = (w - cw) / 2 - ease * w
+                drawRoundRect(art(k), Offset(x, y), Size(cw, ch), CornerRadius(20f))
+                drawRoundRect(Color.White, Offset(x, y), Size(cw, ch), CornerRadius(20f), style = Stroke(3f))
+                drawRoundRect(c.accent.copy(alpha = 0.35f), Offset(x - 3f, y - 3f), Size(cw + 6f, ch + 6f), CornerRadius(22f), style = Stroke(5f))
+                if (ease > 0f) drawRoundRect(art(k + 1), Offset(x + w, y), Size(cw, ch), CornerRadius(20f))
+                val by = y + ch - h * 0.075f; val bh = h * 0.05f
+                drawRoundRect(Color(0x66FFFFFF), Offset(x + cw * 0.07f, by), Size(cw * 0.64f, bh), CornerRadius(bh / 2))
+                drawRoundRect(Color(0x66FFFFFF), Offset(x + cw * 0.75f, by), Size(cw * 0.18f, bh), CornerRadius(bh / 2))
+                below = y + ch + h * 0.04f
+            }
+        }
+        // "Pick up where you left off": a heading and wide cards that drift along.
+        if (below < h * 0.8f) {
+            if (style == "live") drawRect(c.accent, Offset(w * 0.05f, below), Size(3f, h * 0.022f))
+            drawRoundRect(Color(0xCCFFFFFF), Offset(w * 0.08f, below), Size(w * 0.5f, h * 0.022f), CornerRadius(4f))
+            val ry = below + h * 0.04f; val rw = w * 0.56f; val rh = rw * 0.56f
+            val drift = t * w * 0.25f
+            for (i in 0..2) {
+                val rx = w * 0.05f + i * (rw + w * 0.04f) - drift
+                drawRoundRect(Brush.linearGradient(listOf(tones[(i + 1) % 4], Color(0xFF101218)), Offset(rx, ry), Offset(rx + rw, ry + rh)),
+                    Offset(rx, ry), Size(rw, rh), CornerRadius(10f))
+                drawRect(c.accent, Offset(rx + 4f, ry + rh - 3f), Size(rw * 0.45f, 3f))
             }
         }
         miniBar(bar, c)
@@ -180,8 +240,8 @@ internal fun LookSection(vm: AppViewModel, onEditTheme: (CustomTheme?) -> Unit) 
     val texts by vm.texts.collectAsStateWithLifecycle()
     var sheet by remember { mutableStateOf<String?>(null) }
     val style = homeStyleOf(texts); val bar = barKindOf(texts); val look = currentLook(texts)
-    val styleName = mapOf("live" to "Live", "streamx" to "StreamX", "classic" to "Classic")
-    val barName = mapOf("orbit" to "Orbit", "streamx" to "StreamX glass", "capsule" to "Capsule")
+    val styleName = mapOf("live" to "Live", "streamx" to "Stack", "classic" to "Classic")
+    val barName = mapOf("orbit" to "Orbit", "streamx" to "Horizon", "capsule" to "Capsule")
     @Composable fun Row3(t: String, s: String, onClick: () -> Unit, thumb: @Composable () -> Unit) {
         Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(46.dp, 64.dp).clip(RoundedCornerShape(9.dp)).border(1.dp, Color(0xFF2C2F3A), RoundedCornerShape(9.dp))) { thumb() }
@@ -206,7 +266,7 @@ internal fun LookSection(vm: AppViewModel, onEditTheme: (CustomTheme?) -> Unit) 
     }
     Text("QUICK LOOKS", Modifier.padding(start = 24.dp, top = 18.dp, bottom = 8.dp), fontSize = 13.sp, color = Muted, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        listOf(Triple("All Live", "live", "orbit") to "Midnight", Triple("All StreamX", "streamx", "streamx") to "Crimson", Triple("All Classic", "classic", "capsule") to "Elegant")
+        listOf(Triple("All Live", "live", "orbit") to "Midnight", Triple("All Stack", "streamx", "streamx") to "Crimson", Triple("All Classic", "classic", "capsule") to "Elegant")
             .forEach { (t, theme) ->
                 val th = Themes.first { it.name == theme }
                 val on = style == t.second && bar == t.third && currentThemeName(texts) == theme
@@ -223,7 +283,7 @@ internal fun LookSection(vm: AppViewModel, onEditTheme: (CustomTheme?) -> Unit) 
 
     when (sheet) {
         "style" -> LookSheet("Home style", "How the top of Home and the rows look. The colours follow your theme.", { sheet = null }) {
-            val opts = listOf(Triple("live", "Live", "Curved card with trailer and glow"), Triple("streamx", "StreamX", "Stacked swipe cards"),
+            val opts = listOf(Triple("live", "Live", "Curved card with trailer and glow"), Triple("streamx", "Stack", "A big card with the next ones stacked behind"),
                 Triple("classic", "Classic", "Full-width poster, Xstream original"))
             opts.chunked(2).forEach { row ->
                 Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -232,7 +292,7 @@ internal fun LookSection(vm: AppViewModel, onEditTheme: (CustomTheme?) -> Unit) 
                             if (style != k) { vm.setText("homeStyle", k); vm.refresh(); Snack.show("$n Home on — its rows refresh in a moment") }
                             sheet = null
                         }) {
-                            Box { MiniHome(k, bar, look, Modifier.fillMaxWidth().height(170.dp)); if (style == k) Tick(Modifier.align(Alignment.TopEnd).padding(6.dp)) }
+                            Box { MiniHome(k, bar, look, Modifier.fillMaxWidth().height(170.dp), animate = true); if (style == k) Tick(Modifier.align(Alignment.TopEnd).padding(6.dp)) }
                             Text(n, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
                             Text(d, fontSize = 11.sp, color = Muted, textAlign = TextAlign.Center, lineHeight = 14.sp)
                         }
@@ -242,7 +302,7 @@ internal fun LookSection(vm: AppViewModel, onEditTheme: (CustomTheme?) -> Unit) 
             }
         }
         "bar" -> LookSheet("Bottom bar", "Works with every Home style.", { sheet = null }) {
-            listOf(Triple("orbit", "Orbit", "Clear pill with the red glow line (Live)"), Triple("streamx", "StreamX glass", "The glowing curved edge, water rings on Me"),
+            listOf(Triple("orbit", "Orbit", "Clear pill with the red glow line (Live)"), Triple("streamx", "Horizon", "The glowing curved edge, water rings on Me"),
                 Triple("capsule", "Capsule", "The floating capsule (Xstream original)")).forEach { (k, n, d) ->
                 PickCard(bar == k, Modifier.fillMaxWidth().padding(bottom = 10.dp), onClick = { vm.setText("navBar", k); sheet = null }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {

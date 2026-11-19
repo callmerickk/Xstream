@@ -1444,23 +1444,34 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
     val n = items.size
     val loops = if (n > 1) 2_000 else 1
     val pager = rememberPagerState(initialPage = if (n > 1) (loops / 2) * n else 0) { n * loops }
-    var muted by remember { mutableStateOf(true) }
+    // 0.8.7: trailers play only when you tap Trailer (in HD, with sound) — no automatic trailers using data on every card.
+    var muted by remember { mutableStateOf(false) }
     var tid by remember { mutableStateOf<String?>(null) }
     var videoOn by remember { mutableStateOf(false) }
+    var paused by remember { mutableStateOf(false) }
+    var loadingTrailer by remember { mutableStateOf(false) }
     val ring = remember { androidx.compose.animation.core.Animatable(0f) }
     val scope = rememberCoroutineScope()
     fun next() = scope.launch { if (n > 1) pager.animateScrollToPage(pager.currentPage + 1, animationSpec = tween(700)) }
-    LaunchedEffect(pager.settledPage, onScreen.value) {
-        tid = null; videoOn = false; ring.snapTo(0f)
-        if (!onScreen.value) return@LaunchedEffect
-        delay(700)
-        tid = runCatching { vm.trailerId(items[pager.settledPage % n].meta) }.getOrNull()
-        if (tid == null) { ring.animateTo(1f, tween(9_000, easing = androidx.compose.animation.core.LinearEasing)); next() }
+    fun stopTrailer() { tid = null; videoOn = false; paused = false; loadingTrailer = false; YtDirect.tapHd = false }
+    fun playTrailer(m: Meta) {
+        if (tid != null) { paused = !paused; return }
+        loadingTrailer = true
+        scope.launch {
+            val id = runCatching { vm.trailerId(m) }.getOrNull()
+            loadingTrailer = false
+            if (id == null) { Snack.show("No trailer for ${m.name}"); return@launch }
+            YtDirect.tapHd = true; muted = false; paused = false; tid = id
+            ActLog.add("TRAILER", "tapped · ${m.name}")
+        }
     }
-    // While the trailer plays the ring fills over ~60 s (trailers are about that long); it ends with the trailer.
-    LaunchedEffect(videoOn) {
-        if (videoOn) ring.animateTo(1f, tween(((1f - ring.value) * 60_000).toInt().coerceAtLeast(1), easing = androidx.compose.animation.core.LinearEasing))
-        else ring.stop()
+    LaunchedEffect(pager.settledPage, onScreen.value) {
+        stopTrailer(); ring.snapTo(0f)
+        if (!onScreen.value) return@LaunchedEffect
+        // Moves on by itself every 9 s — not while a trailer you started is playing.
+        delay(700)
+        ring.animateTo(1f, tween(9_000, easing = androidx.compose.animation.core.LinearEasing))
+        if (tid == null && !loadingTrailer) next()
     }
     androidx.compose.foundation.pager.HorizontalPager(pager, Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 18.dp), pageSpacing = 12.dp,
         beyondViewportPageCount = 1) { page ->
@@ -1492,19 +1503,13 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
                 .clickable { onOpen(m) }) {
                 val id = tid
                 // Stops when the card leaves the screen; silent while you swipe to the next card.
-                if (front && id != null && onScreen.value) TrailerVideo(id, muted || pager.isScrollInProgress, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
-                    backdrop = backdropOf(m) ?: m.poster, onPlaying = { videoOn = true }, onEnded = { videoOn = false; next() }, onError = { videoOn = false },
-                    trimBars = true)
+                if (front && id != null && onScreen.value) TrailerVideo(id, muted || paused || pager.isScrollInProgress, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
+                    backdrop = backdropOf(m) ?: m.poster, onPlaying = { videoOn = true }, onEnded = { stopTrailer() }, onError = { stopTrailer(); Snack.show("Trailer couldn't play") },
+                    trimBars = true, paused = paused)
                 val artAlpha by animateFloatAsState(if (front && videoOn) 0f else 1f, tween(450), label = "liveArt")
                 AsyncImage(hiResArt(backdropOf(m) ?: m.poster), m.name, Modifier.fillMaxSize().graphicsLayer { alpha = artAlpha },
                     contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.7f to Color.Transparent, 1f to Color(0x80000000))))
-                // Speaker: sound on / off for the trailer (starts muted).
-                if (front && videoOn) Box(Modifier.align(Alignment.TopEnd).padding(14.dp).size(42.dp).clip(CircleShape)
-                    .background(Color(0x66000000)).border(1.dp, Color(0x40FFFFFF), CircleShape).clickable { muted = !muted }, Alignment.Center) {
-                    Icon(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp, if (muted) "Sound on" else "Sound off",
-                        Modifier.size(20.dp), tint = Color.White)
-                }
             }
             var logoFailed by remember(m.id) { mutableStateOf(false) }
             Box(Modifier.padding(top = 18.dp).height(64.dp).fillMaxWidth(0.82f), Alignment.Center) {
@@ -1514,26 +1519,42 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
             }
             val info = listOfNotNull(m.genres?.firstOrNull(), m.releaseInfo?.take(4), if (m.type == "series") "Series" else m.runtime)
             Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(info.joinToString("  ·  "), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFC9CCD6))
-                // IMDb rating, as a small yellow badge.
+                Text(info.joinToString("  ·  "), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFC9CCD6))
+                // IMDb rating, as a small yellow badge (0.8.7: smaller).
                 val rating by produceState(m.imdbRating?.toDoubleOrNull(), m.id) {
                     if (value == null && m.id.startsWith("tt")) value = HeroRatings.get(vm, m)
                 }
                 rating?.takeIf { it > 0 }?.let { r ->
-                    Text("  ·  ", fontSize = 16.sp, color = Color(0xFFC9CCD6))
-                    Text("IMDb", Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFF5C518)).padding(horizontal = 5.dp, vertical = 1.dp),
-                        fontSize = 12.sp, fontWeight = FontWeight.Black, color = Color.Black)
-                    Text(" ★ ${"%.1f".format(r)}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF5C518))
+                    Text("  ·  ", fontSize = 15.sp, color = Color(0xFFC9CCD6))
+                    Text("IMDb", Modifier.clip(RoundedCornerShape(3.dp)).background(Color(0xFFF5C518)).padding(horizontal = 3.dp),
+                        fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.Black, lineHeight = 12.sp)
+                    Text(" ★ ${"%.1f".format(r)}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF5C518))
                 }
             }
-            Row(Modifier.padding(top = 16.dp).fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(Modifier.weight(1.7f).height(56.dp).clip(RoundedCornerShape(28.dp)).background(Color(0xFFE6E7EB))
+            // Play · Trailer · My List (0.8.7: More Info went — tapping the card opens the title page).
+            val list by vm.myList.collectAsState()
+            val inList = list.any { it.id == m.id }
+            Row(Modifier.padding(top = 16.dp).fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Top) {
+                Row(Modifier.weight(1f).height(54.dp).clip(RoundedCornerShape(27.dp)).background(Color(0xFFE6E7EB))
                     .clickable { pendingDetailPlay.value = m.id; onOpen(m) }, horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.PlayArrow, null, Modifier.size(28.dp), tint = Color.Black)
                     Text("Play", Modifier.padding(start = 8.dp), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.Black)
                 }
-                Box(Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(28.dp)).background(Color(0x40FFFFFF)).clickable { onOpen(m) }, Alignment.Center) {
-                    Text("More Info", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                val playingHere = front && tid != null
+                @Composable fun Round(label: String, onClick: () -> Unit, icon: @Composable () -> Unit) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(Modifier.size(54.dp).clip(CircleShape).background(Color(0x2EFFFFFF)).border(1.dp, Color(0x33FFFFFF), CircleShape).clickable(onClick = onClick), Alignment.Center) { icon() }
+                        Text(label, Modifier.padding(top = 4.dp), fontSize = 11.sp, color = Color(0xFFB8BED3))
+                    }
+                }
+                Round(if (playingHere) (if (paused) "Resume" else "Pause") else "Trailer", { if (front) playTrailer(m) }) {
+                    if (front && loadingTrailer) androidx.compose.material3.CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Icon(if (playingHere && !paused) Icons.Default.Pause else Icons.Default.Movie, null, Modifier.size(24.dp), tint = Color.White)
+                }
+                if (playingHere) Round(if (muted) "Sound on" else "Mute", { muted = !muted }) {
+                    Icon(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp, null, Modifier.size(22.dp), tint = Color.White)
+                } else Round(if (inList) "In My List" else "My List", { vm.toggleList(m) }) {
+                    Icon(if (inList) Icons.Default.Check else Icons.Default.Add, null, Modifier.size(24.dp), tint = Color.White)
                 }
             }
         }

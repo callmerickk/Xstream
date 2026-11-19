@@ -117,6 +117,9 @@ data class SearchGroup(
 )
 
 object SearchState {
+    /** 0.8.7: what you typed and the collection you opened survive a trip to a title page, so Back returns to them. */
+    var text by androidx.compose.runtime.mutableStateOf<String?>(null)
+    var openGroup by androidx.compose.runtime.mutableStateOf<SearchGroup?>(null)
     val hits = MutableStateFlow<List<SearchHit>>(emptyList())
     /** Collections / studios matching the search, shown as stacked cards above the results. */
     val groups = MutableStateFlow<List<SearchGroup>>(emptyList())
@@ -543,7 +546,8 @@ private val ChipText = Color(0xFFB6BDCC)
 
 @Composable
 fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
-    var q by rememberSaveable(initial) { mutableStateOf(initial) }
+    var q by remember(initial) { mutableStateOf(if (initial.isNotEmpty()) initial else SearchState.text ?: "") }
+    LaunchedEffect(q) { SearchState.text = q }
     val adultPref = vm.texts.collectAsStateWithLifecycle().value["adultOn"]
     SearchAdult.on = adultPref != "no"
     val hits by SearchState.hits.collectAsStateWithLifecycle()
@@ -552,8 +556,10 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
     val shownQuery by SearchState.query.collectAsStateWithLifecycle()
     val groups by SearchState.groups.collectAsStateWithLifecycle()
     val dym by SearchState.didYouMean.collectAsStateWithLifecycle()
-    var openGroup by remember { mutableStateOf<SearchGroup?>(null) }
-    openGroup?.let { g -> GroupPage(g, onClose = { openGroup = null }) { m -> openGroup = null; onOpen(m) } }
+    var openGroup by remember { mutableStateOf(SearchState.openGroup) }
+    LaunchedEffect(openGroup) { SearchState.openGroup = openGroup }
+    // Opening a title from a collection keeps the collection open behind it: Back comes back to it.
+    openGroup?.let { g -> GroupPage(g, onClose = { openGroup = null }) { m -> onOpen(m) } }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     var recent by remember { mutableStateOf(vm.store("searchRecent").orEmpty().split("\n").filter { it.isNotBlank() }) }

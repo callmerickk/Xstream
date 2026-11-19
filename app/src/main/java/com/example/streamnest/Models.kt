@@ -78,7 +78,12 @@ data class Meta(
     val subtitles: List<Subtitle>? = null, val behaviorHints: BehaviorHints? = null,
 )
 
-@Serializable data class CatalogResponse(val metas: List<Meta> = emptyList())
+@Serializable data class CatalogResponse(@kotlinx.serialization.SerialName("metas") val rawMetas: List<Meta> = emptyList()) {
+    /** 0.8.7: addons (AIOStreams) put their error messages in as fake titles ("[❌] PenguPlay — Failed to parse meta"): hidden. */
+    val metas: List<Meta> get() = rawMetas.filterNot { it.isAddonError() }
+}
+fun Meta.isAddonError(): Boolean = id.startsWith("aiostreamserror") || name.contains("[❌]") || name.contains("❌") ||
+    (description?.startsWith("Failed to parse") == true)
 @Serializable data class MetaResponse(val meta: Meta? = null)
 @Serializable data class StreamResponse(val streams: List<StreamInfo> = emptyList())
 @Serializable data class SubsResponse(val subtitles: List<Subtitle> = emptyList())

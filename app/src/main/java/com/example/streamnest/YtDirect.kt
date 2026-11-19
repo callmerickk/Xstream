@@ -90,7 +90,10 @@ object YtDirect {
 
     /** Tallest picture to ask for: small on TV sticks (a second decoder next to the movie's), sharper on phones. */
     fun limitHeight(): Int = maxHeight
-    private val maxHeight: Int get() = if (BuildConfig.IS_TV) 480 else if (BuildConfig.LIVE_ONLY && metered()) 480 else 720
+    private val maxHeight: Int get() = if (tapHd) (if (metered()) 720 else 1080)
+        else if (BuildConfig.IS_TV) 480 else if (BuildConfig.LIVE_ONLY && metered()) 480 else 720
+    /** 0.8.7: a trailer the user tapped plays in HD (1080p on Wi-Fi, 720p on mobile data). */
+    @Volatile var tapHd = false
     /** Xstream Live: trailers at 480p on mobile data, 720p on Wi-Fi. */
     private fun metered(): Boolean = runCatching {
         (Public.vm!!.appContext.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered
@@ -506,7 +509,7 @@ internal class YtChunked(private val up: androidx.media3.datasource.DataSource) 
 @Composable
 fun DirectTrailer(
     src: YtDirect.Src, muted: Boolean, modifier: Modifier = Modifier, crop: Boolean = true, zoom: Float = 1f,
-    onPlaying: () -> Unit = {}, onEnded: () -> Unit = {}, onError: () -> Unit = {}, trimBars: Boolean = false,
+    onPlaying: () -> Unit = {}, onEnded: () -> Unit = {}, onError: () -> Unit = {}, trimBars: Boolean = false, paused: Boolean = false,
 ) {
     val ctx = LocalContext.current
     val playing by rememberUpdatedState(onPlaying)
@@ -524,6 +527,7 @@ fun DirectTrailer(
         }
     }
     LaunchedEffect(muted) { player.volume = if (muted) 0f else 1f }
+    LaunchedEffect(paused) { player.playWhenReady = !paused }
     // The movie is starting (player opened): the trailer stops downloading at once and keeps its last frame on screen,
     // so the internet is free for the movie.
     val hold by TrailerHold.on.collectAsState()

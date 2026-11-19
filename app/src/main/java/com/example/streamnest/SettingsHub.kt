@@ -164,7 +164,7 @@ internal val Themes = listOf(
     ThemeOpt("Midnight", 0xFFE50914, 0xFFFF6A5C, bg = "#0F1014", tint = "#16204A", note = "Live colours"),
     // Elegant (the default): Hotstar's deep blue-black background with the red accent and its shine.
     ThemeOpt("Elegant", 0xFFE50914, 0xFFFF6A5C, bg = "#0F1014", note = "Xstream original"),
-    ThemeOpt("White", 0xFFF2F2F2, 0xFFFFFFFF), ThemeOpt("Crimson", 0xFFE8323C, 0xFFFF6A5C, note = "StreamX colours"),
+    ThemeOpt("White", 0xFFF2F2F2, 0xFFFFFFFF), ThemeOpt("Crimson", 0xFFE8323C, 0xFFFF6A5C, note = "deep black, crimson"),
     ThemeOpt("Ocean", 0xFF2E86DE, 0xFF5AB0FF), ThemeOpt("Violet", 0xFF9B3FD1, 0xFFC27BFF),
     ThemeOpt("Emerald", 0xFF2EAD5B, 0xFF5CD98A), ThemeOpt("Amber", 0xFFF5A20A, 0xFFFFC857),
     ThemeOpt("Rose", 0xFFE3376F, 0xFFFF7AA6),

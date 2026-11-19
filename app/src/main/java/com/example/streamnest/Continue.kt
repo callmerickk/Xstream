@@ -31,7 +31,7 @@ suspend fun AppViewModel.seriesMeta(id: String): Meta? {
 fun Progress.fraction(): Float = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 fun Progress.isSeries(): Boolean = key.contains(":")
 /** An episode watched to (about) the end — Continue Watching then points at the next one. */
-fun Progress.finished(): Boolean = isSeries() && fraction() >= 0.95f
+fun Progress.finished(): Boolean = isSeries() && fraction() >= 0.90f
 
 fun cwTimeLeft(p: Progress): String {
     val left = ((p.durationMs - p.positionMs).coerceAtLeast(0L) / 60_000L).toInt()

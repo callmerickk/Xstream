@@ -408,27 +408,38 @@ object ActLog {
 /** Servers that can't be reached: after 2 connection failures in a row they are skipped for 10 minutes. */
 object HostDown {
     private val fails = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val recent = java.util.ArrayDeque<Pair<String, Long>>()
+    /** The app's own servers and the local network are never skipped. */
+    private fun local(h: String) = h == "localhost" || h.startsWith("127.") || h.startsWith("10.") || h.startsWith("192.168.") ||
+        Regex("^172\\.(1[6-9]|2\\d|3[01])\\.").containsMatchIn(h) || h == "::1"
     private val until = java.util.concurrent.ConcurrentHashMap<String, Long>()
     @Volatile private var lastOkAt = 0L
     private val never = Regex("(?i)(firebase|googleapis|google\\.com|gstatic|themoviedb|strem\\.io|github|tmdb|metahub|googlevideo|youtube)")
     /** Milliseconds left while [host] is skipped, or null. */
     fun check(host: String): Long? {
+        if (local(host)) return null
         val t = until[host] ?: return null
         val left = t - SystemClock.elapsedRealtime()
         if (left <= 0) { until.remove(host); fails.remove(host); return null }
         return left
     }
     fun ok(host: String) { fails.remove(host); lastOkAt = SystemClock.elapsedRealtime() }
-    fun failed(host: String, e: Exception) {
+    @Synchronized fun failed(host: String, e: Exception) {
         val connect = e is java.net.UnknownHostException || e is java.net.ConnectException ||
             (e is java.net.SocketTimeoutException && e.message?.contains("failed to connect") == true) ||
             e is javax.net.ssl.SSLHandshakeException
-        if (!connect || never.containsMatchIn(host)) return
-        // Only when the internet itself works (something else answered in the last minute).
-        if (SystemClock.elapsedRealtime() - lastOkAt > 60_000) return
+        if (!connect || never.containsMatchIn(host) || local(host)) return
+        val now = SystemClock.elapsedRealtime()
+        // Only when the internet itself works (something else answered in the last minute)…
+        if (now - lastOkAt > 60_000) return
+        // …and not when many servers fail together (that is the phone's network dropping, not the servers): 0.8.6 blocked
+        // ~20 servers at once at 19:16 and even the app's own server (127.0.0.1), so The Office failed.
+        recent.addLast(host to now)
+        while (recent.isNotEmpty() && now - recent.first().second > 5_000) recent.removeFirst()
+        if (recent.map { it.first }.distinct().size >= 3) { fails.clear(); return }
         val n = (fails[host] ?: 0) + 1
         fails[host] = n
-        if (n >= 2) {
+        if (n >= 2 && until[host] == null) {
             until[host] = SystemClock.elapsedRealtime() + 10 * 60_000L
             ActLog.add("NET", "$host can't be reached twice — skipped for 10 min")
         }

@@ -511,7 +511,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         val others = progress.value.filter { it.key != p.key && !(series && it.key.contains(":") && it.key.substringBefore(":") == base) }
         // Watched: a movie past 92 % (credits) leaves the row; an episode past 95 % (or at its credits) is replaced by
         // the next episode, shown as Up next.
-        val done = p.durationMs > 0 && p.positionMs > p.durationMs * (if (series) 0.95 else 0.92)
+        val done = p.durationMs > 0 && p.positionMs > p.durationMs * (if (series) 0.90 else 0.90)
         // No limit: every title you started stays (and syncs with your cloud) until it is finished or removed.
         progress.value = (if (done && !series) others else listOf(if (done) p.copy(positionMs = p.durationMs) else p) + others)
         if (done && !series) addWatched(p)
@@ -524,6 +524,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
         ed.apply()
         markCur("prog")
+        if (done && series) viewModelScope.launch { sweepFinished() }
+    }
+
+    /**
+     * 0.8.7: a finished episode with NOTHING after it (the last episode of the show so far, like VisionQuest S1E8) leaves
+     * "Pick up where you left off" and goes to Watched — before, it stayed in the row labelled "Watched".
+     */
+    suspend fun sweepFinished() {
+        val done = progress.value.filter { it.isSeries() && it.finished() }
+        for (p in done) {
+            val meta = runCatching { seriesMeta(p.key.substringBefore(":")) }.getOrNull() ?: continue
+            val eps = meta.videos.orEmpty().filter { (it.season ?: 0) > 0 && it.episode != null }.sortedWith(compareBy({ it.season }, { it.episode }))
+            val i = eps.indexOfFirst { it.id == p.key }
+            if (i >= 0 && eps.getOrNull(i + 1) == null) {
+                progress.value = progress.value.filter { it.key != p.key }
+                lib.edit().putString("progress", Api.json.encodeToString(progress.value)).apply()
+                markCur("prog")
+                addWatched(p)
+                ActLog.add("APP", "finished: ${p.title} → Watched (no more episodes)")
+            }
+        }
     }
 
     // ───────────── Library › Watched (finished movies) ─────────────
@@ -809,6 +830,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     private fun isErrorCard(m: Meta) = m.id.startsWith("aiostreamserror") || m.name.startsWith("[❌]") || m.name.startsWith("[\u274C]")
 
     fun refresh() {
+        viewModelScope.launch { delay(4_000); runCatching { sweepFinished() } }
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             loading.value = true
@@ -858,13 +880,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             // Films only in cinemas / not out yet: checked right away (while "Who's watching?" is up), so Home never
             // shows them and never removes them in front of you.
             if (!BuildConfig.IS_TV) launch(Dispatchers.IO) { runCatching { CinemaOnly.load(appContext); CinemaOnly.check(this@AppViewModel, shelves.value.flatMap { it.items } + recommended.value) } }
-            if (!BuildConfig.IS_TV) runCatching { Posters.warm(appContext, shelves.value.take(12).flatMap { s -> s.items.take(8).map { it.poster } }) }
+            if (!BuildConfig.IS_TV) runCatching { Posters.warm(appContext, shelves.value.take(12).flatMap { s -> s.items.take(12).map { it.poster } }) }
             // Remembered for the next start, so Home shows its cards at once (then refreshes).
             val pid = dataPid
             val snap = shelves.value
             if (pid != null && current.value?.kids != true && snap.isNotEmpty()) launch(Dispatchers.IO) {
                 runCatching {
-                    val slim = snap.map { s -> s.copy(items = s.items.take(24).map { it.copy(videos = null, cast = null, director = null, writer = null, trailerStreams = null) }) }
+                    // 0.8.7: saved shuffled (top-10 rows keep their order), so the next start shows its cards at once and
+                    // looks a little different each time; the fresh rows replace them quietly.
+                    val slim = snap.map { s -> s.copy(items = s.items.take(24).let { l -> if (s.pinned || Regex("(?i)top ?10").containsMatchIn(s.title)) l else l.take(12).shuffled() + l.drop(12) }.map { it.copy(videos = null, cast = null, director = null, writer = null, trailerStreams = null) }) }
                     File(ctx.filesDir, "shelves_$pid.json").writeText(Api.json.encodeToString(slim))
                 }
             }

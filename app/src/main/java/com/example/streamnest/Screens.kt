@@ -473,6 +473,9 @@ fun App(vm: AppViewModel = viewModel()) {
         // Then once (new and existing profiles): titles you love — tap posters or search any title.
         else if (profile != null && !texts["guideDone"].isNullOrEmpty() && tasteTitlesDue(texts, profile) && !showSplash && stack.lastOrNull() !is Screen.Player)
             androidx.compose.ui.window.Dialog({}, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, decorFitsSystemWindows = false)) { TasteTitlesScreen(vm) {} }
+        // 0.8.7: then once — Choose your look (moving previews; Use this / Back).
+        else if (profile != null && !texts["guideDone"].isNullOrEmpty() && !texts["tasteDone"].isNullOrEmpty() && lookDue(texts, profile) && !showSplash && stack.lastOrNull() !is Screen.Player)
+            androidx.compose.ui.window.Dialog({}, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, decorFitsSystemWindows = false)) { FirstLookScreen(vm) {} }
         // Built-in servers (CNCVerse / HdHub links published from Developer's Corner) and the Connect PenguPlay card.
         // The look everyone shares (app logo, AI logo, X's voice) first — it's quick, and it used to wait behind the rest.
         LaunchedEffect(profile?.id) { if (profile != null) { Public.vm = vm; runCatching { AppLook.fetch(vm.appContext) }; runCatching { BuiltIns.sync(vm) }; runCatching { DevDefaults.sync(vm) }; runCatching { Official.apply(vm, vm.appContext) } } }

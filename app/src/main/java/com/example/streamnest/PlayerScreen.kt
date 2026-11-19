@@ -232,7 +232,13 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     }.getOrDefault(4.0)
     // TV 0.7: a little more ahead (30–60 s, 96 MB on 2 GB sticks) — the log showed short stalls every ~30 s with only a
     // few seconds buffered.
-    val budgetMb = when { tv -> if (ramGb >= 1.6) 96 else 72; ramGb < 3.2 -> 96; ramGb < 4.8 -> 160; ramGb < 6.8 -> 220; else -> 300 }
+    val byRam = when { tv -> if (ramGb >= 1.6) 96 else 72; ramGb < 3.2 -> 96; ramGb < 4.8 -> 160; ramGb < 6.8 -> 220; else -> 300 }
+    // 0.8.7: the video buffer lives in the app's own memory (Java heap, ~384 MB on big phones), not the phone's RAM. 300 MB
+    // per player plus a second player during a quiet swap / Watch next / next-episode preload ran the app out of memory
+    // (3 crashes on The Odyssey). Cap at ~30 % of the heap, and half that while another player is alive.
+    val heapMb = (Runtime.getRuntime().maxMemory() / (1024 * 1024)).toInt()
+    val others = PlayerCount.alive.get()
+    val budgetMb = minOf(byRam, (heapMb * 0.30).toInt().coerceAtLeast(48) / (if (others > 0) 2 else 1)).coerceAtLeast(32)
     val load = DefaultLoadControl.Builder()
         // About a minute ahead (like Nuvio): more was downloaded and thrown away at every seek.
         // Xstream Live: start after ~1 s of video (and ~1.5 s after a seek) — the Live server keeps delivering steadily, so
@@ -243,6 +249,7 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
         .setPrioritizeTimeOverSizeThresholds(false)
         .setBackBuffer(if (tv) 10_000 else if (BuildConfig.LIVE_ONLY) 5_000 else 20_000, true)
         .build()
+    ActLog.add("PLAY", "buffer budget $budgetMb MB (heap $heapMb MB, ${others} other player(s))")
     // Streams go through the app's HTTP client (DNS setting) with the addon's request headers.
     val http = OkHttpDataSource.Factory(Api.http).setUserAgent(PlayerUserAgent)
     // Phones: read the saved video first (instant play), then the network. (Source Test measures without it.)
@@ -280,7 +287,7 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
         // Seeking may land up to 0.3 s off the exact spot: much faster jumps on big files (as CloudStream does).
         // Xstream Live: a jump lands on the nearest keyframe — no extra video to fetch and decode before the picture shows.
         .setSeekParameters(if (!BuildConfig.IS_TV) androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC else androidx.media3.exoplayer.SeekParameters(300_000L, 0L))
-        .build().apply {
+        .build().also { PlayerCount.add(it) }.apply {
         val aLang = vm.playerPref("audio")
         val sLang = vm.playerPref("subs")
         trackSelectionParameters = trackSelectionParameters.buildUpon().apply {
@@ -2541,8 +2548,10 @@ fun PlayerScreen(
             val waited = SystemClock.elapsedRealtime() - wnAt
             when {
                 st != null && st.item != null && st.playerReady -> { wnOpen(w, st); return@LaunchedEffect }
+                // 0.8.7: a working link is enough after ~2.5 s (the log waited 15–25 s for a fully loaded player).
+                st != null && st.item != null && waited > 2_500 -> { wnOpen(w, st); return@LaunchedEffect }
                 st != null && st.failed -> { wnOpen(w, null); return@LaunchedEffect }
-                waited > 25_000 -> { wnOpen(w, st?.takeIf { it.item != null }); return@LaunchedEffect }
+                waited > 6_000 -> { wnOpen(w, st?.takeIf { it.item != null }); return@LaunchedEffect }
             }
             delay(150)
         }
@@ -3917,7 +3926,7 @@ fun PlayerScreen(
                     enter = fadeIn(tween(260)) + slideInHorizontally(tween(360)) { it / 3 },
                     exit = fadeOut(tween(200))) {
                     val w = wnLoad
-                    if (w != null) WatchNextLoadingCard(w, wnAt) { wnLoad = null; Prepare.cancel() }
+                    if (w != null) WatchNextLoadingCard(w, wnAt, onOpen = { wnOpen(w, Prepare.state.value?.takeIf { it.key == w.id && it.item != null }) }) { wnLoad = null; Prepare.cancel() }
                 }
                 // Not while Watch Next is open (two posters of the next episode showed at once), nor with the card above.
                 AnimatedVisibility(nearEnd && !locked && !watchNext && wnLoad == null,
@@ -6767,31 +6776,39 @@ private data class WnLoad(val id: String, val title: String, val image: String?,
  * while the stream gets ready. Tap ✕ to keep watching what's on.
  */
 @Composable
-private fun WatchNextLoadingCard(w: WnLoad, startedAt: Long, onCancel: () -> Unit) {
+private fun WatchNextLoadingCard(w: WnLoad, startedAt: Long, onOpen: () -> Unit, onCancel: () -> Unit) {
     val st by Prepare.state.collectAsState()
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     LaunchedEffect(Unit) { while (true) { now = SystemClock.elapsedRealtime(); delay(100) } }
     val mine = st?.takeIf { it.key == w.id }
-    val byTime = ((now - startedAt) / 12_000f).coerceIn(0f, 0.95f)
+    val byTime = ((now - startedAt) / 6_000f).coerceIn(0f, 0.95f)
     val done = maxOf(byTime, if (mine?.item != null) 0.7f else 0f, mine?.progress ?: 0f)
-    val left by androidx.compose.animation.core.animateFloatAsState(1f - done, tween(300), label = "wnRing")
-    val cs = RoundedCornerShape(14.dp)
-    Column(Modifier.padding(top = 10.dp).width(236.dp).softHalo(14.dp, spread = 8.dp, strength = 0.4f).clip(cs).background(Color(0xF014151B))
-        .border(1.dp, Color(0x26FFFFFF), cs)) {
-        Box(Modifier.fillMaxWidth().height(110.dp)) {
-            AsyncImage(w.image ?: w.poster, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color(0xAA000000))))
-            Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(34.dp).clip(CircleShape).background(Color(0x99000000)), Alignment.Center) {
-                CircularProgressIndicator(progress = { left }, modifier = Modifier.fillMaxSize(), color = Color.White, strokeWidth = 2.5.dp, trackColor = Color(0x33FFFFFF))
-                Icon(Icons.Default.PlayArrow, null, Modifier.size(16.dp), tint = Color.White)
-            }
-            Box(Modifier.align(Alignment.TopStart).padding(8.dp).size(26.dp).clip(CircleShape).background(Color(0x99000000)).clickable(onClick = onCancel), Alignment.Center) {
-                Icon(Icons.Default.Close, "Cancel", Modifier.size(14.dp), tint = Color.White)
+    val prog by androidx.compose.animation.core.animateFloatAsState(done, tween(300), label = "wnProg")
+    val cs = RoundedCornerShape(12.dp)
+    // 0.8.7: small and landscape, tucked into the corner; a thin progress line along the bottom; tap = open it now.
+    Box(Modifier.offset(x = 12.dp, y = 10.dp).width(214.dp).height(68.dp).clip(cs).background(Color(0xF014151B))
+        .border(1.dp, Color(0x26FFFFFF), cs).clickable(onClick = onOpen)) {
+        Row(Modifier.fillMaxSize()) {
+            AsyncImage(w.image ?: w.poster, null, Modifier.fillMaxHeight().width(100.dp), contentScale = ContentScale.Crop)
+            Column(Modifier.weight(1f).padding(horizontal = 10.dp), verticalArrangement = Arrangement.Center) {
+                Text(w.label, fontSize = 10.5.sp, color = Color(0xFFFF9AA1), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(w.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("tap to open now", fontSize = 9.5.sp, color = Color(0xFF9AA1B8), maxLines = 1)
             }
         }
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Text(w.label, fontSize = 12.sp, color = Color(0xFFFF9AA1), fontWeight = FontWeight.SemiBold)
-            Text(w.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(prog).height(3.dp).background(Color(0xFFE50914)))
+        Box(Modifier.padding(5.dp).size(20.dp).clip(CircleShape).background(Color(0xAA000000)).clickable(onClick = onCancel), Alignment.Center) {
+            Icon(Icons.Default.Close, "Cancel", Modifier.size(12.dp), tint = Color.White)
         }
+    }
+}
+
+
+/** Players that are alive (not released) — the buffer budget is halved while another one runs. */
+object PlayerCount {
+    private val set = java.util.Collections.newSetFromMap(java.util.WeakHashMap<ExoPlayer, Boolean>())
+    fun add(p: ExoPlayer) { synchronized(set) { set += p } }
+    val alive = object {
+        fun get(): Int = synchronized(set) { set.count { runCatching { it.playbackState != androidx.media3.common.Player.STATE_IDLE }.getOrDefault(false) } }
     }
 }
