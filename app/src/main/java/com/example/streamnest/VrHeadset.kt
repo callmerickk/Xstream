@@ -33,7 +33,7 @@ import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.ThreeSixty
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Pause
@@ -417,7 +417,7 @@ private fun ControlPanel(player: Player, title: String, tick: Int, layout: List<
             "volDown" -> Icons.AutoMirrored.Filled.VolumeDown; "volUp" -> Icons.AutoMirrored.Filled.VolumeUp
             "bright" -> Icons.Default.Brightness6; "subs" -> if (subsOn) Icons.Default.Subtitles else Icons.Default.SubtitlesOff
             "audio" -> Icons.Default.Audiotrack; "size" -> Icons.Default.AspectRatio; "center" -> Icons.Default.CenterFocusStrong
-            "pic" -> Icons.Default.Tune; "fixed" -> Icons.Default.ThreeSixty
+            "pic" -> Icons.Default.Tune; "fixed" -> Icons.Default.Explore
             "3d" -> Icons.Default.ViewInAr
             "next" -> Icons.Default.SkipNext; "browse" -> Icons.Default.GridView; "exit" -> Icons.Default.Close
             else -> null
