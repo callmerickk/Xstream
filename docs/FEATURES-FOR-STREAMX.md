@@ -93,3 +93,19 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
 - **Post-credit pill**: `stingerOf()` (TMDB keywords aftercreditsstinger / duringcreditsstinger) → "★ Scene after the credits".
 - **Seek previews** now also for 127.0.0.1 plugin links (only the Live server is skipped).
 - **Log browser**: blank app + "(TV)" model = StreamX TV; order Xstream Mobile, Xstream Live, StreamX Mobile, StreamX TV.
+
+## 0.8.8 (19 Nov 2026)
+- **Exact short seeks**: `seekAbs` uses `SeekParameters.EXACT` for jumps ≤60 s (CLOSEST_SYNC snapped HLS ±10 s back), CLOSEST_SYNC for longer.
+- **Quality sheet speed**: `qCols` not recomputed on each open; PluginQualityBar groups `remember`ed; tick colour remembered per stream.
+- **60fps**: rows only when a 60fps copy exists; "60fps available" glass note top-left 8 s once per title (StreamX TV style).
+- **Tick colours**: vega / rogmovies / 4khdhub / hdhub4u = green (checked before the plugin rule).
+- **Memory**: Coil memory 12 %, cleared when the player opens; ExoPlayer 22 % of heap; SeekThumbs 160 frames + `trim()`;
+  heap logged every 60 s in the player, >85 % → drop posters and frames.
+- **Title details**: `fullMeta` asks Cinemeta first for tt ids and skips addon error metas.
+- **Relevance**: universes keep movies with ≥40 votes / series ≥15, drop documentary/talk/reality/news, `isJunkTitle()`
+  (One-Shot, Assembled, making of…); search hits filtered the same way.
+- **Collections**: GroupPage dialog without window animation; tab and scroll kept (`SearchState.groupTab/groupScroll`).
+- **Home pictures**: `warmHome()` warms row posters + tall posters/backdrops of the first 3 rows, also from the cached rows
+  while the profile page shows; `Posters.warm` up to 260.
+- **Silent plugin links**: `startBudgetMs` 127.0.0.1 = 7 s unless LIVE_ONLY.
+- **AIDEN**: always listens with SpeechRecognizer; `quickCommand()` runs play / open / search / my list without the AI.
