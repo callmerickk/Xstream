@@ -66,3 +66,30 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
 ## Fixes
 - vivo: `navStack` kept in the ViewModel, ComposeView `DisposeOnLifecycleDestroyed`.
 - No double next-episode posters (the pill is hidden while Watch next is open).
+
+## 0.8.7 (19 Nov 2026)
+- **Memory**: `buildPlayer` budget = min(RAM table, 30 % of `Runtime.maxMemory()`), halved while another player lives (`PlayerCount`).
+- **HostDown fixed**: never local/private hosts; ≥3 hosts failing within 5 s = network drop, ignored.
+- **Watch next card**: 214×68 dp landscape in the corner, progress line, tap = open now; hand over after 2.5 s with a link, max 6 s.
+- **Finished shows**: `sweepFinished()` — last episode done (≥90 %) with no next → Watched; movies done at 90 %.
+- **Addon error titles hidden**: `CatalogResponse.metas` filters `isAddonError()` (aiostreamserror / ❌).
+- **Search Back**: `SearchState.text` / `SearchState.openGroup` survive opening a title.
+- **Home cache**: cached shelves saved shuffled (first 12 of each row; pinned/top-10 kept), posters warmed for those 12.
+- **Live hero**: no auto trailers; Play + round Trailer (Pause/Resume) + My List (Mute while playing); `YtDirect.tapHd` = 1080p
+  Wi-Fi / 720p data; `TrailerVideo(paused=)`; smaller IMDb badge.
+- **Names**: home style "streamx" shown as **Stack**, its bar as **Horizon**, Crimson note "deep black, crimson".
+- **MiniHome** redrawn after the real styles, `animate = true` slides cards and rows; **FirstLook.kt** "Choose your look" once
+  per profile (key `lookChosen`): style → moving preview → Use this/Back → colours → done; Skip = Live + Midnight.
+- **Player top bar**: round ‹ between clock and lock; Watch together + `VrHeadsetIcon` slide out for 3 s at start
+  (`extrasOpen`); Sources removed from the phone More bubble.
+- **Seek bar**: red dot always on phones; `scrubHide` fades everything but the bar + preview while dragging.
+- **Quality sheet** (`PluginQualityBar`): fixed rows Auto · 4K 60fps · 4K · 1080p 60fps · 1080p · 720p · 480p; white frame =
+  `qChosen`; tick = playing row coloured by `qualityTick()` (red HLS, yellow MovieBox/plugin, green file); "60fps" badge;
+  236 dp wide; Other streams groups renamed 1080p / Unlabelled; choosing Auto clears `byHand`/`userPicked`.
+- **Chip**: playing quality (4K, 4K 60fps, 1080p 60fps, 1080p, 720p, 480p), "Auto" for 20 s after a height change in Auto.
+- **Slow internet**: file → `ottSwapTo(basePl)` after 2 stalls / 5 s stall; back to the file after 3 min smooth + 45 s buffer.
+- **Gestures**: `edgeStart` (top/bottom 13 %) ignores swipes; side strips 20 % (middle 0.6).
+- **VR**: "Fixed screen" → **Look around** (ThreeSixty icon), off by default.
+- **Post-credit pill**: `stingerOf()` (TMDB keywords aftercreditsstinger / duringcreditsstinger) → "★ Scene after the credits".
+- **Seek previews** now also for 127.0.0.1 plugin links (only the Live server is skipped).
+- **Log browser**: blank app + "(TV)" model = StreamX TV; order Xstream Mobile, Xstream Live, StreamX Mobile, StreamX TV.
