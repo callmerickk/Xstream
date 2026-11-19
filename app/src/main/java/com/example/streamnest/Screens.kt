@@ -288,7 +288,8 @@ fun App(vm: AppViewModel = viewModel()) {
         else when (val top = stack.lastOrNull()) {
             is Screen.Player -> key(top) {
                 PlayerScreen(vm, top, onBack = pop, onReplace = { next -> if (stack.isNotEmpty()) stack[stack.lastIndex] = next }, onProgress = { pos, dur, url, subs ->
-                    if (top.key.isNotEmpty() && url.isNotEmpty()) vm.saveProgress(Progress(top.key, top.title, top.image, url, subs, pos, dur, System.currentTimeMillis()))
+                    if (top.key.isNotEmpty() && url.isNotEmpty()) vm.saveProgress(Progress(top.key, top.title, top.image, url, subs, pos, dur, System.currentTimeMillis(),
+                        source = PlayingSrc.source.takeIf { PlayingSrc.url == url }, addon = PlayingSrc.addon.takeIf { PlayingSrc.url == url }))
                     // "How was it?" once you've really watched something (10 min or 30%).
                     val base = top.key.substringBefore(":")
                     val prev = vm.votes.value[base]
@@ -301,8 +302,18 @@ fun App(vm: AppViewModel = viewModel()) {
                 })
             }
             is Screen.Detail -> key(top) {
-                PosterZoomIn {
-                    DetailScreen(vm, top.meta, onBack = pop, onOpen = open, sourcesFor = top.sourcesFor, onPlay = { stack.add(it) },
+                // 0.8.9: a collection title with a TMDB id becomes its IMDb title before the page starts (its picture and
+                // story show meanwhile), so nothing is looked up or played for the wrong id.
+                var dm by remember { mutableStateOf(top.meta.takeIf { !it.id.startsWith("tmdb:") } ?: colImdbOf(top.meta.id)?.let { id -> top.meta.copy(id = id, type = if (top.meta.id.startsWith("tmdb:tv:")) "series" else "movie") }) }
+                if (dm == null) {
+                    LaunchedEffect(Unit) {
+                        val r = runCatching { vm.resolveForOpen(top.meta) }.getOrNull()
+                        if (r != null) dm = r.copy(poster = top.meta.poster ?: r.poster, background = top.meta.background ?: r.background)
+                        else { Snack.show(if (vm.tmdbKey().isEmpty()) "Add a TMDB key in Integrations to open this title" else "Couldn't open this title"); pop() }
+                    }
+                    TmdbOpening(top.meta)
+                } else PosterZoomIn {
+                    DetailScreen(vm, dm!!, onBack = pop, onOpen = open, sourcesFor = top.sourcesFor, onPlay = { stack.add(it) },
                         onPerson = { c -> stack.add(Screen.Person(c.id, c.name, c.photo)) },
                         onTrailer = { stack.add(it) })
                 }
@@ -803,6 +814,22 @@ private fun RestoreScreen(busy: Boolean, onDifferent: () -> Unit, onContinue: ()
                 androidx.compose.material3.TextButton(onDifferent) { Text("Use a different account") }
                 androidx.compose.material3.TextButton(onContinue) { Text("Continue with this account") }
             }
+        }
+    }
+}
+
+
+/** 0.8.9: shown for the moment a collection title's IMDb id is looked up — its own picture, name and story. */
+@Composable
+private fun TmdbOpening(m: Meta) {
+    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().background(Bg)) {
+        coil.compose.AsyncImage(m.background ?: m.poster, m.name, androidx.compose.ui.Modifier.fillMaxWidth().aspectRatio(16f / 10f),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+        androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.fillMaxWidth().padding(top = 240.dp).padding(horizontal = 18.dp)) {
+            androidx.compose.material3.Text(m.name, fontSize = 26.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+            m.releaseInfo?.let { androidx.compose.material3.Text(it, fontSize = 13.sp, color = Muted) }
+            m.description?.let { androidx.compose.material3.Text(it, androidx.compose.ui.Modifier.padding(top = 10.dp), fontSize = 14.sp, color = Color(0xFFC9CCD6), maxLines = 6) }
+            androidx.compose.material3.CircularProgressIndicator(androidx.compose.ui.Modifier.padding(top = 20.dp).size(26.dp), color = BrandRed, strokeWidth = 2.5.dp)
         }
     }
 }

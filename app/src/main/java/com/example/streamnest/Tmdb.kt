@@ -220,14 +220,24 @@ object TmdbPosters {
     private val running = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
 
-    fun cached(m: Meta): String? = cache[m.id]
-    fun remember(m: Meta, url: String) { cache[m.id] = url }
+    // 0.8.9: remembered on the phone, so the Top 10 posters are there at once on the next start.
+    @Volatile private var loaded = false
+    private fun prefs() = Public.vm?.appContext?.getSharedPreferences("tmdbPosters", android.content.Context.MODE_PRIVATE)
+    private fun load() {
+        if (loaded) return
+        val p = prefs() ?: return
+        loaded = true
+        runCatching { p.all.forEach { (k, v) -> (v as? String)?.let { cache.putIfAbsent(k, it) } } }
+    }
+    private fun save(id: String, url: String) { runCatching { prefs()?.edit()?.apply { if ((prefs()?.all?.size ?: 0) > 4000) clear() }?.putString(id, url)?.apply() } }
+    fun cached(m: Meta): String? { load(); return cache[m.id] }
+    fun remember(m: Meta, url: String) { cache[m.id] = url; save(m.id, url) }
 
     /** A tall poster that never needs TMDB: Cinemeta's large poster by IMDb id, or the title's own when it is tall. */
     fun fallback(m: Meta): String? = hdPoster(m) ?: m.poster?.takeIf { !m.posterShape.equals("landscape", true) && !m.posterShape.equals("square", true) }?.let { hiResArt(it) }
 
     suspend fun portrait(m: Meta): String? {
-        cache[m.id]?.let { return it }
+        cached(m)?.let { return it }
         if (m.id in none) return null
         val vm = Public.vm ?: return null
         val key = vm.tmdbKey()
@@ -235,7 +245,7 @@ object TmdbPosters {
         val d = running.getOrPut(m.id) { scope.async { runCatching { look(m, key) }.getOrNull() } }
         val r = d.await()
         running.remove(m.id)
-        if (r != null) cache[m.id] = r else none += m.id
+        if (r != null) { cache[m.id] = r; save(m.id, r) } else none += m.id
         return r
     }
 

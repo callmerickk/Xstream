@@ -13,6 +13,16 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.9", "19 Nov 2026", "Never stuck, right film, faster collections", listOf(
+        "Once a video has started, it never goes back to the loading or error screen: the picture holds with a small ring while it reconnects or tries other links",
+        "No internet? It waits and carries on from the same second when it's back",
+        "Pick up where you left off shows the source and the right tick in the Quality menu",
+        "Collections open at once and always play the right film; shorts, specials and documentaries are left out (checked on TMDB)",
+        "Quality menu opens faster",
+        "Top 10 posters are ready as Home opens",
+        "Phone memory full? One tap clears it and tries again",
+        "After a problem on an old version, Xstream offers the latest update (once a day, never during a video)",
+    )),
     Release("0.8.8", "19 Nov 2026", "Steadier, faster, cleaner search", listOf(
         "10-second jumps always move (they sometimes snapped back to where you were)",
         "Quality menu opens at once; 60fps rows only when a 60fps copy exists, with a short “60fps available” note",
@@ -503,6 +513,20 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.9", "19 Nov 2026", "Hold frame, collections by IMDb id, memory prompt, update nudge", listOf(
+        "sawPicture: after the first picture no loading/error screen; startWay holds the frame (frozen) on every reload; overlay = frame + white ring",
+        "keepTrying(): all links failed after the picture → wait for NET_CAPABILITY_VALIDATED (≤2 min), reset tried/skipHosts, retry same link / ranked known; fresh streams every 3rd round",
+        "Progress.source/addon + PlayingSrc: Continue passes them to Screen.Player; itemFor() matches a resumed link to its fresh copy by addon + name (dev label + tick)",
+        "realTitles(): collection / universe / studio items checked once via tmdbDetail (imdb_id, runtime ≥60 / episodes ≥20, no 99/10767/10764/10763, isJunkTitle) → ids become tt; ActLog 'collection: left out'",
+        "Screens: Screen.Detail with tmdb: id resolves first (TmdbOpening shows art + story); LinkMemory refuses tmdb ids (Detail used 'tmdb' as the imdb key)",
+        "fullMeta: one in-flight request per title + 10 min cache; tmdb ids → resolveForOpen; Cinemeta 6 s; addons in parallel, first in order within 4 s (pengu waited 20 s ×2)",
+        "PluginSources.modeStreams: never searches aiostreamserror / tmdb ids / error metas",
+        "Quality menu: sources asked 4 s after the first picture (not on open); shorter enter animation; QUALITY 'menu shown in N ms' log",
+        "warmHome: warms hiResArt (the size cards draw) + first card of every row; TMDB tall posters looked up ahead and stored in prefs (TmdbPosters)",
+        "memTight() (heap >85 % or lowMemory) on a stream error → 'Phone memory is full' Do it (clear Coil memory, thumbs, Preloader, Prepare others, gc, retry) / Deny",
+        "Updater.onTrouble from PLAYFAIL / player ERROR / failed SWITCH: latestKnown (prefs kCode) → 'This is fixed in the latest Xstream' once a day, not while PlayingSrc.open > 0",
+        "Cloud live link: offline → waits for the internet quietly (was retrying every 60 s for hours)",
+    )),
     Release("0.8.8", "19 Nov 2026", "Seek, quality sheet, memory, search, AIDEN", listOf(
         "seekAbs: SeekParameters.EXACT for jumps ≤60 s (CLOSEST_SYNC snapped HLS 10 s jumps back), CLOSEST_SYNC for longer",
         "qCols no longer recomputed on every open; PluginQualityBar groups remembered; tick colour remembered per stream",

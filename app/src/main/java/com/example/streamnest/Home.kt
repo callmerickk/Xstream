@@ -415,7 +415,7 @@ fun HomeScreen(
                         items(progress.take(30), key = { it.key }, contentType = { "cw" }) { p ->
                             Box(Modifier.animateItem().onGloballyPositioned { cwRects[p.key] = it.boundsInRoot() }
                                 .graphicsLayer { alpha = if (lifted == p.key && !BuildConfig.IS_TV) 0f else 1f }) {
-                                ContinueCard(p, cwStyle, vm = vm, onClick = { if (p.finished()) onOpen(p.toMeta()) else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs)) }, onRemove = { vm.removeProgress(p.key) },
+                                ContinueCard(p, cwStyle, vm = vm, onClick = { if (p.finished()) onOpen(p.toMeta()) else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs, source = p.source, addon = p.addon)) }, onRemove = { vm.removeProgress(p.key) },
                                     onLongClick = { actionsFor = p })
                             }
                         }
@@ -480,7 +480,7 @@ fun HomeScreen(
     }
     addFor?.let { m -> AddToWatchlistSheet(vm, m) { addFor = null } }
     if (cwAll) ContinueAllPage(vm, progress, onClose = { cwAll = false },
-        onPlay = { p -> cwAll = false; if (p.finished()) onOpen(p.toMeta()) else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs)) })
+        onPlay = { p -> cwAll = false; if (p.finished()) onOpen(p.toMeta()) else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs, source = p.source, addon = p.addon)) })
     val liftFrom = actionsFor?.let { cwRects[it.key] }
     if (!BuildConfig.IS_TV && actionsFor != null && liftFrom != null) {
         val p = actionsFor!!
@@ -494,7 +494,7 @@ fun HomeScreen(
                 listOf(
                     TitleAction("Go to details", Icons.Default.Info) { onOpen(p.toMeta()) },
                     TitleAction("Play manually", Icons.Default.PlayArrow) { onManual(p.toMeta(), p.key) },
-                    TitleAction("Start from beginning", Icons.Default.Replay) { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, 0L)) },
+                    TitleAction("Start from beginning", Icons.Default.Replay) { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, 0L, source = p.source, addon = p.addon)) },
                     TitleAction("Remove", Icons.Default.DeleteOutline, danger = true) { },
                 ),
                 onRemove = { vm.removeProgress(p.key) },
@@ -506,7 +506,7 @@ fun HomeScreen(
             p,
             onDetails = { onOpen(p.toMeta()) },
             onManual = { onManual(p.toMeta(), p.key) },
-            onStartOver = { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, 0L)) },
+            onStartOver = { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, 0L, source = p.source, addon = p.addon)) },
             onRemove = { vm.removeProgress(p.key) },
             onDismiss = { actionsFor = null },
         )

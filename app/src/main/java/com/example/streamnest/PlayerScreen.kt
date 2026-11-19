@@ -531,6 +531,9 @@ fun PlayerScreen(
     /** After a fallback to MovieBox, the next upgrade offer waits until then. */
     var upCooldownUntil by remember { mutableLongStateOf(0L) }
     var firstFrame by remember { mutableStateOf(false) }
+    /** 0.8.9: a picture was on screen for this title — from now on no loading or error screen, only the held frame + ring. */
+    var sawPicture by remember(p.key) { mutableStateOf(false) }
+    LaunchedEffect(firstFrame) { if (firstFrame) sawPicture = true }
     // Source health: which source is playing (a failure is counted against it) and that it played.
     LaunchedEffect(now?.addon) { PlayFailNote.addon = now?.addon }
     LaunchedEffect(firstFrame) { if (firstFrame) now?.addon?.let { SourceHealth.played(it) } }
@@ -783,6 +786,8 @@ fun PlayerScreen(
     var resumeAt by remember { mutableLongStateOf(p.resumeMs) }
     // Switching while playing: keep the last frame on screen (blurred) instead of the loading screen.
     var switching by remember { mutableStateOf(false) }
+    /** 0.8.9: when the Quality chip was tapped (to log how fast the menu appeared). */
+    val qTapAt = remember { longArrayOf(0L) }
     var switchLabel by remember { mutableStateOf<String?>(null) }
     var frozen by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var videoView by remember { mutableStateOf<View?>(null) }
@@ -867,11 +872,19 @@ fun PlayerScreen(
     fun keepPos(): Long = if (firstFrame) curPos().takeIf { it > 0 } ?: resumeAt else resumeAt
 
     var onEngineError: (String) -> Unit = {}
+    /** 0.8.9: the error code waiting for "Memory is full" (Do it / Deny); Deny = not asked again for this title. */
+    var memAsk by remember { mutableStateOf<String?>(null) }
+    var memDenied by remember(p.key) { mutableStateOf(false) }
     val probeSeq = remember { intArrayOf(0) }
 
     /** The stream entry behind a link, when we know it (for its size and tags). */
     fun itemFor(url: String): StreamItem? =
         known.firstOrNull { it.stream.url == url } ?: candidates.firstOrNull { it.stream.url == url } ?: quickList.firstOrNull { it.stream.url == url }
+            // 0.8.9: a resumed link (from Continue watching) matched to its fresh copy by source and name.
+            ?: now?.takeIf { it.url == url && it.addon != null && it.source != null }?.let { n -> (known + quickList).firstOrNull { it.addonName == n.addon && (it.stream.name ?: it.addonName) == n.source } }
+
+    LaunchedEffect(now) { now?.let { n -> PlayingSrc.url = n.url; PlayingSrc.source = n.source; PlayingSrc.addon = n.addon } }
+    DisposableEffect(Unit) { PlayingSrc.open++; onDispose { PlayingSrc.open-- } }
 
     fun startVlc(n: Now, startMs: Long, w: Way) {
         runCatching { player.stop() }
@@ -907,6 +920,8 @@ fun PlayerScreen(
     }
 
     fun startWay(n: Now, startMs: Long) {
+        // 0.8.9: a reload mid-film (blip, another way) keeps the last frame on screen too.
+        if (firstFrame && !switching) { switching = true; videoView?.let { vv -> captureFrame(vv, full = true) { bmp -> if (switching) frozen = bmp } } }
         loadTick++
         loadStartedAt = SystemClock.elapsedRealtime()
         val w = ways.getOrNull(wayIdx) ?: Way(vlc = engine == "vlc", hw = true, relay = false)
@@ -1124,6 +1139,8 @@ fun PlayerScreen(
         }
     }
 
+    /** 0.8.9: set below — every link failed after the picture was shown: wait for the internet, then try them all again. */
+    var keepTrying: (Now?, Long, String) -> Unit = { _, _, _ -> }
     /** No more ways for this link: the next source; in Quick Start, then every other addon's files; else the error. */
     fun tryNextSource(n: Now?, start: Long, code: String, quiet: Boolean = false) {
         // This link failed every way: count it for its provider group (twice in a row = under observation).
@@ -1161,7 +1178,38 @@ fun PlayerScreen(
                     tryNextSource(n, start, code)
                 }
             }
+            sawPicture -> keepTrying(n, start, code)
             else -> { forgetStreams(p.key); switching = false; frozen = null; failure = "Couldn't play this right now. Try again, or pick a source." ; PlayTiming.mark("nothing played ($code)") }
+        }
+    }
+    var retryRound by remember { mutableIntStateOf(0) }
+    keepTrying = { n, start, code ->
+        switching = true
+        val round = ++retryRound
+        PlayTiming.mark("every link failed after the picture ($code) — holding the frame, round $round")
+        scope.launch {
+            val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            fun online(): Boolean = runCatching {
+                val nw = cm?.activeNetwork ?: return@runCatching false
+                val c = cm.getNetworkCapabilities(nw) ?: return@runCatching false
+                c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) && c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            }.getOrDefault(true)
+            var waited = 0L
+            while (isActive && !online() && waited < 120_000) { delay(1_500); waited += 1_500 }
+            if (waited > 0) { PlayTiming.mark("internet back after ${waited / 1000} s — continuing"); delay(800) }
+            else delay((1_500L * round).coerceAtMost(12_000))
+            if (!isActive || round != retryRound || (firstFrame && !switching)) return@launch
+            tried.clear(); badFiles.clear(); skipHosts.clear(); silentCount.clear()
+            refreshedOnce = false; midRetries = 0; extendedAll = false
+            // Every third round (or nothing left): ask the sources again — links expire.
+            if (round % 3 == 0 || known.isEmpty()) {
+                forgetStreams(p.key)
+                val fresh = withTimeoutOrNull(20_000) { runCatching { vm.allStreams(type, p.key) }.getOrNull() }.orEmpty().filter { it.stream.url != null }
+                if (fresh.isNotEmpty()) known = (fresh + known).distinctBy { it.stream.url }
+            }
+            if (!isActive || round != retryRound) return@launch
+            candidates = known.filter { it.stream.url != null && it.stream.url != n?.url }
+            if (n != null && round % 2 == 1) load(n, start) else tryNextSource(n, start, code)
         }
     }
 
@@ -1209,7 +1257,15 @@ fun PlayerScreen(
     /** A link failed: reload it after a blip, refresh a refused link once, try it another way, then the next source, else show the error. */
     /** Set below (needs switchTo): the upgraded HD file failed → back to MovieBox. */
     var backToMovieBox: (String) -> Boolean = { false }
-    onEngineError = { code ->
+    // 0.8.9: a stream failed while the phone's memory is full → ask once: clear it and try again (Do it), or carry on (Deny).
+    fun memTight(): Boolean = runCatching {
+        val rt = Runtime.getRuntime()
+        val heap = (rt.totalMemory() - rt.freeMemory()).toDouble() / rt.maxMemory()
+        val am = ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val mi = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        heap > 0.85 || mi.lowMemory
+    }.getOrDefault(false)
+    val normalError: (String) -> Unit = { code ->
         PlayTiming.mark("error: $code")
         if (!backToMovieBox(code)) {
         val n = now
@@ -1278,6 +1334,14 @@ fun PlayerScreen(
         }
         }
         Unit
+    }
+    onEngineError = { code ->
+        if (memAsk != null) Unit
+        else if (!memDenied && memTight()) {
+            val rt = Runtime.getRuntime()
+            ActLog.add("PLAY", "stream failed ($code) with memory full (${(rt.totalMemory() - rt.freeMemory()) / 1048576} / ${rt.maxMemory() / 1048576} MB) — asking to clear")
+            memAsk = code
+        } else normalError(code)
     }
 
     // A link that never starts (no error, no picture) counts as failed. With other links waiting: switched when nothing
@@ -3482,7 +3546,7 @@ fun PlayerScreen(
     )
 
     // Loading screen fades out, then the video fades in from black.
-    val loadingAlpha by animateFloatAsState(if ((firstFrame || switching) && failure == null) 0f else 1f, tween(420), label = "loading")
+    val loadingAlpha by animateFloatAsState(if ((firstFrame || switching || sawPicture) && failure == null) 0f else 1f, tween(420), label = "loading")
     val videoAlpha by animateFloatAsState(if (firstFrame) 1f else 0f, tween(650, delayMillis = 180), label = "video")
 
     ProvideTextStyle(TextStyle(fontFamily = InterFont, color = Color.White)) {
@@ -3577,7 +3641,7 @@ fun PlayerScreen(
                 // The video surface can't fade itself, so a black layer on top fades away instead.
                 Box(Modifier.fillMaxSize().graphicsLayer { alpha = 1f - videoAlpha }.background(Color.Black))
                 // Switching link mid-playback: the last frame stays, softly blurred, until the new one is on screen.
-                androidx.compose.animation.AnimatedVisibility(switching && failure == null, Modifier.fillMaxSize(), enter = fadeIn(tween(120)), exit = fadeOut(tween(450))) {
+                androidx.compose.animation.AnimatedVisibility((switching || (sawPicture && !firstFrame)) && failure == null, Modifier.fillMaxSize(), enter = fadeIn(tween(120)), exit = fadeOut(tween(450))) {
                     // The frame stays sharp (it looks paused, not loading); the loading capsule only shows if the new
                     // link takes longer than 2.5 s.
                     var slowSwitch by remember { mutableStateOf(false) }
@@ -3588,8 +3652,8 @@ fun PlayerScreen(
                         }
                         androidx.compose.animation.AnimatedVisibility(slowSwitch || frozen == null, Modifier.fillMaxSize(), enter = fadeIn(tween(250)), exit = fadeOut(tween(150))) {
                             Box(Modifier.fillMaxSize()) {
-                                Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0x33000000), Color(0x99000000)))))
-                                SwitchCapsule(bufProgress, resumeAt, Modifier.align(Alignment.Center))
+                                // 0.8.9: just a ring over the held frame (like a slow internet), never a loading screen.
+                                CircularProgressIndicator(Modifier.align(Alignment.Center).size(46.dp), color = Color.White, strokeWidth = 3.dp, trackColor = Color(0x33FFFFFF))
                             }
                         }
                     }
@@ -4110,7 +4174,7 @@ fun PlayerScreen(
                                 val ready4k = hdReady["4k"].orEmpty().isNotEmpty() && res < 1440
                                 if (plugQ) (real ?: "Auto")
                                 else if (quality == "auto" || quickNow) "Quick" + (real?.let { " · $it" } ?: "") else real ?: (AllQualityLevels.firstOrNull { it.id == quality }?.label ?: "Quick")
-                            }, "Quality", iconFirst = false) { qualityMenu = !qualityMenu; poke++ }
+                            }, "Quality", iconFirst = false) { if (!qualityMenu) qTapAt[0] = SystemClock.elapsedRealtime(); qualityMenu = !qualityMenu; poke++ }
                         // Xstream: one stream that carries several qualities (an HLS playlist, like CloudStream's Netflix
                         // server): pick one of them here, or Auto.
                         if (false && !BuildConfig.IS_TV && quickList.isEmpty() && !vm.pluginMode()) {
@@ -4384,6 +4448,27 @@ fun PlayerScreen(
                 }
             }
 
+            memAsk?.let { code ->
+                androidx.compose.material3.AlertDialog(onDismissRequest = {},
+                    title = { Text("Phone memory is full") },
+                    text = { Text("That's why the video stopped. Clear Xstream's memory and cache for smooth playback?") },
+                    confirmButton = { androidx.compose.material3.TextButton({
+                        memAsk = null
+                        runCatching { coil.Coil.imageLoader(ctx).memoryCache?.clear() }
+                        thumbs?.trim(); Preloader.release(); Prepare.stopOthers()
+                        System.gc()
+                        val rt = Runtime.getRuntime()
+                        ActLog.add("PLAY", "memory cleared by you — now ${(rt.totalMemory() - rt.freeMemory()) / 1048576} / ${rt.maxMemory() / 1048576} MB, trying again")
+                        val n = now; val st = keepPos()
+                        if (n != null) { midRetries = 0; resumeAt = st; startWay(n, st) } else normalError(code)
+                    }) { Text("Do it", fontWeight = FontWeight.Bold) } },
+                    dismissButton = { androidx.compose.material3.TextButton({
+                        memAsk = null; memDenied = true
+                        ActLog.add("PLAY", "memory full — you chose to carry on")
+                        normalError(code)
+                    }) { Text("Deny") } })
+            }
+
             // Seek bubble (controls hidden): « 30s / 30s » that adds up while you keep pressing.
             // The side and text stay those of the last skip while it fades (it used to flip to the other side for a moment).
             var lastBubble by remember { mutableStateOf(true to 30) }
@@ -4530,8 +4615,11 @@ fun PlayerScreen(
             }
             // Opening the menu with few links known: every source is asked now (in plugin mode a title started from the
             // ready player only knew its own link, so the menu stayed empty).
-            LaunchedEffect(qualityMenu) {
-                if (!qualityMenu || BuildConfig.IS_TV || known.size > 3) return@LaunchedEffect
+            // 0.8.9: asked 4 s after the picture shows, not when the menu opens (the menu changed under your finger).
+            LaunchedEffect(firstFrame, p.key) {
+                if (!firstFrame || BuildConfig.IS_TV || known.size > 3) return@LaunchedEffect
+                delay(4_000)
+                if (known.size > 3) return@LaunchedEffect
                 runCatching { kotlinx.coroutines.withTimeoutOrNull(25_000) { vm.streamsFlow(type, p.key).collect { (l, _) -> known = (known + vm.filtered(l).list).distinctBy { it.stream.url } } } }
             }
             // The first file of each quality gets its start + index saved (opens in about a second from the menu). On mobile
@@ -4557,15 +4645,21 @@ fun PlayerScreen(
             LaunchedEffect(qualityMenu) { if (qualityMenu) { instantOpen = true; delay(2_000); instantOpen = false } }
             AnimatedVisibility(
                 qualityMenu && controls, Modifier.align(Alignment.TopEnd).padding(top = topY + 40.dp, end = topEnd + 40.dp),
-                enter = fadeIn(tween(160)) + androidx.compose.animation.scaleIn(spring(dampingRatio = 0.75f, stiffness = 500f), initialScale = 0.9f,
+                enter = fadeIn(tween(110)) + androidx.compose.animation.scaleIn(tween(130), initialScale = 0.94f,
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)),
-                exit = fadeOut(tween(140)) + androidx.compose.animation.scaleOut(tween(140), targetScale = 0.95f),
+                exit = fadeOut(tween(120)) + androidx.compose.animation.scaleOut(tween(120), targetScale = 0.96f),
             ) {
+                // 0.8.9: how long the menu took to appear after the tap, in the log.
+                LaunchedEffect(Unit) {
+                    androidx.compose.runtime.withFrameNanos { }
+                    val t = qTapAt[0]
+                    if (t > 0) { ActLog.add("QUALITY", "menu shown in ${SystemClock.elapsedRealtime() - t} ms · ${known.size} links"); qTapAt[0] = 0 }
+                }
                 // Three columns — 4K | 1080p | 720p — each grouped by picture tag in your picture-preference order
                 // (instant streaming playlists first). A red tick = start and index saved (opens in about a second).
                 val shape = RoundedCornerShape(20.dp)
-                val playing = now?.url
-                val curItem = playing?.let { itemFor(it) }
+                val curItem = now?.url?.let { itemFor(it) }
+                val playing = curItem?.stream?.url ?: now?.url
                 val onQuick = curItem?.isMovieBox() == true || curItem?.let { vm.isQuick(it) } == true
                 val readySet = tagReady + hdReady.values.flatten().mapNotNull { it.stream.url }
                 val focusUrl = qCols.flatMap { c -> c.second.flatMap { it.second } }.let { all -> all.firstOrNull { it.stream.url == playing } ?: all.firstOrNull() }?.stream?.url

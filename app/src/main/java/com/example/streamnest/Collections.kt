@@ -405,11 +405,15 @@ private suspend fun AppViewModel.addonCatalog(s: NSource): List<Meta>? {
 
 // ───────────── Opening a title ─────────────
 
+/** 0.8.9: IMDb ids found ahead (search collections check every title on TMDB once). */
+fun rememberColImdb(tmdbId: String, imdb: String) { ColStore.imdb[tmdbId] = imdb }
+fun colImdbOf(tmdbId: String): String? = ColStore.imdb[tmdbId]
+
 /** Collection items may have TMDB ids ("tmdb:movie:603"); this turns them into the IMDb id the rest of the app uses. */
 suspend fun AppViewModel.resolveForOpen(m: Meta): Meta? {
     if (!m.id.startsWith("tmdb:")) return m
-    ColStore.imdb[m.id]?.let { return m.copy(id = it) }
     val parts = m.id.split(":")
+    ColStore.imdb[m.id]?.let { return m.copy(id = it, type = if (parts.getOrNull(1) == "tv") "series" else "movie") }
     val kind = parts.getOrNull(1) ?: return null
     val tid = parts.getOrNull(2)?.takeIf { it.isNotBlank() } ?: return null
     val key = tmdbKey().ifEmpty { return null }

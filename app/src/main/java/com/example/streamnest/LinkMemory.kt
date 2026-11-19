@@ -22,7 +22,11 @@ object LinkMemory {
     private val mem = ConcurrentHashMap<String, Pair<Long, List<StreamItem>>>()
     private fun file(ctx: Context, id: String) = File(ctx.cacheDir, "linkmem/" + id.hashCode().toUInt().toString(16) + ".json")
 
+    /** 0.8.9: only real title ids ("tt…", "tt…:1:2", kitsu…) — never "tmdb" or a blank id shared by many titles. */
+    private fun okId(id: String) = id.length > 4 && !id.startsWith("tmdb") && id.substringBefore(":") != "tmdb"
+
     fun get(ctx: Context, id: String): List<StreamItem>? {
+        if (!okId(id)) return null
         val now = System.currentTimeMillis()
         mem[id]?.let { (at, l) -> if (now - at < TTL) return l }
         val f = file(ctx, id)
@@ -35,6 +39,7 @@ object LinkMemory {
     }
 
     fun put(ctx: Context, id: String, list: List<StreamItem>) {
+        if (!okId(id)) return
         val l = list.filter { !it.stream.url.isNullOrBlank() && !it.stream.url!!.startsWith("http://127.0.0.1") }.distinctBy { it.stream.url }.take(12)
         if (l.isEmpty()) return
         val now = System.currentTimeMillis()

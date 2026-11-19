@@ -1,5 +1,7 @@
 package com.example.streamnest
 
+import kotlinx.coroutines.sync.withPermit
+
 import android.net.Uri
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
@@ -378,6 +380,43 @@ private fun tmdbMetaOf(o: JsonObject, kindHint: String): Meta? {
         releaseInfo = (o.sStr("release_date") ?: o.sStr("first_air_date"))?.take(4))
 }
 
+/**
+ * 0.8.9: every title of a collection / universe / studio is checked on TMDB once (remembered): it must have an IMDb id;
+ * a film must run at least 60 min, a series must be a scripted show with episodes of 20 min or more; documentaries,
+ * talk, reality and news are dropped (Team Thor, One-Shots, "Assembled"). Kept titles get their IMDb id, so they open
+ * at once and the right film plays. A title TMDB couldn't be asked about (no internet) is kept as it is.
+ */
+private val checkedTitles = java.util.concurrent.ConcurrentHashMap<String, Meta>()
+private val droppedTitles: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+private suspend fun realTitles(key: String, items: List<Meta>): List<Meta> = coroutineScope {
+    val gate = kotlinx.coroutines.sync.Semaphore(8)
+    items.map { m ->
+        async {
+            if (!m.id.startsWith("tmdb:")) return@async m
+            checkedTitles[m.id]?.let { return@async it }
+            if (m.id in droppedTitles) return@async null
+            val p = m.id.split(":")
+            val kind = p.getOrNull(1) ?: return@async m
+            val tid = p.getOrNull(2) ?: return@async m
+            val d = gate.withPermit { runCatching { tmdbDetail(key, kind, tid) }.getOrNull() } ?: return@async m
+            val imdb = (d.sObj("external_ids")?.sStr("imdb_id") ?: d.sStr("imdb_id"))?.takeIf { it.startsWith("tt") }
+            val genres = d.sArr("genres").mapNotNull { it.sStr("id")?.toIntOrNull() }
+            val runtime = if (kind == "tv") (d["episode_run_time"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }?.maxOrNull() ?: 0
+                else d.sStr("runtime")?.toIntOrNull() ?: 0
+            val why = when {
+                imdb == null -> "no IMDb id"
+                genres.any { it in setOf(99, 10767, 10764, 10763) } -> "documentary / talk / reality / news"
+                kind == "tv" && runtime in 1..19 -> "episodes ${runtime} min"
+                kind != "tv" && runtime in 1..59 -> "${runtime} min short"
+                isJunkTitle(m.name) -> "special"
+                else -> null
+            }
+            if (why != null) { droppedTitles += m.id; ActLog.add("APP", "collection: left out \"${m.name}\" ($why)"); null }
+            else m.copy(id = imdb!!).also { checkedTitles[m.id] = it; rememberColImdb(m.id, imdb) }
+        }
+    }.awaitAll().filterNotNull().distinctBy { it.id }
+}
+
 /** Film series (TMDB collections) and studios / franchises matching the search, each with its titles oldest first. */
 private suspend fun searchGroups(key: String, q: String): List<SearchGroup> = coroutineScope {
     val words = q.lowercase().split(Regex("\\s+")).filter { it.length > 1 && it !in setOf("the", "movies", "movie", "films", "series", "all") }
@@ -389,7 +428,7 @@ private suspend fun searchGroups(key: String, q: String): List<SearchGroup> = co
             res.filter { r -> val n = r.sStr("name").orEmpty().lowercase(); words.all { n.contains(it) } }.take(2).mapNotNull { r ->
                 val id = r.sStr("id") ?: return@mapNotNull null
                 val d = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/collection/$id?api_key=$key")).jsonObject
-                val parts = d.sArr("parts").sortedBy { it.sStr("release_date") ?: "9999" }.mapNotNull { tmdbMetaOf(it, "movie") }
+                val parts = realTitles(key, d.sArr("parts").sortedBy { it.sStr("release_date") ?: "9999" }.mapNotNull { tmdbMetaOf(it, "movie") })
                 if (parts.size < 2) null
                 else SearchGroup(d.sStr("name") ?: r.sStr("name") ?: q, "${parts.size} films · in order", parts.take(3).mapNotNull { it.poster }, d.sStr("backdrop_path")?.let { "${SIMG}w780$it" }, parts)
             }
@@ -402,7 +441,7 @@ private suspend fun searchGroups(key: String, q: String): List<SearchGroup> = co
             val cid = c.sStr("id") ?: return@runCatching emptyList<SearchGroup>()
             val parts = (1..2).flatMap { pg ->
                 Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/discover/movie?api_key=$key&with_companies=$cid&sort_by=popularity.desc&vote_count.gte=200&page=$pg")).jsonObject.sArr("results")
-            }.mapNotNull { tmdbMetaOf(it, "movie") }.distinctBy { it.id }.sortedBy { it.releaseInfo ?: "9999" }
+            }.mapNotNull { tmdbMetaOf(it, "movie") }.distinctBy { it.id }.sortedBy { it.releaseInfo ?: "9999" }.let { realTitles(key, it) }
             if (parts.size < 3) emptyList() else listOf(SearchGroup(c.sStr("name") ?: q, "${parts.size} films · oldest first", parts.takeLast(3).mapNotNull { it.poster }, parts.lastOrNull()?.background, parts))
         }.getOrDefault(emptyList())
     }
@@ -467,7 +506,7 @@ private suspend fun universeById(key: String, kid: String, tagName: String): Sea
         }
     }.awaitAll().flatten()
     val movies = async { pages("movie") }; val tv = async { pages("tv") }
-    val all = (movies.await() + tv.await()).distinctBy { it.id }.sortedBy { it.releaseInfo ?: "9999" }
+    val all = realTitles(key, (movies.await() + tv.await()).distinctBy { it.id }.sortedBy { it.releaseInfo ?: "9999" })
     if (all.size < 4) return@coroutineScope null
     val name = tagName.replace(Regex("\\s*\\(.*?\\)\\s*"), " ").trim().split(" ").joinToString(" ") { w -> if (w in setOf("dc", "yrf", "mcu", "dceu", "ssu")) w.uppercase() else w.split("-").joinToString("-") { p -> if (p == "x") "X" else p.replaceFirstChar { it.uppercase() } } }
     val nm = all.count { it.type == "movie" }; val ns = all.size - nm

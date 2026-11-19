@@ -8,6 +8,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -132,9 +133,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     /** Home's pictures to the disk cache: row posters, and the big cards' tall posters and backdrops. */
     fun warmHome(rows: List<Shelf>) {
-        val urls = rows.take(14).flatMap { s -> s.items.take(12).map { it.poster } } +
+        // 0.8.9: the cards draw the large copy (hiResArt), so that is the one warmed; the first card of every row too.
+        val urls = rows.take(14).flatMap { s -> s.items.take(12).map { hiResArt(it.poster) } } +
+            rows.take(14).mapNotNull { s -> s.items.firstOrNull() }.flatMap { listOf(hdPoster(it), hiResArt(backdropOf(it) ?: it.poster)) } +
             rows.take(3).flatMap { s -> s.items.take(10).flatMap { listOf(hdPoster(it), backdropOf(it)) } }
         Posters.warm(appContext, urls)
+        // Tall TMDB posters (Top 10 rows): looked up once, remembered on the phone, downloaded before Home shows.
+        viewModelScope.launch(Dispatchers.IO) {
+            val gate = kotlinx.coroutines.sync.Semaphore(4)
+            rows.take(14).flatMap { it.items.take(10) }.distinctBy { it.id }.filter { TmdbPosters.cached(it) == null }.take(80).map { m ->
+                launch { gate.withPermit { runCatching { TmdbPosters.portrait(m) }.getOrNull()?.let { Posters.warm(appContext, listOf(it)) } } }
+            }
+            rows.take(14).flatMap { it.items.take(10) }.mapNotNull { TmdbPosters.cached(it) }.let { Posters.warm(appContext, it) }
+        }
     }
 
     fun selectProfile(p: Profile) {
@@ -989,16 +1000,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
     }
 
+    // 0.8.9: one request per title at a time (Home asked the same title 2–3 times at once), answers kept 10 min.
+    private val metaRunning = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Meta?>>()
+    private val metaDone = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Meta>>()
+
     suspend fun fullMeta(m: Meta): Meta? {
+        val k = m.type + ":" + m.id
+        metaDone[k]?.let { (at, v) -> if (System.currentTimeMillis() - at < 600_000) return v }
+        val d = metaRunning.getOrPut(k) { viewModelScope.async(Dispatchers.IO) { runCatching { fullMetaNow(m) }.getOrNull() } }
+        val r = try { d.await() } finally { if (d.isCompleted) metaRunning.remove(k, d) }
+        if (r != null) metaDone[k] = System.currentTimeMillis() to r
+        return r
+    }
+
+    private suspend fun fullMetaNow(m0: Meta): Meta? {
+        // 0.8.9: collection titles with TMDB ids become IMDb titles first (an addon asked for "tmdb:movie:…" can wait 20 s).
+        val m = if (m0.id.startsWith("tmdb:")) resolveForOpen(m0) ?: return null else m0
         // 0.8.8: IMDb titles get their details from Cinemeta first; an addon's error message ("[❌] PenguPlay — Failed to
         // parse meta") is never taken as the title.
-        if (m.id.startsWith("tt")) runCatching { Api.fetch<MetaResponse>("$CINEMETA/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull()
+        if (m.id.startsWith("tt")) kotlinx.coroutines.withTimeoutOrNull(6000) { runCatching { Api.fetch<MetaResponse>("$CINEMETA/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull() }
             ?.takeIf { !it.isAddonError() && it.name.isNotBlank() }?.let { return it }
-        for (a in active.filter { it.supports("meta", m.type, m.id) }) {
-            val r = runCatching { Api.fetch<MetaResponse>("${a.baseUrl}/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull()
-            if (r != null && !r.isAddonError()) return r
+        // Addons all at once, the first in your order that answers wins; nobody is waited on for more than 4 s.
+        val list = active.filter { it.supports("meta", m.type, m.id) }
+        if (list.isEmpty()) return null
+        return coroutineScope {
+            val jobs = list.map { a -> async { runCatching { Api.fetch<MetaResponse>("${a.baseUrl}/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull()?.takeIf { !it.isAddonError() && it.name.isNotBlank() } } }
+            val end = System.currentTimeMillis() + 4000
+            var res: Meta? = null
+            for (j in jobs) {
+                val left = end - System.currentTimeMillis()
+                val r = if (left > 0) kotlinx.coroutines.withTimeoutOrNull(left) { j.await() } else if (j.isCompleted) j.await() else null
+                if (r != null) { res = r; break }
+            }
+            jobs.forEach { it.cancel() }
+            res
         }
-        return null
     }
 
     suspend fun streams(type: String, id: String): List<StreamItem> = coroutineScope {

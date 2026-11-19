@@ -94,7 +94,12 @@ fun Meta.isAddonError(): Boolean = id.startsWith("aiostreamserror") || name.cont
 data class StreamItem(val addonName: String, val stream: StreamInfo)
 
 @Serializable
-data class Progress(val key: String, val title: String, val image: String?, val url: String, val subs: List<Subtitle>, val positionMs: Long, val durationMs: Long, val updated: Long)
+data class Progress(val key: String, val title: String, val image: String?, val url: String, val subs: List<Subtitle>, val positionMs: Long, val durationMs: Long, val updated: Long,
+    /** 0.8.9: which source / addon gave [url] (the resumed video shows its source and the right quality tick). */
+    val source: String? = null, val addon: String? = null)
+
+/** 0.8.9: the link playing now and where it came from (saved with Continue watching). */
+object PlayingSrc { /** players on screen */ @Volatile var open = 0; @Volatile var url: String? = null; @Volatile var source: String? = null; @Volatile var addon: String? = null }
 
 data class Channel(val name: String, val logo: String?, val group: String?, val url: String)
 

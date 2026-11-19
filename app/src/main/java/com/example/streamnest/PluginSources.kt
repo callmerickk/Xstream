@@ -364,8 +364,9 @@ object PluginSources {
         CsPlugins.init(ctx)
         SourceHealth.init(ctx)
         if (CsPlugins.catalog.value.isEmpty()) runCatching { CsPlugins.refresh() }
-        val meta = metaFor(type, id)
-        if (meta == null) { send(emptyList<StreamItem>() to true); return@channelFlow }
+        val meta = if (id.startsWith("aiostreamserror") || id.startsWith("tmdb")) null else metaFor(type, id)
+        // 0.8.9: an addon's error message ("[❌] PenguPlay") or an unresolved TMDB id is never searched as a title.
+        if (meta == null || meta.isAddonError()) { send(emptyList<StreamItem>() to true); return@channelFlow }
         val series = type == "series"
         val season = id.split(":").getOrNull(1)?.toIntOrNull()
         val episode = id.split(":").getOrNull(2)?.toIntOrNull()

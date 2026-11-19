@@ -75,6 +75,9 @@ object ActLog {
     fun add(type: String, msg: String) {
         if (app == null) return
         queue.add("${timeFmt.format(Date())} ${type.padEnd(6)} ${mask(msg).replace('\n', ' ')}")
+        // 0.8.9: trouble on an old version → "Update to the latest" (shown later, never during playback).
+        if (type == "PLAYFAIL" || (type == "ERROR" && (msg.startsWith("player") || msg.contains("crash"))) || (type == "SWITCH" && msg.contains("failed")))
+            app?.let { runCatching { Updater.onTrouble(it) } }
     }
 
     private val maskRx = listOf(

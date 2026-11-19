@@ -1,9 +1,9 @@
-Xstream 0.8.8
+Xstream 0.8.9
 
-• 10-second jumps always move.
-• Quality menu opens at once; 60fps shows only when available, with a short note.
-• RogMovies gets the green tick.
-• No more PenguPlay error pages; collections and search show only real films and series.
-• Home opens with posters ready; smoother Back to collections.
-• AIDEN listens as fast as the search mic; simple commands run instantly.
-• Less memory while playing.
+• Once a video starts it never goes back to a loading or error screen — the picture holds while it reconnects.
+• No internet? It waits and continues from the same second.
+• Resume shows the source and the right quality tick.
+• Collections open at once and always play the right film; shorts and specials are left out.
+• Faster Quality menu and Top 10 posters.
+• Memory full? One tap clears it and tries again.
+• Old version having trouble? Xstream offers the update.

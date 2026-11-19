@@ -145,8 +145,25 @@ object Updater {
             UpdateInfo(name, code, notesFor(notes, tv), url, 0L)
         } else null
         available.value = info
+        // 0.8.9: remembered, so "Update to the latest" can still be offered when GitHub can't be reached.
+        p.edit().apply { if (info != null) putString("kName", info.versionName).putInt("kCode", info.versionCode).putString("kNotes", info.notes).putString("kUrl", info.apkUrl) else remove("kCode") }.apply()
         info
     }
+
+    /** A newer version we know of (now or from the last check), or null. */
+    fun latestKnown(ctx: Context): UpdateInfo? = available.value ?: prefs(ctx).let { p ->
+        val c = p.getInt("kCode", 0)
+        if (c > installedCode(ctx)) UpdateInfo(p.getString("kName", "") ?: "", c, p.getString("kNotes", "") ?: "", p.getString("kUrl", "") ?: "", 0L) else null
+    }
+    /** Something went wrong (a stream failed, an error): set when a newer version exists and we haven't asked today. */
+    val trouble = MutableStateFlow(false)
+    fun onTrouble(ctx: Context) {
+        if (BuildConfig.IS_TV || trouble.value) return
+        val day = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+        if (prefs(ctx).getString("nudgeDay", "") == day || latestKnown(ctx) == null) return
+        trouble.value = true
+    }
+    fun nudged(ctx: Context) { prefs(ctx).edit().putString("nudgeDay", java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())).apply() }
 
     /** The release notes block for this device (phone or TV): blocks are separated by "---"; the newest matching one. */
     private fun notesFor(all: String, tv: Boolean): String {
@@ -365,6 +382,24 @@ fun UpdatePrompt() {
             if (i != null && i.versionCode > Updater.skipped(ctx) && System.currentTimeMillis() - Updater.laterAt > 3 * 3600_000L && Updater.progress.value == null
                 && !SourceTester.running.value) info = i
         }
+    }
+    // 0.8.9: after a problem on an old version — once a day, never while a video plays.
+    val trouble by Updater.trouble.collectAsState()
+    var nudge by remember { mutableStateOf<UpdateInfo?>(null) }
+    LaunchedEffect(trouble) {
+        if (!trouble) return@LaunchedEffect
+        while (PlayingSrc.open > 0) delay(1500)
+        delay(800)
+        Updater.trouble.value = false
+        val k = Updater.latestKnown(ctx) ?: return@LaunchedEffect
+        if (info == null && Updater.progress.value == null && k.apkUrl.isNotBlank()) { Updater.nudged(ctx); nudge = k; ActLog.add("APP", "update nudge shown (${k.versionName})") }
+    }
+    nudge?.let { k ->
+        androidx.compose.material3.AlertDialog(onDismissRequest = { nudge = null },
+            title = { androidx.compose.material3.Text("This is fixed in the latest Xstream") },
+            text = { androidx.compose.material3.Text("You're on ${BuildConfig.VERSION_NAME}. Version ${k.versionName} fixes problems like the one you just had.") },
+            confirmButton = { androidx.compose.material3.TextButton({ nudge = null; info = k }) { androidx.compose.material3.Text("Update now") } },
+            dismissButton = { androidx.compose.material3.TextButton({ nudge = null }) { androidx.compose.material3.Text("Later") } })
     }
     val i = info ?: return
     UpdateDialog(i, onLater = { Updater.laterThisRun = true; Updater.laterAt = System.currentTimeMillis(); info = null }, onSkip = { Updater.skip(ctx, i); info = null },

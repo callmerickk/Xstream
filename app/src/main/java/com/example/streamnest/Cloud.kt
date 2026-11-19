@@ -123,7 +123,16 @@ object Cloud {
     private val http: OkHttpClient get() = Api.http
     private val sse: OkHttpClient by lazy { Api.http.newBuilder().readTimeout(0, TimeUnit.MILLISECONDS).build() }
 
+    /** 0.8.9: for "is there internet?" — the live link waits quietly for it instead of retrying every minute. */
+    @Volatile private var appCtx: Context? = null
+    private fun online(): Boolean = runCatching {
+        val cm = appCtx?.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return@runCatching true
+        val c = cm.getNetworkCapabilities(cm.activeNetwork ?: return@runCatching false) ?: return@runCatching false
+        c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) && c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }.getOrDefault(true)
+
     fun init(ctx: Context) {
+        appCtx = ctx.applicationContext
         if (started) return
         started = true
         prefs = ctx.getSharedPreferences("cloud", Context.MODE_PRIVATE)
@@ -486,7 +495,15 @@ object Cloud {
                     tokenLock.withLock { idExp = 0L }
                     delay(30_000)
                 }
-                else -> { status.value = "Offline — will retry"; ActLog.add("SYNC", "link $result · retry in ${backoff / 1000}s"); delay(backoff); backoff = (backoff * 2).coerceAtMost(60_000L) }
+                else -> {
+                    status.value = "Offline — will retry"
+                    if (!online()) {
+                        ActLog.add("SYNC", "offline — waiting for the internet")
+                        var w = 0; while (!online() && w < 720) { delay(5_000); w++ }
+                        backoff = 2000L; continue
+                    }
+                    ActLog.add("SYNC", "link $result · retry in ${backoff / 1000}s"); delay(backoff); backoff = (backoff * 2).coerceAtMost(60_000L)
+                }
             }
         }
     }
