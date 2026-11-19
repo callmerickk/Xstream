@@ -13,6 +13,18 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.7", "19 Nov 2026", "Cleaner player, smarter quality, Choose your look", listOf(
+        "Choose your look: pick Live, Stack or Classic and your colours from moving previews (once; change any time in Settings › Layout)",
+        "Live: Trailer and My List buttons instead of More Info; trailers play only when you tap, in HD",
+        "Player: Watch together and VR fold into a small ‹ button; a red dot on the progress bar; only the bar and preview while you seek",
+        "Quality: one clear list (Auto, 4K 60fps … 480p); the white frame is your choice, the tick shows what really plays (red HLS, yellow plugin, green HD file)",
+        "Slow internet: fades to the streaming copy and back when steady — no loading screen",
+        "Watch next: a small card in the corner, ready in seconds; tap it to open now",
+        "Swipes near the top or bottom edge no longer change volume or open Watch next",
+        "Finished shows leave Continue watching and go to Watched; a pill tells you when a film has a scene after the credits",
+        "Search: broken addon entries hidden; Back returns to your results and collection",
+        "Fixed: crashes from running out of memory on long 1080p films; servers wrongly skipped after a network drop",
+    )),
     Release("0.8.6", "18 Nov 2026", "Your own look, a new profile page, Watch next in the corner", listOf(
         "Settings › Layout › Look: Home style, Bottom bar and Theme are picked on their own from preview cards — any mix (Live Home with the StreamX bar, Crimson on Live…)",
         "New theme Midnight (the Live colours); Quick looks set All Live / All StreamX / All Classic in one tap",
@@ -481,6 +493,23 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.7", "19 Nov 2026", "Memory, quality sheet, player extras, Choose your look", listOf(
+        "Buffer budget = min(RAM table, 30 % of Runtime.maxMemory()), halved when another player is alive (PlayerCount)",
+        "HostDown: never local/private hosts; ≥3 hosts failing within 5 s = network drop (ignored); one log line per host",
+        "Watch next: open after 2.5 s with a link, max 6 s; 214×68 dp landscape card with a progress line; tap = wnOpen",
+        "sweepFinished(): finished last episode (no next) → Watched; episode/movie done at 90 %",
+        "CatalogResponse.metas hides addon error metas (aiostreamserror / ❌); SearchState keeps text + open collection",
+        "Cached shelves saved shuffled (first 12; pinned/top-10 kept); posters warmed for the first 12 of 12 rows",
+        "LiveHero: no auto trailers; Play + round Trailer/Pause + My List/Mute; YtDirect.tapHd (1080p Wi-Fi / 720p data); smaller IMDb badge",
+        "Style label StreamX → Stack, bar StreamX glass → Horizon; MiniHome redrawn after the real styles + animate; FirstLook.kt (lookChosen)",
+        "Player: ‹ extras (Watch together + VrHeadsetIcon) slide out 3 s at start; Sources removed from the phone More bubble; red dot; scrubHide",
+        "PluginQualityBar: fixed list, frame = qChosen, tick = playing (qualityTick colour), 60fps badge, 236 dp wide; groups 1080p / Unlabelled; chip = playing quality or Auto for 20 s after a change",
+        "Slow file → ottSwapTo(basePl) after 2 stalls / long stall; back after 3 min smooth + 45 s buffer (slowFile)",
+        "Gestures: edgeStart (top/bottom 13 %) ignores swipes; middle width 0.6",
+        "VR: Fixed screen → Look around (ThreeSixty icon), off by default",
+        "stingerOf() (TMDB keywords) → ★ Scene after/during the credits pill; seek previews for 127.0.0.1 plugin links (not Live)",
+        "Log browser: blank app + (TV) = StreamX TV; order Xstream Mobile, Xstream Live, StreamX Mobile, StreamX TV",
+    )),
     Release("0.8.6", "18 Nov 2026", "Look pickers, Horizon profile page, taste titles, Watch next corner, log browser", listOf(
         "LookPicker.kt: Home style / Bottom bar / Theme sheets with MiniHome previews; barKindOf() (navBar orbit|streamx|capsule) independent of homeStyle; Midnight theme (#0F1014 / #16204A); themePicked keeps 0.8.5 colours until a theme is chosen",
         "ProfileHorizon.kt: last profile pre-selected, progressOf(pid) / pickedOf(pid) per profile, 10 s ring, tap = preview, tap again = open, poster = play after selectProfile; locked profiles hide their posters",

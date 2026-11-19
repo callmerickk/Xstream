@@ -31,7 +31,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Developer's Corner › Logs of every account, organised: 1 the app (Xstream Mobile · Xstream TV · Xstream Live),
+ * Developer's Corner › Logs of every account, organised: 1 the app (Xstream Mobile · Xstream Live · StreamX Mobile · StreamX TV),
  * 2 its versions (newest first), 3 the devices on that version (model + account, one entry each), 4 the log with
  * Share and Copy.
  */
@@ -111,7 +111,8 @@ fun LogBrowser(onClose: () -> Unit) {
                     when {
                         app == null -> {
                             val apps = list.groupBy { it.app }
-                            items(listOf("Xstream Mobile", "Xstream TV", "Xstream Live").filter { it in apps } + apps.keys.filter { it !in setOf("Xstream Mobile", "Xstream TV", "Xstream Live") }) { a ->
+                            val order = listOf("Xstream Mobile", "Xstream Live", "StreamX Mobile", "StreamX TV")
+                            items(order.filter { it in apps } + apps.keys.filter { it !in order }) { a ->
                                 val g = apps[a].orEmpty()
                                 Entry(a, "${g.map { it.ver }.distinct().size} versions · ${g.size} devices · last ${fmt.format(Date(g.maxOf { it.at }))}") { app = a }
                             }

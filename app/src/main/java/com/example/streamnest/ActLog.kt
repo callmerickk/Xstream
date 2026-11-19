@@ -331,7 +331,7 @@ object ActLog {
                         fun f(k: String) = o[k]?.jsonPrimitive?.contentOrNull.orEmpty()
                         val model = f("model")
                         val ver = f("ver").ifBlank { "?" }
-                        val app = f("app").ifBlank { if (model.endsWith("(TV)")) "Xstream TV" else if (ver.startsWith("1.0")) "Xstream Live" else "Xstream Mobile" }
+                        val app = f("app").ifBlank { if (model.endsWith("(TV)")) "StreamX TV" else if (ver.startsWith("1.0")) "Xstream Live" else "Xstream Mobile" }
                         LogDev(listOf("x:$uid/$d"), app, ver, model.removeSuffix(" (TV)"), f("who").ifBlank { uid.take(8) }, f("at").toLongOrNull() ?: 0L)
                     }
                 }

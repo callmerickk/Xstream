@@ -549,6 +549,11 @@ fun PlayerScreen(
     var controls by remember { mutableStateOf(false) }
     var poke by remember { mutableIntStateOf(0) }
     var scrubbing by remember { mutableStateOf(false) }
+    /** 0.8.7: the quality you chose in the menu ("auto", "1080p", "720p", "4K 60fps"…): the white frame. */
+    var qChosen by remember { mutableStateOf("auto") }
+    /** When the playing height last changed (the chip says "Auto" for 20 s after a change). */
+    var qLastChange by remember { mutableLongStateOf(0L) }
+    var qLastH by remember { mutableIntStateOf(0) }
     var locked by remember { mutableStateOf(false) }
     var more by remember { mutableStateOf(false) }
     /** Intros / recaps already auto-skipped in this video (each only once, so you can seek back into them). */
@@ -656,7 +661,9 @@ fun PlayerScreen(
     val thumbsOn = isOn(opt("seekThumbs"))
     val thumbs = remember(nowUrl, thumbsOn) {
         // Live server links: no preview frames (each one pulled ~2 MB through the server and held up the real seek).
-        if (thumbsOn && nowUrl != null && !nowUrl.startsWith("http://127.0.0.1")) SeekThumbs(nowUrl, StreamHeaders.forUrl(nowUrl), p.key, ctx.cacheDir,
+        // 0.8.7: only the Live server is skipped — Xstream's own plugin links (Prime Video, Hotstar…) also come through
+        // 127.0.0.1 and had no previews at all. Frames are kept per title, so a switch to another copy reuses them.
+        if (thumbsOn && nowUrl != null && !(BuildConfig.LIVE_ONLY && nowUrl.startsWith("http://127.0.0.1"))) SeekThumbs(nowUrl, StreamHeaders.forUrl(nowUrl), p.key, ctx.cacheDir,
             // MovieBox DASH: previews from the same title's MovieBox MP4 (same cut).
             alt = known.firstOrNull { it.isMovieBox() && it.mbKind() == 2 && it.stream.url != nowUrl }?.stream?.url) else null
     }
@@ -2983,6 +2990,40 @@ fun PlayerScreen(
         }
     }
 
+    // ───── 0.8.7: slow internet on a single-quality file (VegaMovies, RogMovies, 4KHDHub) ─────
+    // Two stalls (or one long one) → fade to the title's HLS playlist (it steps 1080p ↔ 720p ↔ 480p by itself). After
+    // ~3 minutes of smooth playback with a full buffer, fade back to the file. Never when you picked a quality yourself.
+    var slowFile by remember(p.key) { mutableStateOf<StreamItem?>(null) }
+    LaunchedEffect(firstFrame, p.key) {
+        if (!firstFrame || BuildConfig.IS_TV) return@LaunchedEffect
+        var smoothSince = SystemClock.uptimeMillis()
+        while (isActive) {
+            delay(3_000)
+            if (byHand || qChosen != "auto" || switching || usingVlc) continue
+            val cur = now?.url?.let { itemFor(it) } ?: continue
+            val pl = basePl ?: continue
+            val t = SystemClock.uptimeMillis()
+            if (buffering || stalls > 0) smoothSince = t
+            if (!cur.isPlaylist() && pl.stream.url != cur.stream.url) {
+                val longStall = buffering && t - stallAt > 5_000 && t - seekedAt > 30_000
+                if ((stalls >= 2 && t - seekedAt > 30_000) || longStall) {
+                    stalls = 0; slowFile = cur
+                    PlayTiming.late("slow internet on ${Public.streamName(cur)} → HLS (fade)")
+                    runCatching { ottSwapTo(pl, why = "slow internet → HLS") }
+                    smoothSince = SystemClock.uptimeMillis()
+                }
+            } else if (cur.stream.url == pl.stream.url) {
+                val back = slowFile ?: continue
+                if (t - smoothSince > 180_000 && player.bufferedPosition - player.currentPosition > 45_000) {
+                    PlayTiming.late("internet steady for 3 min → back to ${Public.streamName(back)} (fade)")
+                    slowFile = null
+                    runCatching { ottSwapTo(back, why = "internet steady again") }
+                    smoothSince = SystemClock.uptimeMillis()
+                }
+            }
+        }
+    }
+
     // ───── Remote seeking: ◀ ▶ move a target (with a preview frame); OK / Play jumps there, or it jumps by itself 1.6 s later ─────
     fun commitSeek() {
         val t = pendingSeek ?: return
@@ -3552,7 +3593,8 @@ fun PlayerScreen(
                     val zoneL = opt("gestLeft").ifBlank { "brightness" }
                     val zoneM = opt("gestMiddle").ifBlank { "watchnext" }
                     val zoneR = opt("gestRight").ifBlank { "volume" }
-                    val midW = (opt("gestMidWidth").toFloatOrNull() ?: 0.5f).coerceIn(0.2f, 0.8f)
+                    // 0.8.7: narrower brightness / volume strips (20 % each side), a wider middle for Watch next.
+                    val midW = (opt("gestMidWidth").toFloatOrNull() ?: 0.6f).coerceIn(0.2f, 0.8f)
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val start = down.position
@@ -3563,6 +3605,9 @@ fun PlayerScreen(
                             start.x > size.width * (0.5f + midW / 2f) -> zoneR
                             else -> zoneM
                         }
+                        // 0.8.7: swipes that start in the top or bottom strip are ignored (pulling down for the status bar
+                        // turned the volume down; swiping up from the bottom to go home opened Watch next). Taps still work.
+                        val edgeStart = !BuildConfig.IS_TV && (start.y < size.height * 0.13f || start.y > size.height * 0.87f)
                         // brightness or volume for this swipe
                         val left = zoneRole == "brightness"
                         var fzStart = 1f; var fzX0 = 0f; var fzY0 = 0f; var c0 = androidx.compose.ui.geometry.Offset.Zero
@@ -3612,11 +3657,11 @@ fun PlayerScreen(
                             when (mode) {
                                 0 -> if (freeZoom && fz > 1.01f && !BuildConfig.IS_TV && delta.getDistance() > slop) {
                                     mode = 6
-                                } else if (!BuildConfig.IS_TV && abs(delta.y) > slop && abs(delta.y) > abs(delta.x) && zoneRole == "watchnext") {
+                                } else if (!BuildConfig.IS_TV && !edgeStart && abs(delta.y) > slop && abs(delta.y) > abs(delta.x) && zoneRole == "watchnext") {
                                     // Xstream: the middle third — swiping up there pulls Watch Next up (like YouTube).
                                     mode = 5
                                     wnDrag = 0f; wnLastY = c.position.y; wnLastT = SystemClock.uptimeMillis(); wnVel = 0f
-                                } else if (abs(delta.y) > slop && abs(delta.y) > abs(delta.x) && zoneRole == "none") {
+                                } else if (abs(delta.y) > slop && abs(delta.y) > abs(delta.x) && (zoneRole == "none" || edgeStart)) {
                                     mode = 4
                                 } else if (abs(delta.y) > slop && abs(delta.y) > abs(delta.x)) {
                                     mode = 1
@@ -3882,6 +3927,17 @@ fun PlayerScreen(
                         }
                     }
                 }
+                // 0.8.7: a scene during / after the credits (TMDB keywords): when the credits start, a pill says so, so
+                // nobody closes the film too early.
+                val stinger by produceState<String?>(null, p.key) { value = if (type == "movie") runCatching { vm.stingerOf(p.key.substringBefore(":")) }.getOrNull() else null }
+                var stingerGone by remember(p.key) { mutableStateOf(false) }
+                val inCredits = dur > 0 && (creditsReached || pos >= dur * 0.93)
+                AnimatedVisibility(stinger != null && inCredits && !stingerGone && !locked,
+                    enter = fadeIn(tween(240)) + slideInHorizontally(tween(320)) { it / 3 }, exit = fadeOut(tween(180))) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PillButton(if (stinger == "after") "★ Scene after the credits" else "★ Scene during the credits", Icons.Default.Star) { stingerGone = true }
+                    }
+                }
                 // Quick start + upgrade: the better file is saved ahead — the ring counts down the seconds still saved.
                 AnimatedVisibility(upgrade != null && upLeft > 0 && !locked && !switching,
                     enter = fadeIn(tween(260)) + slideInHorizontally(tween(360)) { it / 3 },
@@ -3953,11 +4009,15 @@ fun PlayerScreen(
                     // Phones: one play / pause button in the middle.
                     // Xstream: play / pause lives at the bottom right, next to ›. The top-right buttons' width keeps the title clear of them.
                     var topRightW by remember { mutableIntStateOf(0) }
+                    var extrasOpen by remember { mutableStateOf(false) }
+                    // 0.8.7: while you drag the progress bar only the bar and its preview stay; the rest fades out.
+                    val scrubHide by animateFloatAsState(if (scrubbing && !BuildConfig.IS_TV) 0f else 1f, tween(180), label = "scrubHide")
+                    LaunchedEffect(Unit) { delay(900); extrasOpen = true; delay(3_000); extrasOpen = false }
                     val topRightDp = with(LocalDensity.current) { topRightW.toDp() }
                     // Title, top-left.
                     val showName = meta?.name?.takeIf { it.isNotBlank() }
                     val epNow = episodes.firstOrNull { it.id == p.key }
-                    Column(Modifier.align(Alignment.TopStart).padding(start = side, top = topY - 4.dp, end = side + topRightDp + 14.dp).fillMaxWidth()) {
+                    Column(Modifier.align(Alignment.TopStart).padding(start = side, top = topY - 4.dp, end = side + topRightDp + 14.dp).fillMaxWidth().graphicsLayer { alpha = scrubHide }) {
                         Text(if (type == "series") showName ?: p.title.substringBefore("  S") else showName ?: p.title,
                             fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 26.sp)
                         if (type == "series" && epNow != null) Text(
@@ -3967,19 +4027,31 @@ fun PlayerScreen(
                     }
                     // Top-right: clock, lock (phone), quality, back.
                     Row(
-                        Modifier.align(Alignment.TopEnd).padding(top = topY - 8.dp, end = side - 8.dp).onSizeChanged { topRightW = it.width }.onFocusChanged { topHasFocus = it.hasFocus }.watchTouch(touch),
+                        Modifier.align(Alignment.TopEnd).padding(top = topY - 8.dp, end = side - 8.dp).graphicsLayer { alpha = scrubHide }.onSizeChanged { topRightW = it.width }.onFocusChanged { topHasFocus = it.hasFocus }.watchTouch(touch),
                         horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(clockNow(), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E8EE))
-                        if (!BuildConfig.IS_TV && BuildConfig.HAS_SOCIAL) Box {
-                            GlassBtn(Icons.Default.Groups, null, "Watch together", at("together")) { panel = "together" }
-                            // In a room: a small green dot.
-                            val unread by Together.unread.collectAsState()
-                            if (roomNow != null && unread > 0) Text(if (unread > 9) "9+" else "$unread", Modifier.align(Alignment.TopEnd).clip(CircleShape).background(Color(0xFFE50914))
-                                .border(1.5.dp, Color.Black, CircleShape).padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            else if (roomNow != null) Box(Modifier.align(Alignment.TopEnd).padding(top = 5.dp, end = 5.dp).size(9.dp).clip(CircleShape).background(Color(0xFF3CCF7A)).border(2.dp, Color.Black, CircleShape))
+                        // 0.8.7: Watch together and VR sit inside a round ‹ between the clock and the lock. When the player
+                        // opens they slide out to the left for ~3 s and fold back in, so people learn they are there.
+                        if (!BuildConfig.IS_TV) Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.animation.AnimatedVisibility(extrasOpen,
+                                enter = androidx.compose.animation.expandHorizontally(tween(380), expandFrom = Alignment.End) + fadeIn(tween(300)),
+                                exit = androidx.compose.animation.shrinkHorizontally(tween(380), shrinkTowards = Alignment.End) + fadeOut(tween(250))) {
+                                Row(Modifier.padding(end = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    if (BuildConfig.HAS_SOCIAL) Box {
+                                        GlassBtn(Icons.Default.Groups, null, "Watch together", at("together")) { panel = "together" }
+                                        val unread by Together.unread.collectAsState()
+                                        if (roomNow != null && unread > 0) Text(if (unread > 9) "9+" else "$unread", Modifier.align(Alignment.TopEnd).clip(CircleShape).background(Color(0xFFE50914))
+                                            .border(1.5.dp, Color.Black, CircleShape).padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        else if (roomNow != null) Box(Modifier.align(Alignment.TopEnd).padding(top = 5.dp, end = 5.dp).size(9.dp).clip(CircleShape).background(Color(0xFF3CCF7A)).border(2.dp, Color.Black, CircleShape))
+                                    }
+                                    if (!usingVlc) GlassBtn(VrHeadsetIcon, null, "VR headset") { vrOn = true; controls = false }
+                                }
+                            }
+                            Box(Modifier.size(38.dp).clip(CircleShape).background(Color(0x2EFFFFFF)).clickable { extrasOpen = !extrasOpen; poke++ }, Alignment.Center) {
+                                Icon(if (extrasOpen) Icons.Default.ChevronRight else Icons.Default.ChevronLeft, if (extrasOpen) "Hide" else "Watch together and VR", Modifier.size(22.dp), tint = Color.White)
+                            }
                         }
-                        if (!BuildConfig.IS_TV && !usingVlc) GlassBtn(Icons.Default.Vrpano, null, "VR headset") { vrOn = true; controls = false }
                         if (!BuildConfig.IS_TV) GlassBtn(Icons.Default.LockOpen, null, "Lock") { locked = true; controls = true; poke++ }
                         // Phones: plugin mode and Sources (addon) mode share the same quality button and menu.
                         val plugQ = !BuildConfig.IS_TV
@@ -3990,11 +4062,17 @@ fun PlayerScreen(
                                 val vf = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it) } }
                                 val res = vf?.takeIf { it.width > 0 }?.let { f -> when { f.width >= 3200 -> 2160; f.width >= 1800 -> 1080; f.width >= 1200 -> 720; else -> f.height } }
                                     ?: now?.url?.let { itemFor(it) }?.effectiveRes() ?: 0
-                                val real = when { res >= 1440 -> "4K"; res >= 1080 -> "Full HD"; res >= 720 -> "HD 720p"; res > 0 -> "Low"; else -> null }
+                                // 0.8.7: the playing quality itself (4K 60fps, 1080p…); "Auto" while it keeps changing.
+                                val sixty = (vf?.frameRate ?: 0f) >= 48f
+                                val real = when { res >= 1440 -> "4K"; res >= 1000 -> "1080p"; res >= 700 -> "720p"; res > 0 -> "480p"; else -> null }
+                                    ?.let { if (sixty && res >= 1000) "$it 60fps" else it }
+                                    ?.let { if (qChosen == "auto" && SystemClock.elapsedRealtime() - qLastChange < 20_000) "Auto" else it }
                                 val quickNow = now?.url?.let { itemFor(it) }?.let { it.isMovieBox() || vm.isQuick(it) } == true
                                 // Plugin mode: what plays, plus "4K ready" once a 4K file waits in the menu (the pop-up shows once only).
+                                if (res > 0 && qLastH > 0 && res != qLastH) SideEffect { qLastChange = SystemClock.elapsedRealtime() }
+                                if (res > 0 && res != qLastH) SideEffect { qLastH = res }
                                 val ready4k = hdReady["4k"].orEmpty().isNotEmpty() && res < 1440
-                                if (plugQ) (real ?: "Auto") + (if (ready4k) " · 4K READY" else "")
+                                if (plugQ) (real ?: "Auto")
                                 else if (quality == "auto" || quickNow) "Quick" + (real?.let { " · $it" } ?: "") else real ?: (AllQualityLevels.firstOrNull { it.id == quality }?.label ?: "Quick")
                             }, "Quality", iconFirst = false) { qualityMenu = !qualityMenu; poke++ }
                         // Xstream: one stream that carries several qualities (an HLS playlist, like CloudStream's Netflix
@@ -4027,7 +4105,7 @@ fun PlayerScreen(
                     }
                     // Phones: play / pause is the big centre button. TV: it stays the first button of the bottom row (remote focus).
                     Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = side, end = side, bottom = bottomY).watchTouch(touch)) {
-                        Row(Modifier.fillMaxWidth().padding(bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().padding(bottom = 2.dp).graphicsLayer { alpha = scrubHide }, verticalAlignment = Alignment.CenterVertically) {
                             Text("${fmtTime(pendingSeek ?: pos)} / ${fmtTime(dur)}", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.weight(1f))
                             if (dur > 0) Text("Ends at ${endsAt(dur - pos, rateNow())}", fontSize = 13.sp, color = Color(0xFFB6BDCC))
@@ -4042,7 +4120,7 @@ fun PlayerScreen(
                         Spacer(Modifier.height(10.dp))
                         val railScroll = androidx.compose.foundation.rememberScrollState()
                         // Phones: › sits on its own just under the right end of the progress bar (› closed, ⌃ open).
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().graphicsLayer { alpha = scrubHide }, verticalAlignment = Alignment.CenterVertically) {
                         Row(
                             Modifier.then(if (BuildConfig.IS_TV) Modifier else Modifier.weight(1f)).onFocusChanged { rowHasFocus = it.hasFocus }
                                 // Buttons slide away under a rounded, invisible edge (same shape as the buttons) and fade out
@@ -4121,7 +4199,7 @@ fun PlayerScreen(
                                             .clickable { more = false }, Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close", Modifier.size(17.dp)) }
                                     }
                                     val items = buildList<Triple<ImageVector, String, () -> Unit>> {
-                                        add(Triple(Icons.Default.CloudQueue, "Sources") { pick { panel = "sources" } })
+                                        if (BuildConfig.IS_TV) add(Triple(Icons.Default.CloudQueue, "Sources") { pick { panel = "sources" } })
                                         add(Triple(Icons.Default.Speed, "Speed · ${speed.let { if (it % 1f == 0f) it.toInt().toString() else it.toString() }}x") { pick { panel = "speed" } })
                                         add(Triple(Icons.Default.Bedtime, if (sleepAt != null || sleepEnd) "Sleep on" else "Sleep timer") { pick { panel = "sleep" } })
                                         add(Triple(Icons.Default.ZoomOutMap, if (freeZoom) "Free zoom: on" else "Free zoom: off") {
@@ -4242,7 +4320,7 @@ fun PlayerScreen(
                                 Box(Modifier.size(32.dp).clip(CircleShape).background(Color(0x9E14141A)).border(1.dp, Color(0x8CE50914), CircleShape), Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close", Modifier.size(17.dp)) }
                             }
                             val items = buildList<Triple<ImageVector, String, () -> Unit>> {
-                                add(Triple(Icons.Default.CloudQueue, "Sources") { pick { panel = "sources" } })
+                                if (BuildConfig.IS_TV) add(Triple(Icons.Default.CloudQueue, "Sources") { pick { panel = "sources" } })
                                 add(Triple(Icons.Default.Speed, "Speed · ${speed.let { if (it % 1f == 0f) it.toInt().toString() else it.toString() }}x") { pick { panel = "speed" } })
                                 add(Triple(Icons.Default.Bedtime, if (sleepAt != null || sleepEnd) "Sleep on" else "Sleep timer") { pick { panel = "sleep" } })
                                 if (BuildConfig.IS_TV) add(Triple(Icons.Default.AspectRatio, AspectModes[aspectIdx].first) { setAspect((aspectIdx + 1) % AspectModes.size); poke++ })
@@ -4462,8 +4540,14 @@ fun PlayerScreen(
                 val playingRes = curItem?.effectiveRes() ?: 0
                 val fourK = curItem?.takeIf { playingRes >= 1440 } ?: qCols.firstOrNull { it.first == "4K" }?.second?.flatMap { it.second }?.firstOrNull { it.stream.url in readySet }
                 val onBasePl = basePl?.stream?.url != null && basePl?.stream?.url == playing
+                // 0.8.7: what really plays (height and 60 fps) and the tick's colour by the kind of stream.
+                val vfNow = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it) } }
+                val hNow = vfNow?.takeIf { it.width > 0 }?.let { f -> when { f.width >= 3200 -> 2160; f.width >= 1800 -> 1080; f.width >= 1200 -> 720; else -> f.height } } ?: playingRes
+                val sixtyNow = (vfNow?.frameRate ?: 0f) >= 48f || (curItem?.let { VisualTags.video(it).contains("60 fps") } == true)
+                val tickColor = qualityTick(curItem, vm)
                 if (vm.pluginMode() || !BuildConfig.IS_TV) PluginQualityBar(qCols, playing, readySet, if (ladder.size > 1) ladder else if (onBasePl) ladder else baseLadder,
                     if (ladder.size > 1) pinnedH else null, fourK = fourK, onBase = !onBasePl && ladder.size <= 1 && basePl != null,
+                    playingH = hNow, playing60 = sixtyNow, tick = tickColor, chosen = qChosen, onChosen = { qChosen = it; if (it == "auto") { byHand = false; userPicked = false } },
                     curLabel = curItem?.let { if (playingRes >= 1440) "4K" else if (playingRes > 0) "${playingRes}p" else null }, onVariant = { h ->
                     // Playing the 4K file (or another file): back to the playlist first, then that quality.
                     if (ladder.size <= 1 && basePl != null && !onBasePl) {
@@ -5087,7 +5171,7 @@ private fun SeekBar(pos: Long, buffered: Long, dur: Long, thumbs: SeekThumbs?, p
             drawRoundRect(Color(0x4DFFFFFF), Offset(0f, y), Size(size.width, h), r)
             drawRoundRect(Color(0x80FFFFFF), Offset(0f, y), Size(size.width * bFrac, h), r)
             drawRoundRect(Color.White, Offset(0f, y), Size(size.width * frac, h), r)
-            if (dragFrac != null) drawCircle(Color.White, 8.dp.toPx(), Offset(size.width * frac, size.height / 2f))
+            if (dragFrac != null) { drawCircle(Color(0x55E50914), 14.dp.toPx(), Offset(size.width * frac, size.height / 2f)); drawCircle(BrandRed, 9.dp.toPx(), Offset(size.width * frac, size.height / 2f)) }
             else if (pendFrac != null) {
                 // Remote seek target: the jump shown as a light span, with a white marker where it lands.
                 val a = minOf(frac, pendFrac); val b = maxOf(frac, pendFrac)
@@ -5098,6 +5182,9 @@ private fun SeekBar(pos: Long, buffered: Long, dur: Long, thumbs: SeekThumbs?, p
                 // Seek bar has the remote's focus: a red dot where you are (◀ ▶ = 10 s).
                 drawCircle(Color(0x55E50914), 15.dp.toPx(), Offset(size.width * frac, size.height / 2f))
                 drawCircle(BrandRed, 9.dp.toPx(), Offset(size.width * frac, size.height / 2f))
+            } else if (!BuildConfig.IS_TV) {
+                // 0.8.7: phones always show a small red dot where the film is.
+                drawCircle(BrandRed, 6.5.dp.toPx(), Offset(size.width * frac, size.height / 2f))
             }
         }
         if (previewFrac != null && previewMs != null) SeekPreview(thumbs, previewMs, previewFrac, Modifier.align(Alignment.TopStart))
@@ -6601,35 +6688,59 @@ internal fun liftCues(cues: List<Cue>, lift: Float): List<Cue> = cues.map { c ->
 private fun PluginQualityBar(
     cols: List<Pair<String, List<Pair<String, List<StreamItem>>>>>, playing: String?, ready: Set<String>,
     ladder: List<Int>, pinnedH: Int?, onVariant: (Int?) -> Unit, modifier: Modifier,
-    onPoke: () -> Unit, fourK: StreamItem? = null, onBase: Boolean = false, curLabel: String? = null, onPick: (StreamItem) -> Unit,
+    onPoke: () -> Unit, fourK: StreamItem? = null, onBase: Boolean = false, curLabel: String? = null,
+    playingH: Int = 0, playing60: Boolean = false, tick: Color = Color(0xFFFF4D57), chosen: String = "auto", onChosen: (String) -> Unit = {},
+    onPick: (StreamItem) -> Unit,
 ) {
     var open by remember { mutableStateOf<String?>(null) }
     /** "Other streams" is folded until you open it. */
     var otherOpen by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(20.dp)
     val red = Color(0xFFFF4D57)
-    Column(modifier.width(300.dp).heightIn(max = 340.dp).clip(shape).background(Color(0xF0141418)).border(1.dp, Color(0x1FFFFFFF), shape)
+    Column(modifier.width(236.dp).heightIn(max = 340.dp).clip(shape).background(Color(0xF0141418)).border(1.dp, Color(0x1FFFFFFF), shape)
         .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        // THIS STREAM: Auto, 4K (when a 4K file plays or is ready), then the playlist's own qualities (1080p, 720p, 480p).
-        // A single file with no qualities of its own shows just its quality, ticked.
-        val playing4k = fourK != null && fourK.stream.url == playing
-        Text("THIS STREAM", Modifier.padding(start = 6.dp, top = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
+        // 0.8.7: always the same list — Auto · 4K 60fps · 4K · 1080p 60fps · 1080p · 720p · 480p. The white frame is what you
+        // chose; the tick is what really plays, coloured by its kind: red = HLS, yellow = MovieBox / plugin, green = a
+        // high-quality file (VegaMovies, RogMovies, 4KHDHub). Rows with nothing to play are dimmed.
+        Text("QUALITY", Modifier.padding(start = 6.dp, top = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
         val rs = RoundedCornerShape(12.dp)
-        @Composable fun row(label: String, sel: Boolean, accent: Boolean = false, onTap: () -> Unit) {
-            Row(Modifier.fillMaxWidth().clip(rs).background(if (sel) Color(0x26E50914) else Color(0x0DFFFFFF))
-                .border(1.dp, if (sel) Color(0xCCE50914) else if (accent) Color(0x66FFCF5A) else Color(0x12FFFFFF), rs).focusFill().clickable { onTap() }
-                .padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(label, Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                if (sel) Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = red)
+        val all = cols.flatMap { c -> c.second.flatMap { it.second }.map { c.first to it } }
+        fun is60(st: StreamItem) = VisualTags.video(st).contains("60 fps")
+        fun files(group: String, sixty: Boolean) = all.filter { it.first == group && is60(it.second) == sixty }.map { it.second }
+        val k4_60 = files("4K", true); val k4 = files("4K", false).ifEmpty { listOfNotNull(fourK?.takeIf { !is60(it) }) }
+        val f60 = files("1080p", true); val f = files("1080p", false)
+        val playRow = when {
+            playingH >= 1440 -> if (playing60) "4K 60fps" else "4K"
+            playingH >= 1000 -> if (playing60) "1080p 60fps" else "1080p"
+            playingH >= 700 -> "720p"
+            playingH > 0 -> "480p"
+            else -> null
+        }
+        @Composable fun row(key: String, label: String, sixty: Boolean, enabled: Boolean, onTap: () -> Unit) {
+            val framed = chosen == key
+            val ticked = playRow == key || (key == "auto" && playRow == null && chosen == "auto")
+            Row(Modifier.fillMaxWidth().clip(rs).background(if (framed) Color(0x1FFFFFFF) else Color(0x0DFFFFFF))
+                .border(if (framed) 1.5.dp else 1.dp, if (framed) Color.White else Color(0x12FFFFFF), rs).focusFill()
+                .clickable(enabled = enabled) { onPoke(); onChosen(key); onTap() }
+                .padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (enabled) Color.White else Color(0xFF5E6575))
+                if (sixty) Text("60fps", Modifier.padding(start = 7.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFFF5C518)).padding(horizontal = 5.dp, vertical = 1.dp),
+                    fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.Black)
+                Spacer(Modifier.weight(1f))
+                if (ticked) Icon(Icons.Default.Check, null, Modifier.size(17.dp), tint = tick)
             }
         }
-        if (ladder.size > 1) {
-            row("Auto", !playing4k && !onBase && pinnedH == null) { onVariant(null) }
-            if (fourK != null) row("4K", playing4k, accent = true) { if (!playing4k) onPick(fourK) }
-            ladder.filter { it < 1440 }.forEach { h -> row("${h}p", !playing4k && !onBase && h == pinnedH) { onVariant(h) } }
-        } else {
-            if (fourK != null && !playing4k) row("4K", false, accent = true) { onPick(fourK) }
-            row(curLabel ?: "Auto", true) { }
+        fun bestOf(l: List<StreamItem>) = l.firstOrNull { it.stream.url in ready } ?: l.firstOrNull()
+        row("auto", "Auto", false, true) { onVariant(null) }
+        row("4K 60fps", "4K", true, k4_60.isNotEmpty()) { bestOf(k4_60)?.let(onPick) }
+        row("4K", "4K", false, k4.isNotEmpty() || ladder.any { it >= 1440 }) { if (ladder.any { it >= 1440 }) onVariant(ladder.first { it >= 1440 }) else bestOf(k4)?.let(onPick) }
+        row("1080p 60fps", "1080p", true, f60.isNotEmpty()) { bestOf(f60)?.let(onPick) }
+        for (h in listOf(1080, 720, 480)) {
+            val inLadder = ladder.firstOrNull { it in (h - 100)..(h + 100) }
+            val file = if (h == 1080) bestOf(f) else null
+            row("${h}p", "${h}p", false, inLadder != null || file != null || curLabel == "${h}p") {
+                if (inLadder != null) onVariant(inLadder) else file?.let(onPick)
+            }
         }
         Spacer(Modifier.height(4.dp))
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).focusFill().clickable { onPoke(); otherOpen = !otherOpen }.padding(horizontal = 6.dp, vertical = 6.dp),
@@ -6641,7 +6752,8 @@ private fun PluginQualityBar(
         if (otherOpen) cols.forEach { (title, groups) ->
             val files = groups.flatMap { it.second }
             if (files.isEmpty() && title == "Auto") return@forEach
-            val label = when (title) { "4K" -> "4K"; "1080p" -> "Full HD"; "720p" -> "Mid HD"; else -> "Auto" }
+            // 0.8.7: the groups are named 1080p and Unlabelled (were Full HD and Mid HD).
+            val label = when (title) { "4K" -> "4K"; "1080p" -> "1080p"; "720p" -> "Unlabelled"; else -> "Auto" }
             val here = files.any { it.stream.url == playing }
             // A file of this quality is ready (start saved / a playlist): tap plays it from where you are.
             val readyOne = files.firstOrNull { it.stream.url in ready }
@@ -6661,7 +6773,7 @@ private fun PluginQualityBar(
                         else if (readyOne != null && title == "4K") "Ready — tap to play from here" else "${files.size} streams · hold for all",
                         fontSize = 11.sp, color = if (here || (readyOne != null && title == "4K")) Color(0xFFFF8D94) else Color(0xFF9AA3B5))
                 }
-                if (here) Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = red)
+                if (here) Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = tick)
                 else if (readyOne != null && title == "4K") Text("READY", Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFFE50914)).padding(horizontal = 8.dp, vertical = 3.dp),
                     fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.White)
             }
@@ -6811,4 +6923,26 @@ object PlayerCount {
     val alive = object {
         fun get(): Int = synchronized(set) { set.count { runCatching { it.playbackState != androidx.media3.common.Player.STATE_IDLE }.getOrDefault(false) } }
     }
+}
+
+
+/** 0.8.7: a VR headset (the old panorama picture read as "gallery"). */
+val VrHeadsetIcon: ImageVector by lazy {
+    ImageVector.Builder("VrHeadset", 24.dp, 24.dp, 24f, 24f).apply {
+        addPath(androidx.compose.ui.graphics.vector.PathParser().parsePathString(
+            "M2.5 8.5c0-1.4 1.1-2.5 2.5-2.5h14c1.4 0 2.5 1.1 2.5 2.5v6c0 1.4-1.1 2.5-2.5 2.5h-3.4l-2.1-2.6a1.9 1.9 0 0 0-3 0L8.4 17H5a2.5 2.5 0 0 1-2.5-2.5z").toNodes(),
+            fill = null, stroke = androidx.compose.ui.graphics.SolidColor(Color.White), strokeLineWidth = 1.9f,
+            strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round)
+        addPath(androidx.compose.ui.graphics.vector.PathParser().parsePathString("M7.5 9.9a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2z M16.5 9.9a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2z").toNodes(),
+            fill = null, stroke = androidx.compose.ui.graphics.SolidColor(Color.White), strokeLineWidth = 1.9f)
+    }.build()
+}
+
+
+/** 0.8.7: the quality tick's colour — red = HLS playlist, yellow = MovieBox / other plugin stream, green = a high-quality file. */
+internal fun qualityTick(st: StreamItem?, vm: AppViewModel): Color = when {
+    st == null -> Color(0xFFFF4D57)
+    st.isPlaylist() -> Color(0xFFFF4D57)
+    st.isMovieBox() || vm.isQuick(st) -> Color(0xFFF5C518)
+    else -> Color(0xFF2FBF71)
 }

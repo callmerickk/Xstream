@@ -466,3 +466,19 @@ suspend fun AppViewModel.tmdbDiscover(kind: String, lang: String?, genreIds: Lis
             .jsonObject.arr("results").take(20).mapNotNull { parseRec(it, kind) }
     }.getOrDefault(emptyList())
 }
+
+/** 0.8.7: TMDB's "scene during / after the credits" keywords for a movie: "during", "after" or null. Asked once per title. */
+private val stingerCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+suspend fun AppViewModel.stingerOf(imdb: String): String? {
+    stingerCache[imdb]?.let { return it.ifEmpty { null } }
+    val key = tmdbKey(); if (key.isEmpty() || !imdb.startsWith("tt")) return null
+    val r = runCatching {
+        val find = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/find/$imdb?api_key=$key&external_source=imdb_id")).jsonObject
+        val id = find.arr("movie_results").firstOrNull()?.get("id")?.jsonPrimitive?.content ?: return@runCatching ""
+        val kw = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/movie/$id/keywords?api_key=$key")).jsonObject.arr("keywords")
+            .mapNotNull { it.str("name")?.lowercase() }
+        when { "aftercreditsstinger" in kw -> "after"; "duringcreditsstinger" in kw -> "during"; else -> "" }
+    }.getOrNull() ?: return null
+    stingerCache[imdb] = r
+    return r.ifEmpty { null }
+}

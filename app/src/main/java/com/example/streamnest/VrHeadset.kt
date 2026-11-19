@@ -144,7 +144,7 @@ private fun controlLayout(hasNext: Boolean, has3d: Boolean): List<VrCtl> {
         add(VrCtl("volUp", col(4), r1, BTN, 30f, "Volume up")); add(VrCtl("bright", col(5), r1, BTN, 30f, "Brightness"))
         add(VrCtl("subs", col(0), r2, BTN, 30f, "Subtitles")); add(VrCtl("audio", col(1), r2, BTN, 30f, "Audio language"))
         add(VrCtl("size", col(2), r2, BTN, 30f, "Screen size")); add(VrCtl("pic", col(3), r2, BTN, 30f, "Picture"))
-        add(VrCtl("fixed", col(4), r2, BTN, 30f, "Fixed screen")); add(VrCtl("center", col(5), r2, BTN, 30f, "Recenter"))
+        add(VrCtl("fixed", col(4), r2, BTN, 30f, "Look around")); add(VrCtl("center", col(5), r2, BTN, 30f, "Recenter"))
         var c = 0
         if (hasNext) add(VrCtl("next", col(c++), r3, BTN, 30f, "Next episode"))
         add(VrCtl("browse", col(c++), r3, BTN, 30f, "Browse"))
@@ -197,7 +197,7 @@ fun VrHeadsetView(
                 }
             }
             ActLog.add("PLAY", "VR: on · screen ${listOf("Small", "Big", "IMAX", "Giant")[VrState.sizeIdx]} · " +
-                (if (VrState.fixed) "fixed screen" else "screen follows the head") + (if (stereo != 0) " · 3D copy" else ""))
+                (if (VrState.fixed) "look around on" else "look around off") + (if (stereo != 0) " · 3D copy" else ""))
         }
         var glView by remember { mutableStateOf<VrGlView?>(null) }
         val live = remember { VrLive() }
@@ -416,7 +416,7 @@ private fun ControlPanel(player: Player, title: String, tick: Int, layout: List<
             "volDown" -> Icons.AutoMirrored.Filled.VolumeDown; "volUp" -> Icons.AutoMirrored.Filled.VolumeUp
             "bright" -> Icons.Default.Brightness6; "subs" -> if (subsOn) Icons.Default.Subtitles else Icons.Default.SubtitlesOff
             "audio" -> Icons.Default.Audiotrack; "size" -> Icons.Default.AspectRatio; "center" -> Icons.Default.CenterFocusStrong
-            "pic" -> Icons.Default.Tune; "fixed" -> if (fixed) Icons.Default.Lock else Icons.Default.LockOpen
+            "pic" -> Icons.Default.Tune; "fixed" -> Icons.Default.ThreeSixty
             "3d" -> Icons.Default.ViewInAr
             "next" -> Icons.Default.SkipNext; "browse" -> Icons.Default.GridView; "exit" -> Icons.Default.Close
             else -> null
@@ -436,7 +436,7 @@ private fun ControlPanel(player: Player, title: String, tick: Int, layout: List<
         over == null -> "Press on empty space to close"
         over.id == "size" -> "Screen size · $size"
         over.id == "pic" -> "Picture · ${if (smooth) "Smooth" else "Sharp"}"
-        over.id == "fixed" -> "Fixed screen · ${if (fixed) "on" else "off"}"
+        over.id == "fixed" -> "Look around · ${if (fixed) "on — turn your head to see the room" else "off"}"
         over.id == "3d" -> threeDLabel
         else -> over.label
     }, Modifier.offset(0.dp, (last + 3f).dp).width(PANEL_W.dp), fontSize = 8.sp, color = Color(0xFFC9CEDE), textAlign = TextAlign.Center, maxLines = 1)
