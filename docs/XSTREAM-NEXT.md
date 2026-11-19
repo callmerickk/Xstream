@@ -65,3 +65,9 @@ Logs
 - Chip next to the lock = the playing quality (4K, 4K 60fps, 1080p 60fps, 1080p, 720p, 480p); "Auto" while it keeps
   switching on unstable internet; the real quality again once playback is steady.
 - Home style "StreamX" renamed to **Stack** (user approved).
+
+### Correction + selection rules (19 Nov, 05:33) — supersedes the earlier quality notes
+- Other streams: today's groups are named "Full HD" / "Mid HD" → rename to **1080p** / **Unlabelled** (4K unchanged); long-press etc. unchanged.
+- Frame (white outline) = what the user chose; coloured tick = what is actually playing. In Auto the frame stays on Auto and the
+  tick moves (1080p ↔ 720p ↔ 480p, climbing back when steady). A manual pick (e.g. 720p) keeps frame + tick there and NEVER climbs.
+- Final image of the plan: scratchpad mock3/final.png (21 items).
