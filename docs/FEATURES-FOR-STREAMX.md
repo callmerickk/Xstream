@@ -109,3 +109,25 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
   while the profile page shows; `Posters.warm` up to 260.
 - **Silent plugin links**: `startBudgetMs` 127.0.0.1 = 7 s unless LIVE_ONLY.
 - **AIDEN**: always listens with SpeechRecognizer; `quickCommand()` runs play / open / search / my list without the AI.
+
+## 0.8.9 (19 Nov 2026)
+- **Never back to loading/error after the picture** (PlayerScreen): `sawPicture` (set on first frame, per title); `startWay` captures the frame
+  (`frozen`) on every reload; `loadingAlpha` 0 once `sawPicture`; overlay = held frame + white ring (was SwitchCapsule).
+- **keepTrying()**: every link failed after the picture → waits for `NET_CAPABILITY_VALIDATED` (≤2 min), clears `tried/badFiles/skipHosts`,
+  retries the same link (odd rounds) or the ranked known links; fresh `allStreams` every 3rd round; backoff 1.5 s × round (max 12 s).
+- **Resume source**: `Progress.source/addon` (Models.kt) from `PlayingSrc` (set when `now` changes); Continue passes them to
+  `Screen.Player`; `itemFor()` matches a resumed link to its fresh copy by addon + stream name → dev label + quality tick.
+- **Collections = real titles, IMDb ids** (Search.kt `realTitles`): each collection / universe / studio item checked once with
+  `tmdbDetail` (imdb_id; film ≥60 min; series episodes ≥20 min; no genres 99/10767/10764/10763; `isJunkTitle`); kept items get the tt id
+  (`rememberColImdb`). Screens.kt: a `tmdb:` Detail resolves first (`TmdbOpening` shows art + story). LinkMemory refuses tmdb ids
+  (Detail used "tmdb" as the IMDb key — shared remembered links = wrong film).
+- **fullMeta**: one in-flight request per title + 10 min cache; tmdb ids → `resolveForOpen`; Cinemeta (6 s); addons in parallel,
+  first in your order within 4 s (PenguPlay used to block 20 s × 2). `modeStreams` never searches error metas / tmdb ids.
+- **Quality menu**: sources asked 4 s after the first picture (not on open); 130 ms enter; log `QUALITY menu shown in N ms`.
+- **Posters**: `warmHome` warms `hiResArt` (the size drawn) + first card of every row; TMDB tall posters (Top 10) looked up ahead and kept in
+  prefs `tmdbPosters`.
+- **Memory full prompt**: `memTight()` (heap >85 % or `lowMemory`) on a stream error → "Phone memory is full" Do it (clear Coil memory,
+  thumbs, Preloader, other prepared players, gc, retry same second) / Deny (carry on; not asked again for that title).
+- **Update nudge** (Updates.kt): `ActLog.add` PLAYFAIL / player ERROR / failed SWITCH → `Updater.onTrouble`; `latestKnown()` (saved
+  kCode/kName/kUrl, works offline) → "This is fixed in the latest Xstream · Update now / Later", once a day, waits while `PlayingSrc.open > 0`.
+- **Cloud sync**: offline → waits quietly for the internet (was retrying every 60 s for hours).
