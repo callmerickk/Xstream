@@ -501,7 +501,9 @@ object HostStats {
     fun startBudgetMs(url: String): Long {
         val k = key(url)
         // Live server (this phone): it fetches the file's start before answering, 3–10 s; 30 s before it counts as stuck.
-        if (url.startsWith("http://127.0.0.1")) return 30_000L
+        // 0.8.8: only the Live server; Xstream's own plugin links (Hotstar, Prime Video) also come through 127.0.0.1 and
+        // a silent one held a start for 11–24 s before the next link was tried.
+        if (url.startsWith("http://127.0.0.1")) return if (BuildConfig.LIVE_ONLY) 30_000L else 7_000L
         if (failing(url)) return 3_500L
         val o = ok[k] ?: 0
         val slow = slowest[k] ?: 0L

@@ -32,7 +32,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 add(VideoFrameDecoder.Factory())
                 if (!BuildConfig.IS_TV) add(HdPoster)
             }.okHttpClient { Posters.client() }.crossfade(if (BuildConfig.IS_TV) 0 else 120).allowRgb565(true)
-                .memoryCache { coil.memory.MemoryCache.Builder(this).maxSizePercent(0.25).build() }
+                .memoryCache { coil.memory.MemoryCache.Builder(this).maxSizePercent(if (BuildConfig.IS_TV) 0.25 else 0.12).build() }  // 0.8.8: 25 % (~96 MB) left too little for the player
                 .diskCache { coil.disk.DiskCache.Builder().directory(cacheDir.resolve("posters")).maxSizeBytes(400L * 1024 * 1024).build() }
                 .respectCacheHeaders(false)
                 .build()
@@ -166,7 +166,7 @@ object Posters {
     /** Downloads these pictures to the disk cache now (not decoded), so drawing them later is instant. */
     fun warm(ctx: android.content.Context, urls: List<String?>) {
         val loader = Coil.imageLoader(ctx)
-        urls.filterNotNull().filter { it.startsWith("http") && asked.add(it) }.take(80).forEach { u ->
+        urls.filterNotNull().filter { it.startsWith("http") && asked.add(it) }.take(260).forEach { u ->
             loader.enqueue(coil.request.ImageRequest.Builder(ctx).data(u).memoryCachePolicy(coil.request.CachePolicy.DISABLED).size(1, 1).build())
         }
     }

@@ -130,6 +130,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         prefsForId(pid).edit().putString("pickedFor", Api.json.encodeToString(list.take(10).map { it.copy(videos = null) })).apply()
     }
 
+    /** Home's pictures to the disk cache: row posters, and the big cards' tall posters and backdrops. */
+    fun warmHome(rows: List<Shelf>) {
+        val urls = rows.take(14).flatMap { s -> s.items.take(12).map { it.poster } } +
+            rows.take(3).flatMap { s -> s.items.take(10).flatMap { listOf(hdPoster(it), backdropOf(it)) } }
+        Posters.warm(appContext, urls)
+    }
+
     fun selectProfile(p: Profile) {
         if (texts.value["lastProfile"] != p.id) setText("lastProfile", p.id)
         val wasKids = current.value?.kids
@@ -880,7 +887,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             // Films only in cinemas / not out yet: checked right away (while "Who's watching?" is up), so Home never
             // shows them and never removes them in front of you.
             if (!BuildConfig.IS_TV) launch(Dispatchers.IO) { runCatching { CinemaOnly.load(appContext); CinemaOnly.check(this@AppViewModel, shelves.value.flatMap { it.items } + recommended.value) } }
-            if (!BuildConfig.IS_TV) runCatching { Posters.warm(appContext, shelves.value.take(12).flatMap { s -> s.items.take(12).map { it.poster } }) }
+            if (!BuildConfig.IS_TV) runCatching { warmHome(shelves.value) }
             // Remembered for the next start, so Home shows its cards at once (then refreshes).
             val pid = dataPid
             val snap = shelves.value
@@ -983,9 +990,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     suspend fun fullMeta(m: Meta): Meta? {
+        // 0.8.8: IMDb titles get their details from Cinemeta first; an addon's error message ("[❌] PenguPlay — Failed to
+        // parse meta") is never taken as the title.
+        if (m.id.startsWith("tt")) runCatching { Api.fetch<MetaResponse>("$CINEMETA/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull()
+            ?.takeIf { !it.isAddonError() && it.name.isNotBlank() }?.let { return it }
         for (a in active.filter { it.supports("meta", m.type, m.id) }) {
             val r = runCatching { Api.fetch<MetaResponse>("${a.baseUrl}/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull()
-            if (r != null) return r
+            if (r != null && !r.isAddonError()) return r
         }
         return null
     }
@@ -1543,6 +1554,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         viewModelScope.launch(Dispatchers.IO) {
             val cached = runCatching { File(ctx.filesDir, "shelves_$pid.json").takeIf { it.exists() }?.readText()?.let { Api.json.decodeFromString<List<Shelf>>(it) } }.getOrNull()
             if (!cached.isNullOrEmpty()) withContext(Dispatchers.Main) { if (dataPid == pid && (shelves.value.isEmpty() || loading.value)) shelves.value = cached.map { s -> s.copy(items = s.items.distinctBy { it.type + it.id }) } }
+            // 0.8.8: their pictures are fetched to the phone's cache now — while the profile page shows — so Home opens
+            // with every card drawn (the Top 10 / Trending rows were empty boxes for 2–3 s).
+            if (!cached.isNullOrEmpty() && !BuildConfig.IS_TV) runCatching { warmHome(cached) }
         }
     }
 

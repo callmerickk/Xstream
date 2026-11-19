@@ -52,6 +52,8 @@ class SeekThumbs(url: String, headers: Map<String, String>, key: String? = null,
     private val requests = Channel<Long>(Channel.CONFLATED)
     private val lock = Any()
     /** step → frame, in access order (oldest dropped first). Guarded by [lock]. */
+    /** 0.8.8: drop the frames held in memory (the phone is short of memory); they come back from the disk copy. */
+    fun trim() { synchronized(cache) { cache.clear() } }
     private val cache = object : LinkedHashMap<Long, ImageBitmap>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ImageBitmap>?) = size > MAX_FRAMES
     }
@@ -239,7 +241,7 @@ class SeekThumbs(url: String, headers: Map<String, String>, key: String? = null,
     private companion object {
         const val STEP = 10_000L
         const val OPEN = -2L
-        const val MAX_FRAMES = 420
+        const val MAX_FRAMES = 160  // 0.8.8: fewer frames kept in memory (the rest are on the phone)
         // Small previews (Netflix-size): quicker to make and to send through the network.
         const val W = 176
         const val H = 99

@@ -13,6 +13,16 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.8", "19 Nov 2026", "Steadier, faster, cleaner search", listOf(
+        "10-second jumps always move (they sometimes snapped back to where you were)",
+        "Quality menu opens at once; 60fps rows only when a 60fps copy exists, with a short “60fps available” note",
+        "RogMovies gets the green tick like VegaMovies",
+        "Title pages always take their details from Cinemeta / TMDB — no more “PenguPlay” error pages",
+        "Collections and search show only real films and series (no One-Shots, specials or making-ofs)",
+        "Home opens with every poster ready; Back to a collection no longer flashes",
+        "AIDEN listens as fast as the search mic; “play…”, “open…”, “search…” and “my list” run instantly",
+        "Uses less memory while playing (fewer crashes on long films); a silent link is left sooner",
+    )),
     Release("0.8.7", "19 Nov 2026", "Cleaner player, smarter quality, Choose your look", listOf(
         "Choose your look: pick Live, Stack or Classic and your colours from moving previews (once; change any time in Settings › Layout)",
         "Live: Trailer and My List buttons instead of More Info; trailers play only when you tap, in HD",
@@ -493,6 +503,19 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.8", "19 Nov 2026", "Seek, quality sheet, memory, search, AIDEN", listOf(
+        "seekAbs: SeekParameters.EXACT for jumps ≤60 s (CLOSEST_SYNC snapped HLS 10 s jumps back), CLOSEST_SYNC for longer",
+        "qCols no longer recomputed on every open; PluginQualityBar groups remembered; tick colour remembered per stream",
+        "60fps rows only when present; '60fps available' glass note top-left for 8 s once per title (as StreamX TV)",
+        "qualityTick: vega / rogmovies / 4khdhub / hdhub4u → green before the plugin check",
+        "Memory: Coil memory 12 % (was 25 %), cleared on player open; ExoPlayer 22 % of heap; SeekThumbs 160 frames + trim(); heap logged every 60 s, >85 % → drop posters/frames",
+        "fullMeta: Cinemeta first for tt ids; addon error metas skipped",
+        "Universes: votes ≥40 (movies) / ≥15 (tv), no documentary/talk/reality/news genres, isJunkTitle (One-Shot, Assembled, making of…); search hits filtered too",
+        "GroupPage: no window animation, tab + scroll kept (SearchState.groupTab / groupScroll)",
+        "warmHome(): row posters + hdPoster/backdrop of the first 3 rows, also from the cached rows at start; Posters.warm up to 260",
+        "HostStats.startBudgetMs: 127.0.0.1 = 7 s unless LIVE_ONLY (was 30 s)",
+        "AIDEN: listening always via SpeechRecognizer (no live audio session); quickCommand() for play/open/search/my list",
+    )),
     Release("0.8.7", "19 Nov 2026", "Memory, quality sheet, player extras, Choose your look", listOf(
         "Buffer budget = min(RAM table, 30 % of Runtime.maxMemory()), halved when another player is alive (PlayerCount)",
         "HostDown: never local/private hosts; ≥3 hosts failing within 5 s = network drop (ignored); one log line per host",

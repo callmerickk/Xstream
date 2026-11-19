@@ -26,6 +26,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
@@ -238,7 +239,7 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     // (3 crashes on The Odyssey). Cap at ~30 % of the heap, and half that while another player is alive.
     val heapMb = (Runtime.getRuntime().maxMemory() / (1024 * 1024)).toInt()
     val others = PlayerCount.alive()
-    val budgetMb = minOf(byRam, (heapMb * 0.30).toInt().coerceAtLeast(48) / (if (others > 0) 2 else 1)).coerceAtLeast(32)
+    val budgetMb = minOf(byRam, (heapMb * 0.22).toInt().coerceAtLeast(48) / (if (others > 0) 2 else 1)).coerceAtLeast(32)
     val load = DefaultLoadControl.Builder()
         // About a minute ahead (like Nuvio): more was downloaded and thrown away at every seek.
         // Xstream Live: start after ~1 s of video (and ~1.5 s after a seek) — the Live server keeps delivering steadily, so
@@ -668,6 +669,21 @@ fun PlayerScreen(
             alt = known.firstOrNull { it.isMovieBox() && it.mbKind() == 2 && it.stream.url != nowUrl }?.stream?.url) else null
     }
     DisposableEffect(thumbs) { onDispose { thumbs?.close() } }
+    // 0.8.8: memory. Posters held for Home are let go while a video plays, and every minute the heap is checked: above
+    // 85 % the poster memory and preview frames are dropped (the app ran out of memory and closed on long films).
+    LaunchedEffect(Unit) {
+        runCatching { coil.Coil.imageLoader(ctx).memoryCache?.clear() }
+        val rt = Runtime.getRuntime()
+        while (isActive) {
+            delay(60_000)
+            val used = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024); val max = rt.maxMemory() / (1024 * 1024)
+            ActLog.add("PLAY", "memory ${used} / ${max} MB · players ${PlayerCount.alive()}")
+            if (used > max * 0.85) {
+                runCatching { coil.Coil.imageLoader(ctx).memoryCache?.clear() }; thumbs?.trim(); System.gc()
+                ActLog.add("PLAY", "memory high (${used} / ${max} MB) — let go of posters and preview frames")
+            }
+        }
+    }
     // Open the file for previews a little after playback starts, so the first seek-bar frame shows quickly.
     LaunchedEffect(thumbs, firstFrame) { if (firstFrame && thumbs != null) { delay(1500); thumbs.warmUp() } }
     val audio = remember { ctx.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager }
@@ -826,6 +842,10 @@ fun PlayerScreen(
             PlayTiming.late("jump to ${fmtTime(ms)}: this file has no index our player can read — reopening in VLC there")
             vlcJump(ms); return
         }
+        // 0.8.8: ±10 s jumps sometimes did nothing — "nearest keyframe" snapped them back to where you were (HLS keyframes
+        // can be 6–10 s apart). Short jumps land exactly; long jumps (dragging the bar) still use the nearest keyframe.
+        if (!usingVlc && !BuildConfig.IS_TV) player.setSeekParameters(
+            if (kotlin.math.abs(ms - curPos()) <= 60_000) androidx.media3.exoplayer.SeekParameters.EXACT else androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC)
         if (usingVlc) vlc?.seek(ms) else player.seekTo(ms)
         if (firstFrame) Together.local(roomState(isPlayingNow(), ms))
         // A jump that lands back at the start: this server can't seek — remembered, it becomes a last backup.
@@ -3912,6 +3932,22 @@ fun PlayerScreen(
                     }
                 }
             }
+            // 0.8.8 (as on StreamX TV): "60fps available" — a small glass note at the top left for 8 s, once per title,
+            // when a 60 fps copy is found (Quality › 1080p 60fps / 4K 60fps plays it).
+            if (!BuildConfig.IS_TV) {
+                var found60 by remember(p.key) { mutableStateOf(false) }
+                var show60 by remember(p.key) { mutableStateOf(false) }
+                LaunchedEffect(known.size, quickList.size, firstFrame) {
+                    if (found60 || !firstFrame) return@LaunchedEffect
+                    val any = withContext(Dispatchers.Default) { (known + quickList).any { it.effectiveRes() >= 1000 && VisualTags.video(it).contains("60 fps") } }
+                    if (any) { found60 = true; PlayTiming.late("60fps copy found (Quality › 60fps)"); show60 = true; delay(8_000); show60 = false }
+                }
+                AnimatedVisibility(show60 && firstFrame && !inPip && !locked, Modifier.align(Alignment.TopStart).padding(start = side, top = if (controls) 86.dp else 22.dp),
+                    enter = fadeIn(tween(220)) + slideInVertically(tween(260)) { -it }, exit = fadeOut(tween(260))) {
+                    Text("60fps available", Modifier.clip(RoundedCornerShape(50)).background(Color(0x66101116)).border(1.dp, Color(0x40FFFFFF), RoundedCornerShape(50))
+                        .padding(horizontal = 12.dp, vertical = 5.dp), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                }
+            }
             if (!BuildConfig.IS_TV && firstFrame && !inPip) Column(Modifier.align(Alignment.BottomEnd).padding(end = side, bottom = if (controls) 160.dp else 32.dp), horizontalAlignment = Alignment.End) {
                 AnimatedVisibility(inIntro || inRecap,
                     enter = fadeIn(tween(220)) + slideInHorizontally(tween(320)) { it / 3 },
@@ -4472,10 +4508,11 @@ fun PlayerScreen(
             // ───── Quality menu (Auto / Full HD / Mid HD / Low) ─────
             LaunchedEffect(controls) { if (!controls) qualityMenu = false }
             // The menu's rows are worked out in the background as soon as the links are known (sorting every link by
-            // language and quality took seconds on the main thread, so the menu appeared late after a tap).
+            // language and quality took seconds on the main thread, so the menu appeared late after a tap). 0.8.8: not
+            // again on every open (that re-sort was the short delay before the menu showed).
             val picOrder = remember(vm.texts.collectAsStateWithLifecycle().value["picPref"], vm.texts.value["picMatch"]) { PicturePref.order(vm) }
             val slowNow by SlowAddons.links.collectAsStateWithLifecycle()
-            val qCols by produceState<List<Pair<String, List<Pair<String, List<StreamItem>>>>>>(emptyList(), quickList, known, hdReady, slowNow[p.key], picOrder, qualityMenu) {
+            val qCols by produceState<List<Pair<String, List<Pair<String, List<StreamItem>>>>>>(emptyList(), quickList, known, hdReady, slowNow[p.key], picOrder) {
                 value = withContext(Dispatchers.Default) { runCatching {
                     // Every link that can still play is listed (links whose server had a bad moment come last instead of
                     // vanishing: Netflix / Hotstar showed in Sources but not here), and the one playing is always in it.
@@ -4544,7 +4581,7 @@ fun PlayerScreen(
                 val vfNow = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it) } }
                 val hNow = vfNow?.takeIf { it.width > 0 }?.let { f -> when { f.width >= 3200 -> 2160; f.width >= 1800 -> 1080; f.width >= 1200 -> 720; else -> f.height } } ?: playingRes
                 val sixtyNow = (vfNow?.frameRate ?: 0f) >= 48f || (curItem?.let { VisualTags.video(it).contains("60 fps") } == true)
-                val tickColor = qualityTick(curItem, vm)
+                val tickColor = remember(curItem?.stream?.url) { qualityTick(curItem, vm) }
                 if (vm.pluginMode() || !BuildConfig.IS_TV) PluginQualityBar(qCols, playing, readySet, if (ladder.size > 1) ladder else if (onBasePl) ladder else baseLadder,
                     if (ladder.size > 1) pinnedH else null, fourK = fourK, onBase = !onBasePl && ladder.size <= 1 && basePl != null,
                     playingH = hNow, playing60 = sixtyNow, tick = tickColor, chosen = qChosen, onChosen = { qChosen = it; if (it == "auto") { byHand = false; userPicked = false } },
@@ -6704,11 +6741,14 @@ private fun PluginQualityBar(
         // high-quality file (VegaMovies, RogMovies, 4KHDHub). Rows with nothing to play are dimmed.
         Text("QUALITY", Modifier.padding(start = 6.dp, top = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
         val rs = RoundedCornerShape(12.dp)
-        val all = cols.flatMap { c -> c.second.flatMap { it.second }.map { c.first to it } }
         fun is60(st: StreamItem) = VisualTags.video(st).contains("60 fps")
-        fun files(group: String, sixty: Boolean) = all.filter { it.first == group && is60(it.second) == sixty }.map { it.second }
-        val k4_60 = files("4K", true); val k4 = files("4K", false).ifEmpty { listOfNotNull(fourK?.takeIf { !is60(it) }) }
-        val f60 = files("1080p", true); val f = files("1080p", false)
+        // Worked out once per list (not on every redraw).
+        val groups = remember(cols, fourK) {
+            val all = cols.flatMap { c -> c.second.flatMap { it.second }.map { c.first to it } }
+            fun files(group: String, sixty: Boolean) = all.filter { it.first == group && is60(it.second) == sixty }.map { it.second }
+            listOf(files("4K", true), files("4K", false).ifEmpty { listOfNotNull(fourK?.takeIf { !is60(it) }) }, files("1080p", true), files("1080p", false))
+        }
+        val k4_60 = groups[0]; val k4 = groups[1]; val f60 = groups[2]; val f = groups[3]
         val playRow = when {
             playingH >= 1440 -> if (playing60) "4K 60fps" else "4K"
             playingH >= 1000 -> if (playing60) "1080p 60fps" else "1080p"
@@ -6732,9 +6772,10 @@ private fun PluginQualityBar(
         }
         fun bestOf(l: List<StreamItem>) = l.firstOrNull { it.stream.url in ready } ?: l.firstOrNull()
         row("auto", "Auto", false, true) { onVariant(null) }
-        row("4K 60fps", "4K", true, k4_60.isNotEmpty()) { bestOf(k4_60)?.let(onPick) }
+        // 0.8.8: the 60fps rows appear only when such a copy exists.
+        if (k4_60.isNotEmpty()) row("4K 60fps", "4K", true, true) { bestOf(k4_60)?.let(onPick) }
         row("4K", "4K", false, k4.isNotEmpty() || ladder.any { it >= 1440 }) { if (ladder.any { it >= 1440 }) onVariant(ladder.first { it >= 1440 }) else bestOf(k4)?.let(onPick) }
-        row("1080p 60fps", "1080p", true, f60.isNotEmpty()) { bestOf(f60)?.let(onPick) }
+        if (f60.isNotEmpty()) row("1080p 60fps", "1080p", true, true) { bestOf(f60)?.let(onPick) }
         for (h in listOf(1080, 720, 480)) {
             val inLadder = ladder.firstOrNull { it in (h - 100)..(h + 100) }
             val file = if (h == 1080) bestOf(f) else null
@@ -6941,6 +6982,8 @@ val VrHeadsetIcon: ImageVector by lazy {
 internal fun qualityTick(st: StreamItem?, vm: AppViewModel): Color = when {
     st == null -> Color(0xFFFF4D57)
     st.isPlaylist() -> Color(0xFFFF4D57)
+    // 0.8.8: VegaMovies' family (RogMovies) and the other HD file sites are green, before the plugin check.
+    Regex("(?i)vega|rog ?movies|4k ?hd ?hub|hdhub4u|hd ?hub").containsMatchIn(listOfNotNull(st.addonName, st.stream.name, st.stream.title, st.stream.url).joinToString(" ")) -> Color(0xFF2FBF71)
     st.isMovieBox() || vm.isQuick(st) -> Color(0xFFF5C518)
     else -> Color(0xFF2FBF71)
 }

@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -120,6 +121,8 @@ object SearchState {
     /** 0.8.7: what you typed and the collection you opened survive a trip to a title page, so Back returns to them. */
     var text by androidx.compose.runtime.mutableStateOf<String?>(null)
     var openGroup by androidx.compose.runtime.mutableStateOf<SearchGroup?>(null)
+    val groupTab = HashMap<String, String>()
+    val groupScroll = HashMap<String, Int>()
     val hits = MutableStateFlow<List<SearchHit>>(emptyList())
     /** Collections / studios matching the search, shown as stacked cards above the results. */
     val groups = MutableStateFlow<List<SearchGroup>>(emptyList())
@@ -284,7 +287,7 @@ fun AppViewModel.searchPremium(q: String) {
     }
     val ck = query.lowercase()
     fun publish(hits: List<SearchHit>, final: Boolean) {
-        SearchState.hits.value = hits
+        SearchState.hits.value = hits.filterNot { isJunkTitle(it.meta.name) || it.meta.isAddonError() }
         SearchState.suggestions.value = hits.asSequence()
             .map { it.meta.name.trim().lowercase() }
             .filter { it.isNotEmpty() && it != ck }
@@ -450,7 +453,16 @@ private suspend fun universeById(key: String, kid: String, tagName: String): Sea
             runCatching {
                 val url = if (kind == "tv") "https://api.themoviedb.org/3/discover/tv?api_key=$key&with_keywords=$kid&sort_by=first_air_date.asc&first_air_date.lte=$today&page=$pg"
                     else "https://api.themoviedb.org/3/discover/movie?api_key=$key&with_keywords=$kid&sort_by=primary_release_date.asc&primary_release_date.lte=$today&page=$pg"
-                Api.json.parseToJsonElement(Api.get(url)).jsonObject.sArr("results").mapNotNull { tmdbMetaOf(it, kind) }
+                // 0.8.8: only the real films and series — no One-Shots, shorts, specials, documentaries / making-ofs,
+                // talk or reality shows, or titles almost nobody rated.
+                Api.json.parseToJsonElement(Api.get(url)).jsonObject.sArr("results")
+                    .filter { j ->
+                        val votes = j.sStr("vote_count")?.toIntOrNull() ?: 0
+                        val genres = (j["genre_ids"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() }.orEmpty()
+                        votes >= (if (kind == "tv") 15 else 40) && genres.none { it in setOf(99, 10767, 10764, 10763) } &&
+                            !isJunkTitle(j.sStr("title") ?: j.sStr("name") ?: "")
+                    }
+                    .mapNotNull { tmdbMetaOf(it, kind) }
             }.getOrDefault(emptyList())
         }
     }.awaitAll().flatten()
@@ -917,6 +929,9 @@ private fun GroupCard(g: SearchGroup, modifier: Modifier, big: Boolean, onClick:
 @Composable
 private fun GroupPage(g: SearchGroup, onClose: () -> Unit, onOpen: (Meta) -> Unit) {
     androidx.compose.ui.window.Dialog(onClose, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        // 0.8.8: coming Back from a title reopens this page — no window animation (it flashed), same tab and scroll.
+        val dlgView = androidx.compose.ui.platform.LocalView.current
+        SideEffect { (dlgView.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window?.setWindowAnimations(0) }
         Column(Modifier.fillMaxSize().background(Color(0xFF0B0C10)).statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.IconButton(onClose) { Icon(Icons.Default.Close, "Close") }
@@ -926,7 +941,8 @@ private fun GroupPage(g: SearchGroup, onClose: () -> Unit, onOpen: (Meta) -> Uni
                 }
             }
             // A universe: All / Movies / Series, each in release order.
-            var tab by remember { mutableStateOf("all") }
+            var tab by remember(g.name) { mutableStateOf(SearchState.groupTab[g.name] ?: "all") }
+            LaunchedEffect(tab) { SearchState.groupTab[g.name] = tab }
             val shown = when (tab) { "movies" -> g.items.filter { it.type == "movie" }; "series" -> g.items.filter { it.type == "series" }; else -> g.items }
             if (g.kind == "universe") Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("all" to "All ${g.items.size}", "movies" to "Movies ${g.items.count { it.type == "movie" }}", "series" to "Series ${g.items.count { it.type == "series" }}")
@@ -936,7 +952,9 @@ private fun GroupPage(g: SearchGroup, onClose: () -> Unit, onOpen: (Meta) -> Uni
                             color = if (on) Color.Black else Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
             }
-            LazyVerticalGrid(GridCells.Adaptive(110.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 60.dp),
+            val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState(SearchState.groupScroll[g.name + tab] ?: 0)
+            LaunchedEffect(gridState.firstVisibleItemIndex) { SearchState.groupScroll[g.name + tab] = gridState.firstVisibleItemIndex }
+            LazyVerticalGrid(GridCells.Adaptive(110.dp), Modifier.fillMaxSize(), state = gridState, contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 60.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 items(shown.size, key = { shown[it].id }) { i ->
                     val m = shown[i]
@@ -954,3 +972,7 @@ private fun GroupPage(g: SearchGroup, onClose: () -> Unit, onOpen: (Meta) -> Uni
 
 /** Settings › Layout › Adult content (on by default): 18+ titles and collections in search. */
 object SearchAdult { @Volatile var on: Boolean = true }
+
+
+/** 0.8.8: shorts and extras that crowd collections and results (Marvel One-Shots, "Assembled", making-ofs, specials). */
+fun isJunkTitle(n: String): Boolean = Regex("(?i)\\bone[- ]shot\\b|\\bassembled\\b|making of|behind the scenes|special presentation|\\bfeaturette\\b|\\bgag reel\\b|\\bbloopers?\\b|\\brecap\\b|\\bsneak peek\\b|\\bdeleted scenes?\\b").containsMatchIn(n)

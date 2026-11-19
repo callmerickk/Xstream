@@ -271,7 +271,8 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
     private fun begin() {
         if (begun || !alive) return
         begun = true
-        if (GeminiLiveDev.usable(ctx, vm) && startLive()) return
+        // 0.8.8: AIDEN listens with the phone's own recognizer (as fast as the search mic); the live audio session is
+        // no longer used for listening.
         if (ttsReady || !voiceOut) greet() else listen()
     }
 
@@ -469,8 +470,11 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
         state = XState.Thinking
         val my = ++seq
         job = scope.launch {
+            // 0.8.8: simple commands run at once, without waiting for the AI ("play Avengers", "open Loki",
+            // "search Marvel", "my list").
+            val quick = runCatching { quickCommand(q) }.getOrNull()
             val r = try {
-                convo.reply(q)
+                quick ?: convo.reply(q)
             } catch (e: CancellationException) {
                 return@launch
             } catch (e: Exception) {
@@ -483,6 +487,37 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
             closeAfterSpeech = r.closeAfter
             speak(id, say, r.open, if (r.play) (r.episode ?: "") else null)
         }
+    }
+
+    /** "play / watch / start X", "open / show X", "search / find X", "my list": done locally, or null for the AI. */
+    private suspend fun quickCommand(q: String): XResult? {
+        val t = q.lowercase().trim().trimEnd('.', '!', '?')
+        Regex("^(?:please\\s+)?(play|watch|start|put on|chalao|chala do|lagao)\\s+(.+?)(?:\\s+(?:movie|film|series|show))?$").find(t)?.let { m ->
+            val name = m.groupValues[2].trim().takeIf { it.length >= 2 && it !in setOf("something", "anything", "a movie", "a film") } ?: return null
+            // Episodes, "next episode" and "something funny" are left to the AI (it knows seasons and moods).
+            if (Regex("season|episode|\\bs\\d|\\be\\d|^(next|previous|the next|it|this|that|something|some)\\b|\\b(funny|scary|romantic|good|new)\\b").containsMatchIn(name)) return null
+            val hit = vm.searchNow(name).firstOrNull() ?: return XResult("I couldn't find $name.", emptyList(), "", null)
+            ActLog.add("AI", "quick command: play ${hit.name}")
+            return XResult("Playing ${hit.name}.", emptyList(), "", hit, play = true)
+        }
+        Regex("^(open|show|show me)\\s+(.+)$").find(t)?.let { m ->
+            val name = m.groupValues[2].trim()
+            if (name in setOf("my list", "watchlist", "my watchlist")) return null
+            val hit = vm.searchNow(name).firstOrNull() ?: return null
+            ActLog.add("AI", "quick command: open ${hit.name}")
+            return XResult("Opening ${hit.name}.", emptyList(), "", hit)
+        }
+        Regex("^(search|search for|find|look for|dhundo)\\s+(.+)$").find(t)?.let { m ->
+            val name = m.groupValues[2].trim()
+            val hits = vm.searchNow(name).take(12)
+            ActLog.add("AI", "quick command: search $name (${hits.size})")
+            return XResult(if (hits.isEmpty()) "Nothing found for $name." else "Here's what I found for $name.", hits, name, null)
+        }
+        if (t in setOf("my list", "show my list", "open my list", "watchlist")) {
+            val l = vm.myList.value.take(12)
+            return XResult(if (l.isEmpty()) "Your list is empty." else "Here's your list.", l, "My List", null)
+        }
+        return null
     }
 
     // ── speaking ──
