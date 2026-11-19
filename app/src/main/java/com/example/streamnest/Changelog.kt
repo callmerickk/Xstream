@@ -13,6 +13,14 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.10", "19 Nov 2026", "Smarter on weak internet, no more Find another source", listOf(
+        "Weak internet: streams step down to 720p / 480p by themselves without reloading, and climb back when it's steady",
+        "The stream that's playing always shows in Other streams",
+        "A saved link that stopped working is replaced quietly — no “Find another source” screen any more",
+        "Loading screen ⌄ shows the streams by quality (4K, 1080p, Unlabelled), also over a paused frame",
+        "Each profile has its own search",
+        "“mcu”, “avengers” and other films of a universe show the universe collection too",
+    )),
     Release("0.8.9", "19 Nov 2026", "Never stuck, right film, faster collections", listOf(
         "Once a video has started, it never goes back to the loading or error screen: the picture holds with a small ring while it reconnects or tries other links",
         "No internet? It waits and carries on from the same second when it's back",
@@ -513,6 +521,15 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.10", "19 Nov 2026", "HLS step-down, no fail screen, sources list, per-profile search, late universe", listOf(
+        "hlsCap: 2 stalls/90 s or a 4 s stall → setMaxVideoSize one rung down (no reload); up one rung after 2 min smooth + 30 s buffer; one-rung HLS → ottSwapTo lighter copy; QUALITY 'stream qualities' logged",
+        "qCols keyed on now.url + firstFrame; the playing link always listed (synthesised StreamItem with its height when not in any list)",
+        "tryNextSource before the picture: up to 3 quiet fresh look-ups (findRequest forced) instead of the failure screen; failure (phone) = ring + one line, retried every 30 s / when online; Find another source + Choose source removed",
+        "OtherStreamsList extracted; loading screen ⌄ and the held-frame ⌄ open it (pickOpen); picks load() before the picture, fadeTo after",
+        "SearchState.forProfile(pid) snapshots/restores text, results, groups, open collection per profile (called in selectProfile)",
+        "Universe: added when ready (lateUni, no 2.5 s cap), by name or from the top results (tmdbDone); realTitles light request (external_ids only), 12 at once, verdicts kept in prefs colCheck",
+        "ActLog uploads now keep QUALITY / SWITCH / memory / retry lines",
+    )),
     Release("0.8.9", "19 Nov 2026", "Hold frame, collections by IMDb id, memory prompt, update nudge", listOf(
         "sawPicture: after the first picture no loading/error screen; startWay holds the frame (frozen) on every reload; overlay = frame + white ring",
         "keepTrying(): all links failed after the picture → wait for NET_CAPABILITY_VALIDATED (≤2 min), reset tried/skipHosts, retry same link / ranked known; fresh streams every 3rd round",

@@ -154,6 +154,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         // Each profile has its own settings, addons and collections.
         val switched = dataPid != p.id
         if (switched) loadProfileData(p.id)
+        SearchState.forProfile(p.id)
         current.value = p
         lib = prefsFor(p)
         progress.value = lib.getString("progress", null)?.let { runCatching { warm("p:${p.id}", it) { r -> Api.json.decodeFromString<List<Progress>>(r) } }.getOrNull() } ?: emptyList()

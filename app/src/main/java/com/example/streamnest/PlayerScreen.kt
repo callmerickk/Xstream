@@ -788,6 +788,8 @@ fun PlayerScreen(
     var switching by remember { mutableStateOf(false) }
     /** 0.8.9: when the Quality chip was tapped (to log how fast the menu appeared). */
     val qTapAt = remember { longArrayOf(0L) }
+    /** 0.8.10: the ⌄ Sources list over the loading screen / held frame (Other streams style). */
+    var pickOpen by remember { mutableStateOf(false) }
     var switchLabel by remember { mutableStateOf<String?>(null) }
     var frozen by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var videoView by remember { mutableStateOf<View?>(null) }
@@ -875,6 +877,8 @@ fun PlayerScreen(
     /** 0.8.9: the error code waiting for "Memory is full" (Do it / Deny); Deny = not asked again for this title. */
     var memAsk by remember { mutableStateOf<String?>(null) }
     var memDenied by remember(p.key) { mutableStateOf(false) }
+    /** 0.8.10: quiet fresh look-ups after every link failed before the picture (then it waits and tries again by itself). */
+    var autoFinds by remember(p.key) { mutableIntStateOf(0) }
     val probeSeq = remember { intArrayOf(0) }
 
     /** The stream entry behind a link, when we know it (for its size and tags). */
@@ -1179,7 +1183,16 @@ fun PlayerScreen(
                 }
             }
             sawPicture -> keepTrying(n, start, code)
-            else -> { forgetStreams(p.key); switching = false; frozen = null; failure = "Couldn't play this right now. Try again, or pick a source." ; PlayTiming.mark("nothing played ($code)") }
+            // 0.8.10: before the picture (a resumed / remembered link that expired): fresh links are looked up quietly —
+            // the loading screen stays, never "Find another source".
+            !BuildConfig.IS_TV && autoFinds < 3 -> {
+                autoFinds++
+                forgetStreams(p.key); vm.forgetLink(p.key); switching = false; frozen = null
+                PlayTiming.mark("nothing played ($code) — looking for fresh links quietly (${autoFinds})")
+                status = "Finding stream source"
+                findRequest = if (findRequest < 1) 2 else findRequest + 1
+            }
+            else -> { forgetStreams(p.key); switching = false; frozen = null; failure = if (BuildConfig.IS_TV) "Couldn't play this right now. Try again, or pick a source." else "Not available right now — still trying"; PlayTiming.mark("nothing played ($code)") }
         }
     }
     var retryRound by remember { mutableIntStateOf(0) }
@@ -1581,6 +1594,21 @@ fun PlayerScreen(
         return true
     }
 
+    // 0.8.10 (phone): any "not available" — wait for the internet, then look again every 30 s by itself (no buttons).
+    LaunchedEffect(failure) {
+        if (failure == null || BuildConfig.IS_TV) return@LaunchedEffect
+        val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+        fun online(): Boolean = runCatching {
+            val c = cm?.getNetworkCapabilities(cm.activeNetwork ?: return@runCatching false) ?: return@runCatching false
+            c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) && c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        }.getOrDefault(true)
+        var waited = 0L
+        while (!online() && waited < 600_000) { delay(2_000); waited += 2_000 }
+        if (waited == 0L) delay(30_000) else delay(1_000)
+        PlayTiming.mark("looking for links again by itself")
+        autoFinds = 0; failure = null; status = "Finding stream source"
+        findRequest = if (findRequest < 1) 2 else findRequest + 1
+    }
     LaunchedEffect(findRequest) {
         if (findRequest == 0) return@LaunchedEffect
         val findT0 = SystemClock.elapsedRealtime()
@@ -3108,6 +3136,62 @@ fun PlayerScreen(
         }
     }
 
+    // ───── 0.8.10: weak internet on an HLS stream ─────
+    // Two stalls in 90 s (or one longer than 4 s) → the top quality is switched off inside the same stream (720p, then
+    // 480p): no reload, it changes at the next piece. Back up one step after 2 min smooth with 30 s buffered. A stream
+    // with only one quality → a lighter copy of the title, faded in. Never when you picked a quality yourself.
+    var hlsCap by remember(p.key) { mutableIntStateOf(0) }
+    LaunchedEffect(firstFrame, p.key) {
+        if (!firstFrame || BuildConfig.IS_TV) return@LaunchedEffect
+        var smoothSince = SystemClock.uptimeMillis()
+        var loggedFor: String? = null
+        var capFor: String? = null
+        fun setCap(h: Int) {
+            hlsCap = h
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setMaxVideoSize(Int.MAX_VALUE, if (h > 0) h else Int.MAX_VALUE).build()
+        }
+        while (isActive) {
+            delay(1_000)
+            if (usingVlc) continue
+            val url = now?.url ?: continue
+            if (capFor != url) { if (hlsCap > 0) setCap(0); capFor = url }
+            val g = player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO }
+            val heights = g?.let { gg -> (0 until gg.length).map { gg.getTrackFormat(it).height }.filter { it > 0 }.distinct().sortedDescending() }.orEmpty()
+            if (heights.isNotEmpty() && loggedFor != url) { loggedFor = url; ActLog.add("QUALITY", "stream qualities: ${heights.joinToString(", ") { "${it}p" }}") }
+            if (byHand || qChosen != "auto" || switching || !firstFrame) continue
+            if (g != null && player.trackSelectionParameters.overrides.keys.any { it == g.mediaTrackGroup }) continue
+            val t = SystemClock.uptimeMillis()
+            if (buffering) smoothSince = t
+            val curH = player.videoSize.height.takeIf { it > 0 } ?: heights.firstOrNull() ?: continue
+            val afterSeek = t - seekedAt < 8_000
+            val slow = !afterSeek && ((stalls >= 2 && t - stallAt < 90_000) || (buffering && t - stallAt > 4_000))
+            if (slow) {
+                val top = if (hlsCap > 0) minOf(hlsCap, curH) else curH
+                val lower = heights.firstOrNull { it < top - 50 }
+                if (heights.size > 1 && lower != null) {
+                    stalls = 0; setCap(lower); smoothSince = t
+                    ActLog.add("QUALITY", "slow internet → ${lower}p inside the stream (no reload)")
+                } else if (heights.size <= 1 && hlsCap == 0) {
+                    val cur = itemFor(url)
+                    val c = (known + quickList).distinctBy { it.stream.url }.filter { it.stream.url != url && it.stream.url.orEmpty() !in tried && !Ranker.isDead(it) &&
+                        it.effectiveRes() in 1 until (curH - 50) && (cur == null || vm.langRank(it) <= vm.langRank(cur)) }
+                        .sortedWith(compareBy<StreamItem>({ if (it.isPlaylist()) 0 else 1 }, { -it.effectiveRes() })).firstOrNull()
+                    if (c != null) {
+                        stalls = 0; smoothSince = t
+                        ActLog.add("QUALITY", "slow internet, one-quality stream → lighter copy ${Public.streamName(c)} (fade)")
+                        runCatching { ottSwapTo(c, why = "slow internet → lighter copy") }
+                    }
+                }
+            } else if (hlsCap > 0 && t - smoothSince > 120_000 && player.bufferedPosition - player.currentPosition > 30_000) {
+                val higher = heights.filter { it > hlsCap + 50 }.minOrNull()
+                val next = if (higher == null || higher >= (heights.firstOrNull() ?: 0)) 0 else higher
+                setCap(next); smoothSince = t
+                ActLog.add("QUALITY", "internet steady → " + if (next == 0) "top quality again" else "${next}p")
+            }
+        }
+    }
+
     // ───── Remote seeking: ◀ ▶ move a target (with a preview frame); OK / Play jumps there, or it jumps by itself 1.6 s later ─────
     fun commitSeek() {
         val t = pendingSeek ?: return
@@ -4522,6 +4606,27 @@ fun PlayerScreen(
                 }
             }
 
+            val picOrder = remember(vm.texts.collectAsStateWithLifecycle().value["picPref"], vm.texts.value["picMatch"]) { PicturePref.order(vm) }
+            val slowNow by SlowAddons.links.collectAsStateWithLifecycle()
+            val qCols by produceState<List<Pair<String, List<Pair<String, List<StreamItem>>>>>>(emptyList(), quickList, known, hdReady, slowNow[p.key], picOrder, now?.url, firstFrame) {
+                val vh = runCatching { if (usingVlc) 0 else player.videoSize.height }.getOrDefault(0)
+                value = withContext(Dispatchers.Default) { runCatching {
+                    // Every link that can still play is listed (links whose server had a bad moment come last instead of
+                    // vanishing: Netflix / Hotstar showed in Sources but not here), and the one playing is always in it.
+                    // 0.8.10: a link that started ready-made (not in any list) is shown too, under its own name.
+                    val playingNow = now?.let { n -> (quickList + known).firstOrNull { it.stream.url == n.url } ?: itemFor(n.url)
+                        ?: StreamItem(n.addon ?: "Playing", StreamInfo(url = n.url, name = (n.source ?: n.addon ?: "Playing now") + if (vh > 0) " ${if (vh >= 1440) "2160" else vh.toString()}p" else "")) }
+                    val all = (vm.filtered((quickList + known + hdReady.values.flatten() + slowNow[p.key].orEmpty()).distinctBy { it.stream.url }).list
+                        .filter { !Ranker.isDead(it) && !it.unplayableHere() && !it.slowMp4() } + listOfNotNull(playingNow)).distinctBy { it.stream.url }
+                        .sortedBy { if (HostStats.penalty(it.stream.url.orEmpty()) > 0 || Ranker.keepsFailing(it)) 1 else 0 }
+                    fun col(lo: Int, hi: Int) = all.filter { it.effectiveRes() in lo until hi }
+                        .groupBy { if (it.isPlaylist()) "Instant" else VisualTags.primary(it) }.toList()
+                        .sortedBy { (g, _) -> if (g == "Instant") -1 else picOrder.indexOf(g).let { i -> if (i < 0) 99 else i } }
+                        .map { (g, l) -> g to l.sortedWith(compareBy<StreamItem>({ vm.langRank(it) }, { -Ranker.score(it) })).take(if (vm.pluginMode() || !BuildConfig.IS_TV) 60 else 4) }
+                    (if (vm.pluginMode() || !BuildConfig.IS_TV) listOf("Auto" to col(0, 1)) else emptyList()) +
+                        listOf("4K" to col(1440, 100_000), "1080p" to col(1080, 1440), "720p" to col(700, 1080))
+                }.getOrDefault(emptyList()) }
+            }
             // ───── Loading screen: dimmed artwork, "Finding stream source" → "Buffering…" ─────
             if (loadingAlpha > 0.01f) {
                 Box(Modifier.fillMaxSize().graphicsLayer { alpha = loadingAlpha }.noFocus().clickable(interactionSource = noRipple, indication = null) {}) {
@@ -4566,12 +4671,10 @@ fun PlayerScreen(
                                 percent = pct, modifier = Modifier.fillMaxSize())
                         }
                     } else {
+                        // 0.8.10: never "Find another source" / "Choose source" — one quiet line; it keeps trying by itself.
                         Column(Modifier.align(Alignment.Center).padding(horizontal = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(Public.say(f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
-                            Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                LoadBtn("Find another source", true, Modifier.focusRequester(failFocus)) { findRequest = if (findRequest < 1) 2 else findRequest + 1 }
-                                LoadBtn("Choose source", false) { failure = null; panel = "sources"; status = "Buffering…" }
-                            }
+                            CircularProgressIndicator(Modifier.size(34.dp), color = Color.White, strokeWidth = 2.5.dp)
+                            Text(Public.say(f), Modifier.padding(top = 14.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
                         }
                     }
                     Box(
@@ -4584,9 +4687,40 @@ fun PlayerScreen(
                             .shadow(10.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
                             .background(Color(0x8C101014), CircleShape).border(1.dp, Color(0x24FFFFFF), CircleShape)
                             .focusRing(CircleShape)
-                            .clickable(interactionSource = noRipple, indication = null) { panel = "sources" },
+                            .clickable(interactionSource = noRipple, indication = null) { if (BuildConfig.IS_TV) panel = "sources" else pickOpen = true },
                         Alignment.Center,
                     ) { Icon(Icons.Default.KeyboardArrowDown, "Sources", Modifier.size(20.dp), tint = Color.White) }
+                }
+            }
+            // 0.8.10: the same ⌄ over the held frame (the ring mid-film), so a stream can be chosen there too.
+            if (!BuildConfig.IS_TV && loadingAlpha <= 0.01f && (switching || (sawPicture && !firstFrame)) && failure == null) {
+                Box(
+                    Modifier.align(Alignment.TopStart).padding(start = 30.dp, top = 74.dp).size(44.dp)
+                        .shadow(10.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
+                        .background(Color(0x8C101014), CircleShape).border(1.dp, Color(0x24FFFFFF), CircleShape)
+                        .clickable(interactionSource = noRipple, indication = null) { pickOpen = true },
+                    Alignment.Center,
+                ) { Icon(Icons.Default.KeyboardArrowDown, "Sources", Modifier.size(20.dp), tint = Color.White) }
+            }
+            if (pickOpen && !BuildConfig.IS_TV) {
+                val pickPlaying = now?.url?.let { itemFor(it) }?.stream?.url ?: now?.url
+                val pickTick = remember(pickPlaying) { qualityTick(now?.url?.let { itemFor(it) }, vm) }
+                BackHandler { pickOpen = false }
+                Box(Modifier.fillMaxSize().background(Color(0x66000000)).clickable(interactionSource = noRipple, indication = null) { pickOpen = false }) {
+                    val ps = RoundedCornerShape(20.dp)
+                    Column(Modifier.align(Alignment.TopStart).padding(start = 30.dp, top = 126.dp).width(260.dp).heightIn(max = 300.dp).clip(ps)
+                        .background(Color(0xF0141418)).border(1.dp, Color(0x1FFFFFFF), ps)
+                        .clickable(interactionSource = noRipple, indication = null) {}
+                        .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(8.dp)) {
+                        Text("STREAMS · ${qCols.sumOf { c -> c.second.sumOf { it.second.size } }}", Modifier.padding(start = 6.dp, top = 2.dp, bottom = 6.dp),
+                            fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
+                        OtherStreamsList(qCols, pickPlaying, tagReady + hdReady.values.flatten().mapNotNull { it.stream.url }, pickTick, { poke++ }) { st ->
+                            pickOpen = false; byHand = true; failure = null
+                            ActLog.add("SWITCH", "you · Sources (loading) → ${Public.streamName(st)}")
+                            if (firstFrame) fadeTo(st, VisualTags.quality(st), "Sources → ${VisualTags.quality(st)}")
+                            else load(Now(st.stream.url!!, withSubs(st, now?.subs.orEmpty()), st.stream.name ?: st.addonName, st.addonName), keepPos())
+                        }
+                    }
                 }
             }
 
@@ -4595,24 +4729,6 @@ fun PlayerScreen(
             // The menu's rows are worked out in the background as soon as the links are known (sorting every link by
             // language and quality took seconds on the main thread, so the menu appeared late after a tap). 0.8.8: not
             // again on every open (that re-sort was the short delay before the menu showed).
-            val picOrder = remember(vm.texts.collectAsStateWithLifecycle().value["picPref"], vm.texts.value["picMatch"]) { PicturePref.order(vm) }
-            val slowNow by SlowAddons.links.collectAsStateWithLifecycle()
-            val qCols by produceState<List<Pair<String, List<Pair<String, List<StreamItem>>>>>>(emptyList(), quickList, known, hdReady, slowNow[p.key], picOrder) {
-                value = withContext(Dispatchers.Default) { runCatching {
-                    // Every link that can still play is listed (links whose server had a bad moment come last instead of
-                    // vanishing: Netflix / Hotstar showed in Sources but not here), and the one playing is always in it.
-                    val playingNow = now?.url?.let { u -> (quickList + known).firstOrNull { it.stream.url == u } }
-                    val all = (vm.filtered((quickList + known + hdReady.values.flatten() + slowNow[p.key].orEmpty()).distinctBy { it.stream.url }).list
-                        .filter { !Ranker.isDead(it) && !it.unplayableHere() && !it.slowMp4() } + listOfNotNull(playingNow)).distinctBy { it.stream.url }
-                        .sortedBy { if (HostStats.penalty(it.stream.url.orEmpty()) > 0 || Ranker.keepsFailing(it)) 1 else 0 }
-                    fun col(lo: Int, hi: Int) = all.filter { it.effectiveRes() in lo until hi }
-                        .groupBy { if (it.isPlaylist()) "Instant" else VisualTags.primary(it) }.toList()
-                        .sortedBy { (g, _) -> if (g == "Instant") -1 else picOrder.indexOf(g).let { i -> if (i < 0) 99 else i } }
-                        .map { (g, l) -> g to l.sortedWith(compareBy<StreamItem>({ vm.langRank(it) }, { -Ranker.score(it) })).take(if (vm.pluginMode() || !BuildConfig.IS_TV) 60 else 4) }
-                    (if (vm.pluginMode() || !BuildConfig.IS_TV) listOf("Auto" to col(0, 1)) else emptyList()) +
-                        listOf("4K" to col(1440, 100_000), "1080p" to col(1080, 1440), "720p" to col(700, 1080))
-                }.getOrDefault(emptyList()) }
-            }
             // Opening the menu with few links known: every source is asked now (in plugin mode a title started from the
             // ready player only knew its own link, so the menu stayed empty).
             // 0.8.9: asked 4 s after the picture shows, not when the menu opens (the menu changed under your finger).
@@ -6883,66 +6999,81 @@ private fun PluginQualityBar(
             Text("OTHER STREAMS · ${cols.sumOf { c -> c.second.sumOf { it.second.size } }}", Modifier.weight(1f), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
             Icon(if (otherOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, if (otherOpen) "Fold" else "Open", Modifier.size(18.dp), tint = Color(0xFF8A94A8))
         }
-        if (otherOpen && cols.all { it.second.isEmpty() }) Text("Finding qualities…", Modifier.padding(12.dp), fontSize = 13.sp, color = Color(0xFF9AA3B5))
-        if (otherOpen) cols.forEach { (title, groups) ->
-            val files = groups.flatMap { it.second }
-            if (files.isEmpty() && title == "Auto") return@forEach
-            // 0.8.7: the groups are named 1080p and Unlabelled (were Full HD and Mid HD).
-            val label = when (title) { "4K" -> "4K"; "1080p" -> "1080p"; "720p" -> "Unlabelled"; else -> "Auto" }
-            val here = files.any { it.stream.url == playing }
-            // A file of this quality is ready (start saved / a playlist): tap plays it from where you are.
-            val readyOne = files.firstOrNull { it.stream.url in ready }
-            val ps = RoundedCornerShape(14.dp)
-            Row(
-                Modifier.fillMaxWidth().clip(ps).background(if (here) Color(0x33E50914) else if (open == title) Color(0x26FFFFFF) else Color(0x0FFFFFFF))
-                    .border(1.dp, if (here) Color(0xCCE50914) else Color(0x14FFFFFF), ps).focusFill()
-                    .combinedClickable(enabled = files.isNotEmpty(),
-                        onClick = { onPoke(); if (!here) (readyOne ?: files.firstOrNull())?.let(onPick) else open = if (open == title) null else title },
-                        onLongClick = { onPoke(); open = if (open == title) null else title })
-                    .padding(horizontal = 14.dp, vertical = 11.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (files.isEmpty()) Color(0xFF6E7687) else Color.White)
-                    Text(if (files.isEmpty()) "Not available" else if (here) "Playing · ${files.size} streams · hold for all"
-                        else if (readyOne != null && title == "4K") "Ready — tap to play from here" else "${files.size} streams · hold for all",
-                        fontSize = 11.sp, color = if (here || (readyOne != null && title == "4K")) Color(0xFFFF8D94) else Color(0xFF9AA3B5))
-                }
-                if (here) Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = tick)
-                else if (readyOne != null && title == "4K") Text("READY", Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFFE50914)).padding(horizontal = 8.dp, vertical = 3.dp),
-                    fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.White)
+        if (otherOpen) OtherStreamsList(cols, playing, ready, tick, onPoke, onPick)
+    }
+}
+
+/**
+ * 0.8.10: "Other streams" — 4K / 1080p / Unlabelled / Auto, each with its streams (hold or tap the playing one for all).
+ * Used in the Quality menu, and on the loading screen / held frame (the ⌄ Sources button).
+ */
+@kotlin.OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun OtherStreamsList(cols: List<Pair<String, List<Pair<String, List<StreamItem>>>>>, playing: String?, ready: Set<String>, tick: Color,
+    onPoke: () -> Unit, onPick: (StreamItem) -> Unit) {
+    var open by remember { mutableStateOf<String?>(null) }
+    val red = Color(0xFFFF4D57)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    if (cols.all { it.second.isEmpty() }) Text("Finding qualities…", Modifier.padding(12.dp), fontSize = 13.sp, color = Color(0xFF9AA3B5))
+    cols.forEach { (title, groups) ->
+        val files = groups.flatMap { it.second }
+        if (files.isEmpty() && title == "Auto") return@forEach
+        // 0.8.7: the groups are named 1080p and Unlabelled (were Full HD and Mid HD).
+        val label = when (title) { "4K" -> "4K"; "1080p" -> "1080p"; "720p" -> "Unlabelled"; else -> "Auto" }
+        val here = files.any { it.stream.url == playing }
+        // A file of this quality is ready (start saved / a playlist): tap plays it from where you are.
+        val readyOne = files.firstOrNull { it.stream.url in ready }
+        val ps = RoundedCornerShape(14.dp)
+        Row(
+            Modifier.fillMaxWidth().clip(ps).background(if (here) Color(0x33E50914) else if (open == title) Color(0x26FFFFFF) else Color(0x0FFFFFFF))
+                .border(1.dp, if (here) Color(0xCCE50914) else Color(0x14FFFFFF), ps).focusFill()
+                .combinedClickable(enabled = files.isNotEmpty(),
+                    onClick = { onPoke(); if (!here) (readyOne ?: files.firstOrNull())?.let(onPick) else open = if (open == title) null else title },
+                    onLongClick = { onPoke(); open = if (open == title) null else title })
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(label, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = if (files.isEmpty()) Color(0xFF6E7687) else Color.White)
+                Text(if (files.isEmpty()) "Not available" else if (here) "Playing · ${files.size} streams · hold for all"
+                    else if (readyOne != null && title == "4K") "Ready — tap to play from here" else "${files.size} streams · hold for all",
+                    fontSize = 11.sp, color = if (here || (readyOne != null && title == "4K")) Color(0xFFFF8D94) else Color(0xFF9AA3B5))
             }
-            AnimatedVisibility(open == title && files.isNotEmpty(), enter = androidx.compose.animation.expandVertically(tween(260)) + fadeIn(tween(200)),
-                exit = androidx.compose.animation.shrinkVertically(tween(220)) + fadeOut(tween(160))) {
-                Column(Modifier.padding(start = 6.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    files.forEachIndexed { i, st ->
-                        val on = st.stream.url == playing
-                        val rs = RoundedCornerShape(10.dp)
-                        Row(
-                            Modifier.fillMaxWidth().clip(rs).background(if (on) Color(0x26E50914) else Color(0x0DFFFFFF))
-                                .border(1.dp, if (on) Color(0xCCE50914) else Color(0x12FFFFFF), rs).focusFill()
-                                .clickable(enabled = !on) { onPick(st) }.padding(horizontal = 10.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("${i + 1}", Modifier.width(22.dp), fontSize = 15.sp, fontWeight = FontWeight.Black, color = red)
-                            Column(Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text((VisualTags.video(st).ifEmpty { listOf(VisualTags.primary(st)) } + Public.streamName(st)).joinToString(" · "),
-                                        Modifier.weight(1f, fill = false), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (Ranker.untested(st)) Text("Unidentified", Modifier.padding(start = 6.dp).clip(RoundedCornerShape(5.dp)).background(Color(0x1FFFFFFF))
-                                        .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB6BDCC))
-                                }
-                                Text(listOfNotNull(VisualTags.audio(st), VisualTags.size(st), st.languagesOrOriginal().joinToString(" + ") { langLabel(it) },
-                                    if (Ranker.knownUnseekable(st)) "Can't jump" else if (st.isEmbedBackup()) "backup" else null).joinToString(" · "),
-                                    fontSize = 10.5.sp, color = Color(0xFF9AA3B5), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (here) Icon(Icons.Default.Check, null, Modifier.size(16.dp), tint = tick)
+            else if (readyOne != null && title == "4K") Text("READY", Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFFE50914)).padding(horizontal = 8.dp, vertical = 3.dp),
+                fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.White)
+        }
+        AnimatedVisibility(open == title && files.isNotEmpty(), enter = androidx.compose.animation.expandVertically(tween(260)) + fadeIn(tween(200)),
+            exit = androidx.compose.animation.shrinkVertically(tween(220)) + fadeOut(tween(160))) {
+            Column(Modifier.padding(start = 6.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                files.forEachIndexed { i, st ->
+                    val on = st.stream.url == playing
+                    val rs = RoundedCornerShape(10.dp)
+                    Row(
+                        Modifier.fillMaxWidth().clip(rs).background(if (on) Color(0x26E50914) else Color(0x0DFFFFFF))
+                            .border(1.dp, if (on) Color(0xCCE50914) else Color(0x12FFFFFF), rs).focusFill()
+                            .clickable(enabled = !on) { onPick(st) }.padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("${i + 1}", Modifier.width(22.dp), fontSize = 15.sp, fontWeight = FontWeight.Black, color = red)
+                        Column(Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text((VisualTags.video(st).ifEmpty { listOf(VisualTags.primary(st)) } + Public.streamName(st)).joinToString(" · "),
+                                    Modifier.weight(1f, fill = false), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (Ranker.untested(st)) Text("Unidentified", Modifier.padding(start = 6.dp).clip(RoundedCornerShape(5.dp)).background(Color(0x1FFFFFFF))
+                                    .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFB6BDCC))
                             }
-                            if (on) Icon(Icons.Default.Check, null, Modifier.size(15.dp), tint = red)
-                            else if (st.stream.url in ready || st.isPlaylist()) Icon(Icons.Default.Check, "Ready", Modifier.size(14.dp), tint = Color(0x99FF3B47))
+                            Text(listOfNotNull(VisualTags.audio(st), VisualTags.size(st), st.languagesOrOriginal().joinToString(" + ") { langLabel(it) },
+                                if (Ranker.knownUnseekable(st)) "Can't jump" else if (st.isEmbedBackup()) "backup" else null).joinToString(" · "),
+                                fontSize = 10.5.sp, color = Color(0xFF9AA3B5), maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
+                        if (on) Icon(Icons.Default.Check, null, Modifier.size(15.dp), tint = red)
+                        else if (st.stream.url in ready || st.isPlaylist()) Icon(Icons.Default.Check, "Ready", Modifier.size(14.dp), tint = Color(0x99FF3B47))
                     }
                 }
             }
         }
+    }
     }
 }
 

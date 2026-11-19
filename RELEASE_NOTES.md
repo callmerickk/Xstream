@@ -1,9 +1,8 @@
-Xstream 0.8.9
+Xstream 0.8.10
 
-• Once a video starts it never goes back to a loading or error screen — the picture holds while it reconnects.
-• No internet? It waits and continues from the same second.
-• Resume shows the source and the right quality tick.
-• Collections open at once and always play the right film; shorts and specials are left out.
-• Faster Quality menu and Top 10 posters.
-• Memory full? One tap clears it and tries again.
-• Old version having trouble? Xstream offers the update.
+• Weak internet: steps down to 720p / 480p by itself without reloading, back up when steady.
+• The playing stream always shows in Other streams.
+• No more "Find another source" — expired links are replaced quietly.
+• Loading screen ⌄ lists streams by quality; also available over a paused frame.
+• Each profile has its own search.
+• "mcu" and "avengers" show the MCU collection.

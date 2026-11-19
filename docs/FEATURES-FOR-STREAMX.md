@@ -131,3 +131,17 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
 - **Update nudge** (Updates.kt): `ActLog.add` PLAYFAIL / player ERROR / failed SWITCH → `Updater.onTrouble`; `latestKnown()` (saved
   kCode/kName/kUrl, works offline) → "This is fixed in the latest Xstream · Update now / Later", once a day, waits while `PlayingSrc.open > 0`.
 - **Cloud sync**: offline → waits quietly for the internet (was retrying every 60 s for hours).
+
+## 0.8.10 (19 Nov 2026)
+- **HLS on weak internet** (PlayerScreen `hlsCap`): 2 stalls in 90 s or a stall >4 s (not right after a seek) → `setMaxVideoSize(∞, next lower height)`
+  — same stream, changes at the next segment, no reload; one step up after 2 min smooth with 30 s buffered; a one-quality HLS → `ottSwapTo`
+  a lighter copy. Only in Auto (not when a quality was picked). Log: `QUALITY stream qualities: …`, `slow internet → 720p inside the stream`.
+- **Playing stream always listed**: `qCols` keyed on `now.url`/`firstFrame`; unknown playing link → synthesised `StreamItem` (source + height).
+- **No "Find another source"**: before the picture, a failed link → up to 3 quiet fresh look-ups (`autoFinds`, forced `findRequest`);
+  then the phone shows a ring + one line and looks again every 30 s (waits for the internet first). Both buttons removed.
+- **Loading-screen ⌄** (and over the held frame): opens `OtherStreamsList` (the Quality menu's Other streams: 4K / 1080p / Unlabelled / Auto,
+  hold for all); a pick `load()`s before the picture, `fadeTo` after.
+- **Per-profile search**: `SearchState.forProfile(pid)` keeps each profile's text, results, groups, open collection, tabs/scroll.
+- **Universe card**: added when ready (`lateUni`), never cut by a timer; by alias (mcu) or from the top results' keywords (avengers → MCU).
+  `realTitles` uses a light TMDB call (external_ids) 12 at a time; verdicts saved in prefs `colCheck`.
+- **Logs**: uploaded logs now include QUALITY / SWITCH / memory / retry lines.

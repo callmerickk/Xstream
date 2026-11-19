@@ -135,6 +135,24 @@ object SearchState {
     /** The query whose results are currently shown ("" = none). */
     val query = MutableStateFlow("")
     internal var job: Job? = null
+
+    /** 0.8.10: each profile has its own search (text, results, open collection); switching brings back that profile's own. */
+    private data class Snap(val text: String?, val openGroup: SearchGroup?, val tab: Map<String, String>, val scroll: Map<String, Int>,
+        val hits: List<SearchHit>, val groups: List<SearchGroup>, val dym: String?, val sugg: List<String>, val query: String)
+    private val byProfile = HashMap<String, Snap>()
+    private var owner: String? = null
+    fun forProfile(pid: String) {
+        if (owner == pid) return
+        owner?.let { byProfile[it] = Snap(text, openGroup, HashMap(groupTab), HashMap(groupScroll), hits.value, groups.value, didYouMean.value, suggestions.value, query.value) }
+        owner = pid
+        job?.cancel(); loading.value = false
+        val s = byProfile[pid]
+        text = s?.text; openGroup = s?.openGroup
+        groupTab.clear(); s?.tab?.let { groupTab.putAll(it) }
+        groupScroll.clear(); s?.scroll?.let { groupScroll.putAll(it) }
+        hits.value = s?.hits.orEmpty(); groups.value = s?.groups.orEmpty(); didYouMean.value = s?.dym
+        suggestions.value = s?.sugg.orEmpty(); query.value = s?.query.orEmpty()
+    }
 }
 
 private const val SIMG = "https://image.tmdb.org/t/p/"
@@ -325,13 +343,26 @@ fun AppViewModel.searchPremium(q: String) {
             // (MCU Avengers, Harry Potter 1–8, X-Men) come with the first results, so cards and results show together.
             val named: kotlinx.coroutines.Deferred<List<SearchGroup>>? = if (key.isNotEmpty()) async { runCatching { searchGroups(key, query) }.getOrDefault(emptyList<SearchGroup>()) } else null
             val universeByName = if (key.isNotEmpty()) async { runCatching { universeFor(key, query) }.getOrNull() } else null
+            // 0.8.10: the universe card (MCU…) is added the moment it is ready — never dropped by a 2.5 s timer (checking its
+            // titles takes longer the first time). Typed by name ("mcu") or the one the top results belong to ("avengers").
+            var lateUni: SearchGroup? = null
+            val tmdbDone = kotlinx.coroutines.CompletableDeferred<Unit>()
+            if (key.isNotEmpty()) launch {
+                val uni = universeByName?.await() ?: run {
+                    withTimeoutOrNull(15_000) { tmdbDone.await() }
+                    tmdbSeen.universes.sortedBy { it.first }.firstOrNull { it.first < 5 }?.let { u -> runCatching { universeById(key, u.second, u.third) }.getOrNull() }
+                } ?: return@launch
+                lateUni = uni
+                val cur = SearchState.groups.value
+                if (cur.none { it.kind == "universe" && it.name == uni.name }) SearchState.groups.value = (listOf(uni) + cur).take(5)
+            }
             suspend fun allGroups(hits: List<SearchHit>): List<SearchGroup> {
                 val fromHits = runCatching { collectionsOf(key, tmdbSeen.collections.sortedBy { it.first }.map { it.second }.distinct().take(3)) }.getOrDefault(emptyList())
                 val byName = named?.let { withTimeoutOrNull(1_200) { it.await() } }.orEmpty()
                 val sameTitle = titleFamilies(query, hits)
                 // A shared universe: asked for by name (MCU, DCEU…), or one the top results belong to (First Steps → MCU).
-                val uni = universeByName?.let { withTimeoutOrNull(2_500) { it.await() } }
-                    ?: tmdbSeen.universes.sortedBy { it.first }.firstOrNull { it.first < 5 }?.let { u -> runCatching { withTimeoutOrNull(2_500) { universeById(key, u.second, u.third) } }.getOrNull() }
+                val uni = lateUni ?: universeByName?.let { withTimeoutOrNull(300) { it.await() } }
+                    ?: tmdbSeen.universes.sortedBy { it.first }.firstOrNull { it.first < 5 }?.let { u -> universeCache[u.second] }
                 val collections = (fromHits + byName).distinctBy { it.name.lowercase().removeSuffix(" collection").trim() }
                 // Same hero, different story (Fantastic Four 1994, 2015, First Steps): beside the collection of true sequels.
                 val versions = collections.filter { it.kind == "collection" }.mapNotNull { otherVersions(it, hits) }
@@ -352,6 +383,7 @@ fun AppViewModel.searchPremium(q: String) {
                     put(first)
                 } }.getOrDefault(emptyList<SearchHit>())
                 if (!groupsDone || SearchState.groups.value.isEmpty()) SearchState.groups.value = allGroups(r)
+                tmdbDone.complete(Unit)
                 put(r)
             }
         }
@@ -389,7 +421,7 @@ private fun tmdbMetaOf(o: JsonObject, kindHint: String): Meta? {
 private val checkedTitles = java.util.concurrent.ConcurrentHashMap<String, Meta>()
 private val droppedTitles: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 private suspend fun realTitles(key: String, items: List<Meta>): List<Meta> = coroutineScope {
-    val gate = kotlinx.coroutines.sync.Semaphore(8)
+    val gate = kotlinx.coroutines.sync.Semaphore(12)
     items.map { m ->
         async {
             if (!m.id.startsWith("tmdb:")) return@async m
@@ -398,7 +430,13 @@ private suspend fun realTitles(key: String, items: List<Meta>): List<Meta> = cor
             val p = m.id.split(":")
             val kind = p.getOrNull(1) ?: return@async m
             val tid = p.getOrNull(2) ?: return@async m
-            val d = gate.withPermit { runCatching { tmdbDetail(key, kind, tid) }.getOrNull() } ?: return@async m
+            // 0.8.10: remembered on the phone (instant next time); a light request (no pictures / keywords).
+            val prefs = Public.vm?.appContext?.getSharedPreferences("colCheck", android.content.Context.MODE_PRIVATE)
+            prefs?.getString(m.id, null)?.let { v ->
+                return@async if (v.startsWith("tt")) m.copy(id = v).also { checkedTitles[m.id] = it; rememberColImdb(m.id, v) } else { droppedTitles += m.id; null }
+            }
+            val d = gate.withPermit { runCatching { detailCache["$kind:$tid"] ?: withContext(Dispatchers.Default) {
+                Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/$kind/$tid?api_key=$key&append_to_response=external_ids")).jsonObject } }.getOrNull() } ?: return@async m
             val imdb = (d.sObj("external_ids")?.sStr("imdb_id") ?: d.sStr("imdb_id"))?.takeIf { it.startsWith("tt") }
             val genres = d.sArr("genres").mapNotNull { it.sStr("id")?.toIntOrNull() }
             val runtime = if (kind == "tv") (d["episode_run_time"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }?.maxOrNull() ?: 0
@@ -411,6 +449,7 @@ private suspend fun realTitles(key: String, items: List<Meta>): List<Meta> = cor
                 isJunkTitle(m.name) -> "special"
                 else -> null
             }
+            runCatching { prefs?.edit()?.putString(m.id, if (why == null) imdb!! else "x")?.apply() }
             if (why != null) { droppedTitles += m.id; ActLog.add("APP", "collection: left out \"${m.name}\" ($why)"); null }
             else m.copy(id = imdb!!).also { checkedTitles[m.id] = it; rememberColImdb(m.id, imdb) }
         }
@@ -597,7 +636,8 @@ private val ChipText = Color(0xFFB6BDCC)
 
 @Composable
 fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
-    var q by remember(initial) { mutableStateOf(if (initial.isNotEmpty()) initial else SearchState.text ?: "") }
+    val searchPid = vm.current.collectAsStateWithLifecycle().value?.id
+    var q by remember(initial, searchPid) { mutableStateOf(if (initial.isNotEmpty()) initial else SearchState.text ?: "") }
     LaunchedEffect(q) { SearchState.text = q }
     val adultPref = vm.texts.collectAsStateWithLifecycle().value["adultOn"]
     SearchAdult.on = adultPref != "no"
@@ -607,7 +647,7 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
     val shownQuery by SearchState.query.collectAsStateWithLifecycle()
     val groups by SearchState.groups.collectAsStateWithLifecycle()
     val dym by SearchState.didYouMean.collectAsStateWithLifecycle()
-    var openGroup by remember { mutableStateOf(SearchState.openGroup) }
+    var openGroup by remember(searchPid) { mutableStateOf(SearchState.openGroup) }
     LaunchedEffect(openGroup) { SearchState.openGroup = openGroup }
     // Opening a title from a collection keeps the collection open behind it: Back comes back to it.
     openGroup?.let { g -> GroupPage(g, onClose = { openGroup = null }) { m -> onOpen(m) } }
