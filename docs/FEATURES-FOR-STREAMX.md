@@ -145,3 +145,12 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
 - **Universe card**: added when ready (`lateUni`), never cut by a timer; by alias (mcu) or from the top results' keywords (avengers → MCU).
   `realTitles` uses a light TMDB call (external_ids) 12 at a time; verdicts saved in prefs `colCheck`.
 - **Logs**: uploaded logs now include QUALITY / SWITCH / memory / retry lines.
+
+## 0.8.11 (19 Nov 2026)
+- **Quality that follows the internet, no loading** (PlayerScreen, replaces the 0.8.10 block): `bwNow` = smoothed
+  `AnalyticsListener.onBandwidthEstimate`; rungs + bitrates from the HLS video track group. Down **before** a stall when speed
+  < 1.2× the current rung and < 10 s loaded ahead (or a 1.5 s stall) → `setMaxVideoSize` to the next rung that fits (loaded part
+  keeps playing, next segment lighter). Up one rung when speed > 1.4× the next rung with 20 s ahead for 12 s; a stall within 60 s
+  of a climb doubles that wait (max 2 min). Auto only. Logs `QUALITY speed … → 720p inside the stream (no reload)`.
+- **Ladder upgrades guarded**: no VegaMovies/RogMovies upgrade while capped, 3 min after a slow moment, or under 8 Mb/s; 3 tries per title.
+- **60fps note**: its own 8 s timer, top-right.

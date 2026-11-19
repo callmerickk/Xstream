@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.xstream"
         minSdk = 24
         targetSdk = 34
-        versionCode = 44
-        versionName = "0.8.10"
+        versionCode = 45
+        versionName = "0.8.11"
     }
     // Two apps from one project: the phone app and StreamX TV (Fire TV / Android TV).
     // "gradle assembleDebug" builds both APKs.

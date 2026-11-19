@@ -788,6 +788,10 @@ fun PlayerScreen(
     var switching by remember { mutableStateOf(false) }
     /** 0.8.9: when the Quality chip was tapped (to log how fast the menu appeared). */
     val qTapAt = remember { longArrayOf(0L) }
+    /** 0.8.11: the cap inside an HLS stream (0 = none), when the internet last looked weak, and the measured speed (bit/s). */
+    var hlsCap by remember(p.key) { mutableIntStateOf(0) }
+    var lastSlowAt by remember(p.key) { mutableLongStateOf(0L) }
+    val bwNow = remember { longArrayOf(0L) }
     /** 0.8.10: the ⌄ Sources list over the loading screen / held frame (Other streams style). */
     var pickOpen by remember { mutableStateOf(false) }
     var switchLabel by remember { mutableStateOf<String?>(null) }
@@ -3000,6 +3004,9 @@ fun PlayerScreen(
                     if (here >= 3) break
                     // Never at the cost of the film you're watching: only while it plays smoothly with 30 s loaded ahead.
                     if (buffering || curBuffered() - curPos() < 30_000) { delay(1_000); continue }
+                    // 0.8.11: no heavy upgrades on weak internet (they took the speed the film needed), 3 tries per title.
+                    if (hlsCap > 0 || (lastSlowAt > 0 && SystemClock.uptimeMillis() - lastSlowAt < 180_000) || tried.size >= 3 ||
+                        (bwNow[0] in 1 until 8_000_000)) { delay(2_000); continue }
                     val hdrOff = HdrRule.banned(vm)
                     val ok = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false).filter {
                         it.stream.url !in tried && it.effectiveRes() in 1000..1199 && vm.langRank(it) <= vm.langRank(cur) && !it.unplayableHere() &&
@@ -3136,16 +3143,28 @@ fun PlayerScreen(
         }
     }
 
-    // ───── 0.8.10: weak internet on an HLS stream ─────
-    // Two stalls in 90 s (or one longer than 4 s) → the top quality is switched off inside the same stream (720p, then
-    // 480p): no reload, it changes at the next piece. Back up one step after 2 min smooth with 30 s buffered. A stream
-    // with only one quality → a lighter copy of the title, faded in. Never when you picked a quality yourself.
-    var hlsCap by remember(p.key) { mutableIntStateOf(0) }
+    // ───── 0.8.11: quality that follows the internet, with no loading ─────
+    // Every second: seconds loaded ahead + the measured speed. Inside an HLS stream the next lower quality is chosen
+    // BEFORE the buffer runs out (speed below what this quality needs and < 10 s ahead), so the loaded part keeps playing
+    // and the next piece is lighter — no ring. Up one step when the speed has carried 1.4× the next quality for 12 s with
+    // 20 s ahead. A step up that stalls within 60 s waits longer next time (30 s, 60 s…). Only in Auto.
+    DisposableEffect(player) {
+        val pl = player
+        val l = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onBandwidthEstimate(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, totalLoadTimeMs: Int, totalBytesLoaded: Long, bitrateEstimate: Long) {
+                bwNow[0] = if (bwNow[0] == 0L) bitrateEstimate else (bwNow[0] * 6 + bitrateEstimate * 4) / 10
+            }
+        }
+        runCatching { pl.addAnalyticsListener(l) }
+        onDispose { runCatching { pl.removeAnalyticsListener(l) } }
+    }
     LaunchedEffect(firstFrame, p.key) {
         if (!firstFrame || BuildConfig.IS_TV) return@LaunchedEffect
-        var smoothSince = SystemClock.uptimeMillis()
         var loggedFor: String? = null
         var capFor: String? = null
+        var goodSince = 0L
+        var upAt = 0L
+        var upWait = 12_000L
         fun setCap(h: Int) {
             hlsCap = h
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
@@ -3155,39 +3174,61 @@ fun PlayerScreen(
             delay(1_000)
             if (usingVlc) continue
             val url = now?.url ?: continue
-            if (capFor != url) { if (hlsCap > 0) setCap(0); capFor = url }
+            if (capFor != url) { if (hlsCap > 0) setCap(0); capFor = url; goodSince = 0L; upWait = 12_000L }
             val g = player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO }
-            val heights = g?.let { gg -> (0 until gg.length).map { gg.getTrackFormat(it).height }.filter { it > 0 }.distinct().sortedDescending() }.orEmpty()
-            if (heights.isNotEmpty() && loggedFor != url) { loggedFor = url; ActLog.add("QUALITY", "stream qualities: ${heights.joinToString(", ") { "${it}p" }}") }
+            val rungs = g?.let { gg -> (0 until gg.length).map { gg.getTrackFormat(it) }.filter { it.height > 0 }
+                .groupBy { it.height }.map { (h, fs) -> h to (fs.maxOf { it.bitrate.takeIf { b -> b > 0 } ?: it.peakBitrate.takeIf { b -> b > 0 } ?: (h * h * 2) }) } }
+                .orEmpty().sortedByDescending { it.first }
+            if (rungs.isNotEmpty() && loggedFor != url) { loggedFor = url; ActLog.add("QUALITY", "stream qualities: ${rungs.joinToString(", ") { "${it.first}p ${it.second / 1000} kb/s" }}") }
             if (byHand || qChosen != "auto" || switching || !firstFrame) continue
             if (g != null && player.trackSelectionParameters.overrides.keys.any { it == g.mediaTrackGroup }) continue
             val t = SystemClock.uptimeMillis()
-            if (buffering) smoothSince = t
-            val curH = player.videoSize.height.takeIf { it > 0 } ?: heights.firstOrNull() ?: continue
-            val afterSeek = t - seekedAt < 8_000
-            val slow = !afterSeek && ((stalls >= 2 && t - stallAt < 90_000) || (buffering && t - stallAt > 4_000))
-            if (slow) {
-                val top = if (hlsCap > 0) minOf(hlsCap, curH) else curH
-                val lower = heights.firstOrNull { it < top - 50 }
-                if (heights.size > 1 && lower != null) {
-                    stalls = 0; setCap(lower); smoothSince = t
-                    ActLog.add("QUALITY", "slow internet → ${lower}p inside the stream (no reload)")
-                } else if (heights.size <= 1 && hlsCap == 0) {
-                    val cur = itemFor(url)
+            val ahead = (player.bufferedPosition - player.currentPosition).coerceAtLeast(0)
+            val bw = bwNow[0]
+            val curH = player.videoSize.height.takeIf { it > 0 } ?: rungs.firstOrNull()?.first ?: continue
+            val cur = rungs.minByOrNull { kotlin.math.abs(it.first - curH) }
+            val afterSeek = t - seekedAt < 6_000
+            if (buffering && !afterSeek) {
+                lastSlowAt = t; goodSince = 0L
+                if (upAt > 0 && t - upAt < 60_000) { upWait = (upWait * 2).coerceAtMost(120_000); upAt = 0L }
+            }
+            if (rungs.size > 1 && cur != null) {
+                val top = if (hlsCap > 0) minOf(hlsCap, cur.first) else cur.first
+                val topRate = rungs.firstOrNull { it.first <= top }?.second ?: cur.second
+                // Down, early: the speed can't carry this quality and the loaded part is getting short (or it already stalled).
+                val tooSlow = bw in 1 until (topRate * 12 / 10) && ahead < 10_000
+                if (!afterSeek && (tooSlow || (buffering && t - stallAt > 1_500))) {
+                    val lower = rungs.firstOrNull { it.first < top - 50 && (bw <= 0 || it.second * 12 / 10 <= bw || it == rungs.last()) }
+                        ?: rungs.firstOrNull { it.first < top - 50 }
+                    if (lower != null) {
+                        stalls = 0; setCap(lower.first); goodSince = 0L; lastSlowAt = t
+                        ActLog.add("QUALITY", "speed ${bw / 1000} kb/s, ${ahead / 1000} s ahead → ${lower.first}p inside the stream (no reload)")
+                    }
+                } else if (hlsCap > 0) {
+                    // Up: steady speed for 12 s (longer after a failed climb) with 20 s ahead.
+                    val next = rungs.filter { it.first > hlsCap + 50 }.minByOrNull { it.first }
+                    val canCarry = next != null && bw > next.second * 14 / 10 && ahead > 20_000 && !buffering
+                    if (!canCarry) goodSince = 0L
+                    else if (goodSince == 0L) goodSince = t
+                    else if (t - goodSince >= upWait) {
+                        val newCap = if (next!!.first >= rungs.first().first) 0 else next.first
+                        setCap(newCap); upAt = t; goodSince = 0L
+                        ActLog.add("QUALITY", "speed ${bw / 1000} kb/s steady → " + (if (newCap == 0) "top quality" else "${newCap}p") + " (no reload)")
+                    }
+                }
+            } else if (rungs.size <= 1 && hlsCap == 0 && !afterSeek && ((buffering && t - stallAt > 3_000) || stalls >= 2)) {
+                // One quality only: a lighter copy, faded in (not more than once a minute).
+                if (t - upAt > 60_000) {
+                    val curItem = itemFor(url)
                     val c = (known + quickList).distinctBy { it.stream.url }.filter { it.stream.url != url && it.stream.url.orEmpty() !in tried && !Ranker.isDead(it) &&
-                        it.effectiveRes() in 1 until (curH - 50) && (cur == null || vm.langRank(it) <= vm.langRank(cur)) }
+                        it.effectiveRes() in 1 until (curH - 50) && (curItem == null || vm.langRank(it) <= vm.langRank(curItem)) }
                         .sortedWith(compareBy<StreamItem>({ if (it.isPlaylist()) 0 else 1 }, { -it.effectiveRes() })).firstOrNull()
                     if (c != null) {
-                        stalls = 0; smoothSince = t
+                        stalls = 0; upAt = t; lastSlowAt = t
                         ActLog.add("QUALITY", "slow internet, one-quality stream → lighter copy ${Public.streamName(c)} (fade)")
                         runCatching { ottSwapTo(c, why = "slow internet → lighter copy") }
                     }
                 }
-            } else if (hlsCap > 0 && t - smoothSince > 120_000 && player.bufferedPosition - player.currentPosition > 30_000) {
-                val higher = heights.filter { it > hlsCap + 50 }.minOrNull()
-                val next = if (higher == null || higher >= (heights.firstOrNull() ?: 0)) 0 else higher
-                setCap(next); smoothSince = t
-                ActLog.add("QUALITY", "internet steady → " + if (next == 0) "top quality again" else "${next}p")
             }
         }
     }
@@ -4088,9 +4129,11 @@ fun PlayerScreen(
                 LaunchedEffect(known.size, quickList.size, firstFrame) {
                     if (found60 || !firstFrame) return@LaunchedEffect
                     val any = withContext(Dispatchers.Default) { (known + quickList).any { it.effectiveRes() >= 1000 && VisualTags.video(it).contains("60 fps") } }
-                    if (any) { found60 = true; PlayTiming.late("60fps copy found (Quality › 60fps)"); show60 = true; delay(8_000); show60 = false }
+                    if (any) { found60 = true; PlayTiming.late("60fps copy found (Quality › 60fps)"); show60 = true }
                 }
-                AnimatedVisibility(show60 && firstFrame && !inPip && !locked, Modifier.align(Alignment.TopStart).padding(start = side, top = if (controls) 86.dp else 22.dp),
+                // 0.8.11: its own timer (new links used to cancel the hiding), top-right.
+                LaunchedEffect(show60) { if (show60) { delay(8_000); show60 = false } }
+                AnimatedVisibility(show60 && firstFrame && !inPip && !locked, Modifier.align(Alignment.TopEnd).padding(end = side, top = if (controls) 86.dp else 22.dp),
                     enter = fadeIn(tween(220)) + slideInVertically(tween(260)) { -it }, exit = fadeOut(tween(260))) {
                     Text("60fps available", Modifier.clip(RoundedCornerShape(50)).background(Color(0x66101116)).border(1.dp, Color(0x40FFFFFF), RoundedCornerShape(50))
                         .padding(horizontal = 12.dp, vertical = 5.dp), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)

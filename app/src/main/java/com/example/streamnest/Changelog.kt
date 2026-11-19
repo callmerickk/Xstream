@@ -13,6 +13,12 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.11", "19 Nov 2026", "Quality follows your internet, no loading", listOf(
+        "On weak internet the quality lowers before the video runs out — no loading ring",
+        "When the internet is steady again (about 12 s), it goes back up by itself, also without loading",
+        "No heavy background upgrades while the internet is weak",
+        "“60fps available” shows top-right and hides after 8 s",
+    )),
     Release("0.8.10", "19 Nov 2026", "Smarter on weak internet, no more Find another source", listOf(
         "Weak internet: streams step down to 720p / 480p by themselves without reloading, and climb back when it's steady",
         "The stream that's playing always shows in Other streams",
@@ -521,6 +527,14 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.11", "19 Nov 2026", "Predictive HLS quality, ladder guard, 60fps note", listOf(
+        "bwNow from AnalyticsListener.onBandwidthEstimate (smoothed); per-rung bitrate from the track group",
+        "Down before a stall: speed < 1.2× current rung and < 10 s ahead (or stalled 1.5 s) → setMaxVideoSize next rung that fits; no reload",
+        "Up: speed > 1.4× next rung, 20 s ahead, for 12 s → one rung up; a stall within 60 s of a climb doubles the wait (max 2 min)",
+        "One-quality stream: lighter copy faded in, at most once a minute",
+        "Ladder upgrades (VegaMovies/RogMovies) paused while capped / 3 min after a slow moment / speed < 8 Mb/s; 3 tries per title",
+        "60fps note: own 8 s timer (known.size changes cancelled it), TopEnd",
+    )),
     Release("0.8.10", "19 Nov 2026", "HLS step-down, no fail screen, sources list, per-profile search, late universe", listOf(
         "hlsCap: 2 stalls/90 s or a 4 s stall → setMaxVideoSize one rung down (no reload); up one rung after 2 min smooth + 30 s buffer; one-rung HLS → ottSwapTo lighter copy; QUALITY 'stream qualities' logged",
         "qCols keyed on now.url + firstFrame; the playing link always listed (synthesised StreamItem with its height when not in any list)",

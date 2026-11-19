@@ -1,8 +1,6 @@
-Xstream 0.8.10
+Xstream 0.8.11
 
-• Weak internet: steps down to 720p / 480p by itself without reloading, back up when steady.
-• The playing stream always shows in Other streams.
-• No more "Find another source" — expired links are replaced quietly.
-• Loading screen ⌄ lists streams by quality; also available over a paused frame.
-• Each profile has its own search.
-• "mcu" and "avengers" show the MCU collection.
+• Weak internet: the quality lowers before the video runs out — no loading.
+• Back up by itself when the internet is steady (about 12 s), also without loading.
+• No heavy background upgrades on weak internet.
+• "60fps available" now top-right and hides after 8 s.
