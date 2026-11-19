@@ -1,6 +1,7 @@
 package com.example.streamnest
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background

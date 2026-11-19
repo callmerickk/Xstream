@@ -237,7 +237,7 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     // per player plus a second player during a quiet swap / Watch next / next-episode preload ran the app out of memory
     // (3 crashes on The Odyssey). Cap at ~30 % of the heap, and half that while another player is alive.
     val heapMb = (Runtime.getRuntime().maxMemory() / (1024 * 1024)).toInt()
-    val others = PlayerCount.alive.get()
+    val others = PlayerCount.alive()
     val budgetMb = minOf(byRam, (heapMb * 0.30).toInt().coerceAtLeast(48) / (if (others > 0) 2 else 1)).coerceAtLeast(32)
     val load = DefaultLoadControl.Builder()
         // About a minute ahead (like Nuvio): more was downloaded and thrown away at every seek.
@@ -6920,9 +6920,7 @@ private fun WatchNextLoadingCard(w: WnLoad, startedAt: Long, onOpen: () -> Unit,
 object PlayerCount {
     private val set = java.util.Collections.newSetFromMap(java.util.WeakHashMap<ExoPlayer, Boolean>())
     fun add(p: ExoPlayer) { synchronized(set) { set += p } }
-    val alive = object {
-        fun get(): Int = synchronized(set) { set.count { runCatching { it.playbackState != androidx.media3.common.Player.STATE_IDLE }.getOrDefault(false) } }
-    }
+    fun alive(): Int = synchronized(set) { set.count { runCatching { it.playbackState != androidx.media3.common.Player.STATE_IDLE }.getOrDefault(false) } }
 }
 
 
