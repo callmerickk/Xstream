@@ -236,7 +236,20 @@ fun DetailScreen(
     val level = vm.playerPref("quality").ifEmpty { texts["qsQuality"] ?: "auto" }
     val instantOn = !external && (quick || autoMode != "manual")
     LaunchedEffect(playTarget.target.videoId, quick, level) {
-        if (meta.type == "series" && !playTarget.target.videoId.contains(":")) return@LaunchedEffect
+        // 0.8.16: a show whose episode list hasn't come yet starts with your Continue episode (or S1E1) at once; when
+        // the list comes, the real next episode replaces it if it differs.
+        if (meta.type == "series" && !playTarget.target.videoId.contains(":")) {
+            val mine = progress.filter { it.key.startsWith(meta.id + ":") }.maxByOrNull { it.updated }
+            val guess = mine?.takeIf { !(it.durationMs > 0 && it.positionMs >= it.durationMs * 0.90) }?.key ?: if (mine == null) "${meta.id}:1:1" else return@LaunchedEffect
+            PluginSources.noteMeta(meta)
+            DetailTiming.begin(meta.name, guess)
+            Prepare.start(vm, ctx, meta.type, guess, mine?.positionMs ?: 0L, null, quick, level, meta)
+            return@LaunchedEffect
+        }
+        // 0.8.16: the plugins get this title's name + year at once (they asked Cinemeta first: ~1.4 s before Netflix /
+        // Prime / Hotstar even started searching).
+        PluginSources.noteMeta(meta)
+        DetailTiming.begin(meta.name, playTarget.target.videoId)
         // CNCVerse (Vegamovies…) is asked from the moment the page opens, alongside MovieBox: its server needs time to
         // collect the links, so they are there for the HD upgrade once the video plays.
         SlowAddons.watch(vm, meta.type, playTarget.target.videoId)
@@ -252,6 +265,7 @@ fun DetailScreen(
         if (names.isNotEmpty()) runCatching { vm.streamsFlow(meta.type, playTarget.target.videoId, only = names).collect { } }
     }
     val prep by Prepare.state.collectAsStateWithLifecycle()
+    LaunchedEffect(prep) { DetailTiming.on(prep) }
     // Play pressed while it is still saving: stay here; start as soon as enough is saved (or fall back).
     var waitingFor by remember { mutableStateOf<SourceTarget?>(null) }
     var waitingResume by remember { mutableLongStateOf(0L) }

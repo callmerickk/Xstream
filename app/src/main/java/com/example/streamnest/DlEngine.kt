@@ -139,6 +139,8 @@ object DlEngine {
         ActLog.add("APP", "download finished: ${d.title} (${f.length() / 1_048_576} MB)")
         if (jobs.values.none { it.isActive }) DlService.stop(ctx)
         DlService.finished(ctx, d.title)
+        // 0.8.16: shown in the gallery / file manager right away.
+        runCatching { android.media.MediaScannerConnection.scanFile(ctx, arrayOf(d.file), null, null) }
     }
 }
 

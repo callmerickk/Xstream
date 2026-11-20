@@ -532,7 +532,7 @@ object DeviceCodecs {
     }
 }
 
-private fun StreamItem.allText(): String = listOfNotNull(stream.name, stream.title, stream.description, stream.behaviorHints?.filename).joinToString(" ").lowercase()
+private fun StreamItem.allText(): String = noSourceName(listOfNotNull(stream.name, stream.title, stream.description, stream.behaviorHints?.filename).joinToString(" ")).lowercase()
 private val heavyRx = Regex("remux|truehd|true-hd|dts-?hd|dts-?x|dts[ ._-]?ma")
 private val dvRx = Regex("(^|[^a-z])(dv|dovi|dolby[ ._-]?vision)([^a-z]|$)")
 private val hdrRx = Regex("hdr10|hdr")

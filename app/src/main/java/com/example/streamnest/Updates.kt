@@ -26,6 +26,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -193,7 +196,10 @@ object Updater {
     /** Xstream came to the front: open the installer for a download that finished meanwhile. */
     fun onResume(ctx: Context) {
         foreground = true
-        if (installWaiting) { installWaiting = false; install(ctx.applicationContext) }
+        if (installWaiting) {
+            val can = Build.VERSION.SDK_INT < 26 || ctx.packageManager.canRequestPackageInstalls()
+            if (can) { installWaiting = false; install(ctx.applicationContext) }
+        }
     }
 
     /** Android's download manager: survives minimising and closing the app, shows its own notification. */
@@ -233,8 +239,15 @@ object Updater {
     }
 
     /** Downloads the APK (progress in [progress]) and opens the installer. */
+    /** 0.8.16: a finished download waiting for "Install" (kept — never downloaded again for the same version). */
+    val ready = MutableStateFlow<UpdateInfo?>(null)
+    private fun keptFor(ctx: Context, code: Int): Boolean =
+        prefs(ctx).getInt("apkCode", 0) == code && listOf(dmFile(ctx), apkFile(ctx)).any { it.exists() && it.length() > 1_000_000 }
+
     suspend fun downloadAndInstall(ctx: Context, info0: UpdateInfo) {
         if (progress.value != null) return
+        // Already downloaded this version (e.g. you went to allow "unknown apps"): straight to Install.
+        if (keptFor(ctx, info0.versionCode)) { ready.value = info0; if (foreground) install(ctx) else installWaiting = true; return }
         error.value = null
         progress.value = 0f
         // A newer build may have come out since the pop-up appeared: always the newest.
@@ -247,11 +260,16 @@ object Updater {
             val ok = fast || runCatching { dmDownload(ctx, info) }.getOrNull() == true || run { progress.value = 0f; plainDownload(info, apkFile(ctx)) }
             progress.value = null; inBackground.value = false
             if (!ok) { error.value = "Download failed. Check your connection and try again."; return }
-            if (foreground) install(ctx) else installWaiting = true
+            prefs(ctx).edit().putInt("apkCode", info.versionCode).apply()
+            ready.value = info
         } finally { UpdateService.stop(ctx) }
     }
 
-    private fun client() = Api.http.newBuilder().readTimeout(25, java.util.concurrent.TimeUnit.SECONDS).build()
+    // 0.8.16: the update file uses the phone's own DNS first (it picks the nearest GitHub file server — the private DNS
+    // could pick a far one, which crawled at KB/s), the private DNS only if that fails.
+    private fun client() = Api.http.newBuilder().readTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
+        .dns(object : okhttp3.Dns { override fun lookup(hostname: String) = runCatching { okhttp3.Dns.SYSTEM.lookup(hostname) }.getOrNull()?.takeIf { it.isNotEmpty() } ?: Api.http.dns.lookup(hostname) })
+        .build()
 
     /** Parallel ranged download into [apkFile]; resumes each part a few times if a connection drops. */
     private suspend fun fastDownload(ctx: Context, info: UpdateInfo): Boolean = withContext(Dispatchers.IO) {
@@ -338,7 +356,9 @@ object Updater {
     fun install(ctx: Context) {
         val f = listOf(dmFile(ctx), apkFile(ctx)).filter { it.exists() && it.length() > 0 }.maxByOrNull { it.lastModified() } ?: return
         if (Build.VERSION.SDK_INT >= 26 && !ctx.packageManager.canRequestPackageInstalls()) {
-            error.value = "Allow Xstream to install updates, then press Update again."
+            // 0.8.16: the file is kept; coming back after allowing opens the installer by itself.
+            installWaiting = true
+            error.value = "Allow Xstream to install updates — the installer opens when you come back."
             runCatching {
                 ctx.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
@@ -401,11 +421,36 @@ fun UpdatePrompt() {
             confirmButton = { androidx.compose.material3.TextButton({ nudge = null; info = k }) { androidx.compose.material3.Text("Update now") } },
             dismissButton = { androidx.compose.material3.TextButton({ nudge = null }) { androidx.compose.material3.Text("Later") } })
     }
+    // 0.8.16: downloading shows as a small pill with a progress bar (bottom corner); when it's done, "Install".
+    val prog by Updater.progress.collectAsState()
+    val bgOn by Updater.inBackground.collectAsState()
+    val spd by Updater.speed.collectAsState()
+    if (prog != null && bgOn) UpdatePill(prog ?: 0f, spd)
+    val done by Updater.ready.collectAsState()
+    done?.takeIf { it.versionCode > BuildConfig.VERSION_CODE && info == null }?.let { r ->
+        androidx.compose.material3.AlertDialog(onDismissRequest = { Updater.ready.value = null },
+            title = { androidx.compose.material3.Text("Xstream ${r.versionName} is ready") },
+            text = { androidx.compose.material3.Text("The update has downloaded. Install it now?") },
+            confirmButton = { androidx.compose.material3.TextButton({ Updater.ready.value = null; Updater.install(ctx) }) { androidx.compose.material3.Text("Install") } },
+            dismissButton = { androidx.compose.material3.TextButton({ Updater.ready.value = null }) { androidx.compose.material3.Text("Later") } })
+    }
     val i = info ?: return
+    fun bg() { Updater.inBackground.value = true; if (Updater.progress.value == null) Updater.start(ctx, i); info = null }
     UpdateDialog(i, onLater = { Updater.laterThisRun = true; Updater.laterAt = System.currentTimeMillis(); info = null }, onSkip = { Updater.skip(ctx, i); info = null },
-        onBackground = { Updater.inBackground.value = true; if (Updater.progress.value == null) Updater.start(ctx, i); info = null
-            android.widget.Toast.makeText(ctx, "Downloading in the background — the installer opens when it's done.", android.widget.Toast.LENGTH_LONG).show() }) {
-        Updater.start(ctx, i)
+        onBackground = { bg() }) { if (BuildConfig.IS_TV) Updater.start(ctx, i) else bg() }
+}
+
+/** 0.8.16: the update downloading — a small pill with its progress, above the bottom bar. */
+@Composable
+private fun UpdatePill(p: Float, bytesPerSec: Long) {
+    Box(Modifier.fillMaxSize().navigationBarsPadding().padding(end = 14.dp, bottom = 96.dp), contentAlignment = Alignment.BottomEnd) {
+        Column(Modifier.width(170.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xF0181A21)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(14.dp)).padding(10.dp)) {
+            Text("Updating Xstream · ${(p * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+            if (bytesPerSec > 0) Text(if (bytesPerSec > 1_000_000) "%.1f MB/s".format(bytesPerSec / 1_000_000.0) else "${bytesPerSec / 1000} KB/s", fontSize = 10.5.sp, color = Color(0xFF9AA3B5))
+            Box(Modifier.padding(top = 6.dp).fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0x33FFFFFF))) {
+                Box(Modifier.fillMaxWidth(p.coerceIn(0.02f, 1f)).fillMaxHeight().background(BrandRed))
+            }
+        }
     }
 }
 

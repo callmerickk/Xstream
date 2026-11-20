@@ -112,7 +112,10 @@ object Api {
      */
     private class ChainDns(first: String) : Dns {
         private val order = (listOf(first) + listOf("cloudflare", "google", "quad9", "adguard")).distinct().mapNotNull { n -> dohFor(n)?.let { n to it } }
+        /** 0.8.16: a name no DNS knows (a site that moved, like vegamovies.mq) is remembered 10 min — it was asked 20+ times, 1.5 s each. */
+        private val gone = java.util.concurrent.ConcurrentHashMap<String, Long>()
         override fun lookup(hostname: String): List<InetAddress> {
+            gone[hostname]?.let { if (System.currentTimeMillis() - it < 600_000) throw java.net.UnknownHostException("$hostname: not found (remembered)") }
             if (hostname.endsWith(".local") || hostname == "localhost" || hostname.matches(Regex("[0-9.]+"))) return Dns.SYSTEM.lookup(hostname)
             val tried = ArrayList<String>()
             for ((name, dns) in order) {
@@ -127,6 +130,8 @@ object Api {
                 } catch (e: Exception) { tried += "$name: ${e.javaClass.simpleName}" }
             }
             dohFallbacks.incrementAndGet()
+            // Only when the DNS servers answered "no such name" (not when the internet was off).
+            if (tried.all { it.endsWith("UnknownHostException") || it.endsWith("no address") }) gone[hostname] = System.currentTimeMillis()
             ActLog.add("NET", "DNS: $hostname not found — ${tried.joinToString()}")
             throw java.net.UnknownHostException("$hostname: no private DNS answered (${tried.joinToString()})")
         }

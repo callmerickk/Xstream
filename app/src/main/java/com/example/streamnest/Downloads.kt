@@ -103,6 +103,13 @@ object Downloads {
     }
 
     /** Bytes used by finished downloads. */
+    /** Movies/Xstream (visible to the gallery and file manager), else the app's own Movies folder. */
+    fun publicDir(ctx: Context): File {
+        val pub = runCatching { File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "Xstream").apply { mkdirs() } }.getOrNull()
+        if (pub != null && runCatching { File(pub, ".xstream-probe.mp4").let { f -> f.writeText("x"); f.delete() } }.getOrDefault(false)) return pub
+        return ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: ctx.filesDir
+    }
+
     fun usedBytes(): Long = list.value.sumOf { runCatching { File(it.file).length() }.getOrDefault(0L) }
 
     /**
@@ -123,12 +130,14 @@ object Downloads {
             val pr = StreamCache.probe(url)
             if (!pr.ok || pr.size <= 0 || pr.type?.startsWith("text/html", true) == true) continue
             val ext = (s.stream.behaviorHints?.filename ?: url.substringBefore('?')).substringAfterLast('.', "mkv").lowercase()
-                .takeIf { it.length in 2..4 && it.all(Char::isLetterOrDigit) } ?: "mkv"
+                .takeIf { it in setOf("mkv", "mp4", "avi", "webm", "mov", "m4v", "ts") } ?: "mkv"
             val name = (target.title + (target.epLabel?.let { " $it" } ?: "")).replace(Regex("[^A-Za-z0-9 ._-]"), "").trim().take(60)
                 .ifBlank { "video" } + "-" + System.currentTimeMillis() % 100000 + "." + ext
             // The app downloads it itself (pause / resume / speed); the old system downloads keep working as before.
             StreamHeaders.remember(s)
-            val file = File(ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES), name).absolutePath
+            // 0.8.16: saved in the phone's Movies/Xstream folder (shows in the gallery and file manager); the app's own
+            // folder only if that one can't be written.
+            val file = File(publicDir(ctx), name).absolutePath
             val d = Dl(-System.currentTimeMillis(), target.videoId, target.title, target.epLabel, target.image ?: meta.poster, meta.type, meta.id, file,
                 Prepare.qualityName(s.resolution()), System.currentTimeMillis(), url = url)
             save(list.value + d)

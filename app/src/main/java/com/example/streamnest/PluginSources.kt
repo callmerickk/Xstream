@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
@@ -388,6 +389,9 @@ object PluginSources {
             var pending = entries.size + (if (nuvio.isEmpty()) 0 else 1) + (if (direct != null) 1 else 0)
             if (pending == 0) { send(emptyList<StreamItem>() to true); return@coroutineScope }
             suspend fun add(l: List<StreamItem>, delta: Int = -1) = lock.withLock {
+                // The final copies (with every subtitle) replace the ones passed on early.
+                val urls = l.mapNotNull { it.stream.url }.toSet()
+                acc.removeAll { it.stream.url in urls }
                 acc += l.filter { keep(it) && !it.isInstantDownload() && !TitleMatch.wrong(it, type, id) && !vm.extHides(it) }
                 pending += delta
                 send(acc.distinctBy { it.stream.url } to (pending <= 0))
@@ -407,7 +411,15 @@ object PluginSources {
                     val isMb = api.name.contains("moviebox", true)
                     val got = if (isMb && direct != null) direct.await() else null
                     if (got != null && got.isNotEmpty()) { MovieBoxDirect.noteOk(); add(emptyList()); return@launch }
-                    val l = shared(api, id) { linksFrom(api, meta.name, year, series, season, episode) }
+                    // 0.8.16: each link goes on the moment the plugin finds it (MovieBox spent 6–55 s on all its links +
+                    // 40–50 subtitles before any was passed on).
+                    val l = shared(api, id) { linksFrom(api, meta.name, year, series, season, episode, onLink = { item ->
+                        this@channelFlow.launch { lock.withLock {
+                            if (keep(item) && !item.isInstantDownload() && !TitleMatch.wrong(item, type, id) && !vm.extHides(item) && acc.none { it.stream.url == item.stream.url }) {
+                                acc += item; send(acc.distinctBy { it.stream.url } to (pending <= 0))
+                            }
+                        } }
+                    }) }
                     if (isMb && got != null && l.isNotEmpty()) MovieBoxDirect.noteBroken("nothing found for \"${meta.name}\" while ${api.name} found ${l.size}")
                     // Timing of each plugin (Activity log → PLUGIN), to see which one is slow.
                     ActLog.add("PLUGIN", "${api.name}: ${l.size} links in ${System.currentTimeMillis() - t0} ms · $id")
@@ -416,6 +428,10 @@ object PluginSources {
                 } }
             } }
             if (nuvio.isNotEmpty()) jobs += launch {
+                // 0.8.16: Nuvio (Purstream…) is the backup — asked 3 s after the streaming services and MovieBox, or
+                // as soon as they have all answered.
+                var waited = 0
+                while (waited < 3_000 && lock.withLock { pending } > 1) { delay(100); waited += 100 }
                 // Each Nuvio link is passed on the moment it comes (they used to wait for the slowest Nuvio plugin,
                 // and arrived after the player had already given up).
                 val seen = HashSet<String>()

@@ -3181,6 +3181,23 @@ fun PlayerScreen(
         }
     }
 
+    // ───── 0.8.16: links that arrive after the start (MovieBox can take 30–55 s) join Other streams and the backups ─────
+    LaunchedEffect(firstFrame, p.key) {
+        if (!firstFrame || BuildConfig.IS_TV) return@LaunchedEffect
+        fun merge(l: List<StreamItem>, from: String) {
+            val add = l.filter { it.stream.url != null && known.none { k -> k.stream.url == it.stream.url } }
+            if (add.isEmpty()) return
+            known = known + add
+            ActLog.add("PLAY", "${add.size} late link(s) added from $from: " + add.map { it.addonName }.distinct().joinToString())
+        }
+        var t = 0
+        while (isActive && t < 120) {
+            delay(4_000); t += 4
+            Prepare.state.value?.takeIf { it.key == p.key }?.list?.let { merge(it, "the title page") }
+            if (t == 40) withTimeoutOrNull(25_000) { runCatching { vm.allStreams(type, p.key) }.getOrNull() }?.let { merge(it, "a fresh look") }
+        }
+    }
+
     // ───── 0.8.12: a start with a single link (resume, remembered, prepared) gets backups at once ─────
     LaunchedEffect(p.key) {
         if (BuildConfig.IS_TV || p.find) return@LaunchedEffect

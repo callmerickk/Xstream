@@ -13,6 +13,16 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.16", "20 Nov 2026", "Faster title pages, smarter sources", listOf(
+        "Title pages get ready faster: every source starts searching the moment the page opens",
+        "Shows start preparing at once, even before the episode list arrives",
+        "Links show up as soon as each one is found (MovieBox no longer waits for all its subtitles)",
+        "Links that arrive late are added to Other streams while you watch",
+        "4K HDHUB copies are sorted by their real quality",
+        "Netflix, Prime, Hotstar and MovieBox are warmed up first; Purstream is a backup",
+        "Updates download in the background with a small progress bar, then ask to install — and are never downloaded twice",
+        "Downloads are saved in Movies/Xstream, so they show in your gallery and file manager",
+    )),
     Release("0.8.15", "20 Nov 2026", "MovieBox sources reachable again", listOf(
         "Your private DNS (Cloudflare) is always used — never the internet provider's, which blocks some sources like MovieBox / MovieBoxIN",
         "Servers aren't skipped any more just because an address lookup failed",
@@ -548,6 +558,18 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.16", "20 Nov 2026", "Title page speed, live plugin links, 4K HDHUB quality, update + downloads", listOf(
+        "Detail: PluginSources.noteMeta before Prepare.start (modeStreams fetched Cinemeta first: ~1.4 s before Netflix/Prime/Hotstar searched); DetailTiming 'TITLE' lines (first link, green, blinks)",
+        "Series without an episode list: Prepare starts with the Continue episode or S1E1",
+        "modeStreams: plugin links passed on via onLink as found; final copies (with subtitles) replace them; Nuvio waits ≤3 s for CS plugins",
+        "Player merges late links (Prepare list every 4 s, one allStreams at 40 s) into known",
+        "noSourceName(): '4K HDHUB' ignored when reading quality (text / resIn / allText)",
+        "warmAll: moviebox/cncverse/OTT entries first, pauses while Prepare searches",
+        "ChainDns remembers 'no such name' 10 min",
+        "Updater: background download + UpdatePill, 'ready' dialog, kept APK (apkCode) reused, installWaiting after the unknown-apps screen, update client uses the phone DNS first",
+        "Downloads to Movies/Xstream (public, scanned), app folder as fallback; video extensions only",
+        "Uploaded logs keep TITLE, CSWARM and PLUGIN lines with links",
+    )),
     Release("0.8.15", "20 Nov 2026", "Private DNS chain, no down-marking on UnknownHost", listOf(
         "Api.ChainDns: chosen DoH → cloudflare → google → quad9 → adguard; system DNS only for .local / IPs or when 'system' is chosen (FallbackDns sent lookups to the ISP DNS, which blocks aoneroom.com)",
         "DNS lines in the log: which DoH found a host after others failed, and why a host wasn't found",

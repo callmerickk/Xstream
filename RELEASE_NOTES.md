@@ -1,4 +1,8 @@
-Xstream 0.8.15
+Xstream 0.8.16
 
-• Your private DNS (Cloudflare) is always used — MovieBox / MovieBoxIN and other blocked sources can be reached again.
-• Servers aren't skipped just because an address lookup failed.
+• Title pages get ready faster — every source starts searching at once; shows don't wait for the episode list.
+• Links appear as soon as each is found; late links join Other streams while you watch.
+• 4K HDHUB copies sorted by their real quality.
+• Netflix, Prime, Hotstar and MovieBox warmed up first; Purstream is a backup.
+• Updates download in the background with a progress bar, then ask to install — never downloaded twice.
+• Downloads saved in Movies/Xstream, visible in your gallery.

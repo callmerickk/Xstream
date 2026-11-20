@@ -198,3 +198,21 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
 - **HostDown** ignores UnknownHostException (a failed lookup marked api3.aoneroom.com down for 10 min).
 - **Plugins** (`CsPlugins` baseClient) look up through `Api.http.dns` each time, so a DNS change applies without a restart.
 - Planned next (after the log confirms MovieBox sources answer): DASH (.mpd, multi-quality) treated like HLS and kept as the first backup — from every MovieBox provider (built-in MovieBox, CloudStream MovieBox, MovieBoxIN, others), not only MovieBoxIN.
+
+## 0.8.16 (20 Nov 2026)
+- **Title page speed**: `PluginSources.noteMeta(meta)` before `Prepare.start` — `modeStreams` used to fetch Cinemeta for the name/year
+  first (~1.4 s before Netflix / Prime / Hotstar / Disney even searched; HDHub ones started at 0 s). `DetailTiming` logs `TITLE page open`,
+  `first link after X s (N blinks) · source`, `light green after X s`.
+- **Shows**: no episode list yet → Prepare starts with the Continue episode (unfinished) or S1E1 at once.
+- **Links as found**: `linksFrom(onLink=…)` in `modeStreams` — each CloudStream link is passed on immediately (MovieBox spent 6–55 s on all
+  links + 40–50 subtitles before passing any); final copies (with subtitles) replace early ones. Nuvio (Purstream) waits ≤3 s for the
+  CloudStream plugins (backup).
+- **Late links**: the player merges `Prepare` list updates (every 4 s, 2 min) and one `allStreams` at 40 s into `known` (Other streams + backups).
+- **4K HDHUB quality**: `noSourceName()` strips "4K HDHUB" before reading quality (text(), resIn(), allText()); "4K" elsewhere still = 4K.
+- **Warm-up**: `warmAll` warms MovieBox / cncverse / OTT entries first and pauses while a title is searching; 3-minute re-warm stays.
+- **DNS**: `ChainDns` remembers "no such name" 10 min (vegamovies.mq asked 20+ times, 1.5 s each).
+- **Updates**: Update = background download with `UpdatePill` (progress + speed), then "Xstream X is ready · Install"; the APK is kept
+  (`apkCode`) and reused; after the unknown-apps screen the installer opens on return (`installWaiting`); the update client uses the phone's
+  DNS first (nearest GitHub file server), private DNS as fallback.
+- **Downloads**: saved to public Movies/Xstream (scanned into the gallery), app folder only if not writable; video extensions only.
+- Not done yet: start searching on finger-down; 1 s wait for your language's copy; folder picker for downloads; DASH-first start.

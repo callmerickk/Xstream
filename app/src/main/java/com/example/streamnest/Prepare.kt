@@ -494,3 +494,26 @@ object Prepare {
 
     fun stopOthers() { saveJob?.cancel(); saveJob = null }
 }
+
+/**
+ * 0.8.16: how fast a title page gets ready, in the log: first link (and from where), green light, the source of each
+ * answer — one "TITLE" line each, timed from the page opening. Blink = the light's 0.6 s blink.
+ */
+object DetailTiming {
+    @Volatile private var key: String? = null
+    @Volatile private var t0 = 0L
+    @Volatile private var firstLink = false
+    @Volatile private var green = false
+    fun begin(name: String, id: String) {
+        if (key == id) return
+        key = id; t0 = android.os.SystemClock.elapsedRealtime(); firstLink = false; green = false
+        ActLog.add("TITLE", "page open · $name")
+    }
+    private fun at(): String { val s = (android.os.SystemClock.elapsedRealtime() - t0) / 1000.0; return "%.2f s (%d blinks)".format(s, (s / 0.6).toInt() + 1) }
+    fun on(p: Prepared?) {
+        if (p == null || p.key != key) return
+        if (!firstLink && p.item != null) { firstLink = true; ActLog.add("TITLE", "first link after ${at()} · ${Public.streamName(p.item)}") }
+        if (!green && p.ready) { green = true; ActLog.add("TITLE", "light green after ${at()}") }
+        if (!green && p.failed) { green = true; ActLog.add("TITLE", "nothing prepared after ${at()}") }
+    }
+}

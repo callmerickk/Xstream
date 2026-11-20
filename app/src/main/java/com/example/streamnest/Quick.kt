@@ -64,7 +64,7 @@ fun StreamItem.resolution(): Int {
 }
 
 private val res4k = Regex("(?i)2160p|(?<![a-z0-9])(4k|uhd)(?![a-z0-9])")
-private fun resIn(t: String): Int? = when {
+private fun resIn(t0: String): Int? = noSourceName(t0).let { t -> when {
     t.isBlank() -> null
     res4k.containsMatchIn(t) -> 2160
     t.contains("1440p", true) -> 1440
@@ -72,7 +72,7 @@ private fun resIn(t: String): Int? = when {
     t.contains("720p", true) -> 720
     t.contains("480p", true) || t.contains("576p", true) || t.contains("360p", true) -> 480
     else -> null
-}
+} }
 
 private val langCodes = mapOf("en" to "english", "hi" to "hindi", "fr" to "french", "es" to "spanish", "de" to "german", "ta" to "tamil",
     "te" to "telugu", "ml" to "malayalam", "kn" to "kannada", "bn" to "bengali", "mr" to "marathi", "pa" to "punjabi", "ja" to "japanese",
