@@ -118,7 +118,7 @@ object Relay {
             out.write(sb.toString().toByteArray())
             if (method != "HEAD" && body != null) {
                 val src = body.byteStream()
-                val buf = ByteArray(256 * 1024)
+                val buf = ByteArray(64 * 1024)  // 0.8.14: small fixed pieces (was 256 KB per connection)
                 try {
                     while (true) {
                         val n = src.read(buf)

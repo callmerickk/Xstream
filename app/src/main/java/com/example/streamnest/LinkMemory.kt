@@ -51,11 +51,14 @@ object LinkMemory {
     }
 
     /** Home looks ahead: the first cards (and Pick up where you left off) are looked up two at a time, quietly. */
-    private val ahead = Semaphore(2)
+    private val ahead = Semaphore(1)
     private val asked = ConcurrentHashMap.newKeySet<String>()
     suspend fun lookAhead(vm: AppViewModel, type: String, id: String) {
         if (BuildConfig.IS_TV || BuildConfig.LIVE_ONLY || !asked.add(id) || get(vm.appContext, id) != null) return
         ahead.withPermit {
+            // 0.8.14: the title you open goes first — searching ahead waits while a title page / player is searching.
+            var w = 0
+            while (Prepare.state.value?.let { !it.failed && it.item == null } == true && w < 60) { kotlinx.coroutines.delay(500); w++ }
             val l = withContext(Dispatchers.IO) { runCatching { vm.quickStreams(type, id) }.getOrDefault(emptyList()) }
             if (l.isNotEmpty()) put(vm.appContext, id, l)
         }

@@ -13,6 +13,11 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.14", "20 Nov 2026", "Lighter on memory and data", listOf(
+        "Only Continue watching and the next episode are looked up ahead — less memory and internet used",
+        "The title you open is always searched first",
+        "Very large web pages are skipped, so memory can't fill up suddenly",
+    )),
     Release("0.8.13", "20 Nov 2026", "Watch next opens straight into the picture", listOf(
         "Watch next keeps “Preparing” in the corner until the video is ready, then opens without a loading screen",
         "Faster starts: Continue plays your saved link at once again; a link that doesn't answer is replaced right away",
@@ -539,6 +544,12 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.14", "20 Nov 2026", "Look-ahead only for Continue / next episode, page cap", listOf(
+        "Home: aheadIds = Continue first 2 only (deck posters removed); Watch next sheet look-ahead off",
+        "LinkMemory.lookAhead: Semaphore 1, waits while Prepare is searching (title page / player first)",
+        "ActLog.Net.capPage: text/html + application/json over 5 MB refused / reading stopped (video pieces untouched)",
+        "Relay copies in 64 KB pieces (was 256 KB per connection)",
+    )),
     Release("0.8.13", "20 Nov 2026", "Watch next waits for the frame, faster fallbacks", listOf(
         "wnOpen only when Prepare.playerReady; failed → Prepare.start again (2×); link without player → 25 s; 60 s max; card progress over 20 s",
         "TIMEOUT before the picture always goes to the next source / quiet fresh look-up (no other ways: 20 s lost on a 127.0.0.1 link)",

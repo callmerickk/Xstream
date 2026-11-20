@@ -180,3 +180,12 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
 - **Continue**: the saved link plays at once again (the 0.8.12 12-hour rule made every resume a full search); fake / dead links are
   caught by the size + length checks and the backups (fetched after 6 s now, not 2.5 s, so they don't slow the starting link).
 - **Logs**: uploads keep the `PLAY +x s` stage lines and Watch next lines.
+
+## 0.8.14 (20 Nov 2026)
+- **Look-ahead only where it pays**: Home looks ahead for Continue watching (first 2) only — Home posters and the Watch next sheet are no
+  longer searched before a tap (memory + data). Next episode at 75 % stays.
+- **Your tap first**: `LinkMemory.lookAhead` runs one at a time (Semaphore 1) and waits while `Prepare` is searching.
+- **Page cap** (`ActLog.Net.capPage`): text/html and application/json answers over 5 MB are refused or stop reading at 5 MB (normal plugin
+  pages are under 1 MB); video, playlists, subtitles, pictures untouched.
+- **Relay** (127.0.0.1 header relay) copies in 64 KB pieces instead of 256 KB per connection.
+- App motto noted: fastest start first — nothing new may run before the first picture; the auto quality switch stays as in 0.8.11.

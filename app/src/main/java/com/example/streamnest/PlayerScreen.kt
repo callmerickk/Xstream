@@ -6636,7 +6636,8 @@ private fun WatchNextOverlay(
     // you pick usually has its links remembered already and gets ready in the corner within a second or two.
     LaunchedEffect(visible, similar) {
         val list = similar ?: return@LaunchedEffect
-        if (!visible || BuildConfig.IS_TV) return@LaunchedEffect
+        // 0.8.14: not searched ahead any more — the title you pick is searched when you pick it.
+        if (true || !visible || BuildConfig.IS_TV) return@LaunchedEffect
         delay(600)
         list.take(4).forEach { w ->
             launch {

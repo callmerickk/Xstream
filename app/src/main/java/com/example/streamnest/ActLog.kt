@@ -1,5 +1,7 @@
 package com.example.streamnest
 
+import okio.buffer
+
 import android.content.Context
 import android.os.SystemClock
 import android.view.KeyEvent
@@ -216,13 +218,41 @@ object ActLog {
                 val r = chain.proceed(req)
                 HostDown.ok(u.host)
                 if (!skip) add("NET", "$what · ${r.code} · ${SystemClock.elapsedRealtime() - t0} ms" + (r.body?.contentLength()?.takeIf { it > 0 }?.let { " · ${it / 1024} KB" } ?: ""))
-                r
+                capPage(r, what)
             } catch (e: Exception) {
                 if (!skip) add("NET", "$what · failed (${e.javaClass.simpleName}: ${e.message?.take(80)}) · ${SystemClock.elapsedRealtime() - t0} ms")
                 if (!media) HostDown.failed(u.host, e, SystemClock.elapsedRealtime() - t0)
                 throw e
             }
         }
+    }
+
+    /**
+     * 0.8.14: a web page / answer over 5 MB is not read (a normal plugin page is under 1 MB; a huge error or broken page
+     * read into memory takes many times its size). Video, audio, subtitles and pictures are never touched.
+     */
+    private const val PAGE_MAX = 5L * 1024 * 1024
+    private fun capPage(r: Response, what: String): Response {
+        val body = r.body ?: return r
+        val type = body.contentType()?.toString()?.lowercase().orEmpty()
+        // Only web pages and JSON answers (some hosts disguise video pieces as .js / text — those are never touched).
+        if (!(type.startsWith("text/html") || type.startsWith("application/json"))) return r
+        if (body.contentLength() > PAGE_MAX) { body.close(); add("NET", "$what · page too big (${body.contentLength() / 1048576} MB) — not read"); throw java.io.IOException("page too big") }
+        val limited = object : okio.ForwardingSource(body.source()) {
+            var n = 0L
+            override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                val got = super.read(sink, byteCount)
+                if (got > 0) { n += got; if (n > PAGE_MAX) { add("NET", "$what · page over 5 MB — stopped reading"); throw java.io.IOException("page too big") } }
+                return got
+            }
+        }
+        val nb = object : okhttp3.ResponseBody() {
+            override fun contentType() = body.contentType()
+            override fun contentLength() = body.contentLength()
+            private val src = limited.buffer()
+            override fun source(): okio.BufferedSource = src
+        }
+        return r.newBuilder().body(nb).build()
     }
 
     // ── TV → account (so the phone can read it); phone ← account ──

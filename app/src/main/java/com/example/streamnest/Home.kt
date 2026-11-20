@@ -313,8 +313,8 @@ fun HomeScreen(
     // Xstream (plugins / addons): the same look-ahead — the first cards and the top of Pick up where you left off are
     // looked up quietly, two at a time, after Home has settled; opening one turns the light green at once.
     val aheadIds = remember(deck, progress.take(2).map { it.key }) {
-        deck.take(4).map { it.meta }.filter { it.type == "movie" && it.id.startsWith("tt") }.map { "movie" to it.id } +
-            progress.take(2).map { p -> (if (p.key.contains(":")) "series" else "movie") to p.key }
+        // 0.8.14: only Continue watching (first 2) — Home posters aren't searched ahead any more (memory + data).
+        progress.take(2).map { p -> (if (p.key.contains(":")) "series" else "movie") to p.key }
     }
     LaunchedEffect(aheadIds) {
         if (aheadIds.isEmpty() || vm.liveMode() || BuildConfig.LIVE_ONLY) return@LaunchedEffect
