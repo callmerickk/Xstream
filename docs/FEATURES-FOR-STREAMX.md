@@ -197,4 +197,4 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
   Log: `DNS: host found by google (cloudflare didn't answer)` / `DNS: host not found — …`.
 - **HostDown** ignores UnknownHostException (a failed lookup marked api3.aoneroom.com down for 10 min).
 - **Plugins** (`CsPlugins` baseClient) look up through `Api.http.dns` each time, so a DNS change applies without a restart.
-- Planned next (after the log confirms MovieBoxIN answers): DASH (.mpd, multi-quality) treated like HLS and kept as the first backup.
+- Planned next (after the log confirms MovieBox sources answer): DASH (.mpd, multi-quality) treated like HLS and kept as the first backup — from every MovieBox provider (built-in MovieBox, CloudStream MovieBox, MovieBoxIN, others), not only MovieBoxIN.
