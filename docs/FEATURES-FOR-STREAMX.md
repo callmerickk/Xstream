@@ -171,3 +171,12 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
   saved one; `seriesMeta` never caches empty. Detail shows saved episodes at once; a finished last episode → the next one; never plays a
   bare show id. Episode progress saved from 1 s.
 - **Next episode card**: phone `NextEpisodePill` is the same 214×68 corner card as `WatchNextLoadingCard`.
+
+## 0.8.13 (20 Nov 2026)
+- **Watch next opens into the picture**: the corner card waits for `Prepare.state.playerReady` (the hidden player's first frame), no
+  2.5 s / 6 s handover; a failed prepare is retried in the corner twice (`wnTries`); a link without a hidden player (memory) opens after
+  25 s; 60 s max. Card progress runs over 20 s.
+- **Faster fallbacks**: before the picture a TIMEOUT always goes to the next source / quiet fresh look-up (no other ways of that link).
+- **Continue**: the saved link plays at once again (the 0.8.12 12-hour rule made every resume a full search); fake / dead links are
+  caught by the size + length checks and the backups (fetched after 6 s now, not 2.5 s, so they don't slow the starting link).
+- **Logs**: uploads keep the `PLAY +x s` stage lines and Watch next lines.

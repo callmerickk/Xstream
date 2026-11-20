@@ -80,12 +80,12 @@ fun Progress.asMeta(): Meta = Meta(
 
 
 /**
- * 0.8.12: Continue watching → the player. A link saved more than 12 h ago isn't trusted (it may now give a short
- * "too many requests / update the app" video): fresh links are looked up and played from the saved second.
+ * Continue watching → the player (the saved link; fresh links only when there is none).
  */
 fun Progress.toPlayer(startMs: Long = positionMs): Screen.Player {
     val type = if (isSeries()) "series" else "movie"
-    val old = System.currentTimeMillis() - updated > 12 * 3600_000L
-    return if (old || url.isBlank()) Screen.Player(title, "", emptyList(), key, image, startMs, type = type, find = true)
+    // 0.8.13: the saved link plays at once again (fresh look-ups every time made starts slow); a fake / dead one is caught
+    // by the size + length checks and backups, and replaced quietly.
+    return if (url.isBlank()) Screen.Player(title, "", emptyList(), key, image, startMs, type = type, find = true)
     else Screen.Player(title, url, subs, key, image, startMs, type = type, source = source, addon = addon)
 }

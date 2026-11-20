@@ -1332,7 +1332,7 @@ fun PlayerScreen(
             // The server refused (403 / 428 / 5xx…) or the link stalls while other links are waiting: VLC can't fix a
             // refused link and a stuck one wastes time — straight to the next source.
             // 0.8.12: a link that sent nothing at all is not tried another way (that cost 20 s on Justice League).
-            n != null && !firstFrame && (code.contains("HTTP") || (code == "TIMEOUT" && (hasMoreLinks() || (tracks.isEmpty && !usingVlc && player.bufferedPosition <= 0L)))) -> {
+            n != null && !firstFrame && (code.contains("HTTP") || code == "TIMEOUT") -> {
                 if (code.contains("400") || code.contains("404")) Ranker.markDeadUrl(n.url)
                 tryNextSource(n, start, code)
             }
@@ -2666,8 +2666,9 @@ fun PlayerScreen(
     // takes over the moment its first picture is ready.
     var wnLoad by remember { mutableStateOf<WnLoad?>(null) }
     var wnAt by remember { mutableLongStateOf(0L) }
+    var wnTries by remember { mutableIntStateOf(0) }
     fun wnBegin(w: WnLoad) {
-        wnLoad = w; wnAt = SystemClock.elapsedRealtime()
+        wnLoad = w; wnAt = SystemClock.elapsedRealtime(); wnTries = 0
         ActLog.add("PLAY", "Watch next: getting ${w.name} ready in the corner (the current video keeps playing)")
         val level = vm.playerPref("quality").ifEmpty { vm.texts.value["qsQuality"] ?: "auto" }
         Prepare.start(vm, ctx, w.type, w.id, w.resume, null, vm.qsActive(), level, w.meta)
@@ -2692,12 +2693,19 @@ fun PlayerScreen(
         while (wnLoad === w) {
             val st = Prepare.state.value?.takeIf { it.key == w.id }
             val waited = SystemClock.elapsedRealtime() - wnAt
+            // 0.8.13: the card stays until the next title's first frame is ready in the background, then it opens straight
+            // into the picture (no loading screen). A failed try is retried quietly; only after 60 s the usual way.
             when {
                 st != null && st.item != null && st.playerReady -> { wnOpen(w, st); return@LaunchedEffect }
-                // 0.8.7: a working link is enough after ~2.5 s (the log waited 15–25 s for a fully loaded player).
-                st != null && st.item != null && waited > 2_500 -> { wnOpen(w, st); return@LaunchedEffect }
-                st != null && st.failed -> { wnOpen(w, null); return@LaunchedEffect }
-                waited > 6_000 -> { wnOpen(w, st?.takeIf { it.item != null }); return@LaunchedEffect }
+                st != null && st.failed && wnTries < 2 -> {
+                    wnTries++
+                    ActLog.add("PLAY", "Watch next: ${w.name} not ready — trying other links in the corner ($wnTries)")
+                    val level = vm.playerPref("quality").ifEmpty { vm.texts.value["qsQuality"] ?: "auto" }
+                    Prepare.start(vm, ctx, w.type, w.id, w.resume, null, vm.qsActive(), level, w.meta)
+                }
+                // A link but no background player (memory) after 25 s → open with the link.
+                st != null && st.item != null && waited > 25_000 -> { wnOpen(w, st); return@LaunchedEffect }
+                (st != null && st.failed) || waited > 60_000 -> { wnOpen(w, st?.takeIf { it.item != null }); return@LaunchedEffect }
             }
             delay(150)
         }
@@ -3176,7 +3184,8 @@ fun PlayerScreen(
     // ───── 0.8.12: a start with a single link (resume, remembered, prepared) gets backups at once ─────
     LaunchedEffect(p.key) {
         if (BuildConfig.IS_TV || p.find) return@LaunchedEffect
-        delay(2_500)
+        // 0.8.13: after 6 s (at 2.5 s the extra searching took speed from the link that was starting).
+        delay(6_000)
         if (firstFrame || known.count { it.stream.url != null } > 1 || candidates.isNotEmpty()) return@LaunchedEffect
         PlayTiming.late("only one link — getting backups")
         val fresh = withTimeoutOrNull(20_000) { runCatching { vm.allStreams(type, p.key) }.getOrNull() }.orEmpty().filter { it.stream.url != null }
@@ -7244,7 +7253,7 @@ private fun WatchNextLoadingCard(w: WnLoad, startedAt: Long, onOpen: () -> Unit,
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     LaunchedEffect(Unit) { while (true) { now = SystemClock.elapsedRealtime(); delay(100) } }
     val mine = st?.takeIf { it.key == w.id }
-    val byTime = ((now - startedAt) / 6_000f).coerceIn(0f, 0.95f)
+    val byTime = ((now - startedAt) / 20_000f).coerceIn(0f, 0.9f)
     val done = maxOf(byTime, if (mine?.item != null) 0.7f else 0f, mine?.progress ?: 0f)
     val prog by androidx.compose.animation.core.animateFloatAsState(done, tween(300), label = "wnProg")
     val cs = RoundedCornerShape(12.dp)

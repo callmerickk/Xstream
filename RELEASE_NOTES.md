@@ -1,7 +1,4 @@
-Xstream 0.8.12
+Xstream 0.8.13
 
-• Fewer crashes: hidden players limited, memory freed in the background.
-• Faster starts: backups at once, dead links dropped quickly, unreachable servers skipped.
-• Fake short videos are skipped; old saved links are refreshed.
-• Shows always open with their episodes and continue with the right one.
-• One small Next episode card.
+• Watch next stays in the corner until the video is ready, then opens straight into the picture.
+• Faster starts: Continue plays your saved link at once; a link that doesn't answer is replaced right away.

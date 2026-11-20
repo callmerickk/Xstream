@@ -13,6 +13,10 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.13", "20 Nov 2026", "Watch next opens straight into the picture", listOf(
+        "Watch next keeps “Preparing” in the corner until the video is ready, then opens without a loading screen",
+        "Faster starts: Continue plays your saved link at once again; a link that doesn't answer is replaced right away",
+    )),
     Release("0.8.12", "20 Nov 2026", "Steadier, faster starts, right episode", listOf(
         "Fewer crashes: hidden players are limited and freed when memory is short or the app goes to the background",
         "Faster starts: backups are fetched at once, dead links are dropped after a few seconds, unreachable servers are skipped",
@@ -535,6 +539,12 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.13", "20 Nov 2026", "Watch next waits for the frame, faster fallbacks", listOf(
+        "wnOpen only when Prepare.playerReady; failed → Prepare.start again (2×); link without player → 25 s; 60 s max; card progress over 20 s",
+        "TIMEOUT before the picture always goes to the next source / quiet fresh look-up (no other ways: 20 s lost on a 127.0.0.1 link)",
+        "Continue plays the saved link again (12 h rule removed — every resume was a full search); backups after 6 s instead of 2.5 s",
+        "Uploaded logs keep the PLAY +x s stage lines and Watch next lines",
+    )),
     Release("0.8.12", "20 Nov 2026", "Memory caps, fast fallbacks, fake-video checks, series meta", listOf(
         "PlayerCount.room() (only 1 alive, heap <70 %): auto ottSwapTo, next-episode preload, ladder wait for it; Prepare skips >70 %; VR switch <60 % after releasing hidden players; hidden player budget 10 % heap",
         "Ladder: addon with other lengths not retried (ladderNo); onTrimMemory(UI_HIDDEN) frees Preloader/Prepare/Coil; replies over 16 MB refused (cappedString)",
