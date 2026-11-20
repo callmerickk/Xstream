@@ -320,7 +320,7 @@ object CsPlugins {
         // 0.8.16: the streaming-service plugins (Netflix / Prime / Hotstar — HLS) and MovieBox first, the rest after; a
         // title you open never waits behind the warm-up (it pauses while a title page / player is searching).
         val first = Regex("(?i)moviebox|cncverse|netflix|prime|hotstar|disney|ott")
-        for (e in enabledEntries().sortedBy { if (first.containsMatchIn(e.name) || first.containsMatchIn(e.key)) 0 else 1 }) {
+        for (e in enabledEntries().sortedBy { x -> if (first.containsMatchIn(x.name) || first.containsMatchIn(x.key)) 0 else 1 }) {
             var w = 0
             while (Prepare.state.value?.let { !it.failed && it.item == null } == true && w < 40) { kotlinx.coroutines.delay(500); w++ }
             val t0 = System.currentTimeMillis()
