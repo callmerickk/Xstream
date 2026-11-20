@@ -13,6 +13,10 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.15", "20 Nov 2026", "MovieBox sources reachable again", listOf(
+        "Your private DNS (Cloudflare) is always used — never the internet provider's, which blocks some sources like MovieBox / MovieBoxIN",
+        "Servers aren't skipped any more just because an address lookup failed",
+    )),
     Release("0.8.14", "20 Nov 2026", "Lighter on memory and data", listOf(
         "Only Continue watching and the next episode are looked up ahead — less memory and internet used",
         "The title you open is always searched first",
@@ -544,6 +548,12 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.15", "20 Nov 2026", "Private DNS chain, no down-marking on UnknownHost", listOf(
+        "Api.ChainDns: chosen DoH → cloudflare → google → quad9 → adguard; system DNS only for .local / IPs or when 'system' is chosen (FallbackDns sent lookups to the ISP DNS, which blocks aoneroom.com)",
+        "DNS lines in the log: which DoH found a host after others failed, and why a host wasn't found",
+        "HostDown ignores UnknownHostException (api3.aoneroom.com was 'down' for 10 min for MovieBox + MovieBoxIN)",
+        "CsPlugins.baseClient asks Api.http.dns on every lookup (DNS changes reach plugins without a restart)",
+    )),
     Release("0.8.14", "20 Nov 2026", "Look-ahead only for Continue / next episode, page cap", listOf(
         "Home: aheadIds = Continue first 2 only (deck posters removed); Watch next sheet look-ahead off",
         "LinkMemory.lookAhead: Semaphore 1, waits while Prepare is searching (title page / player first)",

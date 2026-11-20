@@ -470,7 +470,9 @@ object HostDown {
     }
     fun ok(host: String) { fails.remove(host); if (lan(host)) lanFails.remove(host); lastOkAt = SystemClock.elapsedRealtime() }
     @Synchronized fun failed(host: String, e: Exception, ms: Long = 0) {
-        val connect = e is java.net.UnknownHostException || e is java.net.ConnectException ||
+        // 0.8.15: "no address" (a DNS answer, often a blocked or slow lookup) never marks a server as down.
+        if (e is java.net.UnknownHostException && !lan(host)) return
+        val connect = e is java.net.ConnectException ||
             (e is java.net.SocketTimeoutException && e.message?.contains("failed to connect") == true) ||
             e is javax.net.ssl.SSLHandshakeException
         if (lan(host)) {

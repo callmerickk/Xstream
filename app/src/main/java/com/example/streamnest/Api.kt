@@ -52,7 +52,9 @@ object Api {
             .addInterceptor(TmdbAuth)
             .addInterceptor(Vpn.SmartRetry)
             .addInterceptor(ActLog.Net)
-        b.dns(CachedDns(dohFor(provider)?.let { FallbackDns(it) } ?: Dns.SYSTEM))
+        // 0.8.15: a private DNS is never swapped for the phone's own one (the internet provider's, which blocks some
+        // servers like MovieBox's aoneroom.com) — Cloudflare → Google → Quad9 → AdGuard instead, like CloudStream.
+        b.dns(CachedDns(if (dohFor(provider) != null) ChainDns(provider) else Dns.SYSTEM))
         return b.build()
     }
 
@@ -101,6 +103,32 @@ object Api {
         override fun lookup(hostname: String): List<InetAddress> {
             cache[hostname]?.let { (at, ips) -> if (System.currentTimeMillis() - at < 600_000) return ips }
             return base.lookup(hostname).also { if (it.isNotEmpty()) cache[hostname] = System.currentTimeMillis() to it }
+        }
+    }
+
+    /**
+     * 0.8.15: the chosen private DNS first, then the other private ones; the phone's own DNS only for home-network
+     * names (10.x / .local) or when no private one can be reached at all (no internet → the error is the same).
+     */
+    private class ChainDns(first: String) : Dns {
+        private val order = (listOf(first) + listOf("cloudflare", "google", "quad9", "adguard")).distinct().mapNotNull { n -> dohFor(n)?.let { n to it } }
+        override fun lookup(hostname: String): List<InetAddress> {
+            if (hostname.endsWith(".local") || hostname == "localhost" || hostname.matches(Regex("[0-9.]+"))) return Dns.SYSTEM.lookup(hostname)
+            val tried = ArrayList<String>()
+            for ((name, dns) in order) {
+                try {
+                    val r = dns.lookup(hostname)
+                    if (r.isNotEmpty()) {
+                        dohOk.incrementAndGet()
+                        if (tried.isNotEmpty()) ActLog.add("NET", "DNS: $hostname found by $name (${tried.joinToString()} didn't answer)")
+                        return r
+                    }
+                    tried += "$name: no address"
+                } catch (e: Exception) { tried += "$name: ${e.javaClass.simpleName}" }
+            }
+            dohFallbacks.incrementAndGet()
+            ActLog.add("NET", "DNS: $hostname not found — ${tried.joinToString()}")
+            throw java.net.UnknownHostException("$hostname: no private DNS answered (${tried.joinToString()})")
         }
     }
 

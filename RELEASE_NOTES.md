@@ -1,5 +1,4 @@
-Xstream 0.8.14
+Xstream 0.8.15
 
-• Only Continue watching and the next episode are looked up ahead — less memory and internet used.
-• The title you open is always searched first.
-• Very large web pages are skipped, so memory can't fill up suddenly.
+• Your private DNS (Cloudflare) is always used — MovieBox / MovieBoxIN and other blocked sources can be reached again.
+• Servers aren't skipped just because an address lookup failed.

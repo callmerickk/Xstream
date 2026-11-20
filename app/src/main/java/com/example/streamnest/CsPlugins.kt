@@ -73,7 +73,9 @@ object CsPlugins {
         // Plugins' requests: Xstream's network, with a hard 25 s limit per request (one hung request stalled a whole test).
         // No HTTP cache: plugins read their current site addresses from small JSON files (an old cached copy sent
         // VegaMovies to a dead domain).
-        com.lagradost.cloudstream3.app.baseClient = Api.http.newBuilder().cache(null).callTimeout(25, java.util.concurrent.TimeUnit.SECONDS).build()
+        // 0.8.15: the DNS is asked through Api.http each time, so a DNS change reaches plugins at once (no restart).
+        com.lagradost.cloudstream3.app.baseClient = Api.http.newBuilder().cache(null).callTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
+            .dns(object : okhttp3.Dns { override fun lookup(hostname: String) = Api.http.dns.lookup(hostname) }).build()
         val p = ctx.getSharedPreferences("cs_plugins", Context.MODE_PRIVATE); prefs = p
         repos.value = runCatching { Api.json.decodeFromString<List<CsRepo>>(p.getString("repos", null) ?: "") }.getOrNull() ?: defaultRepos.map { CsRepo(it) }
         catalog.value = runCatching { Api.json.decodeFromString<List<CsPluginEntry>>(p.getString("catalog", null) ?: "") }.getOrDefault(emptyList())

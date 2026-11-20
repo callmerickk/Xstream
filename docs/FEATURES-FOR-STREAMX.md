@@ -189,3 +189,12 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
   pages are under 1 MB); video, playlists, subtitles, pictures untouched.
 - **Relay** (127.0.0.1 header relay) copies in 64 KB pieces instead of 256 KB per connection.
 - App motto noted: fastest start first — nothing new may run before the first picture; the auto quality switch stays as in 0.8.11.
+
+## 0.8.15 (20 Nov 2026)
+- **Private DNS only** (`Api.ChainDns`): the chosen DNS-over-HTTPS, then Cloudflare → Google → Quad9 → AdGuard; the phone's DNS only for
+  `.local` / IP names or when "System" is chosen. The old `FallbackDns` quietly used the provider's DNS when Cloudflare was slow — that DNS
+  blocks `aoneroom.com`, so MovieBox / MovieBoxIN got "Unable to resolve host" while CloudStream (DoH only) worked.
+  Log: `DNS: host found by google (cloudflare didn't answer)` / `DNS: host not found — …`.
+- **HostDown** ignores UnknownHostException (a failed lookup marked api3.aoneroom.com down for 10 min).
+- **Plugins** (`CsPlugins` baseClient) look up through `Api.http.dns` each time, so a DNS change applies without a restart.
+- Planned next (after the log confirms MovieBoxIN answers): DASH (.mpd, multi-quality) treated like HLS and kept as the first backup.
