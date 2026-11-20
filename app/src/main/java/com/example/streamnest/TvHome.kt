@@ -262,7 +262,7 @@ fun TvHomeScreen(
                         ) { _, p, mod ->
                             TvContinueCard(vm, p, mod) {
                                 if (p.finished()) onOpen(p.asMeta())
-                                else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs))
+                                else onPlay(p.toPlayer())
                             }
                         }
                         is TvHomeSec.Col -> TvRow(
@@ -823,7 +823,7 @@ fun TvLibraryScreen(vm: AppViewModel, onOpen: (Meta) -> Unit, onPlay: (Screen.Pl
             if (progress.isNotEmpty()) item(key = "cw") {
                 TvRow(progress, key = { it.key }, title = t("continueWatching").replace("{name}", "").trim(), state = cwState,
                     restoreIndex = 0, restoreRequester = first, onLeftEdge = onLeftEdge) { _, p, mod ->
-                    TvContinueCard(vm, p, mod) { if (p.finished()) onOpen(p.asMeta()) else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs)) }
+                    TvContinueCard(vm, p, mod) { if (p.finished()) onOpen(p.asMeta()) else onPlay(p.toPlayer()) }
                 }
             }
             if (myList.isNotEmpty()) item(key = "list") {

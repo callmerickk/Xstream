@@ -27,6 +27,7 @@ import okhttp3.Request
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 import java.io.File
 import androidx.compose.ui.graphics.Color
 import kotlinx.serialization.json.JsonArray
@@ -513,7 +514,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     // ───────────── Watch data (per profile) ─────────────
     fun saveProgress(p: Progress) {
-        if (p.positionMs < 10_000) return
+        // 0.8.12: an episode counts from its first seconds (closing S4E1 early brought Continue back to the finished S3E23).
+        if (p.positionMs < (if (p.key.contains(":")) 1_000 else 10_000)) return
         ContinueWidget.update(ctx, p)
         WatchLog.record(ctx, current.value?.id, p)
         if (p.key.contains(":")) {
@@ -1010,23 +1012,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         metaDone[k]?.let { (at, v) -> if (System.currentTimeMillis() - at < 600_000) return v }
         val d = metaRunning.getOrPut(k) { viewModelScope.async(Dispatchers.IO) { runCatching { fullMetaNow(m) }.getOrNull() } }
         val r = try { d.await() } finally { if (d.isCompleted) metaRunning.remove(k, d) }
-        if (r != null) metaDone[k] = System.currentTimeMillis() to r
+        // 0.8.12: a show's details count only with its episodes (one without them made Play start S1E1 with no list).
+        val full = r != null && (m.type != "series" || !r.videos.isNullOrEmpty())
+        if (full) { metaDone[k] = System.currentTimeMillis() to r!!; if (m.type == "series") saveShow(r) }
+        else if (m.type == "series") savedShow(m.id)?.let { return it }
         return r
     }
+    /** 0.8.12: a show's episode list kept on the phone (shown at once, also offline). */
+    private fun showPrefs() = appContext.getSharedPreferences("shows", android.content.Context.MODE_PRIVATE)
+    private fun saveShow(m: Meta) { runCatching { showPrefs().edit().putString(m.id.substringBefore(":"), Api.json.encodeToString(m)).apply() } }
+    fun savedShow(id: String): Meta? = runCatching { showPrefs().getString(id.substringBefore(":"), null)?.let { Api.json.decodeFromString<Meta>(it) } }.getOrNull()
 
     private suspend fun fullMetaNow(m0: Meta): Meta? {
         // 0.8.9: collection titles with TMDB ids become IMDb titles first (an addon asked for "tmdb:movie:…" can wait 20 s).
         val m = if (m0.id.startsWith("tmdb:")) resolveForOpen(m0) ?: return null else m0
         // 0.8.8: IMDb titles get their details from Cinemeta first; an addon's error message ("[❌] PenguPlay — Failed to
         // parse meta") is never taken as the title.
-        if (m.id.startsWith("tt")) kotlinx.coroutines.withTimeoutOrNull(6000) { runCatching { Api.fetch<MetaResponse>("$CINEMETA/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull() }
-            ?.takeIf { !it.isAddonError() && it.name.isNotBlank() }?.let { return it }
+        val series = m.type == "series"
+        fun good(x: Meta?) = x != null && !x.isAddonError() && x.name.isNotBlank() && (!series || !x.videos.isNullOrEmpty())
+        if (m.id.startsWith("tt")) kotlinx.coroutines.withTimeoutOrNull(if (series) 12_000 else 6_000) { runCatching { Api.fetch<MetaResponse>("$CINEMETA/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull() }
+            ?.takeIf { good(it) }?.let { return it }
         // Addons all at once, the first in your order that answers wins; nobody is waited on for more than 4 s.
         val list = active.filter { it.supports("meta", m.type, m.id) }
         if (list.isEmpty()) return null
         return coroutineScope {
-            val jobs = list.map { a -> async { runCatching { Api.fetch<MetaResponse>("${a.baseUrl}/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull()?.takeIf { !it.isAddonError() && it.name.isNotBlank() } } }
-            val end = System.currentTimeMillis() + 4000
+            val jobs = list.map { a -> async { runCatching { Api.fetch<MetaResponse>("${a.baseUrl}/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull()?.takeIf { good(it) } } }
+            // Shows wait longer: only details with the episode list are taken.
+            val end = System.currentTimeMillis() + if (series) 12_000 else 4_000
             var res: Meta? = null
             for (j in jobs) {
                 val left = end - System.currentTimeMillis()

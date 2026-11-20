@@ -157,7 +157,7 @@ fun HorizonWhoIsWatching(vm: AppViewModel, active: Boolean, onPicked: () -> Unit
         val c = it.cw; val m = it.meta
         go(p) {
             when {
-                c != null -> onPlay(Screen.Player(c.title, c.url, c.subs, c.key, c.image, c.positionMs, source = c.source, addon = c.addon))
+                c != null -> onPlay(c.toPlayer())
                 m != null && m.type == "series" -> vm.viewModelScope.launch {
                     val full = vm.fullMeta(m) ?: m
                     val first = full.videos.orEmpty().filter { (it.season ?: 0) > 0 && it.episode != null }.sortedWith(compareBy({ it.season }, { it.episode })).firstOrNull()

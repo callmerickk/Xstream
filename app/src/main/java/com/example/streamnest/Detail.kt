@@ -116,7 +116,9 @@ fun DetailScreen(
     /** Unused now (trailers open TrailerActivity directly); kept so existing callers compile. */
     @Suppress("UNUSED_PARAMETER") onTrailer: (Screen.Trailer) -> Unit = {},
 ) {
-    var meta by remember { mutableStateOf(meta0) }
+    // 0.8.12: a show's episode list saved on the phone shows at once (also offline), then is refreshed.
+    var meta by remember { mutableStateOf(if (meta0.type == "series") vm.savedShow(meta0.id)?.takeIf { !it.videos.isNullOrEmpty() }
+        ?.copy(poster = meta0.poster ?: vm.savedShow(meta0.id)?.poster) ?: meta0 else meta0) }
     // The audio language you last chose for this title goes first when its links are ranked here too.
     remember(meta0.id) { LangPick.current = vm.titleLang(meta0.id); 0 }
     var metaLoaded by remember { mutableStateOf(false) }
@@ -213,7 +215,9 @@ fun DetailScreen(
                 if (p != null && p.durationMs > 0) (p.positionMs.toFloat() / p.durationMs).coerceIn(0f, 1f) else 0f)
         } else {
             val mine = progress.filter { it.key.startsWith(meta.id + ":") }.maxByOrNull { it.updated }
-            val ep = mine?.let { m -> episodes.firstOrNull { it.id == m.key } }
+            // 0.8.12: the last one you watched is finished → the one after it (S3E23 done → S4E1, it replayed S3E23).
+            val mineEp = mine?.let { m -> episodes.firstOrNull { it.id == m.key } }
+            val ep = (if (mineEp != null && mine?.let { it.durationMs > 0 && it.positionMs >= it.durationMs * 0.90 } == true) episodes.getOrNull(episodes.indexOf(mineEp) + 1) ?: mineEp else mineEp)
                 ?: episodes.lastOrNull { it.id in done }?.let { last -> episodes.getOrNull(episodes.indexOf(last) + 1) }
                 ?: episodes.firstOrNull { (it.season ?: 0) > 0 } ?: episodes.first()
             val r = resumeFor(ep.id)
@@ -232,6 +236,7 @@ fun DetailScreen(
     val level = vm.playerPref("quality").ifEmpty { texts["qsQuality"] ?: "auto" }
     val instantOn = !external && (quick || autoMode != "manual")
     LaunchedEffect(playTarget.target.videoId, quick, level) {
+        if (meta.type == "series" && !playTarget.target.videoId.contains(":")) return@LaunchedEffect
         // CNCVerse (Vegamovies…) is asked from the moment the page opens, alongside MovieBox: its server needs time to
         // collect the links, so they are there for the HD upgrade once the video plays.
         SlowAddons.watch(vm, meta.type, playTarget.target.videoId)
@@ -260,6 +265,8 @@ fun DetailScreen(
 
     /** Play button / episode tap: Quick Start or auto modes go straight to the player, manual opens the sources page. */
     fun start(t: SourceTarget, forceSources: Boolean = false, fromStart: Boolean = false, cinemaOk: Boolean = false) {
+        // 0.8.12: a show never starts without a season and episode (it played the bare show id → S1E1 from another source).
+        if (meta.type == "series" && !t.videoId.contains(":")) { Snack.show("Loading the episodes…"); scope.launch { vm.fullMeta(meta0)?.let { meta = it } }; return }
         // Not out online yet (only in cinemas, or not released): no searching for links that would be the wrong film.
         // From StreamX's plan: a clean copy (web / Blu-ray) already found on this page just plays; only without one comes
         // "In cinemas only", with Remind me · Play cinema copy · Close.

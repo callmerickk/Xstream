@@ -239,7 +239,8 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     // (3 crashes on The Odyssey). Cap at ~30 % of the heap, and half that while another player is alive.
     val heapMb = (Runtime.getRuntime().maxMemory() / (1024 * 1024)).toInt()
     val others = PlayerCount.alive()
-    val budgetMb = minOf(byRam, (heapMb * 0.22).toInt().coerceAtLeast(48) / (if (others > 0) 2 else 1)).coerceAtLeast(32)
+    // 0.8.12: a hidden player (prepared next title, quiet swap) gets 10 % of the heap, the playing one 22 %.
+    val budgetMb = minOf(byRam, (heapMb * (if (others > 0) 0.10 else 0.22)).toInt().coerceAtLeast(32)).coerceAtLeast(32)
     val load = DefaultLoadControl.Builder()
         // About a minute ahead (like Nuvio): more was downloaded and thrown away at every seek.
         // Xstream Live: start after ~1 s of video (and ~1.5 s after a seek) — the Live server keeps delivering steadily, so
@@ -250,7 +251,7 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
         .setPrioritizeTimeOverSizeThresholds(false)
         .setBackBuffer(if (tv) 10_000 else if (BuildConfig.LIVE_ONLY) 5_000 else 20_000, true)
         .build()
-    ActLog.add("PLAY", "buffer budget $budgetMb MB (heap $heapMb MB, ${others} other player(s))")
+    ActLog.add("PLAY", "player made · buffer $budgetMb MB · memory ${PlayerCount.usedMb()} / $heapMb MB · ${others} other player(s)")
     // Streams go through the app's HTTP client (DNS setting) with the addon's request headers.
     val http = OkHttpDataSource.Factory(Api.http).setUserAgent(PlayerUserAgent)
     // Phones: read the saved video first (instant play), then the network. (Source Test measures without it.)
@@ -788,6 +789,8 @@ fun PlayerScreen(
     var switching by remember { mutableStateOf(false) }
     /** 0.8.9: when the Quality chip was tapped (to log how fast the menu appeared). */
     val qTapAt = remember { longArrayOf(0L) }
+    /** 0.8.12: addons whose copy had another length (ladder): not tried again for this title. */
+    val ladderNo = remember(p.key) { mutableSetOf<String>() }
     /** 0.8.11: the cap inside an HLS stream (0 = none), when the internet last looked weak, and the measured speed (bit/s). */
     var hlsCap by remember(p.key) { mutableIntStateOf(0) }
     var lastSlowAt by remember(p.key) { mutableLongStateOf(0L) }
@@ -1328,7 +1331,8 @@ fun PlayerScreen(
             }
             // The server refused (403 / 428 / 5xx…) or the link stalls while other links are waiting: VLC can't fix a
             // refused link and a stuck one wastes time — straight to the next source.
-            n != null && !firstFrame && (code.contains("HTTP") || (code == "TIMEOUT" && hasMoreLinks())) -> {
+            // 0.8.12: a link that sent nothing at all is not tried another way (that cost 20 s on Justice League).
+            n != null && !firstFrame && (code.contains("HTTP") || (code == "TIMEOUT" && (hasMoreLinks() || (tracks.isEmpty && !usingVlc && player.bufferedPosition <= 0L)))) -> {
                 if (code.contains("400") || code.contains("404")) Ranker.markDeadUrl(n.url)
                 tryNextSource(n, start, code)
             }
@@ -1374,7 +1378,7 @@ fun PlayerScreen(
             delay(budget)
             var waited = budget
             while (waited < maxOf(14_000L, budget) && !firstFrame && (tracks.groups.isNotEmpty() || player.bufferedPosition > 0)) { delay(500); waited += 500 }
-        } else delay(if (now?.url.orEmpty().startsWith("http://127.0.0.1")) 10_000L else if (hasMoreLinks()) 12_000L else 30_000L)
+        } else delay(if (now?.url.orEmpty().startsWith("http://127.0.0.1")) 8_000L else if (hasMoreLinks()) 12_000L else 20_000L)
         if (!firstFrame && failure == null && now != null && !recovering) onEngineError("TIMEOUT")
     }
     // The right title? As soon as a link's length is known (before the picture shows when it can be), it is compared
@@ -1384,23 +1388,42 @@ fun PlayerScreen(
     LaunchedEffect(now?.url) {
         val n = now ?: return@LaunchedEffect
         if (p.manual || userPicked || (type != "movie" && type != "series")) return@LaunchedEffect
-        val expMin = runtimeMinutes(p.meta?.runtime) ?: runCatching { runtimeMinutes(PluginSources.metaFor(type, p.key)?.runtime) }.getOrNull() ?: return@LaunchedEffect
-        if (type == "movie" && expMin < 40) return@LaunchedEffect
-        if (type == "series" && expMin < 10) return@LaunchedEffect
+        // 0.8.12: the expected length is known at once — your saved progress has the real one (no waiting on addons; a
+        // resumed Flash episode played a 10-min "too many requests" video for 5 minutes while that look-up hung).
+        val savedMs = (vm.epProgress.value[p.key] ?: vm.progress.value.firstOrNull { it.key == p.key })?.durationMs ?: 0L
+        val expMin = (if (savedMs > 5 * 60_000) (savedMs / 60_000).toInt() else null)
+            ?: runtimeMinutes(p.meta?.runtime)
+            ?: withTimeoutOrNull(3_000) { runCatching { runtimeMinutes(PluginSources.metaFor(type, p.key)?.runtime) }.getOrNull() }
+        fun reject(why: String, dead: Boolean) {
+            val addon = itemFor(n.url)?.addonName ?: n.addon.orEmpty()
+            PlayTiming.late("not this title? $why — next link")
+            ActLog.add("SWITCH", "auto · wrong video ($why) · $addon · ${n.source} — skipped")
+            if (dead) Ranker.markDeadUrl(n.url)
+            if (addon.isNotBlank() && !dead) wrongAddons += addon
+            badFiles += fileId(n.url); tried += n.url
+            tryNextSource(n, if (firstFrame) keepPos() else resumeAt, "WRONG_TITLE", quiet = true)
+        }
+        // A file under 20 MB is never a film or an episode (a placeholder / error video).
+        if (n.url.startsWith("http") && !n.url.startsWith("http://127.0.0.1") && itemFor(n.url)?.isPlaylist() != true &&
+            StreamType.mimeFor(n.url, itemFor(n.url)?.fileName()) != androidx.media3.common.MimeTypes.APPLICATION_M3U8) {
+            val size = withTimeoutOrNull(4_000) { runCatching { StreamCache.probe(n.url).size }.getOrNull() } ?: -1L
+            if (now?.url != n.url) return@LaunchedEffect
+            if (size in 1 until 20L * 1024 * 1024) { reject("file only ${size / 1024} KB", true); return@LaunchedEffect }
+        }
         var d = 0L
         val t0 = SystemClock.elapsedRealtime()
         while (SystemClock.elapsedRealtime() - t0 < 15_000) { if (now?.url != n.url) return@LaunchedEffect; d = curDur(); if (d > 0) break; delay(250) }
         if (d <= 0) return@LaunchedEffect
         val got = d / 60_000.0
-        val (lo, hi) = if (type == "movie") 0.75 to 1.35 else 0.6 to 1.4
-        if (got < expMin * lo || got > expMin * hi) {
-            val addon = itemFor(n.url)?.addonName ?: n.addon.orEmpty()
-            PlayTiming.late("wrong title? this copy is ${"%.0f".format(got)} min, expected about $expMin min — next link")
-            ActLog.add("SWITCH", "auto · wrong title (length ${"%.0f".format(got)} min vs $expMin) · $addon · ${n.source} — nothing more from it for this title")
-            if (addon.isNotBlank()) wrongAddons += addon
-            badFiles += fileId(n.url); tried += n.url
-            tryNextSource(n, if (firstFrame) keepPos() else resumeAt, "WRONG_TITLE", quiet = true)
+        if (expMin == null) {
+            // Length unknown: anything under 5 min (episode) / 30 min (film) is not the real thing.
+            if (got < (if (type == "series") 5.0 else 30.0)) reject("only ${"%.0f".format(got)} min long", true)
+            return@LaunchedEffect
         }
+        if (type == "movie" && expMin < 40) return@LaunchedEffect
+        if (type == "series" && expMin < 10) return@LaunchedEffect
+        val (lo, hi) = if (type == "movie") 0.75 to 1.35 else 0.6 to 1.4
+        if (got < expMin * lo || got > expMin * hi) reject("length ${"%.0f".format(got)} min vs $expMin", got < 5.0)
     }
     // The paused player from the title page: if no picture 6 s after Play, it is treated like a stuck link.
     LaunchedEffect(Unit) {
@@ -2765,7 +2788,10 @@ fun PlayerScreen(
         if (curH in 1 until want.first) {
             val best = known.filter { it.resolution() in want && it.stream.url != now?.url }.firstOrNull()
                 ?: if (curH < 1000) known.filter { it.resolution() in 1000..1200 && it.stream.url != now?.url }.firstOrNull() else null
-            if (best != null) switchTo(best, "VR: best picture", auto = true, why = "VR: best picture (was ${curH}p${if (wifi) ", Wi-Fi" else ""})")
+            // 0.8.12: hidden players go first, and only with memory to spare (a crash came 2 s after this switch).
+            Preloader.release(); Prepare.stopOthers()
+            if (best != null && PlayerCount.heapFrac() < 0.60) switchTo(best, "VR: best picture", auto = true, why = "VR: best picture (was ${curH}p${if (wifi) ", Wi-Fi" else ""})")
+            else if (best != null) ActLog.add("SWITCH", "auto · VR: best picture skipped — memory ${PlayerCount.usedMb()} MB in use")
         }
     }
     /** The upgraded HD file failed: straight back to the MovieBox link at the same second (no hunting through other HD files). */
@@ -2814,6 +2840,9 @@ fun PlayerScreen(
             val pr = StreamCache.probe(url)
             if (pr.ok && !pr.seekable) { Ranker.markUnseekable(url); swLog(auto, "$why — skipped", url, "not switched: the file can't be jumped inside"); return false }
         }
+        // 0.8.12: never a second hidden player when memory is short (two crashes came from stacked hidden players).
+        if (auto && !PlayerCount.room()) { swLog(true, "$why — skipped", url, "not switched: memory ${PlayerCount.usedMb()} MB in use"); return false }
+        if (!auto) { Preloader.release(); Prepare.stopOthers() }
         val hold = HeaderHold(StreamHeaders.forUrl(url))
         val sp = buildPlayer(ctx, vm, true, hold = hold)
         sp.setSeekParameters(androidx.media3.exoplayer.SeekParameters.EXACT)
@@ -2857,7 +2886,7 @@ fun PlayerScreen(
         // copies are often a few seconds longer or shorter at the credits — they used to reload with "Resuming at").
         if (dMain <= 0 || dSh <= 0 || kotlin.math.abs(dMain - dSh) > (if (asked) 10_000 else 1_500)) {
             swapFail = if (dMain > 0 && dSh > 0 && kotlin.math.abs(dMain - dSh) < dMain * 0.08) "cut (${kotlin.math.abs(dMain - dSh) / 1000} s longer/shorter)" else "length"
-            if (!asked && why.startsWith("ladder")) { swLog(true, "$why — not faded", url, "lengths differ (${fmtTime(dMain)} vs ${fmtTime(dSh)})"); drop(); return false }
+            if (!asked && why.startsWith("ladder")) { ladderNo += c.addonName; swLog(true, "$why — not faded", url, "lengths differ (${fmtTime(dMain)} vs ${fmtTime(dSh)}) — ${c.addonName} not tried again for this title"); drop(); return false }
             PlayTiming.late("swap: lengths differ (${fmtTime(dMain)} vs ${fmtTime(dSh)})" + if (asked) " — switching the usual way" else " — Upgrade quality offered instead")
             if (!asked) swLog(true, "$why — not faded", url, "lengths differ by ${kotlin.math.abs(dMain - dSh) / 1000} s, offered as Upgrade instead")
             drop()
@@ -3017,9 +3046,10 @@ fun PlayerScreen(
                     }
                     val waited = SystemClock.elapsedRealtime() - t0 >= 25_000
                     // VegaMovies / RogMovies first; after 25 s without them, the highest rung that is there.
-                    val c = ok.firstOrNull { rung(it) == 3 }
-                        ?: (if (waited) (ok.firstOrNull { rung(it) == 2 } ?: ok.firstOrNull { rung(it) == 1 }) else null)
-                    if (c == null) { delay(1_000); continue }
+                    val okNow = ok.filter { it.addonName !in ladderNo }
+                    val c = okNow.firstOrNull { rung(it) == 3 }
+                        ?: (if (waited) (okNow.firstOrNull { rung(it) == 2 } ?: okNow.firstOrNull { rung(it) == 1 }) else null)
+                    if (c == null || !PlayerCount.room()) { delay(2_000); continue }
                     tried += c.stream.url!!
                     val why = "ladder ${here} → ${rung(c)} (${if (rung(c) == 3) "VegaMovies/RogMovies" else if (rung(c) == 2) "OTT 1080p" else "MovieBox MP4"})"
                     PlayTiming.late("$why: trying ${Public.streamName(c)}")
@@ -3141,6 +3171,19 @@ fun PlayerScreen(
                 }
             }
         }
+    }
+
+    // ───── 0.8.12: a start with a single link (resume, remembered, prepared) gets backups at once ─────
+    LaunchedEffect(p.key) {
+        if (BuildConfig.IS_TV || p.find) return@LaunchedEffect
+        delay(2_500)
+        if (firstFrame || known.count { it.stream.url != null } > 1 || candidates.isNotEmpty()) return@LaunchedEffect
+        PlayTiming.late("only one link — getting backups")
+        val fresh = withTimeoutOrNull(20_000) { runCatching { vm.allStreams(type, p.key) }.getOrNull() }.orEmpty().filter { it.stream.url != null }
+        if (fresh.isEmpty()) return@LaunchedEffect
+        known = (known + fresh).distinctBy { it.stream.url }
+        if (!firstFrame && candidates.isEmpty()) candidates = fresh.filter { it.stream.url != now?.url && it.stream.url !in tried }
+        PlayTiming.late("backups ready: ${fresh.size} links")
     }
 
     // ───── 0.8.11: quality that follows the internet, with no loading ─────
@@ -3560,6 +3603,7 @@ fun PlayerScreen(
         var tries = 0
         while (!NextUp.fresh(ep.id) && tries < 20) { delay(1500); tries++ }
         if (!NextUp.fresh(ep.id) || Preloader.has(ep.id)) return@LaunchedEffect
+        if (!PlayerCount.room()) { ActLog.add("PLAY", "next episode not loaded ahead — memory ${PlayerCount.usedMb()} MB in use"); return@LaunchedEffect }
         val url = NextUp.url ?: return@LaunchedEffect
         nextPreloaded = true
         val subs = NextUp.subs
@@ -5303,23 +5347,21 @@ private fun NextEpisodePill(left: Long, window: Long, poster: String? = null, la
     val shape = RoundedCornerShape(26.dp)
     val frac = (1f - left.toFloat() / window).coerceIn(0f, 1f)
     val ring by androidx.compose.animation.core.animateFloatAsState(frac, tween(900), label = "nextRing")
-    // Phones: a card with the next episode's picture, its name and the countdown ring over the picture.
+    // 0.8.12 phones: the same small landscape card as "Preparing next…" (same place, same size), so nothing jumps from a
+    // big card to a small one; the red line fills as the credits run out; tap = next episode now.
     if (!BuildConfig.IS_TV && poster != null) {
-        val cs = RoundedCornerShape(14.dp)
-        Column(Modifier.padding(top = 10.dp).width(236.dp).softHalo(14.dp, spread = 8.dp, strength = 0.4f).clip(cs).background(Color(0xF014151B))
+        val cs = RoundedCornerShape(12.dp)
+        Box(Modifier.offset(x = 12.dp, y = 10.dp).width(214.dp).height(68.dp).clip(cs).background(Color(0xF014151B))
             .border(1.dp, Color(0x26FFFFFF), cs).clickable(onClick = onClick)) {
-            Box(Modifier.fillMaxWidth().height(110.dp)) {
-                AsyncImage(poster, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color(0xAA000000))))
-                Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(34.dp).clip(CircleShape).background(Color(0x99000000)), Alignment.Center) {
-                    CircularProgressIndicator(progress = { ring }, modifier = Modifier.fillMaxSize(), color = Color.White, strokeWidth = 2.5.dp, trackColor = Color(0x33FFFFFF))
-                    Icon(Icons.Default.SkipNext, null, Modifier.size(16.dp), tint = Color.White)
+            Row(Modifier.fillMaxSize()) {
+                AsyncImage(poster, null, Modifier.fillMaxHeight().width(100.dp), contentScale = ContentScale.Crop)
+                Column(Modifier.weight(1f).padding(horizontal = 10.dp), verticalArrangement = Arrangement.Center) {
+                    Text("Next episode" + if (left in 1L..60_000L) " in ${(left + 999) / 1000} s" else "", fontSize = 10.5.sp, color = Color(0xFFFF9AA1), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text(label ?: "Next episode", fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("tap to play now", fontSize = 9.5.sp, color = Color(0xFF9AA1B8), maxLines = 1)
                 }
             }
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                Text("Next episode" + if (left in 1L..60_000L) " in ${(left + 999) / 1000} s" else "", fontSize = 12.sp, color = Color(0xFFB8BECB), fontWeight = FontWeight.SemiBold)
-                if (label != null) Text(label, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(ring).height(3.dp).background(Color(0xFFE50914)))
         }
         return
     }
@@ -7230,6 +7272,10 @@ object PlayerCount {
     private val set = java.util.Collections.newSetFromMap(java.util.WeakHashMap<ExoPlayer, Boolean>())
     fun add(p: ExoPlayer) { synchronized(set) { set += p } }
     fun alive(): Int = synchronized(set) { set.count { runCatching { it.playbackState != androidx.media3.common.Player.STATE_IDLE }.getOrDefault(false) } }
+    fun usedMb(): Long { val rt = Runtime.getRuntime(); return (rt.totalMemory() - rt.freeMemory()) / 1048576 }
+    fun heapFrac(): Double { val rt = Runtime.getRuntime(); return (rt.totalMemory() - rt.freeMemory()).toDouble() / rt.maxMemory() }
+    /** 0.8.12: room for one more (hidden) player: only the playing one alive and under 70 % of the app's memory. */
+    fun room(): Boolean = alive() <= 1 && heapFrac() < 0.70
 }
 
 

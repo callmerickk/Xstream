@@ -23,8 +23,9 @@ private object SeriesCache { val map = ConcurrentHashMap<String, Pair<Long, Meta
 /** A series' episode list (from your addons), cached for 6 hours. */
 suspend fun AppViewModel.seriesMeta(id: String): Meta? {
     SeriesCache.map[id]?.let { (at, m) -> if (System.currentTimeMillis() - at < 6 * 3600_000L) return m }
-    val m = runCatching { fullMeta(Meta(id = id, type = "series")) }.getOrNull()
-    SeriesCache.map[id] = System.currentTimeMillis() to m
+    val m = runCatching { fullMeta(Meta(id = id, type = "series")) }.getOrNull()?.takeIf { !it.videos.isNullOrEmpty() } ?: savedShow(id)
+    // 0.8.12: kept only with its episodes (an empty answer stayed for 6 h before).
+    if (m != null && !m.videos.isNullOrEmpty()) SeriesCache.map[id] = System.currentTimeMillis() to m
     return m
 }
 
@@ -76,3 +77,15 @@ fun Progress.asMeta(): Meta = Meta(
     id = key.substringBefore(":"), type = if (isSeries()) "series" else "movie",
     name = title.substringBefore("  S").trim(), poster = image, background = image,
 )
+
+
+/**
+ * 0.8.12: Continue watching → the player. A link saved more than 12 h ago isn't trusted (it may now give a short
+ * "too many requests / update the app" video): fresh links are looked up and played from the saved second.
+ */
+fun Progress.toPlayer(startMs: Long = positionMs): Screen.Player {
+    val type = if (isSeries()) "series" else "movie"
+    val old = System.currentTimeMillis() - updated > 12 * 3600_000L
+    return if (old || url.isBlank()) Screen.Player(title, "", emptyList(), key, image, startMs, type = type, find = true)
+    else Screen.Player(title, url, subs, key, image, startMs, type = type, source = source, addon = addon)
+}

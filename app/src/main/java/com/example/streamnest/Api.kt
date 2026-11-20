@@ -157,7 +157,7 @@ object Api {
         call.enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: java.io.IOException) { if (cont.isActive) cont.resumeWith(Result.failure(e)) }
             override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                val r = runCatching { response.use { require(it.isSuccessful) { "HTTP ${it.code}" }; it.body!!.string() } }
+                val r = runCatching { response.use { require(it.isSuccessful) { "HTTP ${it.code}" }; it.body!!.cappedString() } }
                 if (cont.isActive) cont.resumeWith(r)
             }
         })
@@ -169,7 +169,7 @@ object Api {
         headers.forEach { (k, v) -> b.header(k, v) }
         http.newCall(b.build()).execute().use {
             require(it.isSuccessful) { "HTTP ${it.code}" }
-            it.body!!.string()
+            it.body!!.cappedString()
         }
     }
 
@@ -194,4 +194,14 @@ object Api {
 
     fun normalize(input: String): String =
         input.trim().replace("stremio://", "https://").removeSuffix("/manifest.json").trimEnd('/')
+}
+
+
+/** 0.8.12: a reply over 16 MB is refused (read into memory it can need 10× that and crash the app). */
+fun okhttp3.ResponseBody.cappedString(): String {
+    val max = 16L * 1024 * 1024
+    if (contentLength() > max) throw java.io.IOException("reply too big (${contentLength() / 1048576} MB)")
+    val src = source()
+    if (src.request(max + 1)) throw java.io.IOException("reply too big (over 16 MB)")
+    return string()
 }

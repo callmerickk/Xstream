@@ -17,6 +17,17 @@ import coil.decode.VideoFrameDecoder
 /** A FragmentActivity (still a ComponentActivity) so the fingerprint prompt can be shown. */
 // AppCompat (still a FragmentActivity underneath): CloudStream plugins expect the app's screen to be one.
 class MainActivity : androidx.appcompat.app.AppCompatActivity() {
+    /** 0.8.12: in the background (not while a video plays in a small window) the hidden players and picture memory are
+     *  freed, so Android stops closing the app (it was using 440–625 MB there). */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN && !isInPictureInPictureMode) {
+            runCatching { Preloader.release() }
+            runCatching { Prepare.stopOthers() }
+            runCatching { coil.Coil.imageLoader(this).memoryCache?.clear() }
+            ActLog.add("APP", "in the background — freed hidden players and pictures (memory ${PlayerCount.usedMb()} MB)")
+        }
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.lagradost.cloudstream3.CommonActivity.activity = this

@@ -45,6 +45,10 @@ object ActLog {
     private val queue = ConcurrentLinkedQueue<String>()
     private var dir: File? = null
     private var app: Context? = null
+    /** The current network (changes when the Wi-Fi / mobile data changes). */
+    fun netHandle(): Long = runCatching {
+        (app?.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager)?.activeNetwork?.networkHandle ?: 0L
+    }.getOrDefault(0L)
     private val dayFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     private val timeFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
     @Volatile var screen = "Start"
@@ -215,7 +219,7 @@ object ActLog {
                 r
             } catch (e: Exception) {
                 if (!skip) add("NET", "$what · failed (${e.javaClass.simpleName}: ${e.message?.take(80)}) · ${SystemClock.elapsedRealtime() - t0} ms")
-                if (!media) HostDown.failed(u.host, e)
+                if (!media) HostDown.failed(u.host, e, SystemClock.elapsedRealtime() - t0)
                 throw e
             }
         }
@@ -419,19 +423,38 @@ object HostDown {
     @Volatile private var lastOkAt = 0L
     private val never = Regex("(?i)(firebase|googleapis|google\\.com|gstatic|themoviedb|strem\\.io|github|tmdb|metahub|googlevideo|youtube)")
     /** Milliseconds left while [host] is skipped, or null. */
+    /** 0.8.12: a home-network server (10.x / 192.168.x) that can't be reached here is skipped until the network changes
+     *  (away from home Wi-Fi every search and subtitle request waited 4 s for it). */
+    private fun lan(h: String) = local(h) && !h.startsWith("127.") && h != "localhost" && h != "::1"
+    private val lanFails = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    @Volatile private var lanNet = Long.MIN_VALUE
+    private fun sameNet() { val id = ActLog.netHandle(); if (id != lanNet) { lanNet = id; lanFails.clear() } }
+
     fun check(host: String): Long? {
+        if (lan(host)) { sameNet(); return if ((lanFails[host] ?: 0) >= 2) 60_000L else null }
         if (local(host)) return null
         val t = until[host] ?: return null
         val left = t - SystemClock.elapsedRealtime()
         if (left <= 0) { until.remove(host); fails.remove(host); return null }
         return left
     }
-    fun ok(host: String) { fails.remove(host); lastOkAt = SystemClock.elapsedRealtime() }
-    @Synchronized fun failed(host: String, e: Exception) {
+    fun ok(host: String) { fails.remove(host); if (lan(host)) lanFails.remove(host); lastOkAt = SystemClock.elapsedRealtime() }
+    @Synchronized fun failed(host: String, e: Exception, ms: Long = 0) {
         val connect = e is java.net.UnknownHostException || e is java.net.ConnectException ||
             (e is java.net.SocketTimeoutException && e.message?.contains("failed to connect") == true) ||
             e is javax.net.ssl.SSLHandshakeException
-        if (!connect || never.containsMatchIn(host) || local(host)) return
+        if (lan(host)) {
+            sameNet()
+            if (connect || e is java.net.SocketTimeoutException || (e is java.net.SocketException && ms >= 3_000)) {
+                val n = (lanFails[host] ?: 0) + 1; lanFails[host] = n
+                if (n == 2) ActLog.add("NET", "$host (home network server) can't be reached on this network — skipped until the network changes")
+            }
+            return
+        }
+        // 0.8.12: servers that reset every connection (blocked) or ask for a proxy password count too, after 3 in a row.
+        val soft = (e is java.net.SocketException && e.message?.contains("reset", true) == true) ||
+            (e is java.net.ProtocolException && e.message?.contains("407") == true)
+        if ((!connect && !soft) || never.containsMatchIn(host) || local(host)) return
         val now = SystemClock.elapsedRealtime()
         // Only when the internet itself works (something else answered in the last minute)…
         if (now - lastOkAt > 60_000) return
@@ -442,7 +465,7 @@ object HostDown {
         if (recent.map { it.first }.distinct().size >= 3) { fails.clear(); return }
         val n = (fails[host] ?: 0) + 1
         fails[host] = n
-        if (n >= 2 && until[host] == null) {
+        if (n >= (if (soft) 3 else 2) && until[host] == null) {
             until[host] = SystemClock.elapsedRealtime() + 10 * 60_000L
             ActLog.add("NET", "$host can't be reached twice — skipped for 10 min")
         }

@@ -1,6 +1,7 @@
-Xstream 0.8.11
+Xstream 0.8.12
 
-• Weak internet: the quality lowers before the video runs out — no loading.
-• Back up by itself when the internet is steady (about 12 s), also without loading.
-• No heavy background upgrades on weak internet.
-• "60fps available" now top-right and hides after 8 s.
+• Fewer crashes: hidden players limited, memory freed in the background.
+• Faster starts: backups at once, dead links dropped quickly, unreachable servers skipped.
+• Fake short videos are skipped; old saved links are refreshed.
+• Shows always open with their episodes and continue with the right one.
+• One small Next episode card.

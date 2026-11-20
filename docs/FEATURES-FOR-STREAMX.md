@@ -154,3 +154,20 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
   of a climb doubles that wait (max 2 min). Auto only. Logs `QUALITY speed … → 720p inside the stream (no reload)`.
 - **Ladder upgrades guarded**: no VegaMovies/RogMovies upgrade while capped, 3 min after a slow moment, or under 8 Mb/s; 3 tries per title.
 - **60fps note**: its own 8 s timer, top-right.
+
+## 0.8.12 (20 Nov 2026)
+- **Memory** (OOM crashes in OkHttp threads, o-kills at 440–625 MB): `PlayerCount.room()` = one live player and heap < 70 % — required for
+  auto `ottSwapTo` (ladder, slow-internet copy), next-episode preload, ladder loop; Prepare skips opening ahead above 70 %; VR "best picture"
+  only < 60 % after `Preloader.release()` + `Prepare.stopOthers()`. Hidden players get 10 % of the heap (playing one 22 %). User picks free
+  hidden players first. `ladderNo`: an addon whose copy had another length isn't retried. `MainActivity.onTrimMemory(UI_HIDDEN)` frees
+  Preloader / Prepare / Coil memory. `cappedString()` refuses replies over 16 MB. "player made · buffer · memory" logged.
+- **Fast fallbacks**: one-link start → `allStreams` backups after 2.5 s; a TIMEOUT with no data → next source / quiet fresh look-up (no
+  other ways of the same link); last-link wait 20 s (127.0.0.1 8 s). `HostDown`: home-network servers (10.x/192.168.x) skipped after 2
+  failures until the network changes (`ActLog.netHandle()`); connection-reset / 407 hosts rest 10 min after 3.
+- **Fake videos**: expected length from saved progress (else meta, else `metaFor` ≤3 s); file < 20 MB (Range probe) or very short
+  (unknown length: < 5 min episode / < 30 min film) → rejected + `markDeadUrl`. `Progress.toPlayer()`: saved link older than 12 h →
+  `find = true` from the saved second.
+- **Series**: `fullMeta` accepts shows only with `videos` (Cinemeta 12 s, addons up to 12 s), saves them (prefs `shows`), falls back to the
+  saved one; `seriesMeta` never caches empty. Detail shows saved episodes at once; a finished last episode → the next one; never plays a
+  bare show id. Episode progress saved from 1 s.
+- **Next episode card**: phone `NextEpisodePill` is the same 214×68 corner card as `WatchNextLoadingCard`.

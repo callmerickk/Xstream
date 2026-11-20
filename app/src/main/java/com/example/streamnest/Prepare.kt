@@ -366,6 +366,7 @@ object Prepare {
     private fun readyPlayer(vm: AppViewModel, ctx: Context, id: String, s: StreamItem, url: String, mime: String?, subs: List<Subtitle>, list: List<StreamItem>, resumeMs: Long, replace: Boolean = false) {
         // replace: only while the title page still holds the MovieBox one (Play may have taken it meanwhile).
         if (BuildConfig.IS_TV || Preloader.has(id) != replace) return
+        if (PlayerCount.heapFrac() > 0.70) { ActLog.add("PLAY", "not opened ahead — memory ${PlayerCount.usedMb()} MB in use"); return }
         runCatching {
             StreamHeaders.use(url)
             val p = buildPlayer(ctx, vm, true)
@@ -427,6 +428,7 @@ object Prepare {
     private suspend fun csOpen(vm: AppViewModel, ctx: Context, id: String, s: StreamItem, url: String, others: () -> List<StreamItem>,
                                resumeMs: Long, timeoutMs: Long): Boolean {
         if (timeoutMs <= 0) return false
+        if (PlayerCount.heapFrac() > 0.75) return false
         val ready = kotlinx.coroutines.CompletableDeferred<Boolean>()
         val subs = s.stream.subtitles.orEmpty()
         val p = runCatching {

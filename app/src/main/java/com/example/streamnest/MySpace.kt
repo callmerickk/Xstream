@@ -281,7 +281,7 @@ private fun OldLibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Met
         else item {
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(progress, key = { it.key }) { p ->
-                    ContinueCard(p, onClick = { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs, source = p.source, addon = p.addon)) }, onRemove = { vm.removeProgress(p.key) })
+                    ContinueCard(p, onClick = { onPlay(p.toPlayer()) }, onRemove = { vm.removeProgress(p.key) })
                 }
             }
         }

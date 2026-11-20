@@ -13,6 +13,14 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.12", "20 Nov 2026", "Steadier, faster starts, right episode", listOf(
+        "Fewer crashes: hidden players are limited and freed when memory is short or the app goes to the background",
+        "Faster starts: backups are fetched at once, dead links are dropped after a few seconds, unreachable servers are skipped",
+        "Fake short videos (“too many requests”, “update the app”) are skipped",
+        "Continue watching uses fresh links when the saved one is old",
+        "Shows always open with their episodes; after the last episode you watched it goes to the next one",
+        "One small Next episode card at the end",
+    )),
     Release("0.8.11", "19 Nov 2026", "Quality follows your internet, no loading", listOf(
         "On weak internet the quality lowers before the video runs out — no loading ring",
         "When the internet is steady again (about 12 s), it goes back up by itself, also without loading",
@@ -527,6 +535,15 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.12", "20 Nov 2026", "Memory caps, fast fallbacks, fake-video checks, series meta", listOf(
+        "PlayerCount.room() (only 1 alive, heap <70 %): auto ottSwapTo, next-episode preload, ladder wait for it; Prepare skips >70 %; VR switch <60 % after releasing hidden players; hidden player budget 10 % heap",
+        "Ladder: addon with other lengths not retried (ladderNo); onTrimMemory(UI_HIDDEN) frees Preloader/Prepare/Coil; replies over 16 MB refused (cappedString)",
+        "Single-link start → allStreams backups after 2.5 s; silent TIMEOUT goes to next source / fresh look-up (no other ways); no-more-links wait 20 s, 127.0.0.1 8 s",
+        "HostDown: LAN hosts skipped per network after 2 failures (netHandle); connection reset / 407 count after 3",
+        "Wrong video: expected length from saved progress, metaFor 3 s max; files <20 MB and very short videos rejected + markDeadUrl; Continue → find=true when the saved link is >12 h old (Progress.toPlayer)",
+        "fullMeta for series: only with videos (12 s), saved in prefs 'shows'; seriesMeta never caches empty; Detail shows saved episodes, next after a finished one, never plays a bare show id",
+        "NextEpisodePill (phone) = same 214×68 card as WatchNextLoadingCard; episode progress saved from 1 s",
+    )),
     Release("0.8.11", "19 Nov 2026", "Predictive HLS quality, ladder guard, 60fps note", listOf(
         "bwNow from AnalyticsListener.onBandwidthEstimate (smoothed); per-rung bitrate from the track group",
         "Down before a stall: speed < 1.2× current rung and < 10 s ahead (or stalled 1.5 s) → setMaxVideoSize next rung that fits; no reload",
