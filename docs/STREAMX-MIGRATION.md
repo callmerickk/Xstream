@@ -101,3 +101,27 @@ Feature list with Xstream versions: `FEATURES-FOR-STREAMX.md`. This file = the p
   sign-in is per project — not recommended.
 - Kaggle / Colab / similar: notebooks, not servers (sessions end, no public address, terms) → only for batch jobs
   (e.g. nightly title lists, recommendations), not for live streaming work.
+
+## Next Xstream mobile build — the list (23 Nov)
+Promised earlier (reminders):
+1. **Logs in one organised place**: in the app and in sent files, every log in one stack (app › version › device).
+2. **Profile page "no lift"**: the selected profile no longer lifts up, and its text ("opening in N s · ◀ to change")
+   moves into a small opening pill. **Image first; build only after approval.**
+3. **Zoom in the QR scanner** (phone signing in a TV).
+Agreed 22 Nov:
+4. Tour: no whole-screen touch swallowing, Skip/Next ≥ 48 dp, Back = Skip, ✕ in the card, TOUR lines logged (Samsung).
+5. DNS: the phone's DNS first, private DNS when it fails or is blocked (aoneroom), answer remembered per site.
+6. Continue look-ahead stops when another title opens.
+7. Down-server rule: a "down" host is retried once per new title; with the relay it goes through the relay instead.
+8. DetailTiming stops at Play (the "87 s" green light).
+9. Blocked-page relay through the Cloudflare Worker (allowlist: vcloud.fit, hubcloud.*, vegamovies.*, rogmovies.*) +
+   final file links kept for days → VegaMovies back.
+10. Watch together: fix after the friend's log (rooms are the same code as StreamX; suspects: invite link opens StreamX,
+    player swaps/retries fighting the sync).
+11. Then calls (Cloudflare Worker + Durable Objects + Firebase push + WebRTC, Cloudflare TURN).
+12. Live server for 32-bit (armeabi-v7a) and on demand (wakes only when plugins + addons find nothing, sleeps ~1 min
+    after the player closes).
+13. Layered sources: Quick Play = chosen plugins + addons race; then the rest by name and by id; then the Live server.
+From StreamX TV, worth bringing to Xstream mobile too: Skip intro fitted to the copy (25 fps ×23.976/25) + learned
+corrections (`IntroFix.kt`, TV 0.9.9); smart search for MovieBox "Name S7"; log newest first.
+Asked, not decided: 3D copies (tag + 3D group + VR stereo / "watch in 2D").
