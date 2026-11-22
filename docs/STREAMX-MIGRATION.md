@@ -81,3 +81,23 @@ Feature list with Xstream versions: `FEATURES-FOR-STREAMX.md`. This file = the p
   (sends FCM pushes with the key kept as a Worker secret — no key in the app). Media stays peer-to-peer WebRTC
   (Workers can't carry call audio/video); TURN for mobile data from Cloudflare Realtime TURN (check free quota / card)
   or Metered / ExpressTURN free tiers.
+
+## Decisions (22 Nov, 16:45)
+1. Every new, untested feature goes into **Xstream mobile first**; only after approval does it land in StreamX.
+2. 32-bit Live server: build it in the next Xstream Live build; user tests on a realme 3 Pro (Snapdragon 710 — a 64-bit
+   chip; whether its Android is 32- or 64-bit must be checked, e.g. Settings › About › or the app log's ABI line).
+3. Calls: Xstream first. Before that, fix **Watch together in Xstream** (a friend says it doesn't work; StreamX played a
+   whole film in a room fine). Code check: Together.kt / Call.kt / Social*.kt are the same in both apps (only names);
+   differences are in Xstream's player (quality swaps, keepTrying, held frame, exact seeks) and both apps claiming the
+   same invite link (`streamx-watch.pages.dev/join`, `streamx://join`) — the web page offers StreamX. Need a log from
+   the friend's phone in a room.
+
+## Load and limits (22 Nov)
+- Firebase Realtime Database (Spark, free): **100 connections at the same time**. Every open app (Xstream, StreamX
+  phone and TV — all share `streamx-d976a`) keeps one live sync stream (`Cloud.streamLoop`), Watch together a second.
+  Ideas: live stream only while the app is in front and something needs it (else a quick read on open / on change);
+  move live things (rooms, presence, chat, calls) to Cloudflare Durable Objects (no connection cap; 100k requests/day free).
+  A 2nd Firebase account (split users by uid) is possible but rooms / friends / chat between the two halves break and
+  sign-in is per project — not recommended.
+- Kaggle / Colab / similar: notebooks, not servers (sessions end, no public address, terms) → only for batch jobs
+  (e.g. nightly title lists, recommendations), not for live streaming work.
