@@ -166,3 +166,15 @@ Asked, not decided: 3D copies (tag + 3D group + VR stereo / "watch in 2D").
 - Start: TV theme window background = logo (`src/tv/res/values/themes.xml`, `tv_launch.xml`), splash cross-fades into the
   gate (`onFading`), profile pick = short zoom + Home fade-in (`homeIn` in TvApp); hero auto-slide waits for the next
   picture; next two rows' posters prefetched on row focus.
+
+## TV 0.9.15 — steadier and lighter (23 Nov)
+- Exit pop-up (`TvExtras.kt` TvExitDialog): the cache size was read on the main thread via `StreamCache.usedBytes`, which
+  opens the whole video cache (SQLite + folder scan) when nothing played yet → frozen screen, Android closed the app on Back.
+  Now `usedBytesIfOpen()` on IO. Check Xstream's exit dialog for the same.
+- First open after an update: the old-file clean-up (`TvBox.setupOnce`) ran on the main thread at Who's watching →
+  frozen, closed. Version is marked first; clean-up runs 30 s later on a low-priority thread when the remote is quiet.
+- `onTrimMemory`: Fire TV sends level 15 at every start with 300 MB free; pictures are cleared only after 20 s and when
+  the heap is >60 % or the box has <120 MB free (`TvSmall.reallyShort`).
+- Home refresh waits for a quiet remote when saved rows are shown; Worker bundle cap 5 s; direct fetches max 3 at once;
+  the log names the hosts the bundle missed.
+- Crash text and "Android closed the app" lines now carry last screen + key; a saved crash is logged at next start.
