@@ -373,3 +373,17 @@ STILL LEFT (reason)
   behind the whole app (MainActivity), Home/Detail set the picture. Glass first in Themes with a NEW badge.
 - `FirstLook.kt` (from Xstream): "Choose your look" once per profile (texts `look0976`), Glass first; Skip = All Live.
 - AI button lifted above the active bottom bar (Orbit 84, Capsule 82, Horizon 80 dp + 12). Icon unchanged.
+
+## StreamX 0.9.77 — title-page out-of-memory crashes (24 Nov)
+Log: two OOM crashes on 0.9.76 (02:38:39, 02:40:18), each 7–16 s after opening a title page, heap 384 MB full from
+73–117 MB; the 0.9.75 Settings crash (00:49) came right after browsing titles the same way.
+Most likely cause (code): plugin searches run in PluginSources' own `bg` scope and were never stopped when you left a
+title — browsing 4–5 titles quickly stacked ~15 site scrapes per title (each holding a whole web page); plus each title
+page's ready paused player (`Prepare.readyPlayer` / `csOpen`) kept loading up to its full 84 MB while waiting.
+Fix (minimal, phone only): `PluginSources.focus(id)` from the title page stops searches still running for other titles
+(the playing title is kept via `playingKey`); hidden players (`buildPlayer(hidden = true)`) hold at 16 MB / 15 s until
+`HiddenCap.lift` when the player takes them; Download ignores repeat taps while starting; `MemWatch` logs memory for
+60 s after each screen change and above 75 % lets go of the paused player, Coil memory and other titles' answers.
+Glass: the title page root is transparent (it was a second dark layer → looked black).
+Not done (speed risk on the stable app): a global limit on concurrent scrapes.
+**Same fix should go to Xstream** (same Prepare / PluginSources / buildPlayer code).
