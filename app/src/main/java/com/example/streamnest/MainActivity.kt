@@ -69,6 +69,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             StreamNestTheme {
                 androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                     if (BuildConfig.IS_TV) TvApp() else App()
+                    // 0.8.18: approval-only access + "Update required" (off until turned on in Settings › Access requests).
+                    if (!BuildConfig.IS_TV) AccessGate(androidx.lifecycle.viewmodel.compose.viewModel<AppViewModel>())
                     UpdatePrompt()
                     ProfileLockDialog()
                     // Source Test running: the screen stays awake; afterwards your normal screen timeout applies again.

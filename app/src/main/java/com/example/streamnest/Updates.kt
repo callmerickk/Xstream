@@ -98,6 +98,8 @@ object Updater {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("updates", Context.MODE_PRIVATE)
 
+    /** 0.8.18: versions.json's "minPhone" from the last check (0 = none). */
+    fun minPhone(ctx: Context): Int = prefs(ctx).getInt("minPhone", 0)
     fun installedCode(ctx: Context): Int = runCatching {
         val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
         if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode.toInt() else @Suppress("DEPRECATION") pi.versionCode
@@ -136,6 +138,8 @@ object Updater {
         p.edit().putLong("checkedAt", now).apply()
         val tv = BuildConfig.IS_TV
         val code = versions[if (tv) "tv" else "phone"]?.jsonPrimitive?.intOrNull ?: 0
+        // 0.8.18: the oldest version still allowed ("minPhone"); older ones show "Update required".
+        if (!tv) p.edit().putInt("minPhone", versions["minPhone"]?.jsonPrimitive?.intOrNull ?: 0).apply()
         val name = versions.s(if (tv) "tvName" else "phoneName") ?: ""
         // The APK of exactly this release (its tag), so the version shown is the version installed.
         val tag = versions.s("tag")

@@ -339,7 +339,7 @@ fun App(vm: AppViewModel = viewModel()) {
             Screen.Notes -> NotificationsPage(onBack = pop, onTogether = { stack.add(Screen.Together()) }, onOpen = open)
             null -> Box(Modifier.fillMaxSize().background(Bg).nestedScroll(scrollWatcher).pointerInput(Unit) {
                 // Watches every touch (never consumes it) to wake the dock.
-                awaitPointerEventScope { while (true) { awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial); lastTouch[0] = System.currentTimeMillis(); if (idleHidden) idleHidden = false } }
+                awaitPointerEventScope { while (true) { awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial); lastTouch[0] = System.currentTimeMillis(); UserIdle.lastTouch = lastTouch[0]; if (idleHidden) idleHidden = false } }
             }) {
                 Box(Modifier.fillMaxSize().then(if (voiceOpen) Modifier.blur(10.dp) else Modifier)) {
                 when (tab) {

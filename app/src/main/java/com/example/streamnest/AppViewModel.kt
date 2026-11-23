@@ -1120,6 +1120,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
         val lock = Any()
         var done = 0
+        // 0.8.18: the Cloudflare link finder asks all addons at once; an addon's cloud answer is shown until its own
+        // direct answer arrives (which then replaces it). Counted as answered on whichever comes first.
+        val answered = BooleanArray(addons.size)
+        val cloud = if (addons.isEmpty() || BuildConfig.IS_TV) null else async {
+            runCatching { CloudFind.find(type, id, addons.map { CloudFind.baseOf(it.baseUrl) }) }.getOrDefault(emptyMap())
+        }
+        cloud?.let { c ->
+            launch {
+                val m = c.await()
+                if (m.isEmpty()) return@launch
+                val pending = addons.indices.filter { i -> synchronized(lock) { !answered[i] } }
+                for (i in pending) {
+                    val a = addons[i]
+                    val l = m[CloudFind.baseOf(a.baseUrl)].orEmpty()
+                    if (l.isEmpty()) continue
+                    val r = right(l.map { StreamItem(a.label(), it).also { si -> StreamHeaders.remember(si) } })
+                    if (r.isEmpty()) continue
+                    val snapshot = synchronized(lock) {
+                        if (answered[i]) null else {
+                            results[i] = r; answered[i] = true; done++
+                            results.filterNotNull().flatten().distinctBy { it.stream.url } to (done == total)
+                        }
+                    }
+                    if (snapshot != null) send(snapshot)
+                }
+            }
+        }
         addons.forEachIndexed { i, a ->
             launch {
                 val t0 = android.os.SystemClock.elapsedRealtime()
@@ -1135,8 +1162,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 AddonSpeed.record(a.label(), android.os.SystemClock.elapsedRealtime() - t0, res.isSuccess)
                 val r = right(res.getOrDefault(emptyList()))
                 val snapshot = synchronized(lock) {
-                    results[i] = r; done++
-                    results.filterNotNull().flatten() to (done == total)
+                    // A cloud answer already counted: the direct one replaces it (kept if the direct one is empty).
+                    if (answered[i]) { if (r.isNotEmpty()) results[i] = r } else { results[i] = r; answered[i] = true; done++ }
+                    results.filterNotNull().flatten().distinctBy { it.stream.url } to (done == total)
                 }
                 send(snapshot)
             }

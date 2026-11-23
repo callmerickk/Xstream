@@ -321,6 +321,12 @@ fun HomeScreen(
         delay(5_000)
         aheadIds.forEach { (type, id) -> launch { LinkMemory.lookAhead(vm, type, id) } }
     }
+    // 0.8.18: keep Continue watching's links fresh while the phone sits idle on Wi-Fi.
+    LaunchedEffect(Unit) {
+        if (BuildConfig.LIVE_ONLY) return@LaunchedEffect
+        delay(20_000)
+        while (true) { runCatching { LinkMemory.refreshCw(vm) }; delay(60_000) }
+    }
     // True while at least half of the top cards are on screen. Recomputed on scroll, but only notifies readers
     // when the answer flips, so it costs nothing per frame. Trailers / auto-slide stop when the deck scrolls away.
     val deckOnScreen = remember(listState) {

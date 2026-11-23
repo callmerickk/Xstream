@@ -83,7 +83,8 @@ jobs:
           G=app/build.gradle.kts
           CODE=$(grep 'versionCode = ' $G | sed -n 1p | grep -o '[0-9]\+')
           NAME=$(grep 'versionName = ' $G | sed -n 1p | sed 's/.*"\(.*\)".*/\1/')
-          echo "{\"phone\":$CODE,\"tv\":0,\"phoneName\":\"$NAME\",\"tvName\":\"\",\"tag\":\"build-${{ github.run_number }}\"}" > release/versions.json
+          MIN=$(cat min-version.txt 2>/dev/null | grep -o '[0-9]\+' | head -1); MIN=${MIN:-0}
+          echo "{\"phone\":$CODE,\"tv\":0,\"phoneName\":\"$NAME\",\"tvName\":\"\",\"tag\":\"build-${{ github.run_number }}\",\"minPhone\":$MIN}" > release/versions.json
           cat release/versions.json
           echo "TAG=build-${{ github.run_number }}" >> $GITHUB_ENV
           echo "TITLE=Xstream $NAME" >> $GITHUB_ENV

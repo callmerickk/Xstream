@@ -63,4 +63,42 @@ object LinkMemory {
             if (l.isNotEmpty()) put(vm.appContext, id, l)
         }
     }
+
+    /** Age of the saved links for [id] (null = none saved). */
+    fun ageMs(ctx: Context, id: String): Long? {
+        if (!okId(id)) return null
+        mem[id]?.let { return System.currentTimeMillis() - it.first }
+        val f = file(ctx, id)
+        return if (f.exists()) System.currentTimeMillis() - f.lastModified() else null
+    }
+
+    /**
+     * 0.8.18: Continue watching ready to play — while the phone is idle (no touch for 10 s, no video, nothing being
+     * searched) and on Wi-Fi / an unmetered network, the links of the top 3 Continue watching items are looked up again
+     * when they're missing or older than 2.5 h (they expire after 4 h). At most once every 30 min.
+     */
+    @Volatile private var cwAt = 0L
+    suspend fun refreshCw(vm: AppViewModel) {
+        if (BuildConfig.IS_TV || BuildConfig.LIVE_ONLY || vm.liveMode()) return
+        val now = System.currentTimeMillis()
+        if (now - cwAt < 30 * 60_000L || now - UserIdle.lastTouch < 10_000 || PlayingSrc.open > 0) return
+        if (Prepare.state.value?.let { !it.failed && it.item == null } == true) return
+        val cm = vm.appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return
+        if (cm.isActiveNetworkMetered) return
+        cwAt = now
+        val items = vm.progress.value.take(3)
+        var n = 0
+        for (p in items) {
+            val age = ageMs(vm.appContext, p.key)
+            if (age != null && age < 150 * 60_000L) continue
+            if (PlayingSrc.open > 0) break
+            val type = if (p.key.contains(":")) "series" else "movie"
+            val l = withContext(Dispatchers.IO) { runCatching { vm.quickStreams(type, p.key) }.getOrDefault(emptyList()) }
+            if (l.isNotEmpty()) { put(vm.appContext, p.key, l); n++ }
+        }
+        if (n > 0) ActLog.add("APP", "CW links refreshed · $n of ${items.size} Continue watching items ready to play")
+    }
 }
+
+/** 0.8.18: when the screen was last touched (for quiet background work). */
+object UserIdle { @Volatile var lastTouch = System.currentTimeMillis() }

@@ -13,6 +13,12 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.18", "23 Nov 2026", "Links found in the cloud, Continue watching ready, invite-only option", listOf(
+        "Your addons are asked all at once through StreamX's cloud: links show up sooner (each addon still answers directly too)",
+        "Continue watching: while the phone rests on Wi-Fi, the links of your top 3 are kept fresh, so Play starts at once",
+        "Invite-only access (off for now): new accounts can ask for access and wait for approval",
+        "Very old versions can be asked to update before they keep working",
+    )),
     Release("0.8.17", "23 Nov 2026", "Steadier playback, Watch together that waits, own invite links", listOf(
         "Fewer crashes: only the subtitles in your languages are loaded with a video (some sources sent over 100)",
         "When two sources agree on an episode's length, the app trusts them (it used to reject every copy and keep switching)",
@@ -567,6 +573,12 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.18", "23 Nov 2026", "CloudFind (/find), CW link refresh, Access gate + admin, minPhone", listOf(
+        "CloudFind.kt: one POST /find to the streamx-home Worker (7 s cap) inside addonStreamsFlow; an addon's cloud answer fills its slot until its direct answer replaces it; deduped by url; phone only",
+        "LinkMemory.refreshCw: idle 10 s (UserIdle.lastTouch), no player, unmetered → top 3 Continue watching re-looked-up when missing or older than 2.5 h; every 30 min at most",
+        "Access.kt: access/config/required (off by default), requests/<uid>, allowed/<uid>; AccessGate over the app (update / signin / request / waiting / denied); Settings › Access requests (developer)",
+        "versions.json minPhone from min-version.txt (build.yml); Updater.minPhone → 'Update required'",
+    )),
     Release("0.8.17", "23 Nov 2026", "Memory tracker + subtitle cap, length rule, Watch together rejoin, own invite link, TV lessons", listOf(
         "SubCap: only subtitles in your languages are given to ExoPlayer (2 per language, 6 max); memory logged every 5 s for 30 s per video",
         "Relay: connections counted; a 'playlist' over 2 MB is streamed, not read into memory",

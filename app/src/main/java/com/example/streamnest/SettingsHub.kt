@@ -85,6 +85,7 @@ fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) 
         "extensions" -> ExtensionsPage(vm, back)
         "live" -> LiveServerPage(vm, back)
         "health" -> SourceHealthPage(back)
+        "access" -> Page("Access requests", back) { AccessAdmin() }
         "notifications" -> NotificationsPage(vm, back)
         "updates" -> UpdateLogPage(vm, back, open)
         "playback" -> PlaybackPage(vm, back)
@@ -1017,6 +1018,8 @@ private fun AdvancedPage(vm: AppViewModel, onBack: () -> Unit, open: (String) ->
                 SettingRow(Icons.Default.Code, "Developer's Corner", "App name, logo, password and UI editing.") { open("dev") }
                 RowDivider(20.dp)
                 SettingRow(null, "Source health", "Which plugins and addons find and play links, and why they fail.") { open("health") }
+                RowDivider(20.dp)
+                SettingRow(null, "Access requests", "Approve who can use Xstream, and turn approval on or off.") { open("access") }
             }
         }
     }
