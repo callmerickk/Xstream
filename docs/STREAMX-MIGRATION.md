@@ -322,3 +322,15 @@ NOT CHANGED
   Rules template: /home/claude/firebase-access-rules.json (not applied).
 - versions.json "minPhone" from min-version.txt (build.yml) → "Update required". Versions before 0.8.18 don't read it.
 For StreamX later: same files; StreamX's versions.json needs the same minPhone line.
+
+## StreamX 0.9.74 (build-215) / Xstream 0.8.19 (build-149) — 23 Nov
+- Green light honest (both): `Prepare.lengthProblem` (same wrong-title rule incl. ≥2 sources agreeing ±3 min, trustedLen per
+  title); `readyPlayer` checks `p.duration` at STATE_READY before `playerReady = true`; a wrong copy is added to `failed[id]`,
+  the paused player released and `Prepare.start` re-run from `lastArgs`; the main candidate loop now also skips `bad` links.
+- AI only from its button: StreamX `aiWakeOff0974`, Xstream `aiOff0819` (one-time `aiWake`/`wakeOn` = no; defaults "no";
+  wake word needs the flag); `voiceOpen` is `remember` not `rememberSaveable` (it re-opened AI after a screen rebuild).
+- StreamX: Home style first on Settings › Layout with drawn previews (`PhoneHomeStylePicker`); old entry kept.
+- StreamX: Horizon profile page ported as `PhoneHorizon.kt` (`HorizonWhoIsWatching`, `PhoneHorizonGround`), phone only;
+  `textOf/pickedOf/savePicked` added; `refreshRecommended` saves picked per profile. Not ported: the invite banner of the
+  old page (Horizon has none; the auto-open is skipped when an invite is pending).
+- "No lift" (both): the chosen profile keeps its size; "Opening <name> in Ns" is a pill in the header row (tap stops it).
