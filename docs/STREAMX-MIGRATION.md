@@ -228,3 +228,22 @@ NOT CHANGED
 - LinkMemory (4 h disk cache + look-ahead): StreamX's start is already faster (green light 0.2–0.9 s vs Xstream 1.6–4.3 s in the 22 Nov logs); look-ahead adds memory/data.
 - Links as found (`onLink` in `modeStreams`): StreamX already has the `onLink` plumbing and a faster green light; changing the search path risks the stable start.
 - Memory / subtitle cap: waiting for Xstream 0.8.17 logs (rule).
+
+## Migrated in StreamX 0.9.70 (build-206, phone only — TV stays 0.9.15)
+CHANGED
+- Quality sheet (`PhoneQualityBar` = Xstream's PluginQualityBar: fixed rows Auto/4K/1080p/720p/480p + 60fps rows, white
+  frame = `qChosen`, tick = playing row coloured by `qualityTick()`, `OtherStreamsList` with 1080p/Unlabelled groups);
+  TV keeps the old PluginQualityBar → PlayerScreen.kt
+- Quality chip: 4K / 1080p (60fps) / 720p / 480p, "Auto" for 20 s after a height change (`qLastChange`, `qLastH`);
+  StreamX's "· 4K READY" suffix kept → PlayerScreen.kt
+- Red seek dot always on phones + red dot with halo while dragging; `scrubHide` fades title, top buttons, time row and
+  button rail while dragging → PlayerScreen.kt (SeekBar + controls)
+- Exact short seeks on phones (EXACT ≤60 s, else StreamX's SeekParameters(300 s, 0)) → PlayerScreen.kt `seekAbs`
+- `edgeStart` (top/bottom 13 % swipes ignored) → PlayerScreen.kt gestures
+- Post-credit pill on phones (`stingerOf`, tap to hide) → PlayerScreen.kt
+- Pilot / Season Finale / Series Finale tags → Detail.kt
+- Cinema-copy dialog ("In cinemas only", Remind me · Play cinema copy · Close, `isCinemaCopy`, clean ready copy plays) → Detail.kt
+NOT CHANGED
+- Trailer in card (`TrailerInCard`): StreamX auto-plays card trailers (with pause) — a different, deliberate behaviour; kept.
+- Top bar ‹ with Watch together + VR slide-out: VR isn't in StreamX yet (extras batch 0.9.73); comes with VR.
+- `qChosen` blocking automatic quality swaps: phone auto-switch stays as StreamX does it today (user's choice).
