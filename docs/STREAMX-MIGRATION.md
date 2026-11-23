@@ -410,3 +410,27 @@ Not done (speed risk on the stable app): a global limit on concurrent scrapes.
   closest tier, then rank) opens at that second; VLC only when none. TrueHD / DTS-HD / DTS:X with no hardware decoder
   → `Ranker.markAudioWeak` (session), sorted after CAM copies.
 - Not done: tinting buttons/accents from the poster (risk to readability); only the backdrop shade is tinted.
+
+## StreamX 0.9.79 (versionCode 89, 24 Nov) — phone only, TV stays 0.9.15 — lighter at the same speed
+- Upgrade to 4K / Upgrade quality: `hdReady` is set right after `StreamCache.probe` (ok + seekable + size); the jump
+  test and the start/index saving are gone (addon HD path and plugin 4K path). The tap → `ottSwapTo(asked = true)`,
+  which now always freeze-fades (`heavy = … || asked`); a file that can't really seek is caught there (opened-at-target
+  and `isCurrentMediaItemSeekable` checks) and the usual switch is used.
+- Phone quality sheet (`PhoneQualityBar`): all rows white and tappable; tick + frame = `qChosen`; a playlist row →
+  `onVariant(rung)`, a row with no copy → nearest existing option (`QOpt`, by height; nothing if it's what plays);
+  "quality: you picked …" and, 5 s later, "really plays: W×H fps" in the log; the Quality button shows the pick.
+- Home on intent: CW ahead = top 3 (one after another, each after a quiet moment); a poster held (lifted) for 1 s is
+  looked up; the hero dwell (2 s) stays. Title page unchanged (searches at once).
+- Quiet start: `TvIdle.lastKeyAt` also set by touches on phones; CloudStream warm-up, CW ahead and Home refresh wait
+  for 1.2–1.5 s without touches (bounded 6–15 s); log upload waits too.
+- Animations only on change: dock icons float ~7 s when the dock appears / water changes, then rest; Library's Watch
+  together glow breathes 3 times then holds.
+- Logs: `ActLog.detailed` (phone default off, prefs `actlog/detailed`; Developer's Corner › Tests & logs › Detailed logs).
+  Off drops PLUGIN / NUVIOPLAY / CSWARM / RANK / MBDIRECT / TRAILER lines unless they match `importantRx`, tap lines
+  skip the semantics-tree label lookup, memory is logged once per screen or above 60 %. TV always detailed.
+- Pictures: `warmHome` warms the first 4 rows only; Home warms the next row in the scroll direction when the list
+  stops (nothing during a fling). Exact-size fetching was already in (`TvImgSize` on phones since 0.9.75).
+- `FrameStats` (MemWatch.kt): FrameMetrics listener per activity; "frames · <screen> · N drawn · M late (x %)" on leaving
+  a screen (late = > 1.5 frame budgets).
+- Skipped: a phone baseline profile — `src/main/baseline-prof.txt` already lists every app, Compose and Coil class
+  (profileinstaller 1.3.1), and a recorded profile needs a Macrobenchmark run on a real phone.
