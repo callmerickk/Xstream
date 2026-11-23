@@ -202,3 +202,13 @@ share streamx://join.
 ## Rollback point 23 Nov
 If a later build goes wrong, go back to: branch `backup-2026-11-23` in callmerickk/StreamNest and callmerickk/Xstream;
 release build-198 (StreamX 0.9.67 · TV 0.9.15); TV working tree archive `/home/claude/backup-tv-tree-2026-11-23.tgz`.
+
+## Done 23 Nov: StreamX phone 0.9.68 (build-201) and Xstream 0.8.17 (build-144)
+- StreamX 0.9.68: ≥2-source length rule (phone+TV, PlayerScreen `offLens`/`trustedLen`); 403/rejected links never retried
+  on phone; old TV logs dropped from users/<uid> by the phone too (ActLog); tour: no whole-screen swallower, 48 dp
+  Skip/Next, ✕, Back = Skip, TOUR log lines. Phone keeps auto-switching (TV-only rule).
+- Xstream 0.8.17: `SubCap` (only your languages' subtitles to ExoPlayer, 6 max) + 5 s memory lines for 30 s; Relay
+  open-connection count + no >2 MB playlist reads; length rule; Together logs/2-min host grace/host rejoin
+  (`Together.resumeIfRecent`); invite link `/xjoin` on the Worker + `xstream://join`; SkipDB; PageRelay; HomeBundle;
+  `ImgSize`; upgrade pool adds UHDMovies/Desiflix; log newest first.
+- Not ported yet: idle-gated start and hero/poster preload (TV-specific), stopping repeated cached plugin answers.
