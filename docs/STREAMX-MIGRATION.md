@@ -247,3 +247,16 @@ NOT CHANGED
 - Trailer in card (`TrailerInCard`): StreamX auto-plays card trailers (with pause) — a different, deliberate behaviour; kept.
 - Top bar ‹ with Watch together + VR slide-out: VR isn't in StreamX yet (extras batch 0.9.73); comes with VR.
 - `qChosen` blocking automatic quality swaps: phone auto-switch stays as StreamX does it today (user's choice).
+
+## Migrated in StreamX 0.9.71 (Search batch)
+CHANGED:
+- Spelling: `PluginSources.deaccent`, `norm`/`core` without marks and "aa"→"a", extra name variants (Bāhubali/Baahubali) — shared (TV gets it at its next build).
+- Addon error titles hidden: `Models.kt` `CatalogResponse.metas` filters `Meta.isAddonError()`; search results drop them + `isJunkTitle` (phone).
+- Collections / universes / studios: `Search.kt` `realTitles` (TMDB check once: IMDb id, film ≥ 60 min, series episodes ≥ 20 min, no documentary/talk/reality/news; remembered in prefs `colCheck`, IMDb id kept via `Collections.rememberColImdb`); universe discover filtered (votes, genres, junk names); universe card added when ready (no 2.5 s drop).
+- Per-profile search: `SearchState.forProfile` (called from `AppViewModel` on profile switch, phone), search text / open collection / tab / scroll survive a title page; collection stays open behind the title (Back returns); no dialog flash.
+- Saved episode lists: `AppViewModel.fullMeta` phone path (one request per title, 10 min memo, Cinemeta first, addons raced, series only with episodes, saved in prefs `shows`), `savedShow` shown at once in `Detail.kt`; `Continue.seriesMeta` keeps only lists with episodes. TV keeps the old path (`fullMetaTv`).
+- `noSourceName` ("4K HDHUB" not read as quality) in `Streams.text`, `Ranker.allText`, `Quick.resIn` — shared.
+- `noteMeta` before `Prepare.start` in `Detail.kt` (plugins get name+year at once).
+NOT CHANGED:
+- StreamX's smart search (`FoundPages`, `laterSeries`, `tailSeason` "Name S7") kept — already better than Xstream's.
+- TV search path untouched apart from the shared matching helpers above.
