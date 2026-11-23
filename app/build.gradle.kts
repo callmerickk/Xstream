@@ -13,7 +13,7 @@ android {
         applicationId = "com.example.xstreamlive"
         minSdk = 24
         targetSdk = 34
-        versionCode = 11
+        versionCode = 12
         versionName = "1.0.8"
     }
     // Two apps from one project: the phone app and StreamX TV (Fire TV / Android TV).
