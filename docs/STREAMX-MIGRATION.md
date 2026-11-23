@@ -293,3 +293,19 @@ NOT CHANGED:
 - FirstLook "Choose your look": it changes first start (Skip = Live + Midnight) — the default must stay StreamX.
 - Horizon profile page + taste titles: change the profile flow; the profile page redesign waits for the user's image
   approval ("no lift").
+
+## Migrated in StreamX 0.9.73 (extras) — release build-213
+CHANGED
+- VR headset mode: `VrHeadset.kt` copied (Top 10 row → first Home row, StreamX has no `HomeShuffle.frozen`) + `VrHeadsetIcon`;
+  PlayerScreen: `vrOn`/`vrWas`, VR "best picture" switch (heap < 60 % inline, no PlayerCount), `VrHeadsetView` over the video;
+  Screens.kt: VR › Browse opens the title (`VrState.openTitle`).
+- Player top bar ‹ (phone): Watch together + VR slide out 3 s at start (green room dot also on the folded ‹).
+- AIDEN `quickCommand` (VoiceAssistant.kt): play / open / search / my list without the AI.
+- Update nudge: `Updater.latestKnown` / `onTrouble` / `nudged` + dialog in UpdatePrompt; ActLog.add hook (phones only).
+- Public downloads: `Downloads.publicDir` → Movies/StreamX (app folder if not writable; TV keeps the app folder), video
+  extensions only; DlEngine media scan on finish (phones).
+- Log browser: `LogBrowser.kt` + ActLog `appName` (saved in info), `LogDev`, `logIndex`, `logOf`; Activity log › All accounts (dev).
+NOT CHANGED
+- AIDEN listening through the phone recognizer instead of the live session: StreamX's Gemini Live path kept (behaviour change).
+- Sources stays in StreamX's More bubble (removing it changes a working menu).
+- Memory / subtitle cap: still waiting for Xstream 0.8.17 logs.
