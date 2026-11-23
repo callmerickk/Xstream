@@ -182,3 +182,19 @@ Asked, not decided: 3D copies (tag + 3D group + VR stereo / "watch in 2D").
 ## Under review — Desiflix (Nuvio plugin, CB provider), added by the user 23 Nov
 Fast in the user's use. Watch it in the next logs (answer time, links found, which play, quality, language) and give it
 a rank inside the backup layer — expected near 4K HDHUB, below VegaMovies / RogMovies. Not used for auto-switching on TV.
+
+## Plan after the 23 Nov logs (TV 0.9.14/15, StreamX phone 0.9.67, Xstream 0.8.16)
+Findings: Xstream 0.8.16 ALSO crashes out of memory (OnePlus 256 MB 18:05:47, realme 384 MB 22:30:55, native crash
+22:58:52) — +200 MB in the first ~20 s of a CNCVerse stream; the memory fix is NOT proven yet. StreamX phone: OOM on
+realme during a wrong-title storm (Dhindora S2E1, 35 vs 24 min, every source rejected). Watch together: rooms vanish
+when the creator's app dies; invite link https://streamx-watch.pages.dev/join is verified only for StreamX, and both apps
+share streamx://join.
+1. StreamX phone 0.9.68 (proven fixes only): wrong-title = trust ≥2 sources agreeing on length; logs out of users/<uid>;
+   posters kept after update; false memory signals ignored; installer from Activity + reuse download + current notes;
+   dead saved link dropped; rejected link never retried; crash text in log; first-run-after-update light.
+2. Xstream 0.8.17 (test): memory tracker (first 30 s of play) + fixes (subtitles lazily, no repeated answers after start);
+   Watch together logging + creator rejoin within 2 min + clear "room ended"; own invite link via Worker /xjoin + assetlinks
+   + xstream://join; invite page with both apps; TV lessons (SkipDB/length, relay, Home bundle, right-sized pictures, idle
+   start, hero/poster preload, Upgrade offers HD plugins incl. Desiflix); logs in one place; QR zoom; profile "no lift"
+   (image first).
+3. Then the memory fix + new features move to StreamX phone once Xstream logs are clean; then the 5 batches.
