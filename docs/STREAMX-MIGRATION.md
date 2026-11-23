@@ -137,3 +137,14 @@ smart search for MovieBox "Name S7"; log newest first.
 - Per-profile settings: a one-time change must cover every profile (frame-rate matching came back on the 2nd profile).
 - An episode saved spot under 60 s = start from the beginning.
 Asked, not decided: 3D copies (tag + 3D group + VR stereo / "watch in 2D").
+
+## TV 0.9.13 lightness (23 Nov) — candidates for Xstream / StreamX phone
+- `TvImgSize` Coil interceptor (MainActivity.kt): TMDB/Metahub URL rewritten to the smallest size that fills the drawn
+  size (backdrops w300/w780, posters w185/w342/w500; metahub large→medium ≤400 px). Phones have `HdPoster` (similar idea).
+- `TvIdle` (MainActivity.kt): last key time; 4K HDHUB prewarm (TvApp), log uploads (ActLog), first update check
+  (Updates.kt, 8 s + quiet) wait until the remote is quiet.
+- `TvSmall.on` cached (was a system call each time).
+- `app/src/main/baseline-prof.txt` (wildcards for app, Compose, Coil). NOTE: CI builds `assembleDebug` → the APK is
+  debuggable, so ART ignores the profile and Compose runs slower than a release build. The biggest remaining smoothness
+  win: non-debuggable builds signed with the same key (decision needed; same signature keeps in-app updates working).
+- Glass background kept as is (already 192×108 blurred once, cached; now fetched as a small picture).
