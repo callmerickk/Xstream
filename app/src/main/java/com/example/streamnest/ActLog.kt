@@ -123,7 +123,23 @@ object ActLog {
     fun crash(text: String) { runCatching { flush(); fileFor(today()).appendText("${timeFmt.format(Date())} ERROR  crash · ${text.take(4000).replace("\n", " | ")}\n") } }
 
     /** All 3 days of this device in one text (for Share). */
-    fun allText(): String { flush(); return days().sorted().joinToString("\n") { d -> "===== $d =====\n" + read(d) } }
+    // 0.8.17: newest day first, newest app session first (with a header per session).
+    fun allText(): String {
+        flush()
+        return days().sortedDescending().joinToString("\n") { d ->
+            val sessions = ArrayList<StringBuilder>()
+            read(d).lineSequence().forEach { line ->
+                if (sessions.isEmpty() || " APP    opened · " in line) sessions.add(StringBuilder())
+                if (line.isNotEmpty()) sessions.last().append(line).append('\n')
+            }
+            "===== $d =====\n" + sessions.asReversed().filter { it.isNotEmpty() }.joinToString("\n") { sb ->
+                val first = sb.lineSequence().firstOrNull().orEmpty()
+                val head = Regex("^(\\S+) APP    opened · ([^·]+)").find(first)?.let { "----- ${it.groupValues[2].trim()} · opened ${it.groupValues[1].substringBefore('.')} -----\n" }.orEmpty()
+                head + sb
+            }
+        }
+    }
+
 
     // ── Taps and remote keys, with the button they hit ──
 
@@ -276,7 +292,7 @@ object ActLog {
     // ── Cloud logs for the developer (all accounts) ──
 
     const val CLOUD_KEEP_DAYS = 15
-    private val importantRx = Regex("(?i)(\\bERROR\\b|crash|app ended|froze|not responding|exception|failed|refused|can't play|cannot play|no streams|no links|nothing found|first picture|= ✓|stopped|gave up|timeout|timed out|HTTP [45]\\d\\d|wake word|live (closed|failed)|APP +opened|MUSIC |Music ›| QUALITY | SWITCH |TITLE |CSWARM |PLUGIN .*: [1-9][0-9]* links in |PLAY +\\+|Watch next|memory |holding the frame|internet back|looking for|fresh links|update nudge|collection: left out)")
+    private val importantRx = Regex("(?i)(\\bTOGETHER\\b|length check|SkipDB|memory \\+|\\bERROR\\b|crash|app ended|froze|not responding|exception|failed|refused|can't play|cannot play|no streams|no links|nothing found|first picture|= ✓|stopped|gave up|timeout|timed out|HTTP [45]\\d\\d|wake word|live (closed|failed)|APP +opened|MUSIC |Music ›| QUALITY | SWITCH |TITLE |CSWARM |PLUGIN .*: [1-9][0-9]* links in |PLAY +\\+|Watch next|memory |holding the frame|internet back|looking for|fresh links|update nudge|collection: left out)")
 
     /** Sends the important lines written since the last upload (errors, crashes, play results) to xshared/logs. */
     private suspend fun uploadImportant(u0: CloudUser? = null, t0: String? = null) {

@@ -298,6 +298,7 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
                 "bengali" to "bn", "marathi" to "mr", "punjabi" to "pa", "japanese" to "ja", "korean" to "ko", "spanish" to "es", "french" to "fr",
                 "german" to "de", "chinese" to "zh", "russian" to "ru", "italian" to "it", "portuguese" to "pt", "arabic" to "ar", "turkish" to "tr")
             val prefs = (listOf(aLang).filter { it.isNotEmpty() && it != "off" } + vm.qsLangs().mapNotNull { codes[it] }).distinct()
+            SubCap.langs = (listOf(sLang).filter { it.isNotEmpty() && it != "off" } + prefs + "en").toSet()
             if (prefs.isNotEmpty()) setPreferredAudioLanguages(*prefs.toTypedArray())
             when {
                 sLang == "off" -> setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
@@ -307,7 +308,37 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     }
 }
 
-fun subtitleConfigs(subs: List<Subtitle>) = subs.filter { it.url.isNotBlank() }.map {
+/**
+ * 0.8.17: the player downloads and reads EVERY subtitle file it is given as soon as the video opens. Sources often send
+ * 36–171 of them; together they filled the memory in the first 20 s of a stream (out-of-memory crashes on OnePlus and
+ * realme). Only your languages are given to the player now (2 per language, 6 at most).
+ */
+object SubCap {
+    @Volatile var langs: Set<String> = setOf("en")
+    @Volatile var lastKept = 0
+    @Volatile var lastDropped = 0
+    private val names = mapOf("en" to "english eng", "hi" to "hindi hin", "ta" to "tamil tam", "te" to "telugu tel", "ml" to "malayalam mal",
+        "kn" to "kannada kan", "bn" to "bengali ben", "mr" to "marathi mar", "pa" to "punjabi pan", "ja" to "japanese jpn", "ko" to "korean kor",
+        "es" to "spanish spa", "fr" to "french fre fra", "de" to "german ger deu", "zh" to "chinese chi zho", "ru" to "russian rus",
+        "it" to "italian ita", "pt" to "portuguese por", "ar" to "arabic ara", "tr" to "turkish tur")
+    private fun key(l: String): String? {
+        val x = l.lowercase().trim().substringBefore('-').substringBefore('_').substringBefore(' ')
+        if (x.length == 2 && x in names) return x
+        return names.entries.firstOrNull { (_, v) -> v.split(' ').any { w -> x == w || x.startsWith(w) } }?.key
+    }
+    fun pick(subs: List<Subtitle>): List<Subtitle> {
+        val ok = subs.filter { it.url.isNotBlank() }
+        if (ok.size <= 6) { lastKept = ok.size; lastDropped = 0; return ok }
+        val want = langs.mapNotNull { key(it) }.toSet()
+        val per = HashMap<String, Int>()
+        val out = ok.filter { s -> val k = key(s.lang) ?: return@filter false; if (k !in want) return@filter false
+            val c = per[k] ?: 0; if (c >= 2) false else { per[k] = c + 1; true } }.take(6).ifEmpty { ok.take(3) }
+        lastKept = out.size; lastDropped = ok.size - out.size
+        return out
+    }
+}
+
+fun subtitleConfigs(subs: List<Subtitle>) = SubCap.pick(subs).map {
     MediaItem.SubtitleConfiguration.Builder(Uri.parse(it.url)).setId("side:" + it.url.hashCode()).setMimeType(subMime(it.url)).setLanguage(it.lang).setLabel(it.lang).build()
 }
 
@@ -675,6 +706,18 @@ fun PlayerScreen(
     DisposableEffect(thumbs) { onDispose { thumbs?.close() } }
     // 0.8.8: memory. Posters held for Home are let go while a video plays, and every minute the heap is checked: above
     // 85 % the poster memory and preview frames are dropped (the app ran out of memory and closed on long films).
+    // 0.8.17: memory every 5 s for the first 30 s of each video (the out-of-memory crashes grew 200 MB in those seconds).
+    LaunchedEffect(now?.url) {
+        if (now == null) return@LaunchedEffect
+        val rt = Runtime.getRuntime()
+        for (k in 1..6) {
+            delay(5_000)
+            val used = (rt.totalMemory() - rt.freeMemory()) / 1048576; val max = rt.maxMemory() / 1048576
+            val nat = android.os.Debug.getNativeHeapAllocatedSize() / 1048576
+            val pics = runCatching { coil.Coil.imageLoader(ctx).memoryCache?.size?.div(1048576) }.getOrNull() ?: 0
+            ActLog.add("PLAY", "memory +${k * 5} s · app $used / $max MB · native $nat MB · players ${PlayerCount.alive()} · subtitles ${SubCap.lastKept} (${SubCap.lastDropped} left out) · source answers ${known.size} · relay ${Relay.open.get()} · pictures $pics MB")
+        }
+    }
     LaunchedEffect(Unit) {
         runCatching { coil.Coil.imageLoader(ctx).memoryCache?.clear() }
         val rt = Runtime.getRuntime()
@@ -1385,6 +1428,10 @@ fun PlayerScreen(
     // with the title's runtime (films) or the show's episode length (series). A copy far off is another title with the
     // same name (Friends on Prime 31 min vs 22, Deva, Purstream's 22-min "film"): dropped quietly, and nothing more
     // from that source is used for this title.
+    // 0.8.17: when two different sources agree on a length, the episode info is what's wrong (Dhindora S2E1: every source
+    // 35 min vs 24 expected — every copy was rejected and the switching filled the memory).
+    val offLens = remember { mutableListOf<Pair<String, Double>>() }
+    val trustedLen = remember { mutableStateOf<Double?>(null) }
     LaunchedEffect(now?.url) {
         val n = now ?: return@LaunchedEffect
         if (p.manual || userPicked || (type != "movie" && type != "series")) return@LaunchedEffect
@@ -1423,7 +1470,18 @@ fun PlayerScreen(
         if (type == "movie" && expMin < 40) return@LaunchedEffect
         if (type == "series" && expMin < 10) return@LaunchedEffect
         val (lo, hi) = if (type == "movie") 0.75 to 1.35 else 0.6 to 1.4
-        if (got < expMin * lo || got > expMin * hi) reject("length ${"%.0f".format(got)} min vs $expMin", got < 5.0)
+        trustedLen.value?.let { t -> if (kotlin.math.abs(got - t) <= 3.0) return@LaunchedEffect }
+        if (got < expMin * lo || got > expMin * hi) {
+            val addon0 = itemFor(n.url)?.addonName ?: n.addon.orEmpty()
+            val agree = if (got >= 5.0) offLens.firstOrNull { (a, m) -> a != addon0 && kotlin.math.abs(m - got) <= 3.0 } else null
+            if (agree != null) {
+                trustedLen.value = got; wrongAddons -= agree.first
+                ActLog.add("SWITCH", "length check: ${agree.first} and $addon0 both ${"%.0f".format(got)} min (expected $expMin) — trusting the copies, not the episode info")
+                return@LaunchedEffect
+            }
+            offLens += addon0 to got
+            reject("length ${"%.0f".format(got)} min vs $expMin", got < 5.0)
+        }
     }
     // The paused player from the title page: if no picture 6 s after Play, it is treated like a stuck link.
     LaunchedEffect(Unit) {
@@ -1930,6 +1988,18 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(p.key) { if (isOn(opt("skipIntro"))) segs = vm.segments(p.key) }
+    // 0.8.17 (from StreamX TV): once the picture is on, SkipDB is asked with this copy's exact length and its times replace
+    // introdb.app's (a 25 fps copy runs ~4 % faster, so fixed times landed early); introdb.app stays for what SkipDB lacks.
+    LaunchedEffect(firstFrame, now?.url) {
+        if (!firstFrame || !isOn(opt("skipIntro"))) return@LaunchedEffect
+        delay(1_500)
+        val d = curDur()
+        if (d <= 60_000) return@LaunchedEffect
+        val sk = runCatching { vm.skipDb(p.key, d) }.getOrNull() ?: return@LaunchedEffect
+        val base = segs
+        segs = if (base == null) sk else base.copy(intro = sk.intro ?: base.intro, recap = sk.recap ?: base.recap, outro = sk.outro ?: base.outro)
+        ActLog.add("PLAY", "Skip intro times: SkipDB for this copy's length (" + fmtTime(d) + ")" + (sk.intro?.let { " · intro " + fmtTime(it.start_ms) + "–" + fmtTime(it.end_ms) } ?: ""))
+    }
 
     LaunchedEffect(player) {
         while (true) {
@@ -2078,7 +2148,7 @@ fun PlayerScreen(
             cncDone = true
             if (vega) needHd.await()
             hdHubOn = true
-            val hd = vm.addons.value.filter { it.label().contains("hdhub", true) || it.manifest.name.contains("hdhub", true) }.map { it.label() }.toSet()
+            val hd = vm.addons.value.filter { a -> listOf("hdhub", "uhdmovies", "desiflix").any { k -> a.label().contains(k, true) || a.manifest.name.contains(k, true) } }.map { it.label() }.toSet()
             if (hd.isNotEmpty()) runCatching { vm.streamsFlow(type, p.key, only = hd).collect { (l, _) -> add(vm.filtered(l).list) } }
         }
         try {
@@ -3658,7 +3728,7 @@ fun PlayerScreen(
             PlayTiming.late("Next episode: looking for its HD file")
             var list = usable(askCncverse(vm, type, ep.id) { l -> l.any { it.isVegamovies() } })
             if (list.none { it.isVegamovies() }) {
-                val hd = vm.addons.value.filter { it.label().contains("hdhub", true) || it.manifest.name.contains("hdhub", true) }.map { it.label() }.toSet()
+                val hd = vm.addons.value.filter { a -> listOf("hdhub", "uhdmovies", "desiflix").any { k -> a.label().contains(k, true) || a.manifest.name.contains(k, true) } }.map { it.label() }.toSet()
                 if (hd.isNotEmpty()) list = list + usable(withTimeoutOrNull(20_000) { vm.streamsFlow(type, ep.id, only = hd).first { it.second } }?.first.orEmpty())
             }
             for (c in list.distinctBy { it.stream.url }.take(4)) {

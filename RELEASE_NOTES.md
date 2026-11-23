@@ -1,8 +1,8 @@
-Xstream 0.8.16
+Xstream 0.8.17
 
-• Title pages get ready faster — every source starts searching at once; shows don't wait for the episode list.
-• Links appear as soon as each is found; late links join Other streams while you watch.
-• 4K HDHUB copies sorted by their real quality.
-• Netflix, Prime, Hotstar and MovieBox warmed up first; Purstream is a backup.
-• Updates download in the background with a progress bar, then ask to install — never downloaded twice.
-• Downloads saved in Movies/Xstream, visible in your gallery.
+• Fewer crashes while a video starts (only the subtitles in your languages are loaded).
+• No more endless switching when an episode's length differs from its info.
+• Watch together waits for the host to come back, and the host rejoins after a restart.
+• Xstream invites now open Xstream; the invite page offers both apps.
+• Skip intro fits your copy; blocked HD sources come through again; Home loads in one go.
+• Activity log shows the newest first.

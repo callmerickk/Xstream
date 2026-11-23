@@ -36,12 +36,15 @@ object Relay {
             pool.execute {
                 while (!s.isClosed) {
                     val c = runCatching { s.accept() }.getOrNull() ?: break
-                    pool.execute { runCatching { handle(c) }; runCatching { c.close() } }
+                    pool.execute { open.incrementAndGet(); try { runCatching { handle(c) }; runCatching { c.close() } } finally { open.decrementAndGet() } }
                 }
             }
             return s.localPort
         }
     }
+
+    /** 0.8.17: connections being served right now (logged by the player's memory tracker). */
+    val open = java.util.concurrent.atomic.AtomicInteger(0)
 
     private fun enc(u: String) = Base64.encodeToString(u.toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     private fun dec(s: String) = String(Base64.decode(s, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
@@ -100,7 +103,8 @@ object Relay {
         resp.use { r ->
             val body = r.body
             val type = r.header("Content-Type").orEmpty()
-            val isPlaylist = type.contains("mpegurl", true) || target.substringBefore('?').endsWith(".m3u8", true)
+            // 0.8.17: a "playlist" bigger than 2 MB is not one (disguised video pieces were read whole into memory).
+            val isPlaylist = (type.contains("mpegurl", true) || target.substringBefore('?').endsWith(".m3u8", true)) && (body?.contentLength() ?: 0L) <= 2_000_000L
             if (isPlaylist && r.isSuccessful && method != "HEAD") {
                 val text = body?.string().orEmpty()
                 val base = r.request.url.toString()

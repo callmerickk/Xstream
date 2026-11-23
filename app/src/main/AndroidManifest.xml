@@ -55,19 +55,19 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.INFO" />
             </intent-filter>
-            <!-- Watch together invite links: streamx://join/CODE -->
+            <!-- 0.8.17: Xstream's own invite links (StreamX keeps streamx://join and streamx-watch.pages.dev/join):
+                 xstream://join/CODE, and https://streamx-home.callmerick093.workers.dev/xjoin/CODE (verified for Xstream). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="streamx" android:host="join" />
+                <data android:scheme="xstream" android:host="join" />
             </intent-filter>
-            <!-- WhatsApp invite links: https://streamx-watch.pages.dev/join/CODE open Xstream straight into the room. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="streamx-watch.pages.dev" android:pathPrefix="/join" />
+                <data android:scheme="https" android:host="streamx-home.callmerick093.workers.dev" android:pathPrefix="/xjoin" />
             </intent-filter>
         </activity>
         <!-- Full-screen YouTube trailers in a plain Activity (TrailerActivity.kt): fixes the black-picture WebView video. -->

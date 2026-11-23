@@ -13,6 +13,15 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.17", "23 Nov 2026", "Steadier playback, Watch together that waits, own invite links", listOf(
+        "Fewer crashes: only the subtitles in your languages are loaded with a video (some sources sent over 100)",
+        "When two sources agree on an episode's length, the app trusts them (it used to reject every copy and keep switching)",
+        "Watch together: if the host's app restarts, everyone waits up to 2 minutes and the host is put back in the room",
+        "Xstream invites now open Xstream (StreamX invites still open StreamX); the invite page offers both apps",
+        "Skip intro fits your copy's exact length, with a second database as backup",
+        "Blocked HD sources come through again, Home loads in one go, pictures are downloaded at the size they're shown",
+        "Activity log shows the newest first",
+    )),
     Release("0.8.16", "20 Nov 2026", "Faster title pages, smarter sources", listOf(
         "Title pages get ready faster: every source starts searching the moment the page opens",
         "Shows start preparing at once, even before the episode list arrives",
@@ -558,6 +567,16 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.17", "23 Nov 2026", "Memory tracker + subtitle cap, length rule, Watch together rejoin, own invite link, TV lessons", listOf(
+        "SubCap: only subtitles in your languages are given to ExoPlayer (2 per language, 6 max); memory logged every 5 s for 30 s per video",
+        "Relay: connections counted; a 'playlist' over 2 MB is streamed, not read into memory",
+        "Wrong-title rule: 2 sources agreeing on a length (±3 min) beat the episode info",
+        "Together: room created / joined / member joined / left / ended logged; guests wait 2 min for the host; host rejoins its room within 2 min of a restart; 'This room has ended' message",
+        "Invites: https://streamx-home.callmerick093.workers.dev/xjoin/CODE (autoVerify, assetlinks served by the Worker) and xstream://join; StreamX keeps streamx://join and pages.dev/join",
+        "From StreamX TV: SkipDB by file length (introdb.app max 4 s), PageRelay for blocked file sites, Home bundle via the Worker, ImgSize interceptor, upgrade pool includes UHDMovies / Desiflix",
+        "Phone keeps automatic source switching (the no-switch-after-picture rule is TV-only)",
+        "Activity log newest first with session headers",
+    )),
     Release("0.8.16", "20 Nov 2026", "Title page speed, live plugin links, 4K HDHUB quality, update + downloads", listOf(
         "Detail: PluginSources.noteMeta before Prepare.start (modeStreams fetched Cinemeta first: ~1.4 s before Netflix/Prime/Hotstar searched); DetailTiming 'TITLE' lines (first link, green, blinks)",
         "Series without an episode list: Prepare starts with the Continue episode or S1E1",

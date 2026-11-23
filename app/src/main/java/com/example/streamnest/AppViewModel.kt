@@ -436,7 +436,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         StreamHeaders.init(app); AddonSpeed.init(app); Relay.warmUp()
         // Source ranking: this phone's copy now, the shared one from the cloud in the background.
         AutoPlayRules.init(app); Ranker.init(app); HostStats.init(app)
-        if (!BuildConfig.IS_TV && BuildConfig.HAS_SOCIAL) { Buddies.init(app); Invites.start(app) }
+        if (!BuildConfig.IS_TV && BuildConfig.HAS_SOCIAL) { Buddies.init(app); Invites.start(app); runCatching { Together.resumeIfRecent(app) } }
         ProfileLock.init(app)
         AppLook.init(app); Call.init(app); Vpn.resume(app)
         Downloads.init(app)
@@ -861,6 +861,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             // Xstream Live: Home rows only from Posters+ (Cinemeta stays only for title details and episodes).
             val catalogOnly = if (liveLocked() && active.any { isPostersPlus(it) }) active.filter { isPostersPlus(it) }
                 else active.filter { !it.streams && it.manifest.catalogs.isNotEmpty() }.ifEmpty { active }
+            // 0.8.17 (from StreamX TV): every Home catalog in ONE request through the Cloudflare Worker; any it couldn't get
+            // is fetched directly, at most 6 at a time.
+            val bundle: Map<String, String> = if (current.value?.kids != true) {
+                val urls = catalogOnly.flatMap { a -> a.manifest.catalogs.filter { c -> c.extra.orEmpty().none { it.isRequired } }
+                    .map { c -> "${a.baseUrl}/catalog/${c.type}/${enc(c.id)}.json" } }.take(48)
+                runCatching { HomeBundle.fetch(urls) }.getOrDefault(emptyMap())
+            } else emptyMap()
+            val gate = kotlinx.coroutines.sync.Semaphore(6)
             val result = if (current.value?.kids == true) kidsShelves() else coroutineScope {
                 catalogOnly.flatMap { a ->
                     a.manifest.catalogs
@@ -870,7 +878,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                                 runCatching {
                                     // A catalog can declare its card shape (Posters+ trending rows: landscape): its cards
                                     // take it when they don't say themselves.
-                                    val items = Api.fetch<CatalogResponse>("${a.baseUrl}/catalog/${c.type}/${enc(c.id)}.json").metas
+                                    val cu = "${a.baseUrl}/catalog/${c.type}/${enc(c.id)}.json"
+                                    val items = (bundle[cu]?.let { t -> runCatching { Api.json.decodeFromString<CatalogResponse>(t) }.getOrNull() }
+                                        ?: gate.withPermit { Api.fetch<CatalogResponse>(cu) }).metas
                                         .map { m -> if (m.posterShape == null && c.posterShape != null) m.copy(posterShape = c.posterShape) else m }
                                     Shelf("${c.name ?: c.id} ${typeLabel(c.type)}", items, src = "${a.baseUrl}/catalog/${c.type}/${enc(c.id)}.json")
                                 }.getOrNull()
@@ -1441,7 +1451,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         if (!imdb.startsWith("tt")) return null
         val url = if (parts.size >= 3) "https://api.introdb.app/segments?imdb_id=$imdb&season=${parts[1]}&episode=${parts[2]}"
         else "https://api.introdb.app/segments?imdb_id=$imdb"
-        val r = runCatching { Api.fetch<Segments>(url) }.getOrNull() ?: return null
+        // 0.8.17: at most 4 s (introdb.app once took 20 s; SkipDB is the backup).
+        val r = kotlinx.coroutines.withTimeoutOrNull(4_000) { runCatching { Api.fetch<Segments>(url) }.getOrNull() } ?: return null
         // Only trust data for exactly this episode / movie.
         if (parts.size >= 3) {
             if (r.season != null && r.season != parts[1].toIntOrNull()) return null
@@ -1450,6 +1461,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         // Drop doubtful or impossible ranges (too short, too long, low confidence).
         fun ok(sg: Seg?) = sg?.takeIf { it.end_ms - it.start_ms in 5_000..600_000 && it.start_ms >= 0 && it.confidence >= 0.5 }
         return Segments(ok(r.intro), ok(r.recap), r.outro?.takeIf { it.start_ms > 0 && it.confidence >= 0.5 }, r.is_movie, r.season, r.episode)
+    }
+
+    private val skipDbCache = java.util.concurrent.ConcurrentHashMap<String, Segments>()
+    /**
+     * 0.8.17 (from StreamX TV 0.9.14): SkipDB (skipdb.tv) — skip times for exactly this copy's length: we send our file's duration and it shifts
+     * its times to fit (a 25 fps MovieBox copy runs ~4 % faster, so fixed times landed early). Null = nothing there.
+     */
+    suspend fun skipDb(key: String, durationMs: Long): Segments? {
+        val parts = key.split(":")
+        val imdb = parts[0]
+        if (!imdb.startsWith("tt") || durationMs <= 60_000) return null
+        val sec = durationMs / 1000
+        val ck = "$key|${sec / 5}"
+        skipDbCache[ck]?.let { return it }
+        val url = "https://api.skipdb.tv/api/segments?imdb_id=$imdb" + (if (parts.size >= 3) "&season=${parts[1]}&episode=${parts[2]}" else "") + "&duration=$sec"
+        val body = kotlinx.coroutines.withTimeoutOrNull(5_000) { runCatching { Api.get(url) }.getOrNull() } ?: return null
+        val segs = runCatching { (Api.json.parseToJsonElement(body) as kotlinx.serialization.json.JsonObject)["segments"] as? kotlinx.serialization.json.JsonObject }.getOrNull() ?: return null
+        fun seg(vararg names: String): Seg? = names.firstNotNullOfOrNull { n ->
+            runCatching {
+                val j = segs[n] as? kotlinx.serialization.json.JsonObject ?: return@runCatching null
+                fun num(k: String) = (j[k] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()?.toLong()
+                val st = num("start_ms") ?: return@runCatching null; val en = num("end_ms") ?: return@runCatching null
+                Seg(st, en, 1.0).takeIf { en > st && st >= 0 && en - st <= 600_000 }
+            }.getOrNull()
+        }
+        val out = Segments(seg("intro"), seg("recap"), seg("outro", "credits"), parts.size < 3,
+            parts.getOrNull(1)?.toIntOrNull(), parts.getOrNull(2)?.toIntOrNull())
+        if (out.intro == null && out.recap == null && out.outro == null) return null
+        skipDbCache[ck] = out
+        return out
     }
 
     private val guideCache = HashMap<String, List<Pair<String, String>>>()

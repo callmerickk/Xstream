@@ -75,7 +75,9 @@ object CsPlugins {
         // VegaMovies to a dead domain).
         // 0.8.15: the DNS is asked through Api.http each time, so a DNS change reaches plugins at once (no restart).
         com.lagradost.cloudstream3.app.baseClient = Api.http.newBuilder().cache(null).callTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
-            .dns(object : okhttp3.Dns { override fun lookup(hostname: String) = Api.http.dns.lookup(hostname) }).build()
+            .dns(object : okhttp3.Dns { override fun lookup(hostname: String) = Api.http.dns.lookup(hostname) })
+            // 0.8.17: file sites the internet provider cuts (vcloud, hubcloud…) are fetched through the Cloudflare Worker.
+            .apply { interceptors().add(0, PageRelay) }.build()
         val p = ctx.getSharedPreferences("cs_plugins", Context.MODE_PRIVATE); prefs = p
         repos.value = runCatching { Api.json.decodeFromString<List<CsRepo>>(p.getString("repos", null) ?: "") }.getOrNull() ?: defaultRepos.map { CsRepo(it) }
         catalog.value = runCatching { Api.json.decodeFromString<List<CsPluginEntry>>(p.getString("catalog", null) ?: "") }.getOrDefault(emptyList())

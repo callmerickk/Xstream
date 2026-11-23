@@ -42,6 +42,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory(enforceMinimumFrameDelay = true)) else add(GifDecoder.Factory(enforceMinimumFrameDelay = true))
                 add(VideoFrameDecoder.Factory())
                 if (!BuildConfig.IS_TV) add(HdPoster)
+                // 0.8.17: pictures fetched at the size they are drawn (a small card never downloads a 1280-px backdrop).
+                add(ImgSize)
             }.okHttpClient { Posters.client() }.crossfade(if (BuildConfig.IS_TV) 0 else 120).allowRgb565(true)
                 .memoryCache { coil.memory.MemoryCache.Builder(this).maxSizePercent(if (BuildConfig.IS_TV) 0.25 else 0.12).build() }  // 0.8.8: 25 % (~96 MB) left too little for the player
                 .diskCache { coil.disk.DiskCache.Builder().directory(cacheDir.resolve("posters")).maxSizeBytes(400L * 1024 * 1024).build() }
@@ -182,3 +184,31 @@ object Posters {
         }
     }
 }
+
+/** 0.8.17 (from StreamX TV 0.9.13): picks the smallest TMDB / Metahub picture that still fills the size it's drawn at. */
+object ImgSize : coil.intercept.Interceptor {
+    private val tmdb = Regex("(image\\.tmdb\\.org/t/p/)(w\\d+|original)(/)")
+    override suspend fun intercept(chain: coil.intercept.Interceptor.Chain): coil.request.ImageResult {
+        val req = chain.request
+        val url = req.data as? String ?: return chain.proceed(req)
+        val w = (chain.size.width as? coil.size.Dimension.Pixels)?.px ?: return chain.proceed(req)
+        val out = when {
+            url.contains("image.tmdb.org/t/p/") -> {
+                tmdb.replace(url) { m ->
+                    val cur = m.groupValues[2]
+                    val curW = if (cur == "original") Int.MAX_VALUE else cur.drop(1).toIntOrNull() ?: Int.MAX_VALUE
+                    // Only sizes TMDB has for that kind of picture: backdrops (asked as w1280 / original) w300 · w780,
+                    // posters w185 · w342 · w500.
+                    val backdrop = cur == "original" || curW >= 1280
+                    val want = if (backdrop) when { w <= 300 -> 300; w <= 780 -> 780; else -> 0 }
+                        else when { w <= 185 -> 185; w <= 342 -> 342; w <= 500 -> 500; else -> 0 }
+                    if (want in 1 until curW) m.groupValues[1] + "w" + want + m.groupValues[3] else m.value
+                }
+            }
+            url.contains("images.metahub.space/") && w <= 400 -> url.replace("/poster/large/", "/poster/medium/").replace("/background/large/", "/background/medium/")
+            else -> url
+        }
+        return if (out == url) chain.proceed(req) else chain.proceed(req.newBuilder().data(out).build())
+    }
+}
+
