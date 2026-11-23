@@ -309,3 +309,16 @@ NOT CHANGED
 - AIDEN listening through the phone recognizer instead of the live session: StreamX's Gemini Live path kept (behaviour change).
 - Sources stays in StreamX's More bubble (removing it changes a working menu).
 - Memory / subtitle cap: still waiting for Xstream 0.8.17 logs.
+
+## Xstream 0.8.18 — cloud + access (build-147, 23 Nov)
+- CloudFind.kt + Worker POST /find (streamx-home-worker.js): all addons asked at once on Cloudflare; per-addon answers;
+  optional D1 (binding DB, table `found`) remembers answers 3 h keyed by sha256(addon address)+title (only the same
+  addon address reuses it); refresh in background. In AppViewModel.addonStreamsFlow a cloud answer fills an addon's slot
+  until its direct answer replaces it. Phone only.
+- LinkMemory.refreshCw + UserIdle: top 3 Continue watching re-looked-up when idle 10 s, no player, unmetered, links
+  missing or >2.5 h; every 30 min at most; logs "CW links refreshed".
+- Access.kt: AccessGate (update / signin / request / waiting / denied) over the app; Settings › Access requests
+  (developer): approve / deny / remove, "Approval required" switch = access/config/required (off by default).
+  Rules template: /home/claude/firebase-access-rules.json (not applied).
+- versions.json "minPhone" from min-version.txt (build.yml) → "Update required". Versions before 0.8.18 don't read it.
+For StreamX later: same files; StreamX's versions.json needs the same minPhone line.

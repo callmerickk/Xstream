@@ -216,3 +216,9 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
   DNS first (nearest GitHub file server), private DNS as fallback.
 - **Downloads**: saved to public Movies/Xstream (scanned into the gallery), app folder only if not writable; video extensions only.
 - Not done yet: start searching on finger-down; 1 s wait for your language's copy; folder picker for downloads; DASH-first start.
+
+## Xstream 0.8.18 (23 Nov)
+- Cloud link finder (CloudFind.kt, Worker /find, optional D1 memory) — addon answers sooner; direct answers replace them.
+- Continue watching links kept fresh while idle on Wi-Fi (LinkMemory.refreshCw).
+- Invite-only access (Access.kt: AccessGate + Settings › Access requests; Firebase access/…; off by default).
+- Minimum version (versions.json minPhone from min-version.txt) → "Update required".
