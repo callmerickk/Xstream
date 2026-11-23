@@ -198,3 +198,7 @@ share streamx://join.
    start, hero/poster preload, Upgrade offers HD plugins incl. Desiflix); logs in one place; QR zoom; profile "no lift"
    (image first).
 3. Then the memory fix + new features move to StreamX phone once Xstream logs are clean; then the 5 batches.
+
+## Rollback point 23 Nov
+If a later build goes wrong, go back to: branch `backup-2026-11-23` in callmerickk/StreamNest and callmerickk/Xstream;
+release build-198 (StreamX 0.9.67 · TV 0.9.15); TV working tree archive `/home/claude/backup-tv-tree-2026-11-23.tgz`.
