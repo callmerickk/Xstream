@@ -122,6 +122,18 @@ Agreed 22 Nov:
 12. Live server for 32-bit (armeabi-v7a) and on demand (wakes only when plugins + addons find nothing, sleeps ~1 min
     after the player closes).
 13. Layered sources: Quick Play = chosen plugins + addons race; then the rest by name and by id; then the Live server.
-From StreamX TV, worth bringing to Xstream mobile too: Skip intro fitted to the copy (25 fps ×23.976/25) + learned
-corrections (`IntroFix.kt`, TV 0.9.9); smart search for MovieBox "Name S7"; log newest first.
+From StreamX TV, worth bringing to Xstream mobile too: Skip intro **learned corrections only** (`IntroFix.kt`; the
+25 fps speed scaling of TV 0.9.9 made it worse and was removed in TV 0.9.10, keys `introOff2_`, cloud `xshared/intro2/`);
+smart search for MovieBox "Name S7"; log newest first.
+
+## Learned on StreamX TV (0.9.10 – 0.9.12, 23 Nov) — check Xstream for the same bugs
+- Episode menu (hold OK): the menu opens during the hold, so its release must be ignored (`TvEpMenu.kt` `armed`).
+- Panel focus flag: never reset "panel has focus" when a panel opens — only when it closes (presses were eaten).
+- Update: every update wiped the picture disk cache (`TvBox` cleanup) → keep `posters`; RUNNING_LOW only trims pictures.
+- Update installer: start it from the Activity (not app context + NEW_TASK, it opened behind the app → downloaded twice);
+  reuse a finished download of the same version.
+- Next episode: link + file start/index saved to storage + subtitles ahead (no second player on 1 GB); handoff never
+  waits for subtitles; PlayTiming records belong to one player (`session`).
+- Per-profile settings: a one-time change must cover every profile (frame-rate matching came back on the 2nd profile).
+- An episode saved spot under 60 s = start from the beginning.
 Asked, not decided: 3D copies (tag + 3D group + VR stereo / "watch in 2D").
