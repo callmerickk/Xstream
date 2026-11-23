@@ -178,3 +178,7 @@ Asked, not decided: 3D copies (tag + 3D group + VR stereo / "watch in 2D").
 - Home refresh waits for a quiet remote when saved rows are shown; Worker bundle cap 5 s; direct fetches max 3 at once;
   the log names the hosts the bundle missed.
 - Crash text and "Android closed the app" lines now carry last screen + key; a saved crash is logged at next start.
+
+## Under review — Desiflix (Nuvio plugin, CB provider), added by the user 23 Nov
+Fast in the user's use. Watch it in the next logs (answer time, links found, which play, quality, language) and give it
+a rank inside the backup layer — expected near 4K HDHUB, below VegaMovies / RogMovies. Not used for auto-switching on TV.
