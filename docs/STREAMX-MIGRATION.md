@@ -273,3 +273,23 @@ NOT CHANGED:
 Order: StreamX 0.9.72 → 0.9.73 → Xstream 0.8.18 (1–3) → Oracle part after confirmation.
 Legal note given to the user: a notice doesn't make it legal; server-side finding raises exposure; hosts' rules forbid it;
 suggest an IP lawyer before growing.
+
+## Migrated in StreamX 0.9.72 (Looks) — release build-211
+CHANGED (phone only, TV untouched):
+- Home style option (`homeStyleOf` in Quick.kt, key `homeStyle` = streamx|live; default streamx = StreamX's own Deck,
+  unchanged). "Live" = Xstream's `LiveHero` (Home.kt; shape renamed `PhoneLiveShape` — TvLook.kt already has a
+  `LiveHeroShape`). StreamX's TrailerVideo has no pause, so Pause stops the trailer. Picker: Settings › Home Layout ›
+  Home style (SettingsHub.kt).
+- Theme "Midnight" (bg #0F1014, tint #16204A) — `ThemeOpt.tint` added, applied as deckTint (SettingsHub.kt).
+- Watched: `watched`/`loadWatched`/`addWatched`/`removeWatched`, `sweepFinished()` (after a finished episode and 4 s
+  after refresh) in AppViewModel.kt; Library › Watched tile + `WatchedPage` (XLibrary.kt; series open by show id,
+  Rewatch only for films). StreamX's done thresholds (episode 95 %, film 92 %) kept.
+- `warmHome()` (AppViewModel.kt): 12 posters per row + first-card art + first 3 rows' big pictures, also from the saved
+  rows while the profile page shows. Only already-known tall TMDB posters (no extra lookups → less data).
+NOT CHANGED:
+- Classic style (Xstream's own Deck): StreamX's Deck is StreamX's look; a second deck would be a large risky copy.
+- Bottom bar choice (Orbit / Capsule, LiveBar.kt) and LookPicker MiniHome previews: big UI port; the Home style chips
+  cover the choice for now.
+- FirstLook "Choose your look": it changes first start (Skip = Live + Midnight) — the default must stay StreamX.
+- Horizon profile page + taste titles: change the profile flow; the profile page redesign waits for the user's image
+  approval ("no lift").
