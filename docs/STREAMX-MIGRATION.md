@@ -387,3 +387,26 @@ Fix (minimal, phone only): `PluginSources.focus(id)` from the title page stops s
 Glass: the title page root is transparent (it was a second dark layer → looked black).
 Not done (speed risk on the stable app): a global limit on concurrent scrapes.
 **Same fix should go to Xstream** (same Prepare / PluginSources / buildPlayer code).
+
+## StreamX 0.9.78 (versionCode 88, 24 Nov) — phone only, TV stays 0.9.15
+- Glass title page: `GlassBackdrop` loads the picture at 192×108, blurs it ONCE with `TvGlass.blur(…, 7, 3)` on
+  Dispatchers.Default and caches it (`TvGlass.blurred`, ≤ 6); the shade takes the picture's average colour (`GlassTints`).
+  `GlassBg.url` is never cleared (null keeps the last). Detail: top bar transparent, LazyColumn fades out under it
+  (Offscreen layer + DstIn gradient 36 dp), title card a light frost (0x1AFFFFFF) instead of a second dark block.
+- Sync: on the phone, `"set"` arriving from another device keeps the phone's look keys (`LookDeviceKeys` in Config.kt:
+  theme, accent(s), background, buttons, amoled, homeStyle, nav, cardCorner). The phone still SENDS them, so the TV's
+  behaviour is unchanged. This is what turned Glass off / everything black.
+- TrailerInCard ported from Xstream (tap = trailer in the card with sound/fullscreen/stop, hold = all trailers,
+  "Play trailer · hold for more" bubble). The automatic card trailer is off on phones when TrailerInCard is on.
+- Late plugin answers: `PluginSources.sharedK` — Nuvio scrapers now run in the shared `bg` scope (key
+  `nuvio:<name>|<id>`), so an answer after the collector stopped is kept. `Prepare` merges late links into
+  `state.list` after the link was chosen; the player (plugin mode, 4 s after the picture, once per title) re-collects
+  `streamsFlow` (cheap: shared answers) and inserts new links into `candidates` by `Ranker.score`. TV unchanged.
+- PageRelay on the phone: `relayable()` no longer TV-only; CloudStream `baseClient` and Nuvio's fetch client
+  (`NuvioRuntime.clients()`, rebuilt when `Api.http` changes) get the interceptor. Worker `/p`, header `x-sx: sx-home-1`.
+- `HiddenCap`: 5 s / 6 MB (byte cap applies once ≥ 3 s are loaded, hard ceiling 16 MB) until `lift`.
+- Seek index: 2 s after the picture, a progressive file with `!isCurrentMediaItemSeekable` is marked unseekable
+  (ranked last). A jump in such a file → `seekableJump`: a copy in the same language or better (playlists first,
+  closest tier, then rank) opens at that second; VLC only when none. TrueHD / DTS-HD / DTS:X with no hardware decoder
+  → `Ranker.markAudioWeak` (session), sorted after CAM copies.
+- Not done: tinting buttons/accents from the poster (risk to readability); only the backdrop shade is tinted.
