@@ -260,3 +260,16 @@ CHANGED:
 NOT CHANGED:
 - StreamX's smart search (`FoundPages`, `laterSeries`, `tailSeason` "Name S7") kept — already better than Xstream's.
 - TV search path untouched apart from the shared matching helpers above.
+
+## Agreed plan — cloud + access (23 Nov evening)
+1. Cloudflare Worker "link finder": asks every Stremio addon in parallel, ranks, returns one list; shared per-title
+   memory of found pages/links (D1 if bound, else cache), checked and dropped when expired. Plugins stay on device and
+   keep searching as backups. No video through Cloudflare or any storage cloud (IP-locked links, ToS/account risk).
+2. Device: quietly refresh links of the top 3 Continue Watching items when idle / on wifi → instant Play.
+3. Access: "Request access" after sign-in (name, email, device model) → admin Requests screen (Approve / Deny / remove);
+   enforced by Firebase rules (approved uids only); "minimum version" in versions.json → older versions must update.
+4. LATER, when the user confirms an Oracle Cloud Always Free ARM server: Redroid + app "finder mode" runs the CloudStream
+   plugins (server does the slow search/page finding, device does the final quick link step), and the Live server (arm64).
+Order: StreamX 0.9.72 → 0.9.73 → Xstream 0.8.18 (1–3) → Oracle part after confirmation.
+Legal note given to the user: a notice doesn't make it legal; server-side finding raises exposure; hosts' rules forbid it;
+suggest an IP lawyer before growing.
