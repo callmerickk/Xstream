@@ -212,3 +212,19 @@ release build-198 (StreamX 0.9.67 · TV 0.9.15); TV working tree archive `/home/
   (`Together.resumeIfRecent`); invite link `/xjoin` on the Worker + `xstream://join`; SkipDB; PageRelay; HomeBundle;
   `ImgSize`; upgrade pool adds UHDMovies/Desiflix; log newest first.
 - Not ported yet: idle-gated start and hero/poster preload (TV-specific), stopping repeated cached plugin answers.
+
+## Migrated in StreamX 0.9.69 (build-203, 23 Nov) — batch "Start & play" (phone only; TV unchanged)
+CHANGED
+- Never back to loading after the picture (`sawPicture`, frame held on every reload in `startWay`, loading layer hidden) → PlayerScreen.kt
+- `keepTrying` (all links failed after the picture: wait for the internet ≤2 min, retry same / ranked links, fresh look-up every 3rd round) → PlayerScreen.kt
+- Quiet fresh look-ups before the picture (`autoFinds` ≤3) instead of the error → PlayerScreen.kt
+- Late links merged into Other streams / backups (title page list every 4 s for 2 min + one `allStreams` at 40 s) → PlayerScreen.kt
+- One-link start gets backups after 6 s → PlayerScreen.kt
+- Fast fallbacks: TIMEOUT before the picture → next source (no other ways); last link 20 s, 127.0.0.1 8 s → PlayerScreen.kt
+- Fake videos: file < 20 MB rejected, expected length from saved progress first, unknown length < 5 min ep / < 30 min film → PlayerScreen.kt
+- Resume same source: `Progress.source/addon`, `PlayingSrc`, Continue passes them, `itemFor` matches the resumed link → Models.kt, Screens.kt, Home.kt, MySpace.kt, PlayerScreen.kt
+- Watch next corner: `wnTries` (2 quiet retries), opens with a link after 25 s, 60 s max → PlayerScreen.kt
+NOT CHANGED
+- LinkMemory (4 h disk cache + look-ahead): StreamX's start is already faster (green light 0.2–0.9 s vs Xstream 1.6–4.3 s in the 22 Nov logs); look-ahead adds memory/data.
+- Links as found (`onLink` in `modeStreams`): StreamX already has the `onLink` plumbing and a faster green light; changing the search path risks the stable start.
+- Memory / subtitle cap: waiting for Xstream 0.8.17 logs (rule).
