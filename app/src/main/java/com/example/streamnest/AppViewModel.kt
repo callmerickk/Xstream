@@ -1123,8 +1123,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         // 0.8.18: the Cloudflare link finder asks all addons at once; an addon's cloud answer is shown until its own
         // direct answer arrives (which then replaces it). Counted as answered on whichever comes first.
         val answered = BooleanArray(addons.size)
-        val cloud = if (addons.isEmpty() || BuildConfig.IS_TV) null else async {
-            runCatching { CloudFind.find(type, id, addons.map { CloudFind.baseOf(it.baseUrl) }) }.getOrDefault(emptyMap())
+        val cloud: kotlinx.coroutines.Deferred<Map<String, List<StreamInfo>>>? = if (addons.isEmpty() || BuildConfig.IS_TV) null else async {
+            runCatching { CloudFind.find(type, id, addons.map { CloudFind.baseOf(it.baseUrl) }) }.getOrDefault(emptyMap<String, List<StreamInfo>>())
         }
         cloud?.let { c ->
             launch {
