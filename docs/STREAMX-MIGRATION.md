@@ -334,3 +334,25 @@ For StreamX later: same files; StreamX's versions.json needs the same minPhone l
   `textOf/pickedOf/savePicked` added; `refreshRecommended` saves picked per profile. Not ported: the invite banner of the
   old page (Horizon has none; the auto-open is skipped when an invite is pending).
 - "No lift" (both): the chosen profile keeps its size; "Opening <name> in Ns" is a pill in the header row (tap stops it).
+
+## Migrated in StreamX 0.9.75 (23 Nov) — Layout, Glass, All Live, posters, weak internet + gap audit
+CHANGED
+- Settings › Layout = Xstream's: `LookPicker.kt` copied (Look rows with MiniHome previews, sheets, Quick looks All Live/Stack/Classic).
+  Theme list = Xstream's (`ThemeOpt` internal with notes, `applyThemeOpt`, `themeTint`, `themePicked`) + new **Glass** (StreamX).
+- Home styles: Live / Stack (StreamX's own `Deck`) / Classic (`PhoneClassicDeck.kt` = Xstream's `Deck` renamed `ClassicDeck`).
+- Bottom bars: Orbit (`PhoneOrbitBar.kt` = Xstream `LiveBar`), Horizon (StreamX `BottomNav`), Capsule (`PhoneCapsuleBar.kt` =
+  Xstream `BottomNav`); tabs remapped (StreamX 2 = Library, 3 = Me); `barKindOf` in Quick.kt; Screens.kt picks the bar.
+- Glass on phones: `Palette.glass` for theme "Glass"; Home draws `PhoneGlassBackdrop` (small blurred top-card picture).
+- All Live once per profile (`allLive0975`): homeStyle live + navBar orbit + Midnight.
+- Posters: TvImgSize interceptor for phones (= Xstream ImgSize); Home bundle via Worker for phones; Top 10 card art from Metahub medium.
+- Player: SwitchCapsule = ring only on phones; Xstream 0.8.11 weak-internet block (`hlsCap`/`bwNow`/`lastSlowAt`, step down
+  inside the stream, climb back, one-quality → lighter copy) + ladder guard (no HD upgrade while capped / slow / < 8 Mb/s / 3 tries).
+- Logs: `ActLog.sendBeforeSignOut` (Cloud.signOut).
+STILL LEFT (reason)
+- Memory: `PlayerCount`, buffer from heap, `memTight` prompt, subtitle cap — waits for Xstream 0.8.17/0.8.18 logs.
+- `HostDown` dead-server skipping — touches every network request; needs its own test build.
+- LinkMemory look-ahead — StreamX starts faster already (0.2–0.9 s vs 1.6–4.3 s).
+- Taste titles, FirstLook "Choose your look" — replaced by the All Live default (FirstLook would undo it).
+- TrailerInCard — StreamX keeps its own card trailers. Xstream's `UpdatePill` background update — risky for the updater.
+- TMDB tall posters for Top 10 (`tmdbPosters`) — StreamX's Top 10 uses landscape art (now from Metahub).
+- Oracle/server items — wait for the user's server.
