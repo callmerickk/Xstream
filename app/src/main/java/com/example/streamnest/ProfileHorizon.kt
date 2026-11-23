@@ -237,6 +237,11 @@ fun HorizonWhoIsWatching(vm: AppViewModel, active: Boolean, onPicked: () -> Unit
                 Box(Modifier.size(6.dp).clip(CircleShape).background(BrandRed))
                 Text(if (editMode) "  Tap a profile to edit" else "  Who's watching?", fontSize = 13.sp, color = Color(0xFFC6C9D4))
                 Spacer(Modifier.weight(1f))
+                // 0.8.19 "no lift": the countdown sits in a small pill here (it used to push the profile up).
+                val ringing = countdown.value > 0f && !stopped && !editMode
+                if (ringing && sel != null) Text("Opening ${sel.name} in ${left}s", Modifier.clip(RoundedCornerShape(12.dp)).background(BrandRed.copy(alpha = 0.22f))
+                    .border(1.dp, BrandRed.copy(alpha = 0.5f), RoundedCornerShape(12.dp)).clickable { stopped = true }.padding(horizontal = 10.dp, vertical = 4.dp),
+                    fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1)
                 Row(Modifier.clip(RoundedCornerShape(12.dp)).clickable { editMode = !editMode; stopped = true }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Edit, null, Modifier.size(14.dp), tint = Muted)
                     Text(if (editMode) " Done" else " Edit", fontSize = 12.sp, color = Muted)
@@ -329,7 +334,8 @@ private fun ProfileGround(vm: AppViewModel, profiles: List<Profile>, selId: Stri
                         Column(Modifier.width(avD + 30.dp).clickable(remember { MutableInteractionSource() }, null) { if (p == null) onAdd() else onTap(p) },
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             val selected = p != null && p.id == selId && !editMode
-                            val d = if (selected) avD + 10.dp else avD
+                            // 0.8.19 "no lift": the chosen profile keeps its size and place (its ring shows it).
+                            val d = avD
                             Box(Modifier.size(avD + 22.dp), Alignment.Center) {
                                 if (p == null) Box(Modifier.size(avD * 0.85f).clip(CircleShape).background(Color(0xFF24262F)).border(1.dp, Color(0x33FFFFFF), CircleShape), Alignment.Center) {
                                     Icon(Icons.Default.Add, "Add profile", Modifier.size(28.dp), tint = Color(0xFFCFD2DC))
@@ -346,8 +352,7 @@ private fun ProfileGround(vm: AppViewModel, profiles: List<Profile>, selId: Stri
                                 }
                             }
                             Text(p?.name ?: "Add", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (p == null) Muted else Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (selected && ring != null) Text("opening in ${left}s", fontSize = 10.sp, color = Muted)
-                            else if (p?.kids == true) Text("KIDS", fontSize = 9.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7DA2FF))
+                            if (p?.kids == true) Text("KIDS", fontSize = 9.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7DA2FF))
                         }
                     }
                 }

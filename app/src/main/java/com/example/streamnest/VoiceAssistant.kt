@@ -1363,7 +1363,9 @@ fun aidenGreeting(vm: AppViewModel): String {
 fun AidenWake(vm: AppViewModel, onOpen: () -> Unit) {
     if (BuildConfig.IS_TV) return
     val texts by vm.texts.collectAsState()
-    if (!isOn(texts["aiWake"] ?: "yes")) return
+    // 0.8.19: AI shows only when the user taps the AI button: the spoken hello is off for everyone (once).
+    LaunchedEffect(Unit) { if (vm.store("aiOff0819") != "1") { vm.storePut("aiOff0819", "1"); vm.setText("aiWake", "no"); vm.setText("wakeOn", "no") } }
+    if (!isOn(texts["aiWake"] ?: "no") || vm.store("aiOff0819") != "1") return
     val ctx = LocalContext.current
     var open by remember { mutableStateOf(false) }
     val text = remember { aidenGreeting(vm) }

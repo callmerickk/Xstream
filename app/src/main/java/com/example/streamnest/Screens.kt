@@ -127,7 +127,8 @@ fun App(vm: AppViewModel = viewModel()) {
     // open screen — the player — stays instead of falling back to the page underneath.
     val stack = vm.navStack
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    var voiceOpen by rememberSaveable { mutableStateOf(false) }
+    // 0.8.19: not saved across a screen rebuild (it re-opened the AI by itself after rotation / theme change / restore).
+    var voiceOpen by remember { mutableStateOf(false) }
     val pop = { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex); Unit }
     val profile by vm.current.collectAsStateWithLifecycle()
     val texts by vm.texts.collectAsStateWithLifecycle()
@@ -277,7 +278,7 @@ fun App(vm: AppViewModel = viewModel()) {
         LaunchedEffect(profile?.id, aiBusy, callMic, appResumed, texts["wakeOn"], musicLib, musicNow, songOn, micHeld, onPlayer) {
             WakeWord.onName = { if (!voiceOpen) { AiPlayerBus.duck(); voiceOpen = true } }
             // Not during a video either: the listening microphone showed Android's green privacy dot over the film.
-            val on = BuildConfig.HAS_AI && !BuildConfig.IS_TV && profile != null && !onPlayer && !aiBusy && !callMic && appResumed && !musicLib && !musicNow && !songOn && micHeld == 0 && isOn(texts["wakeOn"] ?: "yes")
+            val on = BuildConfig.HAS_AI && !BuildConfig.IS_TV && profile != null && !onPlayer && !aiBusy && !callMic && appResumed && !musicLib && !musicNow && !songOn && micHeld == 0 && isOn(texts["wakeOn"] ?: "no") && vm.store("aiOff0819") == "1"
             if (on) { delay(700); WakeWord.start(buddyCtx) } else WakeWord.stop()
         }
         if (profile == null && gateOpen) CloudGate(onDone = { gateOpen = false })

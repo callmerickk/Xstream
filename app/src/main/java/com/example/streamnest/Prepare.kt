@@ -58,7 +58,42 @@ object Prepare {
     fun csPendingFor(id: String) = csPending.value == id
     @Volatile private var csWonFor: String? = null
 
+    // 0.8.19: the paused player's copy is length-checked before the light turns green (a 10-min "update your app" video
+    // for a 53-min episode showed green, then Play had to search again).
+    private class Args(val vm: AppViewModel, val ctx: Context, val type: String, val id: String, val resumeMs: Long, val durMs: Long?,
+                       val quick: Boolean, val level: String, val meta: Meta?)
+    @Volatile private var lastArgs: Args? = null
+    /** Copies rejected for their length, per title: (addon, minutes) — two sources agreeing on a length are trusted. */
+    private val offLens = java.util.concurrent.ConcurrentHashMap<String, MutableList<Pair<String, Double>>>()
+    private val trustedLen = java.util.concurrent.ConcurrentHashMap<String, Double>()
+
+    /** null = fine; else why this copy is not the title (same rule as the player's wrong-title check). */
+    private fun lengthProblem(a: Args, addon: String, durMs: Long): String? {
+        if (durMs <= 0) return null
+        val got = durMs / 60_000.0
+        trustedLen[a.id]?.let { if (kotlin.math.abs(got - it) <= 3.0) return null }
+        val savedMs = (a.vm.epProgress.value[a.id] ?: a.vm.progress.value.firstOrNull { it.key == a.id })?.durationMs ?: 0L
+        val exp = (if (savedMs > 5 * 60_000) (savedMs / 60_000).toInt() else null)
+            ?: (a.durMs?.takeIf { it > 5 * 60_000 }?.let { (it / 60_000).toInt() })
+            ?: runtimeMinutes(a.meta?.runtime)
+        val series = a.type == "series"
+        val bad = if (exp == null) got < (if (series) 5.0 else 30.0)
+            else if (!series && exp < 40) false else if (series && exp < 10) false
+            else { val (lo, hi) = if (series) 0.6 to 1.4 else 0.75 to 1.35; got < exp * lo || got > exp * hi }
+        if (!bad) return null
+        val list = offLens.getOrPut(a.id) { java.util.Collections.synchronizedList(mutableListOf()) }
+        val agree = list.firstOrNull { (ad, m) -> ad != addon && kotlin.math.abs(m - got) <= 3.0 }
+        if (agree != null) {
+            trustedLen[a.id] = got
+            ActLog.add("PLAY", "title page: ${agree.first} and $addon both ${"%.0f".format(got)} min (expected ${exp ?: "?"}) — trusting the copies")
+            return null
+        }
+        list += addon to got
+        return "this copy is ${"%.0f".format(got)} min, expected about ${exp ?: (if (series) "5+" else "30+")} min"
+    }
+
     fun start(vm: AppViewModel, ctx: Context, type: String, id: String, resumeMs: Long, durMs: Long?, quick: Boolean, level: String, meta: Meta? = null) {
+        lastArgs = Args(vm, ctx, type, id, resumeMs, durMs, quick, level, meta)
         val cur = state.value
         // Same title, same resume point (within 30 s), prepared or still preparing: keep it.
         val sameSpot = kotlin.math.abs(resumeMs - lastResume) < 30_000 && System.currentTimeMillis() - preparedAt < 15 * 60_000L
@@ -291,7 +326,7 @@ object Prepare {
 
             while (true) {
                 list = live.value.first.ifEmpty { list }
-                val all0 = withContext(Dispatchers.Default) { vm.rankedCandidates(list, level, quickOnly = useQuick) }.filter { it.stream.url !in tried }
+                val all0 = withContext(Dispatchers.Default) { vm.rankedCandidates(list, level, quickOnly = useQuick) }.filter { it.stream.url !in tried && it.stream.url !in bad }
                     .let { if (quick && level == "auto" && !plugMode) vm.movieBoxFirst(it) else it }
                     .let { l -> if (quick && !wideOn && !plugMode) l.filter { it.startsFast() } else l }
                 // MovieBox MP4s through PenguPlay's server: only when nothing else can play.
@@ -373,10 +408,26 @@ object Prepare {
             p.setMediaItem(androidx.media3.common.MediaItem.Builder().setUri(url).apply { if (mime != null) setMimeType(mime) }
                 .setSubtitleConfigurations(subtitleConfigs(subs)).build(), resumeMs)
             p.playWhenReady = false
-            // Green only when the paused player has really opened the file (it can show a picture at once).
+            // Green only when the paused player has really opened the file (it can show a picture at once) AND its length
+            // fits the title (0.8.19). A wrong copy is dropped here, on the title page, and the next link is prepared.
             p.addListener(object : androidx.media3.common.Player.Listener {
                 override fun onPlaybackStateChanged(st: Int) {
-                    if (st == androidx.media3.common.Player.STATE_READY) state.value?.takeIf { it.key == id && !it.playerReady }?.let { state.value = it.copy(playerReady = true) }
+                    if (st != androidx.media3.common.Player.STATE_READY) return
+                    val cur = state.value?.takeIf { it.key == id && !it.playerReady } ?: return
+                    val a = lastArgs?.takeIf { it.id == id }
+                    val why = a?.let { lengthProblem(it, s.addonName, p.duration) }
+                    if (why == null) { state.value = cur.copy(playerReady = true); return }
+                    ActLog.add("PLAY", "title page: wrong copy dropped before Play · ${s.addonName} · $why — preparing the next link")
+                    ActLog.add("SWITCH", "prepare · wrong title (${why}) · ${s.addonName} — not used")
+                    failed.getOrPut(id) { java.util.concurrent.ConcurrentHashMap.newKeySet() }.add(url)
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        if (Preloader.has(id)) Preloader.release(id)
+                        if (state.value?.key != id || lastArgs?.id != id) return@post
+                        job?.cancel(); job = null
+                        state.value = Prepared(id, "Checking another link…", list = cur.list, subs = cur.subs)
+                        val x = lastArgs!!
+                        start(x.vm, x.ctx, x.type, x.id, x.resumeMs, x.durMs, x.quick, x.level, x.meta)
+                    }
                 }
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                     // Broken while waiting: drop it (Play then opens the link the normal way).

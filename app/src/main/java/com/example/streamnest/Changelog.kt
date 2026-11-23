@@ -13,6 +13,11 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.19", "23 Nov 2026", "AI only when you tap it, honest green light, steady profile page", listOf(
+        "AI opens only when you tap the AI button: \"Hey Aiden\" and the spoken hello are off (turn them on again in Settings if you want)",
+        "Green light: a copy is checked for its length before the light turns green; a fake short video is dropped on the title page",
+        "Profile page: the chosen profile no longer lifts up — \"Opening in 5s\" is a small pill",
+    )),
     Release("0.8.18", "23 Nov 2026", "Links found in the cloud, Continue watching ready, invite-only option", listOf(
         "Your addons are asked all at once through StreamX's cloud: links show up sooner (each addon still answers directly too)",
         "Continue watching: while the phone rests on Wi-Fi, the links of your top 3 are kept fresh, so Play starts at once",
@@ -573,6 +578,9 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.19", "23 Nov 2026", "aiOff0819 (wakeOn/aiWake off once, voiceOpen not saveable), Prepare length check before green, Horizon no-lift pill", listOf(
+        "Prepare.lengthProblem + offLens/trustedLen; readyPlayer STATE_READY checks duration; bad links restart Prepare.start",
+    )),
     Release("0.8.18", "23 Nov 2026", "CloudFind (/find), CW link refresh, Access gate + admin, minPhone", listOf(
         "CloudFind.kt: one POST /find to the streamx-home Worker (7 s cap) inside addonStreamsFlow; an addon's cloud answer fills its slot until its direct answer replaces it; deduped by url; phone only",
         "LinkMemory.refreshCw: idle 10 s (UserIdle.lastTouch), no player, unmetered → top 3 Continue watching re-looked-up when missing or older than 2.5 h; every 30 min at most",
