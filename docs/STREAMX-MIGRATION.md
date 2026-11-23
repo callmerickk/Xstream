@@ -356,3 +356,20 @@ STILL LEFT (reason)
 - TrailerInCard — StreamX keeps its own card trailers. Xstream's `UpdatePill` background update — risky for the updater.
 - TMDB tall posters for Top 10 (`tmdbPosters`) — StreamX's Top 10 uses landscape art (now from Metahub).
 - Oracle/server items — wait for the user's server.
+
+## StreamX 0.9.76 (build-223, 24 Nov) — phone only, TV stays 0.9.15
+- Memory (from Xstream 0.8.17): `SubCap` (your languages, 2 per language, max 6, else 3) in `subtitleConfigs`;
+  `PlayerCount` + buffer = min(RAM table, 22 % of heap; 10 % while another player lives); no hidden player above 70 %
+  (`Prepare.readyPlayer`) / 75 % (`csOpen`); memory lines every 5 s for 30 s + 85 % picture release; Relay playlist
+  >2 MB not read whole, `Relay.open` counter. Camera 640×480 @15 fps.
+- Calls (`Call.kt`): relay from Worker `GET /turn` (Cloudflare Realtime TURN; secrets TURN_KEY_ID / TURN_KEY_TOKEN) added
+  to ICE servers; `status` / `camError` shown in the room panel; ICE states, route (direct/relay), mic/camera errors,
+  permission allowed/refused logged as ROOM "call · …"; ROOM/CALL lines now pass the upload filter (`importantRx`).
+  Permission hints ("While using the app"; refused → Settings path).
+- HDR switch: texts `hdrOn` (default off). `HdrRule.banned` on phones = !on. Quality sheet row + Settings › Playback.
+  Auto climb skips HDR-named, HDR-detected and (when off) 2160p copies.
+- Home bundle: bingecat.com catalogs fetched directly at once; Worker bundle fetches with a browser User-Agent.
+- Glass: `Bg` and `glassy()` turn translucent with Glass (52 panel literals across 24 files), `GlassBackdrop(GlassBg.url)`
+  behind the whole app (MainActivity), Home/Detail set the picture. Glass first in Themes with a NEW badge.
+- `FirstLook.kt` (from Xstream): "Choose your look" once per profile (texts `look0976`), Glass first; Skip = All Live.
+- AI button lifted above the active bottom bar (Orbit 84, Capsule 82, Horizon 80 dp + 12). Icon unchanged.
