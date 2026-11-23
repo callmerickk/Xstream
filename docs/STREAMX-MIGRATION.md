@@ -148,3 +148,21 @@ Asked, not decided: 3D copies (tag + 3D group + VR stereo / "watch in 2D").
   debuggable, so ART ignores the profile and Compose runs slower than a release build. The biggest remaining smoothness
   win: non-debuggable builds signed with the same key (decision needed; same signature keeps in-app updates working).
 - Glass background kept as is (already 192×108 blurred once, cached; now fetched as a small picture).
+
+## TV 0.9.14 (23 Nov) — what and where (check before bringing to Xstream mobile)
+- No automatic stream switch after the first picture on TV (`PlayerScreen.switchTo` guard: `IS_TV && auto && everPictured`,
+  except "the upgraded file failed"). Better copies only via the Upgrade button.
+- Upgrade pool also reads every finished plugin answer (`PluginSources.answered(id)`); 4K HDHUB / UHDMovies / HDHub4u offered
+  after 25 s without VegaMovies/RogMovies; audio language kept (`langOk`).
+- User changes never show the loading screen: Upgrade / Quality / Sources → `fadeTo` (background `ottSwapTo`, freeze fade on
+  TV); Watch next titles and picked episodes → `wnBegin` corner prepare on TV too (`playEpisode` `tvCorner`).
+- UHDMovies + HDHub4u back on TV (`CsPlugins.tvLeanSkip`, one-time `seededTv0914`).
+- Page relay: `PageRelay.kt` (OkHttp interceptor on the plugins' client) → Worker `streamx-home…/p?u=` (allowlisted file
+  sites, pages only). Home catalogs in one request: `HomeBundle.kt` → Worker `/bundle`.
+- Wrong-title copy stops at once + link forgotten; HTTP-refused saved link dropped, other links raced (no VLC retry).
+- Next-episode prep: only the playing source (`streamsFlow(only = setOf(addon))`), file start saved in 512 KB pieces while
+  playback is calm (`tvDropAt`, buffering); other sources fetched only when Quality / Audio / Sources opens (`tvNeedOthers`).
+- Skip intro: `vm.skipDb(key, durationMs)` (SkipDB with our file's duration) overrides introdb times on TV; introdb 4 s max.
+- Start: TV theme window background = logo (`src/tv/res/values/themes.xml`, `tv_launch.xml`), splash cross-fades into the
+  gate (`onFading`), profile pick = short zoom + Home fade-in (`homeIn` in TvApp); hero auto-slide waits for the next
+  picture; next two rows' posters prefetched on row focus.
