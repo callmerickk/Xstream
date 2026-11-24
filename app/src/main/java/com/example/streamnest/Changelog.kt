@@ -13,6 +13,12 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.8.20", "24 Nov 2026", "Green light sooner, fewer crashes", listOf(
+        "The green light comes sooner: the app no longer asks every source twice for the same title",
+        "A good video is no longer thrown away just because its host refuses a few extra connections",
+        "Leaving a title stops its cloud search at once, so the next title opens faster",
+        "Fixed a crash that could happen when a search site handed back a whole video file by mistake",
+    )),
     Release("0.8.19", "23 Nov 2026", "AI only when you tap it, honest green light, steady profile page", listOf(
         "AI opens only when you tap the AI button: \"Hey Aiden\" and the spoken hello are off (turn them on again in Settings if you want)",
         "Green light: a copy is checked for its length before the light turns green; a fake short video is dropped on the title page",
@@ -578,6 +584,15 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.8.20", "24 Nov 2026", "Addon mode: no double asking, faster green, plugin memory guard", listOf(
+        "CsPlugins.PluginGuard (outermost on the plugin client): video/audio, octet-stream big or unknown size, anything > 16 MB → empty body + X-SX-Cut: 1 (URL kept); text/JSON with no length capped at 12 MB; ranged reads and HEAD pass",
+        "addonStreamsFlow: cloud finder first, 1500 ms head start; an addon the cloud answered with ≥1 usable link skips its direct call (Quick Play addons, CNCVerse and CloudFind.directOnly always asked directly); NET summary line per title",
+        "CloudFind: enqueue() in suspendCancellableCoroutine (call.cancel() when the title is left), 5 MB answer ceiling, directOnly + cloudUrls",
+        "Prepare.attempt: a cloud link refused with 401/403/410 → its addon asked directly (askAddonDirect), merged into live; main loop waits ≤ 8 s for it",
+        "StreamCache.saveParts: pixeldrain 2 pieces (1 after a refusal), learned single hosts saved 7 days (max 50), head complete + 403/429 elsewhere = success, 4 pieces by default (8 after 2 clean 4-piece saves)",
+        "StreamCache.race keeps each good probe 60 s (racedProbe); runner-up probed in the background; save wait poll 80 → 25 ms",
+        "DetailTiming: 'link ready' on p.ready, 'light green' only on ready && (playerReady || TV); 'green breakdown' line",
+    )),
     Release("0.8.19", "23 Nov 2026", "aiOff0819 (wakeOn/aiWake off once, voiceOpen not saveable), Prepare length check before green, Horizon no-lift pill", listOf(
         "Prepare.lengthProblem + offLens/trustedLen; readyPlayer STATE_READY checks duration; bad links restart Prepare.start",
     )),

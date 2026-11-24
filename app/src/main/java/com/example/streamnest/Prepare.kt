@@ -48,6 +48,11 @@ object Prepare {
     private var saveJob: Job? = null
     private var lastResume = 0L
     private var preparedAt = 0L
+    // 0.8.20: time stamps for the "green breakdown" log line: job start, links in, link checked.
+    @Volatile private var tStart = 0L
+    @Volatile private var tLinks = 0L
+    @Volatile private var tProbe = 0L
+    private fun sec(a: Long, b: Long) = "%.1f".format((b - a).coerceAtLeast(0L) / 1000f)
 
     /** Links of each title that failed while preparing: the player's own search never tries them again. */
     private val failed = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
@@ -101,6 +106,8 @@ object Prepare {
         cancel()
         lastResume = resumeMs
         preparedAt = System.currentTimeMillis()
+        // 0.8.20: breakdown clock starts here.
+        tStart = android.os.SystemClock.elapsedRealtime(); tLinks = tStart; tProbe = tStart
         state.value = Prepared(id, "Finding streams…")
         job = vm.viewModelScope.launch {
             // CloudStream won the race: MovieBox's preparing goes on quietly (backup links) but no longer changes the status.
@@ -130,8 +137,12 @@ object Prepare {
             var wideL: List<StreamItem> = emptyList(); var wideDone = false
             var wide: Job? = null
             var wideOn = false
+            // 0.8.20: links of an addon asked directly after one of its cloud links was refused; merged into `live`.
+            var extraL: List<StreamItem> = emptyList()
+            val askedDirect = HashSet<String>()
+            val directJobs = mutableListOf<Job>()
             suspend fun publish() {
-                val l = (quickL + wideL + if (wideOn) SlowAddons.links.value[id].orEmpty() else emptyList()).distinctBy { it.stream.url }
+                val l = (quickL + wideL + (if (wideOn) SlowAddons.links.value[id].orEmpty() else emptyList()) + extraL).distinctBy { it.stream.url }
                 // Sorting a long list (the Live server alone can send 40+ links) runs off the screen's thread (it froze the app).
                 val merged = if (wideOn) withContext(Dispatchers.Default) { vm.filtered(l).list } else l
                 live.value = merged to (if (wideOn) wideDone else quickDone)
@@ -151,7 +162,8 @@ object Prepare {
             if (remembered != null) live.value = remembered to false
             val feeder = launch {
                 if (!quick) {
-                    runCatching { vm.progressiveStreams(type, id, false).collect { live.value = it } }
+                    // 0.8.20: links added by a direct ask (refused cloud link) are kept when the next update arrives.
+                    runCatching { vm.progressiveStreams(type, id, false).collect { (l, d) -> live.value = (if (extraL.isEmpty()) l else (l + extraL).distinctBy { x -> x.stream.url }) to d } }
                     if (!live.value.second) live.value = live.value.first to true
                     return@launch
                 }
@@ -187,6 +199,7 @@ object Prepare {
             // Plugin mode: a few seconds more so the best quality (not just the fastest plugin) goes first.
             if (first != null && !first.second && !instant) withTimeoutOrNull(if (plugMode) 4_000 else 1_000) { live.first { it.second } }
             var list = live.value.first
+            tLinks = android.os.SystemClock.elapsedRealtime()   // 0.8.20: links are in (for the green breakdown)
             // Subtitles never hold the preparing back: whatever answered within 0.7 s goes along (the player finds the rest).
             val subs = withTimeoutOrNull(700) { subsJob.await() }.orEmpty()
             val tried = HashSet<String>()
@@ -201,6 +214,21 @@ object Prepare {
                 StreamCache.register(s)
                 val pr = known ?: StreamCache.probe(url)
                 if (!pr.ok) {
+                    // 0.8.20: a link that came from the cloud was refused (401 / 403 / 410: often a link made for another device):
+                    // its addon is asked directly now, once per title, and the answer is merged into the live list.
+                    if (pr.status == 401 || pr.status == 403 || pr.status == 410) CloudFind.refusedBase(url)?.let { base ->
+                        if (askedDirect.add(base)) {
+                            ActLog.add("NET", "${s.addonName}: cloud link refused (HTTP ${pr.status}) — asking the addon directly")
+                            directJobs += launch {
+                                val more = vm.askAddonDirect(type, id, base)
+                                if (more.isNotEmpty()) {
+                                    extraL = (extraL + more).distinctBy { it.stream.url }
+                                    live.value = (live.value.first + more).distinctBy { it.stream.url } to live.value.second
+                                    ActLog.add("NET", "${s.addonName}: direct answer · ${more.size} links added")
+                                } else ActLog.add("NET", "${s.addonName}: direct answer · nothing new")
+                            }
+                        }
+                    }
                     lastWhy = pr.error ?: "HTTP ${pr.status}"
                     bad += url
                     // Dead (web page / not found / bad request / expired signed link): never again. Busy (429): just the next one.
@@ -208,6 +236,7 @@ object Prepare {
                     return false
                 }
                 Ranker.noteHostOk(url)
+                tProbe = android.os.SystemClock.elapsedRealtime()   // 0.8.20: link checked (for the green breakdown)
                 // Playlists (HLS / DASH) stream in small pieces: nothing to save, they start fast.
                 val mime = StreamType.mimeFor(url, s.fileName())
                 if (mime != null) {
@@ -256,7 +285,7 @@ object Prepare {
                         if (!enough.get()) put(Prepared(id, "Saving ${(f * 100).toInt()}% · $label", f, item = s, list = list, subs = subs, saved = done, target = len))
                     }
                 }
-                while (!enough.get() && saver.isActive) delay(80)
+                while (!enough.get() && saver.isActive) delay(25)   // 0.8.20: was 80
                 if (enough.get()) {
                     saver.cancel()
                     put(Prepared(id, "⚡ Ready to play instantly · ${if (big) "15 s" else "1:00"} start saved · $label", 1f, ready = true,
@@ -335,13 +364,27 @@ object Prepare {
                 put(Prepared(id, "Checking ${minOf(3, cands.size)} links at once…", list = list, subs = subs))
                 // The best one is a streaming playlist (MovieBox .mpd / .m3u8): it starts at once, no race needed.
                 // One link per server in the race (three links on one slow server would all be slow).
-                val win = if (cands.size > 1 && cands.first().isPlaylist().not()) StreamCache.race(cands.distinctBy { hostOf(it.stream.url) }.take(3).mapNotNull { it.stream.url }, 6000) else null
+                // 0.8.20: same race as before, but the list is kept so we know who was raced.
+                val raceUrls = if (cands.size > 1 && cands.first().isPlaylist().not()) cands.distinctBy { hostOf(it.stream.url) }.take(3).mapNotNull { it.stream.url } else emptyList()
+                val win = if (raceUrls.isNotEmpty()) StreamCache.race(raceUrls, 6000) else null
                 val ordered = win?.let { (u, _) -> cands.sortedBy { if (it.stream.url == u) 0 else 1 } } ?: cands
+                // 0.8.20: while the winner is being saved, the runner-up is checked in the background if the race didn't cover it.
+                val runner = ordered.getOrNull(1)
+                val runnerBg = runner?.stream?.url
+                    ?.takeIf { u -> win != null && u !in raceUrls && runner?.isPlaylist() != true && StreamCache.racedProbe(u) == null }
+                    ?.let { u -> async { StreamCache.probe(u) } }
                 var i = 0
                 for (s in ordered) {
-                    s.stream.url?.let { tried += it }
-                    val known = win?.takeIf { it.first == s.stream.url }?.second
+                    val su = s.stream.url
+                    su?.let { tried += it }
+                    var known = win?.takeIf { it.first == su }?.second
+                    if (known == null && su != null && i > 0) {
+                        // 0.8.20: the next link was already checked (in the race or in the background): no second check.
+                        known = StreamCache.racedProbe(su) ?: if (s === runner) runnerBg?.await() else null
+                        if (known != null) ActLog.add("PLAY", "next link already checked — starting it without a second check")
+                    }
                     if (attempt(s, i++, ordered.size, known)) {
+                        runnerBg?.cancel()
                         if (csWonFor == id) { feeder.cancel(); return@launch }   // CloudStream is playing first
                         // The HD file that played for this title last time (remembered 2 days): made ready now in the
                         // background; if it's ready before Play, Play starts straight in HD.
@@ -374,6 +417,13 @@ object Prepare {
                 }
                 // Nothing worked yet. Addons still answering, or a slow addon (CNCVerse) still collecting: wait for new links.
                 val known = list.mapNotNull { it.stream.url }.toSet() + tried
+                // 0.8.20: a refused cloud link's addon is being asked directly: wait for that answer (≤ 8 s) before giving up.
+                val askRunning = directJobs.filter { it.isActive }
+                if (askRunning.isNotEmpty()) {
+                    put(Prepared(id, "Asking the addon directly…", list = list, subs = subs))
+                    withTimeoutOrNull(8_000) { askRunning.forEach { it.join() } }
+                    if (live.value.first.any { it.stream.url != null && it.stream.url !in known }) continue
+                }
                 if (!live.value.second) {
                     put(Prepared(id, "Waiting for more addons…", list = list, subs = subs))
                     val m = withTimeoutOrNull(25_000) { live.first { (l, done) -> done || l.any { it.stream.url != null && it.stream.url !in known } } }
@@ -402,6 +452,7 @@ object Prepare {
         // replace: only while the title page still holds the MovieBox one (Play may have taken it meanwhile).
         if (BuildConfig.IS_TV || Preloader.has(id) != replace) return
         if (PlayerCount.heapFrac() > 0.70) { ActLog.add("PLAY", "not opened ahead — memory ${PlayerCount.usedMb()} MB in use"); return }
+        val tPlayer0 = android.os.SystemClock.elapsedRealtime()   // 0.8.20: paused player made now (for the green breakdown)
         runCatching {
             StreamHeaders.use(url)
             val p = buildPlayer(ctx, vm, true)
@@ -416,7 +467,14 @@ object Prepare {
                     val cur = state.value?.takeIf { it.key == id && !it.playerReady } ?: return
                     val a = lastArgs?.takeIf { it.id == id }
                     val why = a?.let { lengthProblem(it, s.addonName, p.duration) }
-                    if (why == null) { state.value = cur.copy(playerReady = true); return }
+                    if (why == null) {
+                        // The light turns green the moment the paused player is READY and its length fits (as in 0.8.19).
+                        state.value = cur.copy(playerReady = true)
+                        // 0.8.20: where the time went, from the title page opening to green.
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        ActLog.add("TITLE", "green breakdown · links ${sec(tStart, tLinks)} s · check ${sec(tLinks, tProbe)} s · save ${sec(tProbe, tPlayer0)} s · player ${sec(tPlayer0, now)} s")
+                        return
+                    }
                     ActLog.add("PLAY", "title page: wrong copy dropped before Play · ${s.addonName} · $why — preparing the next link")
                     ActLog.add("SWITCH", "prepare · wrong title (${why}) · ${s.addonName} — not used")
                     failed.getOrPut(id) { java.util.concurrent.ConcurrentHashMap.newKeySet() }.add(url)
@@ -554,17 +612,21 @@ object DetailTiming {
     @Volatile private var key: String? = null
     @Volatile private var t0 = 0L
     @Volatile private var firstLink = false
+    @Volatile private var linkReady = false
     @Volatile private var green = false
     fun begin(name: String, id: String) {
         if (key == id) return
-        key = id; t0 = android.os.SystemClock.elapsedRealtime(); firstLink = false; green = false
+        key = id; t0 = android.os.SystemClock.elapsedRealtime(); firstLink = false; linkReady = false; green = false
         ActLog.add("TITLE", "page open · $name")
     }
     private fun at(): String { val s = (android.os.SystemClock.elapsedRealtime() - t0) / 1000.0; return "%.2f s (%d blinks)".format(s, (s / 0.6).toInt() + 1) }
     fun on(p: Prepared?) {
         if (p == null || p.key != key) return
         if (!firstLink && p.item != null) { firstLink = true; ActLog.add("TITLE", "first link after ${at()} · ${Public.streamName(p.item)}") }
-        if (!green && p.ready) { green = true; ActLog.add("TITLE", "light green after ${at()}") }
+        // 0.8.20: the saved start is ready (the light may still be grey: the paused player has to open it).
+        if (!linkReady && p.ready) { linkReady = true; ActLog.add("TITLE", "link ready after ${at()}") }
+        // 0.8.20: what the user sees (same test as the light in Detail.kt).
+        if (!green && p.ready && (p.playerReady || BuildConfig.IS_TV)) { green = true; ActLog.add("TITLE", "light green after ${at()}") }
         if (!green && p.failed) { green = true; ActLog.add("TITLE", "nothing prepared after ${at()}") }
     }
 }

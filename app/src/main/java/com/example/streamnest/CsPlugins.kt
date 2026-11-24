@@ -1,5 +1,7 @@
 package com.example.streamnest
 
+import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.buffer
 import kotlinx.coroutines.launch
 import android.content.Context
 import android.content.res.AssetManager
@@ -77,7 +79,8 @@ object CsPlugins {
         com.lagradost.cloudstream3.app.baseClient = Api.http.newBuilder().cache(null).callTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
             .dns(object : okhttp3.Dns { override fun lookup(hostname: String) = Api.http.dns.lookup(hostname) })
             // 0.8.17: file sites the internet provider cuts (vcloud, hubcloud…) are fetched through the Cloudflare Worker.
-            .apply { interceptors().add(0, PageRelay) }.build()
+            // 0.8.20: PluginGuard sits in front of it and sees the final answer: no plugin reads a whole video file into memory.
+            .apply { interceptors().add(0, PageRelay); interceptors().add(0, PluginGuard) }.build()
         val p = ctx.getSharedPreferences("cs_plugins", Context.MODE_PRIVATE); prefs = p
         repos.value = runCatching { Api.json.decodeFromString<List<CsRepo>>(p.getString("repos", null) ?: "") }.getOrNull() ?: defaultRepos.map { CsRepo(it) }
         catalog.value = runCatching { Api.json.decodeFromString<List<CsPluginEntry>>(p.getString("catalog", null) ?: "") }.getOrDefault(emptyList())
@@ -348,4 +351,67 @@ object CsPlugins {
     }
 
     fun providers(): List<Pair<CsPluginEntry, MainAPI>> = enabledEntries().flatMap { e -> loaded[e.key]?.apis?.map { e to it }.orEmpty() }
+}
+
+/**
+ * 0.8.20: plugin-only size guard. A plugin extractor (HubCloud's t3dl.php) got the real 1.75 GB video back and read it
+ * into a String: out of memory. Before any body is read: a ranged read passes (player style); a video / audio type, a
+ * binary type that is big or of unknown size, or anything over 16 MB is cut off (empty body, same code and headers,
+ * plus X-SX-Cut: 1 — the plugin still gets the final address). A text / JSON answer with no length is capped at 12 MB.
+ */
+object PluginGuard : okhttp3.Interceptor {
+    private const val MB = 1024L * 1024
+    private const val CHUNKED_MAX = 12L * MB
+    private val binaryTypes = setOf("application/octet-stream", "binary/octet-stream", "application/x-matroska", "application/mp4")
+
+    override fun intercept(chain: okhttp3.Interceptor.Chain): okhttp3.Response {
+        val req = chain.request()
+        val r = chain.proceed(req)
+        // A ranged read is a player-style read: fine. HEAD has no body to read.
+        if (req.header("Range") != null || req.method == "HEAD") return r
+        val body = r.body ?: return r
+        val mt = body.contentType()
+        val type = if (mt != null) "${mt.type}/${mt.subtype}".lowercase() else ""
+        val len = body.contentLength()          // -1 = unknown
+        val cut = type.startsWith("video/") || type.startsWith("audio/") ||
+            (type in binaryTypes && (len < 0 || len > 8 * MB)) ||
+            len > 16 * MB
+        val u = r.request.url
+        val where = u.host + u.encodedPath.take(40)
+        if (cut) {
+            val size = if (len < 0) "unknown" else if (len >= MB) "${len / MB} MB" else "${len / 1024} KB"
+            ActLog.add("NET", "plugin download blocked · $where · ${type.ifEmpty { "no type" }} · $size — a plugin tried to load a whole video file into memory")
+            body.close()
+            // Empty body, same code and headers; response.request.url stays as it was (extractors often only read .url).
+            return r.newBuilder().body("".toResponseBody(mt)).header("X-SX-Cut", "1").build()
+        }
+        // Text / JSON with no length (chunked): reading past 12 MB throws an IOException the plugin's own try/catch handles.
+        val textual = type.isEmpty() || type.startsWith("text/") || "json" in type || "xml" in type || "javascript" in type
+        if (len < 0 && textual) {
+            val limited = object : okio.ForwardingSource(body.source()) {
+                var n = 0L
+                var logged = false
+                override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                    val got = super.read(sink, byteCount)
+                    if (got > 0) {
+                        n += got
+                        if (n > CHUNKED_MAX) {
+                            if (!logged) { logged = true; ActLog.add("NET", "plugin answer over 12 MB, no length given · $where — stopped reading") }
+                            runCatching { close() }
+                            throw java.io.IOException("response too large for a plugin")
+                        }
+                    }
+                    return got
+                }
+            }
+            val src = limited.buffer()
+            val nb = object : okhttp3.ResponseBody() {
+                override fun contentType() = mt
+                override fun contentLength() = -1L
+                override fun source(): okio.BufferedSource = src
+            }
+            return r.newBuilder().body(nb).build()
+        }
+        return r
+    }
 }
