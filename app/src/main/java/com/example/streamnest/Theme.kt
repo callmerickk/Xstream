@@ -34,49 +34,80 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.node.invalidateDraw
 
 /** 0.9.76: with the Glass theme (phones) pages are see-through over the blurred picture drawn behind the whole app. */
-val Bg: Color get() = if (Palette.glass && !BuildConfig.IS_TV) Color(0x8C070810) else Palette.bg
+// 0.9.2: solid again while the video player is open (nothing see-through is drawn under the video).
+val Bg: Color get() = if (Palette.glass && !BuildConfig.IS_TV && !GlassBg.paused) Color(0x8C070810) else Palette.bg
 /** 0.9.76: a dark panel colour that turns frosted (see-through) with the Glass theme, so every page follows it. */
-fun glassy(c: Color): Color = if (Palette.glass && !BuildConfig.IS_TV) c.copy(alpha = 0.62f) else c
+fun glassy(c: Color): Color = if (Palette.glass && !BuildConfig.IS_TV && !GlassBg.paused) c.copy(alpha = 0.62f) else c
 
 /**
  * 0.9.76: the picture behind the whole app with the Glass theme (Home's top card, the open title…).
  * 0.9.78: never cleared — a missing picture keeps the last one (the page went black after the player or a sync).
+ * 0.9.2: the last blurred picture and its shade live here (not inside the screen), so the backdrop survives the
+ * screen being rebuilt, the theme flicking off and on, and a picture that fails to load; it is also kept on disk so a
+ * fresh start shows the last one instead of black. [paused]: the player (or a full-screen trailer) is open.
  */
 object GlassBg {
     private val s = androidx.compose.runtime.mutableStateOf<String?>(null)
     var url: String? get() = s.value; set(v) { if (v != null) s.value = v }
+    /** 0.9.2: the backdrop on screen now (kept until a new one is ready). */
+    internal val shown = androidx.compose.runtime.mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
+    internal val tint = androidx.compose.runtime.mutableStateOf(Color(0xFF070810))
+    /** 0.9.2: no backdrop (and no see-through pages) while the video player is on screen. */
+    var paused by androidx.compose.runtime.mutableStateOf(false)
+    @Volatile internal var diskTried = false
+    internal fun file(ctx: android.content.Context) = java.io.File(ctx.cacheDir, "glass_last.png")
 }
 
 /**
  * 0.9.78: the Glass backdrop as the TV draws it — the picture at 192×108, blurred ONCE in the background (three box passes
  * ≈ a gaussian) and kept, then simply drawn: nothing is blurred per frame, so scrolling over it costs almost nothing. The
  * picture's own colours show through (a lighter dim than before), and the last backdrop stays while a new one is made.
+ * 0.9.2: never black while Glass is on: a picture that fails keeps the last one (tries the full-size picture once),
+ * the last one comes back from disk after a restart, and with nothing at all a soft shade in the theme's colours shows.
  */
 @Composable
 fun GlassBackdrop(url: String?) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val small = androidx.compose.runtime.remember(url) { url?.replace(Regex("/t/p/(original|w1280|w780)/"), "/t/p/w300/")?.replace("/background/large/", "/background/small/")?.replace("/background/medium/", "/background/small/")?.replace("/poster/large/", "/poster/small/") }
-    var last by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
-    var tint by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(Color(0xFF070810)) }
+    var last by GlassBg.shown
+    var tint by GlassBg.tint
+    // 0.9.2: after a restart, the last backdrop from disk while the new one is made.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (last != null || GlassBg.diskTried) return@LaunchedEffect
+        GlassBg.diskTried = true
+        val b = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { GlassBg.file(ctx).takeIf { it.length() > 0 }?.let { android.graphics.BitmapFactory.decodeFile(it.path) }?.asImageBitmap() }.getOrNull()
+        }
+        if (b != null && last == null) last = b
+    }
     androidx.compose.runtime.LaunchedEffect(small) {
         val u = small ?: return@LaunchedEffect
         TvGlass.blurred[u]?.let { last = it; GlassTints[u]?.let { t -> tint = t }; return@LaunchedEffect }
         val b = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            suspend fun load(x: String): android.graphics.drawable.Drawable? = runCatching {
+                val r = coil.request.ImageRequest.Builder(ctx).data(x).size(192, 108).allowHardware(false).build()
+                (coil.Coil.imageLoader(ctx).execute(r) as? coil.request.SuccessResult)?.drawable
+            }.getOrNull()
             runCatching {
-                val r = coil.request.ImageRequest.Builder(ctx).data(u).size(192, 108).allowHardware(false).build()
-                val d = (coil.Coil.imageLoader(ctx).execute(r) as? coil.request.SuccessResult)?.drawable ?: return@runCatching null
+                // 0.9.2: the small copy failed (not every site has one) → the picture as given, once.
+                val d = load(u) ?: url?.takeIf { it != u }?.let { load(it) } ?: return@runCatching null
                 val bm = (d as? android.graphics.drawable.BitmapDrawable)?.bitmap ?: android.graphics.Bitmap.createBitmap(192, 108, android.graphics.Bitmap.Config.ARGB_8888).also { x ->
                     val c = android.graphics.Canvas(x); d.setBounds(0, 0, 192, 108); d.draw(c) }
                 val bl = TvGlass.blur(android.graphics.Bitmap.createScaledBitmap(bm, 192, 108, true), 7, 3)
                 // 0.9.78: the page's shade takes the picture's own colour (its average, kept very dark).
                 val px = android.graphics.Bitmap.createScaledBitmap(bl, 1, 1, true).getPixel(0, 0)
                 GlassTints[u] = Color(((px shr 16 and 0xFF) * 0.2f + 4) / 255f, ((px shr 8 and 0xFF) * 0.2f + 5) / 255f, ((px and 0xFF) * 0.2f + 9) / 255f)
+                // 0.9.2: kept on disk (≈ 40 KB) for the next start.
+                runCatching { java.io.FileOutputStream(GlassBg.file(ctx)).use { o -> bl.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, o) } }
                 bl.asImageBitmap()
             }.getOrNull()
         }
         if (b != null) { if (TvGlass.blurred.size > 6) { TvGlass.blurred.clear(); GlassTints.keys.retainAll(setOf(u)) }; TvGlass.blurred[u] = b; last = b; GlassTints[u]?.let { tint = it } }
     }
     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(Color(0xFF07080C))) {
+        // 0.9.2: nothing loaded yet: a soft glow in the theme's colours, never plain black.
+        if (last == null) androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.radialGradient(
+            listOf(Palette.tint.copy(alpha = 0.9f), Palette.accent.copy(alpha = 0.18f), Color(0xFF07080C)))))
         androidx.compose.animation.Crossfade(last, Modifier.fillMaxSize(), animationSpec = androidx.compose.animation.core.tween(600), label = "glassBg") { b ->
             if (b != null) androidx.compose.foundation.Image(b, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 filterQuality = androidx.compose.ui.graphics.FilterQuality.High, alpha = 0.8f)
@@ -84,6 +115,17 @@ fun GlassBackdrop(url: String?) {
         val t by androidx.compose.animation.animateColorAsState(tint, androidx.compose.animation.core.tween(600), label = "glassTint")
         androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color(0x33000000), 0.6f to t.copy(alpha = 0.5f), 1f to t.copy(alpha = 0.8f))))
     }
+}
+/**
+ * 0.9.2: a soft (blurred-looking) picture for long lists: a tiny copy (32 px wide) stretched up, so nothing is blurred
+ * on every frame while the list scrolls (Modifier.blur re-blurs each card as it moves).
+ */
+@Composable
+fun SoftImage(url: String?, modifier: Modifier, alpha: Float = 1f) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val req = androidx.compose.runtime.remember(url) { coil.request.ImageRequest.Builder(ctx).data(url).size(32, 18).build() }
+    coil.compose.AsyncImage(req, null, modifier, contentScale = androidx.compose.ui.layout.ContentScale.Crop, alpha = alpha,
+        filterQuality = androidx.compose.ui.graphics.FilterQuality.Low)
 }
 /** 0.9.78: each backdrop's dark shade in the picture's own colour (made once with the blurred picture). */
 private val GlassTints = java.util.concurrent.ConcurrentHashMap<String, Color>()

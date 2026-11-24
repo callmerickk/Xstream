@@ -13,6 +13,16 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.9.2", "24 Nov 2026", "Glass stays glass, smoother screens", listOf(
+        "Glass theme: the page no longer turns plain black — the last picture stays until the next one is ready, also after a restart",
+        "Smoother player: the see-through Glass look switches off while a video plays",
+        "Smoother scrolling in long rows and episode lists",
+        "New Continue Watching page: two picture cards per row, with time left, a progress bar, a play button and a ⋮ menu",
+        "A film whose real file is another film (same name, different year or title) is skipped",
+        "A video host that is only busy is skipped for a moment, not treated as broken",
+        "Source Test: more accurate results (seeking, busy hosts, wrong films, player-ready time)",
+        "Crash reports: when the app crashes, a short report helps fix it (no email or name is sent)",
+    )),
     Release("0.9.1", "24 Nov 2026", "Beta features are back", listOf(
         "Faster start from the cloud: your sources are asked all at once, and each only once",
         "Crash fix for big files: a search site can no longer fill the phone's memory with a whole video",
@@ -600,6 +610,17 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.9.2", "24 Nov 2026", "Shared fixes: Glass, frames, Continue page, file-name check, pixeldrain busy, Source Test, Firebase", listOf(
+        "Glass: GlassBg keeps the shown blurred backdrop + tint in the object (survives recomposition, theme flicker, activity rebuild), saves it to cacheDir/glass_last.png and loads it on a cold start; a failed small picture retries the full URL; no picture yet = radial glow in Palette.tint/accent (never flat black); APP 'look · Glass on/off' line in applyPalette",
+        "Glass off under video: GlassBg.paused (Screens: Player or Trailer on top) → MainActivity skips GlassBackdrop, Bg/glassy() opaque; unused per-frame-blur PhoneGlassBackdrop removed; SoftImage (32 px copy stretched, no RenderEffect) for TallPoster's wide fallback and unaired episode thumbnails",
+        "FrameStats: late = (UNKNOWN_DELAY+INPUT+ANIMATION+LAYOUT+DRAW+SYNC+COMMAND+SWAP) > 1.5 × frame interval (API 31+ FrameMetrics.DEADLINE, else display refresh rate re-read every second); line 'frames · <screen> · N drawn · L late (x %) · <Hz> Hz · avg a ms · worst w ms'",
+        "Continue Watching page: ContinueCard style 'grid' (16:9 picture, bar under it, 2-line title, ▶ circle, time left, ⋮ with Title page + Remove); GridCells.Adaptive(150 dp) = 2 columns on phones",
+        "fileNameCheck (Feature, beta on / stable off): TitleMatch.fileNameProblem decodes the URL's last path segment(s) + behaviorHints.filename; a standalone year off by >1, or a relabelled link (label = film name) whose URL name shares no word with the film → dropped; PLAY 'wrong title (file name) · <addon> · <name>'. TitleMatch keeps names from the Cinemeta look-up",
+        "pixeldrain: LinkProbe.busy = 403 + JSON note (≤2 KB) with rate_limit/captcha/hotlink/limit; Prepare skips it without adding it to failed; tryNextSource doesn't recordFail pixeldrain 403",
+        "Source Test: pixeldrain probes ≥2 s apart; busy = not counted; NOT seekable only after a second mid-file range check (bytes=size/2-size/2) and for a group only with ≥2 such links; first-picture time taken at onRenderedFirstFrame and up to 3 s more for STATE_READY ('player ready at'); wrong-file-name films reported as 'wrong film' (not played, not counted)",
+        "Firebase: Crashlytics + Performance Monitoring via BoM 33.5.1, plugins google-services 4.4.2 / crashlytics 3.0.2 / firebase-perf 1.4.2 applied from the top build.gradle.kts (shared, synced); app/google-services.json (4 apps); no mapping upload (-dontobfuscate). CrashReports.kt: keys brand/version/flavor/device_tier, user id acct-+sha256('sx|'+uid)[:6], important ActLog lines → Crashlytics.log (emails/ids stripped), set up on a background thread",
+        "tools/sync-to-streamx.sh also copies build.gradle.kts and app/google-services.json",
+    )),
     Release("0.9.1", "24 Nov 2026", "Xstream extras on the shared code, behind Feature switches", listOf(
         "Feature.kt: cloudFind, pluginGuard, smartParts, detailTiming, accessGate, linkMemory, music, tasteRows, tastePick, hostDown, roomRejoin, updatePill, inviteBoth — all on in Xstream (IS_BETA), off in StreamX unless listed in Feature.STABLE",
         "cloudFind: CloudFind.kt (cancellable /find, 5 MB cap, directOnly, cloudUrls); AppViewModel.addonStreamsFlow → cloudStreamsFlow (on) / directStreamsFlow (off = StreamX 0.9.79 body); askAddonDirect; Prepare: refused cloud link (401/403/410) → direct ask, merged via extraL, ≤8 s wait",

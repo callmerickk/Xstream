@@ -124,6 +124,21 @@ object SourceTester {
         r.surface
     }.getOrNull()
     private var lastHost: String? = null
+    /** 0.9.2: pixeldrain refuses an address that opens files too fast: its checks go at least 2 s apart. */
+    private var lastPixeldrainAt = 0L
+
+    /** 0.9.2: a second "can we jump inside?" check in the middle of the file (bytes=size/2-size/2): 206 = seekable. */
+    private suspend fun midSeekOk(url: String, size: Long): Boolean = withContext(Dispatchers.IO) {
+        if (size < 2) return@withContext false
+        runCatching {
+            val mid = size / 2
+            val b = okhttp3.Request.Builder().url(url).header("Range", "bytes=$mid-$mid")
+            val h = StreamHeaders.forUrl(url)
+            h.forEach { (k, v) -> b.header(k, v) }
+            if (h.keys.none { it.equals("User-Agent", true) }) b.header("User-Agent", PlayerUserAgent)
+            Api.http.newCall(b.build()).execute().use { r -> r.code == 206 }
+        }.getOrDefault(false)
+    }
     private fun pr0Host(url: String): String? = runCatching { android.net.Uri.parse(url).host }.getOrNull()
 
     private fun stamp() = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
@@ -322,10 +337,24 @@ object SourceTester {
         // What the addon sends along with this link (MovieBox / VA Player need special request details).
         StreamHeaders.forUrl(url).let { h -> w("   request details from the addon: " + if (h.isEmpty()) "none" else h.entries.joinToString(", ") { "${it.key}: ${it.value.take(60)}" }) }
         // 1) one-byte request (a busy server — 429 — gets one more try after 5 s)
+        // 0.9.2: the real file name shows another film (CNCVerse names links after the film asked for): reported, not played.
+        if (t.type == "movie") TitleMatch.fileNameProblem(s, t.imdb, t.year?.take(4)?.toIntOrNull(), t.name)?.let { real ->
+            w("   ✗ wrong film — the file is \"${real.take(100)}\" (not played, not counted in the ranking)")
+            ActLog.add("PLAY", "wrong title (file name) · ${s.addonName} · ${real.take(120)}")
+            return LinkResult(t.label, s.addonName, key, bucket, lang, res, false, null, true, "wrong film", counted = false)
+        }
         val host = pr0Host(url)
         if (host != null && host == lastHost) delay(700) // don't hammer the same server
         lastHost = host
+        // 0.9.2: pixeldrain checks at least 2 s apart (it answers 403 "too fast" otherwise).
+        if (isPixeldrain(url)) {
+            val wait = 2_000 - (SystemClock.elapsedRealtime() - lastPixeldrainAt)
+            if (wait > 0) delay(wait)
+            lastPixeldrainAt = SystemClock.elapsedRealtime()
+        }
         var pr = StreamCache.probe(url)
+        // 0.9.2: one byte at the start said "can't jump inside": ask once more in the middle of the file before believing it.
+        if (pr.ok && !pr.seekable && pr.size > 1 && midSeekOk(url, pr.size)) pr = pr.copy(seekable = true)
         if (pr.status == 429) {
             w("   [${stamp()}] server busy (429) — waiting 5 s, trying once more")
             delay(5000)
@@ -336,6 +365,11 @@ object SourceTester {
         if (!pr.ok && pr.status == 429) {
             w("   ✗ still busy (429) — not counted in the ranking (the server limits requests, the link may be fine)")
             return LinkResult(t.label, s.addonName, key, bucket, lang, res, false, null, pr.seekable, "busy (429)", counted = false)
+        }
+        // 0.9.2: pixeldrain's 403 with its "too fast / captcha / hotlink" note: busy, not dead, the group stays.
+        if (pr.busy) {
+            w("   ✗ pixeldrain busy (403 limit) — not counted in the ranking, not dead (it limits how fast files are opened)")
+            return LinkResult(t.label, s.addonName, key, bucket, lang, res, false, null, true, "busy (pixeldrain 403)", counted = false)
         }
         if (pr.ok) Ranker.noteHostOk(url)
         if (!pr.ok && (pr.status in 400..599 || Ranker.isDeadReason(pr.status, pr.type, url))) {
@@ -367,7 +401,7 @@ object SourceTester {
             else -> att.err
         }
         if (att.tracks.isNotEmpty()) w("   tracks: ${att.tracks}")
-        if (ok) w("   [${stamp()}] ✓ first picture in ${att.ff} ms (player ready at ${if (att.readyAt >= 0) "${att.readyAt} ms" else "— picture came before the player said ready"})")
+        if (ok) w("   [${stamp()}] ✓ first picture in ${att.ff} ms (player ready at ${if (att.readyAt >= 0) "${att.readyAt} ms" else "— not ready within 3 s after the picture"})")
         else w("   [${stamp()}] ✗ $reason")
         if (decoderBusy) w("   → the phone's decoder, not the link — not counted in the ranking")
         line.value = (if (ok) "✓ ${"%.1f".format(att.ff / 1000f)} s · " else "✗ ") + "${Ranker.labelOf(key)} · ${Prepare.qualityName(res)}"
@@ -396,15 +430,19 @@ object SourceTester {
         player.value = p
         val t0 = SystemClock.elapsedRealtime()
         val result = CompletableDeferred<String?>()
+        // 0.9.2: the player often draws its first picture before it says "ready"; we now wait briefly for "ready" too.
+        val ready = CompletableDeferred<Unit>()
+        var ffAt = -1L
         var readyAt = -1L
         var tracksTxt = ""
         val l = object : Player.Listener {
             override fun onRenderedFirstFrame() {
-                if (readyAt < 0 && p.playbackState == Player.STATE_READY) readyAt = SystemClock.elapsedRealtime() - t0
+                if (ffAt < 0) ffAt = SystemClock.elapsedRealtime() - t0
+                if (readyAt < 0 && p.playbackState == Player.STATE_READY) { readyAt = SystemClock.elapsedRealtime() - t0; ready.complete(Unit) }
                 result.complete(null)
             }
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_READY && readyAt < 0) readyAt = SystemClock.elapsedRealtime() - t0
+                if (state == Player.STATE_READY && readyAt < 0) { readyAt = SystemClock.elapsedRealtime() - t0; ready.complete(Unit) }
                 if (state == Player.STATE_READY && p.videoSize.width == 0 && p.currentTracks.groups.none { it.type == C.TRACK_TYPE_VIDEO }) result.complete(null)
             }
             override fun onPlayerError(error: PlaybackException) {
@@ -426,8 +464,10 @@ object SourceTester {
         p.setMediaItem(MediaItem.Builder().setUri(url).apply { if (mime != null) setMimeType(mime) }.build())
         p.prepare(); p.playWhenReady = true
         val err = withTimeoutOrNull(20_000) { result.await() }
-        val ff = SystemClock.elapsedRealtime() - t0
+        val ff = if (ffAt >= 0) ffAt else SystemClock.elapsedRealtime() - t0
         val timedOut = err == null && !result.isCompleted
+        // 0.9.2: picture first: give the player up to 3 s more to say "ready", so the log has its time.
+        if (!timedOut && err == null && readyAt < 0) withTimeoutOrNull(3_000) { ready.await() }
         p.removeListener(l)
         player.value = null
         // Stop first (lets the decoder finish cleanly), detach the picture target, then release.
@@ -504,7 +544,9 @@ object SourceTester {
             val median = if (oks.isEmpty()) 20_000L else oks[oks.size / 2]
             // "Can jump inside" is known only from links that played (a refused link says nothing about the file).
             val played = l.filter { it.ok }
-            val seekable = played.isEmpty() || played.count { it.seekable } * 2 >= played.size
+            // 0.9.2: a group is "NOT seekable" only when at least 2 of its played links failed both jump checks.
+            val notSeek = played.count { !it.seekable }
+            val seekable = played.isEmpty() || notSeek < 2 || played.count { it.seekable } * 2 >= played.size
             val parts = k.first.split('|')
             RankEntry(k.first, parts.getOrElse(0) { "" }, parts.getOrElse(1) { "" }, parts.getOrElse(2) { "" }, k.second, k.third,
                 l.size, oks.size, median, seekable, Ranker.scoreOf(oks.size, l.size, median, seekable), dead = oks.isEmpty() && l.all { it.dead })

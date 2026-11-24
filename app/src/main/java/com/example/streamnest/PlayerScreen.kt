@@ -1362,7 +1362,8 @@ fun PlayerScreen(
     /** No more ways for this link: the next source; in Quick Start, then every other addon's files; else the error. */
     fun tryNextSource(n: Now?, start: Long, code: String, quiet: Boolean = false) {
         // This link failed every way: count it for its provider group (twice in a row = under observation).
-        n?.let { nn -> val it0 = itemFor(nn.url); scope.launch { Ranker.recordFail(it0, code) } }
+        // 0.9.2: …but not pixeldrain's 403 (its "too fast" limit: the server is busy, the group isn't bad).
+        n?.takeIf { !(code.contains("403") && isPixeldrain(it.url)) }?.let { nn -> val it0 = itemFor(nn.url); scope.launch { Ranker.recordFail(it0, code) } }
         // The best remaining link by the Source Test ranking (dead and keeps-failing groups last resort only):
         // links that already sent video in the race first, then servers that haven't failed in this play, then the rest.
         // …never the same file again through another link (e.g. a re-signed storage link) after it failed to open.

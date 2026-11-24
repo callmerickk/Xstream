@@ -247,6 +247,8 @@ object Prepare {
                         }
                     }
                     lastWhy = pr.error ?: "HTTP ${pr.status}"
+                    // 0.9.2: pixeldrain busy (403 rate limit): skipped for now only — not kept as failed, never dead.
+                    if (pr.busy) { ActLog.add("PLAY", "prepare · ${s.addonName}: pixeldrain busy (403 limit) — skipped for now, not dead"); return false }
                     bad += url
                     // Dead (web page / not found / bad request / expired signed link): never again. Busy (429): just the next one.
                     if (Ranker.isDeadReason(pr.status, pr.type, url)) { Ranker.markDeadUrl(url); Ranker.recordFail(s, "prepare: $lastWhy") }

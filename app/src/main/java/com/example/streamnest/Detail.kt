@@ -1045,7 +1045,9 @@ private fun EpisodeRow(ep: Video, watched: Boolean, frac: Float, isNext: Boolean
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.width(150.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Surface1)) {
-            AsyncImage(ep.thumbnail, null, Modifier.fillMaxSize().then(if (unaired) Modifier.blur(16.dp) else Modifier), contentScale = ContentScale.Crop)
+            // 0.9.2: unaired = a cheap soft copy (the episode list scrolls; a per-frame blur cost every frame).
+            if (unaired) SoftImage(ep.thumbnail, Modifier.fillMaxSize())
+            else AsyncImage(ep.thumbnail, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             if (watched) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(22.dp).clip(CircleShape).background(Color(0xCC000000)), Alignment.Center) {
                 Icon(Icons.Default.Check, "Watched", Modifier.size(14.dp))
             } else Icon(Icons.Default.PlayCircle, null, Modifier.align(Alignment.Center).size(30.dp), tint = Color(0xD9FFFFFF))

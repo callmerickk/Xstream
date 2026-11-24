@@ -28,7 +28,12 @@ import java.util.concurrent.ConcurrentHashMap
 data class LinkProbe(
     val ok: Boolean, val status: Int, val ttfbMs: Long, val size: Long, val seekable: Boolean,
     val type: String?, val host: String?, val finalHost: String?, val error: String?,
+    /** 0.9.2: the server is only busy (pixeldrain's 403 "too many files opened too fast"): skip it now, it isn't dead. */
+    val busy: Boolean = false,
 )
+
+/** 0.9.2: pixeldrain's own hosts (pixeldrain.com / .dev / .net …). */
+fun isPixeldrain(url: String?): Boolean = runCatching { android.net.Uri.parse(url).host?.lowercase()?.contains("pixeldrain") == true }.getOrDefault(false)
 
 /**
  * Saved video on the phone's storage (like a file on a hard disk): the player reads from here first and only asks the
@@ -370,6 +375,13 @@ object StreamCache {
                     ct.contains("octet-stream") && size > 20L * 1024 * 1024 -> StreamType.remember(url, "")
                 }
                 if (r.isSuccessful && size > 0) sizes[url] = size
+                // 0.9.2: pixeldrain answers 403 with a short JSON note when an address opens files too fast (rate limit /
+                // captcha / hotlink): that link is busy, not dead (read ≤ 2 KB of the note).
+                if (r.code == 403 && "json" in ct && (isPixeldrain(url) || isPixeldrain(r.request.url.toString()))) {
+                    val note = runCatching { r.peekBody(2048).string().lowercase() }.getOrDefault("")
+                    if (listOf("rate_limit", "captcha", "hotlink", "limit").any { it in note })
+                        return@use LinkProbe(false, r.code, ms, size, false, r.header("Content-Type"), host, r.request.url.host, "busy (pixeldrain limit, HTTP 403)", busy = true)
+                }
                 LinkProbe(r.isSuccessful, r.code, ms, size, seekable, r.header("Content-Type"), host, r.request.url.host,
                     if (r.isSuccessful) null else "HTTP ${r.code}")
             }

@@ -260,6 +260,9 @@ fun App(vm: AppViewModel = viewModel()) {
             life.addObserver(o); onDispose { life.removeObserver(o); WakeWord.stop() }
         }
         val onPlayer = stack.lastOrNull() is Screen.Player
+        // 0.9.2: Glass backdrop off while the player (or a full-screen trailer) is open.
+        val fullVideo = onPlayer || stack.lastOrNull() is Screen.Trailer
+        SideEffect { if (GlassBg.paused != fullVideo) GlassBg.paused = fullVideo }
         val aiBusy = voiceOpen || VoiceAskBus.pending.collectAsState().value != null
         LaunchedEffect(onPlayer) { WakeWord.strict = onPlayer }
         LaunchedEffect(aiBusy) { if (!aiBusy) WakeWord.quietUntil = System.currentTimeMillis() + 3000 }

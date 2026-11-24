@@ -506,7 +506,7 @@ fun HomeScreen(
         }
     }
     addFor?.let { m -> AddToWatchlistSheet(vm, m) { addFor = null } }
-    if (cwAll) ContinueAllPage(vm, progress, continueTitle, onClose = { cwAll = false }) { p ->
+    if (cwAll) ContinueAllPage(vm, progress, continueTitle, onClose = { cwAll = false }, onDetails = { p -> cwAll = false; onOpen(p.toMeta()) }) { p ->
         cwAll = false
         if (p.finished()) onOpen(p.toMeta()) else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs, source = p.source, addon = p.addon))
     }
@@ -637,7 +637,8 @@ fun TallPoster(m: Meta, modifier: Modifier) {
                 onError = { tries++ })
         } else {
             val wide = hiResArt(backdropOf(m) ?: m.poster)
-            AsyncImage(wide, null, Modifier.fillMaxSize().blur(24.dp), contentScale = ContentScale.Crop)
+            // 0.9.2: a cheap soft copy instead of a per-frame blur (this card is in long rows).
+            SoftImage(wide, Modifier.fillMaxSize())
             AsyncImage(wide, m.name, Modifier.fillMaxWidth().aspectRatio(16f / 9f).align(Alignment.TopCenter), contentScale = ContentScale.Fit)
             Text(m.name, Modifier.align(Alignment.BottomCenter).padding(8.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center)
@@ -1197,10 +1198,12 @@ private fun GlassButton(modifier: Modifier, onClick: () -> Unit, content: @Compo
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically, content = content)
 }
 
-/** Continue Watching card. style: "card" (TV-style), "wide" (info on the artwork) or "poster" (tall). */
+/** Continue Watching card. style: "card" (TV-style), "wide" (info on the artwork), "poster" (tall) or "grid" (0.9.2:
+ *  the full page's 2-column picture card). [onDetails]: an extra "Title page" item in the ⋮ menu. */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun ContinueCard(p: Progress, style: String = "card", vm: AppViewModel? = null, onClick: () -> Unit, onRemove: () -> Unit, onLongClick: (() -> Unit)? = null) {
+fun ContinueCard(p: Progress, style: String = "card", vm: AppViewModel? = null, onClick: () -> Unit, onRemove: () -> Unit, onLongClick: (() -> Unit)? = null,
+                 onDetails: (() -> Unit)? = null) {
     val long = onLongClick ?: onRemove
     // Corner badge: time left / "Next · S5 E12" / "New episode in 4 days".
     var badge by remember(p.key, p.positionMs) { mutableStateOf(if (p.finished()) null else CwBadge(CwBadge.LEFT, cwTimeLeft(p))) }
@@ -1225,6 +1228,7 @@ fun ContinueCard(p: Progress, style: String = "card", vm: AppViewModel? = null, 
         Box {
             Icon(Icons.Default.MoreVert, "More", Modifier.clip(CircleShape).clickable { if (onLongClick != null) onLongClick() else menu = true }.padding(2.dp).size(22.dp), tint = Color(0xFFB6BDCC))
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                if (onDetails != null) DropdownMenuItem(text = { Text("Title page") }, onClick = { menu = false; onDetails() })
                 DropdownMenuItem(text = { Text("Remove from Continue Watching") }, onClick = { menu = false; onRemove() })
             }
         }
@@ -1235,6 +1239,26 @@ fun ContinueCard(p: Progress, style: String = "card", vm: AppViewModel? = null, 
         }
     }
     when (style) {
+        // 0.9.2: the full page's card (as Xstream's): picture, progress bar under it, title, time left, ▶ and ⋮.
+        "grid" -> Column(Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(corner)).then(tap)) {
+                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Surface1)) {
+                    AsyncImage(img, ttl, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Color(0x99000000))))
+                    badgeCorner(); upTag()
+                }
+                bar()
+            }
+            Text(ttl, Modifier.padding(top = 7.dp, start = 2.dp, end = 2.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 2,
+                overflow = TextOverflow.Ellipsis, lineHeight = 17.sp)
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(30.dp).clip(CircleShape).background(Color.White).clickable(onClick = go), Alignment.Center) {
+                    Icon(Icons.Default.PlayArrow, "Play", Modifier.size(20.dp), tint = Color.Black)
+                }
+                Text(left, Modifier.weight(1f).padding(start = 8.dp), fontSize = 12.sp, color = Color(0xFFB6BDCC), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                more()
+            }
+        }
         "wide" -> Box(Modifier.width(300.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(corner)).background(Surface1).then(tap)) {
             AsyncImage(img, ttl, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.35f to Color.Transparent, 1f to Color(0xE6000000))))
@@ -1465,7 +1489,7 @@ private fun NotesBubble(onClose: () -> Unit, onAll: () -> Unit, onTogether: () -
 
 /** Pick up where you left off, opened up: every title you started (no limit) and Clear all. */
 @Composable
-private fun ContinueAllPage(vm: AppViewModel, items: List<Progress>, title: String, onClose: () -> Unit, onPlay: (Progress) -> Unit) {
+private fun ContinueAllPage(vm: AppViewModel, items: List<Progress>, title: String, onClose: () -> Unit, onDetails: (Progress) -> Unit, onPlay: (Progress) -> Unit) {
     var ask by remember { mutableStateOf(false) }
     androidx.compose.ui.window.Dialog(onClose, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding()) {
@@ -1479,12 +1503,13 @@ private fun ContinueAllPage(vm: AppViewModel, items: List<Progress>, title: Stri
             }
             if (items.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Nothing here yet", color = Color(0xFF9AA3B5)) }
             else androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                androidx.compose.foundation.lazy.grid.GridCells.Adaptive(170.dp), Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(14.dp),
+                // 0.9.2: two picture cards per row on phones (as Xstream); wider screens fit more.
+                androidx.compose.foundation.lazy.grid.GridCells.Adaptive(if (LocalConfiguration.current.screenWidthDp < 600) 150.dp else 200.dp), Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 24.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                items(items.size, key = { items[it].key }) { i ->
+                items(items.size, key = { items[it].key }, contentType = { "cw" }) { i ->
                     val p = items[i]
-                    ContinueCard(p, "wide", vm = vm, onClick = { onPlay(p) }, onRemove = { vm.removeProgress(p.key) })
+                    ContinueCard(p, "grid", vm = vm, onClick = { onPlay(p) }, onRemove = { vm.removeProgress(p.key) }, onDetails = { onDetails(p) })
                 }
             }
         }
@@ -1686,18 +1711,7 @@ private object HeroRatings {
 }
 
 
-/** 0.9.75: Glass theme backdrop — a small copy of the picture, blurred (Android 12+) and dimmed, cross-faded on change. */
-@Composable
-private fun PhoneGlassBackdrop(url: String?) {
-    val small = remember(url) { url?.replace(Regex("/t/p/(original|w1280|w780)/"), "/t/p/w300/")?.replace("/background/large/", "/background/small/")?.replace("/poster/large/", "/poster/small/") }
-    androidx.compose.animation.Crossfade(small, androidx.compose.ui.Modifier.fillMaxSize(), animationSpec = androidx.compose.animation.core.tween(700), label = "glassBg") { u ->
-        Box(Modifier.fillMaxSize()) {
-            if (u != null) AsyncImage(u, null, Modifier.fillMaxSize().graphicsLayer { alpha = 0.55f }
-                .then(if (android.os.Build.VERSION.SDK_INT >= 31) Modifier.blur(36.dp) else Modifier), contentScale = ContentScale.Crop)
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0x66000000), 0.55f to Color(0xB3070810), 1f to Color(0xF2070810))))
-        }
-    }
-}
+// 0.9.2: the old PhoneGlassBackdrop (blurred every frame, no longer used) is gone; GlassBackdrop (Theme.kt) draws Glass.
 
 /** 0.9.75: Top 10 card picture — Metahub's medium background for IMDb titles (fast CDN), else the row's own, smaller. */
 internal fun rankArt(m: Meta): String? = if (m.id.startsWith("tt")) "https://images.metahub.space/background/medium/${m.id.substringBefore(':')}/img"

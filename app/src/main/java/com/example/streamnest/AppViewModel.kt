@@ -447,7 +447,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         parseColor(m["deckTint"]!!)?.let { Palette.tint = it }
         parseColor(m["accent2"]!!)?.let { Palette.accent2 = it }
         if (isOn(m["amoled"]!!)) Palette.bg = Color.Black
-        Palette.glass = m["theme"] == "Glass"  // 0.9.75: phones too
+        val glass = m["theme"] == "Glass"  // 0.9.75: phones too
+        // 0.9.2: one line when the look changes (a Glass page that went plain dark shows up in the log).
+        if (glass != Palette.glass && !BuildConfig.IS_TV) ActLog.add("APP", "look · Glass " + if (glass) "on" else "off")
+        Palette.glass = glass
         m["cardCorner"]!!.trim().toIntOrNull()?.let { Palette.corner = it.coerceIn(0, 50) }
         // Buttons: the theme's own button colours, else the accent with readable text.
         Palette.button = parseColor(m["btnColor"].orEmpty()) ?: Palette.accent

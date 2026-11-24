@@ -1,14 +1,11 @@
-Xstream 0.9.1
+Xstream 0.9.2
 
-Beta features are back:
-• Faster start from the cloud: your sources are asked all at once, and each only once.
-• Crash fix for big files.
-• Smarter saving: videos start sooner from hosts that limit connections.
-• Music is back, with its own app icon, lock-screen controls and widget.
-• Access approval: new accounts can ask for access (off until it's switched on).
-• Titles you opened recently turn green at once; Continue watching stays ready on Wi-Fi.
-• "What do you like to watch?" and Anime / K-Drama rows on Home.
-• Watch together: the host is put back in the room after a restart.
-• Updates download in a small progress pill, then ask to install.
-• StreamX invite links open Xstream too.
-• "Saved video" is now called "cached video".
+Glass stays glass, smoother screens:
+• Glass theme no longer turns plain black: the last picture stays until the next one is ready.
+• Smoother player: the see-through look switches off while a video plays.
+• Smoother scrolling in long rows and episode lists.
+• New Continue Watching page: two picture cards per row with time left, progress, play and a menu.
+• A film whose real file is another film is skipped.
+• A busy video host is skipped for a moment, not treated as broken.
+• Source Test gives more accurate results.
+• Crash reports help fix problems (no email or name is sent).

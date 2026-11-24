@@ -4,7 +4,9 @@
 #
 # Usage: tools/sync-to-streamx.sh /path/to/StreamX-tree
 #
-# Shared (copied, replaced as a whole): app/src/main, app/src/phone, app/src/tv, app/libs, app/proguard-rules.pro
+# Shared (copied, replaced as a whole): app/src/main, app/src/phone, app/src/tv, app/libs, app/proguard-rules.pro,
+#   0.9.2: build.gradle.kts (the top one: plugin versions + the shared Firebase part, Crashlytics / Performance) and
+#   app/google-services.json (Firebase config for all four apps: StreamX, StreamX TV, Xstream, Xstream TV)
 #
 # Brand files (never copied, StreamX keeps its own):
 #   app/build.gradle.kts        applicationId, versions, signing and the brand values (BRAND_NAME "StreamX",
@@ -42,6 +44,10 @@ for d in app/src/main app/src/phone app/src/tv app/libs; do
   [ -d "$SRC/$d" ] && { mkdir -p "$(dirname "$DST/$d")"; cp -a "$SRC/$d" "$DST/$d"; }
 done
 cp -a "$SRC/app/proguard-rules.pro" "$DST/app/proguard-rules.pro"
+# 0.9.2: the shared Gradle part (top build file) and the Firebase config travel too.
+cp -a "$SRC/build.gradle.kts" "$DST/build.gradle.kts"
+cp -a "$SRC/app/google-services.json" "$DST/app/google-services.json"
+grep -q '"com.example.streamnest"' "$DST/app/google-services.json" || { echo "stop: google-services.json has no StreamX app (com.example.streamnest)"; exit 1; }
 # Build output and the workflow-built Nuvio bundle never travel.
 rm -rf "$DST/app/src/main/assets/nuvio/libs.js"
 

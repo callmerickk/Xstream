@@ -42,4 +42,7 @@ object Feature {
     val updatePill: Boolean = on("updatePill")
     /** 0.9.1: invite links of both apps are accepted (streamx:// and xstream://, both web addresses), as in Xstream 0.8.x. */
     val inviteBoth: Boolean = on("inviteBoth")
+    /** 0.9.2: a film link whose real file name (in its web address, or the addon's file-name hint) shows another film —
+     *  another year (±1 allowed) or clearly another title — is dropped ("wrong title (file name)" in the log). */
+    val fileNameCheck: Boolean = on("fileNameCheck")
 }

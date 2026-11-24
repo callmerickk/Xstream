@@ -33,8 +33,8 @@ android {
         applicationId = "com.example.xstream"
         minSdk = 24
         targetSdk = 34
-        versionCode = 61
-        versionName = "0.9.1"
+        versionCode = 62
+        versionName = "0.9.2"
         brand.forEach { (k, v) -> buildConfigField("String", k, "\"$v\"") }
         buildConfigField("boolean", "IS_BETA", brandBeta.toString())
         manifestPlaceholders["brandName"] = brand.getValue("BRAND_NAME")

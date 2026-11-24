@@ -24,6 +24,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         TouchInput.on = !BuildConfig.IS_TV || packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
         ActLog.init(this)
         runCatching { FrameStats.attach(this) }
+        // 0.9.2: crash reports (Crashlytics): keys, account code and log lines; set up on a background thread.
+        CrashReports.start(this)
         if (BuildConfig.IS_TV && savedInstanceState == null) { TvSmall.startedAt = android.os.SystemClock.elapsedRealtime(); TvSmall.checkLastRun(this) }
         // The phone rebuilt the screen (a display change the app doesn't handle itself): say what changed.
         if (savedInstanceState != null) ActLog.add("APP", "screen rebuilt by Android" + (lastCfg?.let { " · " + cfgDiff(resources.configuration.diff(it)) } ?: ""))
@@ -68,7 +70,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             StreamNestTheme {
                 androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                     // 0.9.76: Glass theme (phones) — one blurred picture behind every page.
-                    if (!BuildConfig.IS_TV && Palette.glass) GlassBackdrop(GlassBg.url)
+                    // 0.9.2: not drawn at all while the video player is open (it only cost frames under the video).
+                    if (!BuildConfig.IS_TV && Palette.glass && !GlassBg.paused) GlassBackdrop(GlassBg.url)
                     if (BuildConfig.IS_TV) TvApp() else App()
                     // 0.9.1 (accessGate): approval-only access + "Update required" (approval off until turned on in Access requests).
                     if (Feature.accessGate && !BuildConfig.IS_TV) AccessGate(androidx.lifecycle.viewmodel.compose.viewModel<AppViewModel>())

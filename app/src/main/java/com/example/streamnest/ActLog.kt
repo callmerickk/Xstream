@@ -96,7 +96,10 @@ object ActLog {
     fun add(type: String, msg: String) {
         if (app == null) return
         if (!detailed && type in verboseTypes && !importantRx.containsMatchIn(msg)) return
-        queue.add("${timeFmt.format(Date())} ${type.padEnd(6)} ${mask(msg).replace('\n', ' ')}")
+        val line = mask(msg).replace('\n', ' ')
+        queue.add("${timeFmt.format(Date())} ${type.padEnd(6)} $line")
+        // 0.9.2: important lines also go into the next crash report (Crashlytics), so a crash shows what led to it.
+        if (CrashReports.on) CrashReports.line(type, line, type in CrashReports.mirrorTypes || importantRx.containsMatchIn(line))
         // 0.9.73 (from Xstream): trouble on an old version → "Update to the latest" (shown later, never during playback).
         if (!BuildConfig.IS_TV && (type == "PLAYFAIL" || (type == "ERROR" && (msg.startsWith("player") || msg.contains("crash"))) || (type == "SWITCH" && msg.contains("failed"))))
             app?.let { runCatching { Updater.onTrouble(it) } }

@@ -39,7 +39,8 @@ import java.io.File
 
 /**
  * Catches a crash, saves its details to a file, and shows them on the next start (so a TV crash can be
- * photographed and sent). Nothing leaves the device.
+ * photographed and sent). 0.9.2: the crash then goes on to Firebase Crashlytics (installed before this handler, it is
+ * called as "previous" below), which sends a crash report: no email or account id (see CrashReports.kt).
  */
 object CrashLog {
     private const val FILE = "last_crash.txt"
