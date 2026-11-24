@@ -25,7 +25,8 @@ Xstream → StreamX, never the other way.
 
 1. In the Xstream repo, add the name to `Feature.STABLE`, e.g. `setOf("pluginGuard")`. Commit.
 2. Sync into the StreamX source tree: `tools/sync-to-streamx.sh /path/to/StreamX-tree`
-   (copies `app/src/main`, `app/src/phone`, `app/src/tv`, `app/libs`, `proguard-rules.pro`; keeps StreamX's
+   (copies `app/src/main`, `app/src/phone`, `app/src/tv`, `app/libs`, `proguard-rules.pro`, and since 0.9.2 the top
+   `build.gradle.kts` (shared Firebase part) and `app/google-services.json`; keeps StreamX's
    `build.gradle.kts`, `Changelog.kt` and everything else).
 3. In the StreamX tree: bump `versionName` / `versionCode` in `app/build.gradle.kts`, add the Changelog entry and
    `RELEASE_NOTES.md`.

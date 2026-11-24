@@ -15,6 +15,7 @@ val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("
 private val UserReleases get() = listOf(
     Release("0.9.2", "24 Nov 2026", "Glass stays glass, smoother screens", listOf(
         "Glass theme: the page no longer turns plain black — the last picture stays until the next one is ready, also after a restart",
+        "Glass title page: the poster shows at full brightness (no dark shade over its top) and the text below sits on a clean frosted panel",
         "Smoother player: the see-through Glass look switches off while a video plays",
         "Smoother scrolling in long rows and episode lists",
         "New Continue Watching page: two picture cards per row, with time left, a progress bar, a play button and a ⋮ menu",
@@ -612,6 +613,7 @@ private val UserReleases get() = listOf(
 private val AllReleases get() = listOf(
     Release("0.9.2", "24 Nov 2026", "Shared fixes: Glass, frames, Continue page, file-name check, pixeldrain busy, Source Test, Firebase", listOf(
         "Glass: GlassBg keeps the shown blurred backdrop + tint in the object (survives recomposition, theme flicker, activity rebuild), saves it to cacheDir/glass_last.png and loads it on a cold start; a failed small picture retries the full URL; no picture yet = radial glow in Palette.tint/accent (never flat black); APP 'look · Glass on/off' line in applyPalette",
+        "Glass title page: list top fade (DstIn 36 dp) only once scrolled; top bar has its own small shade; card = frost gradient 0x1F→0x12 white + 1 dp highlight border; poster full alpha to 70 % then DstIn fade into the panel; title shade 0x59 black only around the title (190–320 dp); non-Glass unchanged",
         "Glass off under video: GlassBg.paused (Screens: Player or Trailer on top) → MainActivity skips GlassBackdrop, Bg/glassy() opaque; unused per-frame-blur PhoneGlassBackdrop removed; SoftImage (32 px copy stretched, no RenderEffect) for TallPoster's wide fallback and unaired episode thumbnails",
         "FrameStats: late = (UNKNOWN_DELAY+INPUT+ANIMATION+LAYOUT+DRAW+SYNC+COMMAND+SWAP) > 1.5 × frame interval (API 31+ FrameMetrics.DEADLINE, else display refresh rate re-read every second); line 'frames · <screen> · N drawn · L late (x %) · <Hz> Hz · avg a ms · worst w ms'",
         "Continue Watching page: ContinueCard style 'grid' (16:9 picture, bar under it, 2-line title, ▶ circle, time left, ⋮ with Title page + Remove); GridCells.Adaptive(150 dp) = 2 columns on phones",

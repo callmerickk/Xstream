@@ -233,3 +233,14 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
 - **saveParts**: 4 pieces default, pixeldrain 2, learned single hosts on disk 7 days, head saved + extra parts refused = success.
 - **race**: probes kept 60 s (racedProbe), runner-up probed in background.
 - **DetailTiming**: "link ready" vs "light green" (what the user sees) + "green breakdown" line.
+
+## Xstream 0.9.2 / StreamX 0.9.80 (24 Nov) — shared fixes (no switch unless noted)
+- Glass: backdrop kept in `GlassBg` (+ `cacheDir/glass_last.png`), never flat black, not drawn under the player
+  (`GlassBg.paused`); `SoftImage` instead of per-frame blur in long lists; log "look · Glass on/off".
+- `FrameStats`: late = frame work > 1.5 × real frame interval (DEADLINE on Android 12+, else refresh rate re-read
+  every second). New line: "frames · Home · 889 drawn · 12 late (1.3 %) · 120 Hz · avg 4.1 ms · worst 38 ms".
+- Continue Watching page: 2-column picture cards (`ContinueCard` style "grid").
+- pixeldrain 403 + JSON limit note = busy (`LinkProbe.busy`), never dead; Source Test paces pixeldrain 2 s, mid-file
+  seek re-check, group "NOT seekable" needs ≥ 2 links, "player ready at" filled, wrong-file-name films = "wrong film".
+- Firebase Crashlytics + Performance (shared top `build.gradle.kts`, `app/google-services.json`, `CrashReports.kt`).
+- Switch `fileNameCheck` (beta only): URL / file-name hint shows another film → link dropped.

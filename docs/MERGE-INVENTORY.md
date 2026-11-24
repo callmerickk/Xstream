@@ -199,3 +199,15 @@ for now (listed so it isn't forgotten).
 | D | Invite links of both apps | Ported | `inviteBoth` | Xstream also registers `streamx://join` (brand manifest) |
 
 Not switched (wording for all apps, 0.9.1): "saved video" / "start saved" → "cached video" / "cached" in user-visible text.
+
+### Step 3 (Xstream 0.9.2 / StreamX 0.9.80)
+
+| Item | Status | Switch | Notes |
+|------|--------|--------|-------|
+| Glass never black, off under the player, lighter list blur | Fix, both apps | none | Theme.kt (GlassBg, GlassBackdrop, SoftImage), Screens.kt, MainActivity.kt, AppViewModel.applyPalette |
+| Frame lines by real refresh rate | Fix, both apps | none | MemWatch.kt FrameStats |
+| Continue Watching 2-column grid page | Fix, both apps | none | Home.kt ContinueAllPage / ContinueCard "grid" |
+| Wrong film behind the right name (URL file name) | Beta only | `fileNameCheck` | StreamFilter.kt TitleMatch.fileNameProblem |
+| pixeldrain 403 = busy | Fix, both apps | none | StreamCache.probe (LinkProbe.busy), Prepare.kt, PlayerScreen.tryNextSource |
+| Source Test: seek re-check, ready time, wrong film, pixeldrain pacing | Fix, both apps | none | SourceTest.kt |
+| Firebase Crashlytics + Performance | Both apps, phone + TV | none | top build.gradle.kts (synced), app/google-services.json (synced), CrashReports.kt |

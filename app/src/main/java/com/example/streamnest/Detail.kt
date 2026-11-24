@@ -500,7 +500,8 @@ fun DetailScreen(
         Column(Modifier.fillMaxSize()) {
             // ── Top bar (stays put while the page scrolls) ──
             val glassPage = Palette.glass && !BuildConfig.IS_TV
-            Box(Modifier.fillMaxWidth().background(if (glassPage) Color.Transparent else Bg).statusBarsPadding().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 14.dp)) {
+            // 0.9.2: Glass — the top bar's own small shade, behind the bar only (it never reaches the poster card).
+            Box(Modifier.fillMaxWidth().background(if (glassPage) Brush.verticalGradient(listOf(Color(0x40000000), Color.Transparent)) else androidx.compose.ui.graphics.SolidColor(Bg)).statusBarsPadding().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 14.dp)) {
                 TopRound(Modifier.align(Alignment.CenterStart), onBack) {
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Back", Modifier.size(26.dp), tint = Color.White)
                 }
@@ -515,12 +516,15 @@ fun DetailScreen(
             }
 
             // 0.9.78: Glass — the page softly fades out as it scrolls under the top bar (no hard "folding" edge).
-            LazyColumn(Modifier.fillMaxSize().then(if (glassPage) Modifier.graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+            // 0.9.2: only once the page has scrolled (it dimmed the top of the poster while the page was at rest).
+            val detailList = androidx.compose.foundation.lazy.rememberLazyListState()
+            val scrolled by remember { derivedStateOf { detailList.firstVisibleItemIndex > 0 || detailList.firstVisibleItemScrollOffset > 0 } }
+            LazyColumn(Modifier.fillMaxSize().then(if (glassPage && scrolled) Modifier.graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
                 .drawWithContent {
                     drawContent()
                     drawRect(Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black, startY = 0f, endY = 36.dp.toPx()),
                         size = androidx.compose.ui.geometry.Size(size.width, 36.dp.toPx()), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
-                } else Modifier), contentPadding = PaddingValues(bottom = 40.dp)) {
+                } else Modifier), state = detailList, contentPadding = PaddingValues(bottom = 40.dp)) {
                 // ── Poster card: artwork, title, description, year · runtime · rating, scores ──
                 item {
                     val shape = RoundedCornerShape(28.dp)
@@ -536,8 +540,21 @@ fun DetailScreen(
                     LaunchedEffect(heroId) { tArm = false; if (heroId != null) { delay(1_800); tArm = true } }
                     val grow by animateFloatAsState(if ((tPlay && !tStop) || (TrailerInCard && cardPlaying && cardTrailer != null)) 1f else 0f, tween(650, easing = FastOutSlowInEasing), label = "trailerMode")
                     val extra = 170f * grow
-                    Box(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(shape).background(TitleCardBg).border(1.dp, CardRim, shape)) {
-                        AsyncImage(artwork, meta.name, Modifier.fillMaxWidth().height((300f + extra).dp).background(Surface1).graphicsLayer { alpha = 1f - grow },
+                    // 0.9.2: Glass — the card is a clean frosted panel (light frost over the blurred backdrop + a thin highlight
+                    // edge); the poster shows at full brightness and melts into the panel at its bottom (no grey band, no
+                    // hard line). Other looks: exactly as before.
+                    Box(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(shape)
+                        .then(if (glassPage) Modifier.background(Brush.verticalGradient(listOf(Color(0x1FFFFFFF), Color(0x12FFFFFF))))
+                            .border(1.dp, Brush.verticalGradient(listOf(Color(0x47FFFFFF), Color(0x14FFFFFF))), shape)
+                        else Modifier.background(TitleCardBg).border(1.dp, CardRim, shape))) {
+                        AsyncImage(artwork, meta.name, Modifier.fillMaxWidth().height((300f + extra).dp)
+                            .then(if (glassPage) Modifier.graphicsLayer { alpha = 1f - grow; compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                                .drawWithContent {
+                                    drawContent()
+                                    // Fully bright down to 70 %, then fades into the frosted panel.
+                                    drawRect(Brush.verticalGradient(0.7f to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                                }
+                            else Modifier.background(Surface1).graphicsLayer { alpha = 1f - grow }),
                             alignment = BiasAlignment(0f, -0.4f), contentScale = ContentScale.Crop)
                         if (!TrailersPaused.on && heroId != null && tArm && !tStop && !TrailerInCard && isOn(texts["cardTrailers"] ?: "yes")) {
                             TrailerVideo(heroId, tMuted, Modifier.fillMaxWidth().height((300f + extra).dp), fitWhole = false, backdrop = backdrop,
@@ -549,7 +566,10 @@ fun DetailScreen(
                                 onPlaying = { cardPlaying = true }, onEnded = { cardTrailer = null; cardPlaying = false },
                                 onError = { cardTrailer = null; cardPlaying = false; Snack.show("This trailer couldn't play") })
                         }
-                        Box(Modifier.padding(top = (150f + extra).dp).fillMaxWidth().height(160.dp).background(Brush.verticalGradient(listOf(Color.Transparent, TitleCardBg))))
+                        // Glass: a soft dark shade only where the title sits (it fades out again into the panel); other looks as before.
+                        if (glassPage) Box(Modifier.padding(top = (190f + extra).dp).fillMaxWidth().height(130.dp)
+                            .background(Brush.verticalGradient(0f to Color.Transparent, 0.55f to Color(0x59000000), 1f to Color.Transparent)))
+                        else Box(Modifier.padding(top = (150f + extra).dp).fillMaxWidth().height(160.dp).background(Brush.verticalGradient(listOf(Color.Transparent, TitleCardBg))))
                         if (TrailerInCard && ct != null) {
                             // Sound, full screen and stop on the card; which trailer is playing.
                             Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

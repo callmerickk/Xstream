@@ -434,3 +434,9 @@ Not done (speed risk on the stable app): a global limit on concurrent scrapes.
   a screen (late = > 1.5 frame budgets).
 - Skipped: a phone baseline profile — `src/main/baseline-prof.txt` already lists every app, Compose and Coil class
   (profileinstaller 1.3.1), and a recorded profile needs a Macrobenchmark run on a real phone.
+
+## Step 3 (24 Nov): shared fixes → Xstream 0.9.2 (code 62) and StreamX 0.9.80 (code 90, TV stays 0.9.15/72)
+- Fixed once in the shared code, both apps: Glass never black / off under the player, refresh-rate-aware frame lines,
+  Continue Watching grid page, pixeldrain 403 = busy, Source Test fixes, Firebase Crashlytics + Performance.
+- Beta only (switch `fileNameCheck`, not in `Feature.STABLE`): wrong film behind the right name (URL file name check).
+- StreamX 0.9.80 zip on branch `streamx-0980` (check build only; not published, not merged — waits for the owner).
