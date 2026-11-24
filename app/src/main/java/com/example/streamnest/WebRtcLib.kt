@@ -22,8 +22,8 @@ object WebRtcLib {
     /** SHA-256 of the files on the assets branch (webrtc/<abi>/), for stream-webrtc-android 1.3.9. The workflow
      *  (tools/webrtc-assets.sh) checks these against the AAR on every build and fails the build if they differ. */
     private val SHA = mapOf(
-        "arm64-v8a" to "PASTE_SHA256_ARM64_HERE",
-        "armeabi-v7a" to "PASTE_SHA256_ARM32_HERE",
+        "arm64-v8a" to "4e9d2df81f7db6d184a9d0024e6f9825c6325c3ee54a8d61ef657f02ef8d85e7",
+        "armeabi-v7a" to "5c4e33201809f56eb41ead202000f7ba8afa0a87ce159af96d18d940622c5c78",
     )
 
     /** 0..100 while downloading, null otherwise. The call UI shows "Getting Watch together ready… 40 %". */
