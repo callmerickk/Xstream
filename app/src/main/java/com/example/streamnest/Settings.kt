@@ -643,7 +643,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             var logs by remember { mutableStateOf(PlayTiming.all()) }
             SettingsCard {
                 Column(Modifier.padding(20.dp)) {
-                    Text("Every time you press Play: how long each step took, and how much came from the saved video. Newest first (last 30).",
+                    Text("Every time you press Play: how long each step took, and how much came from the cached video. Newest first (last 30).",
                         fontSize = 13.sp, color = Muted)
                     if (logs.isEmpty()) Text("Nothing yet — play something, then come back.", Modifier.padding(top = 10.dp), fontSize = 14.sp)
                     logs.take(10).forEach { l ->

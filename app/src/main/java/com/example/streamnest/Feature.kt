@@ -7,8 +7,9 @@ package com.example.streamnest
  * A switch that is off must leave StreamX's own code path exactly as it was: no network call, no screen, nothing kept.
  */
 object Feature {
-    /** The switches approved for the stable app. The only place to turn a feature on in StreamX. */
-    private val STABLE: Set<String> = setOf()
+    /** The switches approved for the stable app. The only place to turn a feature on in StreamX.
+     *  0.9.1: updatePill approved for StreamX by the owner (24 Nov 2026). */
+    private val STABLE: Set<String> = setOf("updatePill")
 
     private fun on(name: String): Boolean = Brand.IS_BETA || name in STABLE
 

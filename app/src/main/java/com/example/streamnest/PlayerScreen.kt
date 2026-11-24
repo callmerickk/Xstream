@@ -1710,7 +1710,7 @@ fun PlayerScreen(
         if (p.instant && !instantShown) {
             instantShown = true
             val secs = (SystemClock.elapsedRealtime() - openedAt) / 1000f
-            Snack.show("⚡ Started in ${"%.1f".format(secs)} s from saved video")
+            Snack.show("⚡ Started in ${"%.1f".format(secs)} s from cached video")   // 0.9.1: wording "cached"
         }
     }
     LaunchedEffect(firstFrame, quickList.size) {
@@ -6480,7 +6480,7 @@ private fun AudioByLanguage(
         val res = v.effectiveRes().takeIf { it > 0 }?.let { if (it >= 2160) "4K" else "${it}p" }
         TrackRow(langLabel(lang), false, listOfNotNull(
             "Another stream of this title", res ?: "Other file",
-            if (v.stream.url in saved) "Its start is saved: switches in about a second" else if (v.isPlaylist()) "Starts at once (streaming playlist)" else null,
+            if (v.stream.url in saved) "Its start is cached: switches in about a second" else if (v.isPlaylist()) "Starts at once (streaming playlist)" else null,
         ), true, nextFocus()) { onVersion(lang, v) }
     }
     Column {

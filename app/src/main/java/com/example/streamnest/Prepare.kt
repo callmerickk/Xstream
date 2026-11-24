@@ -298,14 +298,14 @@ object Prepare {
                 while (!enough.get() && saver.isActive) delay(if (Feature.smartParts) 25 else 80)   // 0.9.1 (smartParts): 25 ms
                 if (enough.get()) {
                     saver.cancel()
-                    put(Prepared(id, "⚡ Ready to play instantly · ${if (big) "15 s" else "1:00"} start saved · $label", 1f, ready = true,
+                    put(Prepared(id, "⚡ Ready to play instantly · ${if (big) "15 s" else "1:00"} cached · $label", 1f, ready = true,
                         item = s, list = list, subs = subs, saved = savedNow.get(), target = len))
                     readyPlayer(vm, ctx, id, s, url, null, subs, list, resumeMs, replace)
                     return true
                 }
                 val err = runCatching { saver.await() }.getOrNull()
                 if (err == null) {
-                    put(Prepared(id, "⚡ Ready to play instantly · ${if (big) "15 s" else "1:00"} saved · $label", 1f, ready = true,
+                    put(Prepared(id, "⚡ Ready to play instantly · ${if (big) "15 s" else "1:00"} cached · $label", 1f, ready = true,
                         item = s, list = list, subs = subs, saved = len, target = len))
                     readyPlayer(vm, ctx, id, s, url, null, subs, list, resumeMs, replace)
                     return true

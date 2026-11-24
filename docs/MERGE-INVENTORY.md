@@ -155,7 +155,7 @@ payload, prefs names (`streamx_cloud`, trailer keys), profile PIN salt, theme st
 
 ## Port status (Xstream 0.9.1, shared-base)
 
-"Ported" = in the shared code behind its switch, on in Xstream, off in StreamX (`Feature.STABLE` is empty).
+"Ported" = in the shared code behind its switch, on in Xstream, off in StreamX unless in `Feature.STABLE` (0.9.1: only `updatePill`).
 "Kept StreamX's" = StreamX's own equivalent stays, Xstream's version was not brought back. "Not ported" = left out
 for now (listed so it isn't forgotten).
 
@@ -194,6 +194,8 @@ for now (listed so it isn't forgotten).
 | C22 | Posters+ in Live-only / Picked for you | Kept StreamX's | none | |
 | C23 | Adult / Trailers on cards / Auto-play toggles | Not ported | (`extraToggles`) | |
 | C25 | Bottom bar / Look picker | Kept StreamX's | none | |
-| C26/C27 | Update pill + ready/Install dialog + installer after allowing unknown apps + phone DNS first | Ported | `updatePill` | StreamX's own finished-download reuse (dlCode/dlLen) and relay kept |
+| C26/C27 | Update pill + ready/Install dialog + installer after allowing unknown apps + phone DNS first | Ported · **approved for stable 24 Nov** (in `Feature.STABLE`) | `updatePill` | StreamX's own finished-download reuse (dlCode/dlLen) and relay kept |
 | C29 | Xstream Music (launcher, service, widget) | Ported | `music` + `HAS_MUSIC` | manifest in `app/src/brand/phone` (Xstream only) |
 | D | Invite links of both apps | Ported | `inviteBoth` | Xstream also registers `streamx://join` (brand manifest) |
+
+Not switched (wording for all apps, 0.9.1): "saved video" / "start saved" → "cached video" / "cached" in user-visible text.

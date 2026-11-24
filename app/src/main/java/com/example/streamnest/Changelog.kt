@@ -24,6 +24,7 @@ private val UserReleases get() = listOf(
         "Watch together: the host is put back in the room after a restart; everyone waits up to 2 minutes",
         "Updates download in a small progress pill, then ask to install",
         "StreamX invite links open Xstream too",
+        "Wording: \"saved video\" is now called \"cached video\"",
     )),
     Release("0.9.0", "24 Nov 2026", "Xstream now runs on StreamX's code", listOf(
         "Xstream now runs on StreamX's code — same look and speed as StreamX; beta features come back step by step",
@@ -614,7 +615,9 @@ private val AllReleases get() = listOf(
         "updatePill: UpdatePill + ready/Install dialog (phone), installWaiting + canRequestPackageInstalls on return, update client phone DNS first",
         "inviteBoth: JoinIntent accepts streamx:// / xstream:// and streamx-watch.pages.dev / workers.dev links",
         "tools/sync-to-streamx.sh (Xstream → StreamX tree, one source of truth), tools/zip-streamx.sh; docs/HOW-SWITCHES-WORK.md; MERGE-INVENTORY.md statuses",
-        "versionName 0.9.1, versionCode 61",
+        "Feature.STABLE = {updatePill} (owner-approved 24 Nov): StreamX gets the update pill on its next build",
+        "Wording, not switched (all apps): \"saved video\" / \"start saved\" → \"cached video\" / \"cached\" (PlayerScreen Snack + source sheet, Settings play timings, Prepare ready status)",
+                "versionName 0.9.1, versionCode 61",
     )),
     Release("0.9.0", "24 Nov 2026", "Shared base: StreamX 0.9.79 code + Xstream brand layer", listOf(
         "app/src/main, phone, tv = StreamX 0.9.79 / TV 0.9.15 source, unchanged except branding (tools/sync-shared.sh copies it)",

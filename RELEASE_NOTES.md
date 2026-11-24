@@ -11,3 +11,4 @@ Beta features are back:
 • Watch together: the host is put back in the room after a restart.
 • Updates download in a small progress pill, then ask to install.
 • StreamX invite links open Xstream too.
+• "Saved video" is now called "cached video".
