@@ -72,3 +72,16 @@ All on in Xstream, off in StreamX. Off = the 0.9.3 code path: nothing read, writ
 Not switched (both apps): the `x-sx-ver` header on every Worker call — only a version number. The Worker's version /
 approval gate does nothing until the owner sets `MIN_VER`; approval needs `access/config/required` = true and only apps
 with `accessGate` on send the sign-in token (never the developer's account).
+
+## Switch new in 0.9.5 (step 6)
+
+On in Xstream, off in StreamX. Off = the 0.9.4 phone layout everywhere and the 0.9.4 buffers.
+
+- `bigScreen` — big-screen mode (BigScreen.kt). The phone app shows the TV interface (`TvApp`: TV Home, side bar, TV
+  settings, TV title page, TV search; the player stays the phone player, which already takes keys, mouse and touch) when:
+  landscape and smallest width ≥ 600 dp, or no touchscreen with a hardware keyboard / mouse, or a window ≥ 840 dp wide
+  **and** ≥ 480 dp tall (the height guard keeps phones turned sideways on the phone layout). Checked at start and on
+  every display change; while a video plays the change waits until the player closes. Esc = Back. TV components get
+  hover highlight and clicks, rows scroll with Shift + wheel or a mouse drag. `DeviceTier` (same file) logs the device
+  tier once; "top" (laptop / PC emulator such as MuMu, or a big tablet) gets up to 400 MB / 120 s of video buffer.
+  Everything added inside the TV files is under `!BuildConfig.IS_TV`, so the TV app is unchanged.

@@ -13,6 +13,12 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.9.5", "24 Nov 2026", "Big screens get the TV look", listOf(
+        "Tablets turned sideways, laptops and PC players such as MuMu now show the TV-style Home, the side menu and the TV settings",
+        "Use the arrow keys, Enter and Esc like a TV remote, or the mouse and touch — all at the same time",
+        "Turn a tablet back upright and the phone layout returns; a video that is playing keeps playing",
+        "Laptops and PC players with memory to spare keep more of the video ready, for smoother HD and 4K",
+    )),
     Release("0.9.4", "24 Nov 2026", "A calmer Home, HDR when you want it", listOf(
         "Home stays still: rows and the Top 10 no longer change in front of you — anything new shows the next time you open Home",
         "Posters are ready as Home opens; while one loads, its card shows the poster's own colour instead of grey",
@@ -622,6 +628,13 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.9.5", "24 Nov 2026", "bigScreen: TV interface in the phone app on big screens; DeviceTier top", listOf(
+        "bigScreen (Feature, beta on / stable off): BigScreen.detect — landscape && smallestScreenWidthDp ≥ 600, or no touch (FEATURE_TOUCHSCREEN false or Configuration.touchscreen NOTOUCH) with a hardware keyboard (KEYBOARD_QWERTY, not hidden) or a mouse / touchpad InputDevice, or screenWidthDp ≥ 840 && screenHeightDp ≥ 480 (height guard: phones in landscape stay on the phone layout). Worked out in MainActivity.onCreate before setContent and on every onConfigurationChanged; while PipState.playerOpen or in PiP the result waits (pending) and is applied 400 ms after the player closes, if no player opened again. One APP line \"big screen on/off (why)\"",
+        "MainActivity: BigScreen.tvUi (= IS_TV || on) picks TvApp() instead of App(); phone GlassBackdrop not drawn in big-screen mode (TvApp draws its own); Esc → KEYCODE_BACK in big-screen mode",
+        "TvApp in the phone build (only reachable with bigScreen on): CloudGate instead of TvLinkGate, ModeChooser instead of the TV's silent Turbo + Elite default, LegalNoticeGate, \"Big …\" screen names + MemWatch / FrameStats per screen; TvBox.info / setupOnce, TV memory lines and CsPlugins.tvPrewarm stay TV only; a pointer press on the page closes an open side bar. The player is the phone PlayerScreen (already handles arrows / Enter / Space / media keys / Back, plus touch and mouse); its TV branches are tuned for 1 GB sticks and are not used",
+        "Pointer on TV components (phone build only): tvCard lights on hover (collectIsHoveredAsState of its clickable); TvRail items hover-lit and, while the strip is closed, only their 46 dp icon area takes clicks (was 220 dp over the page); TvHome hero deck card + TvPillFocus buttons get hoverable + detectTapGestures (focusable() kept, so focus works in touch mode as before); TvRow LazyRow: bigScreenRowMouse — Shift + wheel / sideways wheel scrolls, mouse drag scrolls (a drag is consumed, never a click). TvWeak.k4 = true in big-screen mode (no \"4K (not on this TV)\" labels on the phone)",
+        "DeviceTier (bigScreen): computed once on a background thread 3 s after start and logged (GB, app memory, cores, ABI, PC/emulator, 4K HEVC decoder). top = x86 host / android.hardware.type.pc / emulator names with ≥ 3.5 GB and ≥ 256 MB heap, or ≥ 7.5 GB + ≥ 512 MB heap + 4K HEVC decoder + ≥ 8 cores. buildPlayer on top tier: buffer min(400 MB, 32 % of heap; 14 % with another player alive), max 120 s ahead; \"(top tier)\" in the player-made line. Off / other tiers: unchanged",
+    )),
     Release("0.9.4", "24 Nov 2026", "homeSteady, cloudPrep, lightPlugins, hdrMode; Worker: Cron prep, /cw, /good, /addons, version + approval gate", listOf(
         "homeSteady (HomeSteady.kt): HomeFreeze keeps the shown rows when the catalog set changes but the addon bases are the same (new rows appended, fresh rows saved to shelves_<pid>.json for next open; profile / addon change still rebuilds); NumberedRow order fixed per session (HomeSteady.top / keepTop, saved in filesDir/homesteady_<pid>.json with the tall-poster URLs, so the row shows at once next open without waiting for HindiTrending); TallPoster uses TMDB w342 (HomeSteady.small); warmHome also looks up the first two rows' tall posters and warms them small while the profile page shows; card background = dominant colour from a 16 px Coil decode (darkened ×0.55, kept on disk, ≤ 600) instead of Surface1",
         "cloudPrep (needs cloudFind): /find answers carry checked {url: {at, size, seek, type}}; Prepare.attempt uses CloudPrep.probeOf (≤ 10 min old, never pixeldrain) instead of StreamCache.probe; first picture → POST /good {type, id, a = sha256(addon base), u = sha256(link), host group, ms}; Home → POST /cw (≤ 10 CW titles, type + IMDb id, once a day each)",

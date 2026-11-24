@@ -1,3 +1,11 @@
+Xstream 0.9.5
+
+Big screens get the TV look:
+• Tablets turned sideways, laptops and PC players such as MuMu now show the TV-style Home, the side menu and the TV settings.
+• Use the arrow keys, Enter and Esc like a TV remote, or the mouse and touch, all at the same time.
+• Turn a tablet back upright and the phone layout returns; a video that is playing keeps playing.
+• Laptops and PC players with memory to spare keep more of the video ready, for smoother HD and 4K.
+
 Xstream 0.9.4
 
 A calmer Home, HDR when you want it:

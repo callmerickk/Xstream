@@ -1,5 +1,9 @@
 package com.example.streamnest
 
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -602,6 +606,8 @@ private fun TvHeroDeck(
                         if (ok && e.type == KeyEventType.KeyUp) onOpen(m)
                         ok
                     }
+                    // 0.9.5 (big screen, phone app): a click / tap on the big card opens it.
+                    .then(if (BuildConfig.IS_TV) Modifier else Modifier.pointerInput(m.id) { detectTapGestures { onOpen(m) } })
                     .focusable()
                     .clip(cardShape)
                     .background(if (videoOn) Color.Transparent else Color(0xFF05070C)),
@@ -774,7 +780,10 @@ private fun TvDeckPeek(m: Meta, x: Dp, w: Dp, h: Dp, dim: Float, down: Dp) {
 @Composable
 private fun TvPillFocus(modifier: Modifier, onFocus: (Boolean) -> Unit, onClick: () -> Unit, ring: Boolean = true, circle: Boolean = false, content: @Composable () -> Unit) {
     var f by remember { mutableStateOf(false) }
-    val a by animateFloatAsState(if (f) 1f else 0f, tween(140), label = "pill")
+    // 0.9.5 (big screen, phone app): the mouse lights the button too, and a click / tap presses it.
+    val hoverSrc = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val hov = if (BuildConfig.IS_TV) false else hoverSrc.collectIsHoveredAsState().value
+    val a by animateFloatAsState(if (f || hov) 1f else 0f, tween(140), label = "pill")
     val focusCb = rememberUpdatedState(onFocus)
     val clickCb = rememberUpdatedState(onClick)
     Box(
@@ -803,6 +812,7 @@ private fun TvPillFocus(modifier: Modifier, onFocus: (Boolean) -> Unit, onClick:
                 if (ok && e.type == KeyEventType.KeyUp) clickCb.value()
                 ok
             }
+            .then(if (BuildConfig.IS_TV) Modifier else Modifier.hoverable(hoverSrc).pointerInput(Unit) { detectTapGestures { clickCb.value() } })
             .focusable(),
     ) { content() }
 }

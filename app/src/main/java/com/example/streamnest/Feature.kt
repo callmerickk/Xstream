@@ -69,4 +69,9 @@ object Feature {
     /** 0.9.4: HDR mode (Quality › HDR): on = an HDR copy is found and faded in at the same moment (SDR first, so the start
      *  stays instant); off = back to the regular copy. Only on screens that can show HDR. */
     val hdrMode: Boolean = on("hdrMode")
+    /** 0.9.5: big-screen mode (BigScreen.kt): tablets in landscape, laptops / PC emulators (MuMu), wide windows and
+     *  keyboard-or-mouse devices get the TV interface (TV Home, side bar, TV settings, title page, search) with keys,
+     *  mouse and touch at once; laptops / emulators with memory to spare get the top device tier (bigger video buffer).
+     *  Off = the phone layout everywhere, buffers as before. */
+    val bigScreen: Boolean = on("bigScreen")
 }

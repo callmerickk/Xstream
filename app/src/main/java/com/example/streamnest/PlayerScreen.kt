@@ -259,17 +259,21 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     // phone's RAM. Phones: the playing player gets 22 % of it, a hidden one (swap / prepared title) 10 %. TV unchanged.
     val heapMb = (Runtime.getRuntime().maxMemory() / (1024 * 1024)).toInt()
     val others = PlayerCount.alive()
-    val budgetMb = if (tv) byRam else minOf(byRam, (heapMb * (if (others > 0) 0.10 else 0.22)).toInt()).coerceAtLeast(32)
+    // 0.9.5 (bigScreen): the top device tier (laptop / PC emulator / big tablet, DeviceTier) keeps more video ready:
+    // up to 400 MB (32 % of the app's memory) and 2 minutes ahead. Off: exactly as before.
+    val topTier = !tv && Feature.bigScreen && DeviceTier.top(ctx)
+    val budgetMb = if (tv) byRam else if (topTier) minOf(400, (heapMb * (if (others > 0) 0.14 else 0.32)).toInt()).coerceAtLeast(64)
+        else minOf(byRam, (heapMb * (if (others > 0) 0.10 else 0.22)).toInt()).coerceAtLeast(32)
     // 0.9.77: a hidden player (the title page's ready paused one, the next episode's) loads only enough to start:
     // ~5 s / 6 MB while it waits (0.9.78; was 15 s / 16 MB). Its full budget opens up the moment it is handed to the player ([HiddenCap.lift]).
     // The 0.9.76 crashes: each title page's paused player kept loading up to 84 MB while the user browsed on.
     val capped = hidden && !tv
-    if (!tv) ActLog.add("PLAY", "player made · buffer $budgetMb MB" + (if (capped) " (held to ${HiddenCap.CAP_MB} MB until Play)" else "") +
+    if (!tv) ActLog.add("PLAY", "player made · buffer $budgetMb MB" + (if (topTier) " (top tier)" else "") + (if (capped) " (held to ${HiddenCap.CAP_MB} MB until Play)" else "") +
         " · memory ${PlayerCount.usedMb()} / $heapMb MB · $others other player(s)")
     val hold0 = if (capped) java.util.concurrent.atomic.AtomicBoolean(true) else null
     val load = object : DefaultLoadControl(
         androidx.media3.exoplayer.upstream.DefaultAllocator(true, androidx.media3.common.C.DEFAULT_BUFFER_SEGMENT_SIZE),
-        if (tv) 30_000 else 25_000, if (tv) 60_000 else if (BuildConfig.HAS_LIVE) 120_000 else 60_000, if (fast) 1_500 else 2_500, if (fast) 3_000 else 5_000,
+        if (tv) 30_000 else 25_000, if (tv) 60_000 else if (BuildConfig.HAS_LIVE || topTier) 120_000 else 60_000, if (fast) 1_500 else 2_500, if (fast) 3_000 else 5_000,
         budgetMb * 1024 * 1024, false, if (tv) 10_000 else 20_000, true) {
         override fun shouldContinueLoading(parameters: androidx.media3.exoplayer.LoadControl.Parameters): Boolean {
             // 0.9.78: ~5 s / 6 MB. The byte cap waits until enough is loaded to start (3 s), so a big 4K file still
@@ -903,7 +907,7 @@ fun PlayerScreen(
         val act = ctx as? androidx.activity.ComponentActivity
         val l = androidx.core.util.Consumer<androidx.core.app.PictureInPictureModeChangedInfo> { inPip = it.isInPictureInPictureMode }
         act?.addOnPictureInPictureModeChangedListener(l)
-        onDispose { PipState.playerOpen = false; PipState.playing = false; act?.removeOnPictureInPictureModeChangedListener(l) }
+        onDispose { PipState.playerOpen = false; PipState.playing = false; act?.removeOnPictureInPictureModeChangedListener(l); BigScreen.applyPending() /* 0.9.5 */ }
     }
 
     // ───── Engines: VLC (default) and ExoPlayer (Playback > Player engine). Same controls for both. ─────

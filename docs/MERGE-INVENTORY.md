@@ -229,3 +229,11 @@ Not switched (wording for all apps, 0.9.1): "saved video" / "start saved" → "c
 | Light plugins on the phone; heavy scrapers only when nothing playable came | Beta only | `lightPlugins` | Rules `lightPlugins` (group "Plugins on the phone"), PluginSources.modeStreams + HeavyGate; ComboTest asks all |
 | HDR mode (Quality › HDR → fade to an HDR copy; off → back) | Beta only | `hdrMode` | PlayerScreen (effect after fadeTo, PhoneQualityBar hdrSub / hdrEnabled), PicturePref.hdrScreen |
 | `x-sx-ver` header; Worker version + approval gate (update video) | Both apps, no switch (header only); approval token only with `accessGate` | — | SxWorker.stamp; Worker MIN_VER (unset = no effect); videos on the `assets` branch |
+
+### Step 6 (Xstream 0.9.5)
+
+| Item | Status | Switch | Notes |
+|------|--------|--------|-------|
+| Big-screen mode: TV interface in the phone app on tablets (landscape), laptops, PC emulators (MuMu), wide windows, keyboard / mouse without touch; rotate back → phone layout; Esc = Back; hover / click / Shift-wheel / drag on TV components | Beta only | `bigScreen` | BigScreen.kt, MainActivity (BigScreen.tvUi picks TvApp), TvApp (phone-build branches: CloudGate, ModeChooser, LegalNoticeGate, MemWatch), TvCommon (tvCard hover, TvRow mouse), TvSidebar (hover, narrow closed hit area), TvHome (hero card + buttons tap). Player stays the phone PlayerScreen |
+| Device tier "top" (x86 host / PC / emulator, or ≥ 7.5 GB + 4K HEVC): bigger video buffer, logged once | Beta only | `bigScreen` | DeviceTier (BigScreen.kt), buildPlayer |
+| MuMu installer: one Install.bat that always installs the latest phone APK (GitHub releases/latest), MuMu's own adb / MuMuManager | Windows repo | — | callmerickk/StreamX-Windows |

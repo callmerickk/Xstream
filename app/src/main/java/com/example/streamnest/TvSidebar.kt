@@ -1,5 +1,6 @@
 package com.example.streamnest
 
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -216,7 +217,11 @@ private fun RailRow(
     icon: ImageVector, label: String, selected: Boolean, open: Boolean, progress: () -> Float, style: String = "slim", openStyle: String = "slim",
     requester: FocusRequester, onFocused: () -> Unit, onClick: () -> Unit,
 ) {
-    var focused by remember { mutableStateOf(false) }
+    var focused0 by remember { mutableStateOf(false) }
+    // 0.9.5 (big screen, phone app): the mouse lights an item like focus; the closed strip only takes clicks on its icons.
+    val hoverSrc = remember { MutableInteractionSource() }
+    val hovered = if (BuildConfig.IS_TV) false else hoverSrc.collectIsHoveredAsState().value
+    val focused = focused0 || hovered
     val fg = when {
         focused -> Color.White
         selected -> Color.White
@@ -226,17 +231,17 @@ private fun RailRow(
     val orbitOpen = openStyle == "orbit"
     val lit = Brush.verticalGradient(listOf(Color(0x29FFFFFF), Color(0x12FFFFFF)))
     Row(
-        Modifier.width(if (openStyle == "floating" || orbitOpen) 206.dp else 220.dp).height(42.dp)
+        Modifier.width(if (!BuildConfig.IS_TV && !open) 46.dp else if (openStyle == "floating" || orbitOpen) 206.dp else 220.dp).height(42.dp)
             .focusRequester(requester)
             .focusProperties { canFocus = open }
-            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }
+            .onFocusChanged { focused0 = it.isFocused; if (it.isFocused) onFocused() }
             .clip(CircleShape)
             .then(
                 if (!focused) Modifier
                 else if (orbitOpen) Modifier.background(lit).border(1.dp, Brush.verticalGradient(listOf(Color(0x61FFFFFF), Color(0x1FFFFFFF))), CircleShape)
                 else Modifier.background(Color(0x26FFFFFF)),
             )
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClick)
+            .clickable(interactionSource = hoverSrc, indication = null, onClick = onClick)
             .padding(start = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -293,7 +298,7 @@ private fun RailProfile(
 ) {
     var focused by remember { mutableStateOf(false) }
     Row(
-        Modifier.width(220.dp).height(44.dp)
+        Modifier.width(if (!BuildConfig.IS_TV && !open) 44.dp else 220.dp).height(44.dp)
             .focusRequester(requester)
             .focusProperties { canFocus = open }
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }

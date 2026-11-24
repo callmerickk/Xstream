@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.FocusDirection
@@ -99,9 +100,15 @@ fun TvApp(vm: AppViewModel = viewModel()) {
     val profile by vm.current.collectAsStateWithLifecycle()
     LaunchedEffect(stack.lastOrNull(), tab, profile?.id) {
         val top = stack.lastOrNull()
-        ActLog.screen = if (profile == null) "TV Who's watching" else "TV " + (top?.let { it::class.simpleName } ?: tab.name)
+        // 0.9.5: the phone app in big-screen mode logs "Big …" and keeps the phone's memory / frame lines.
+        val pre = if (BuildConfig.IS_TV) "TV " else "Big "
+        ActLog.screen = if (profile == null) pre + "Who's watching" else pre + (top?.let { it::class.simpleName } ?: tab.name)
         ActLog.add("SCREEN", ActLog.screen + (top?.let { " · " + it.toString().take(80) } ?: ""))
-        TvSmall.lastScreen = ActLog.screen
+        if (BuildConfig.IS_TV) TvSmall.lastScreen = ActLog.screen
+        else {
+            MemWatch.currentId = (top as? TvRoute.Detail)?.meta?.id ?: (top as? TvRoute.Player)?.p?.key
+            MemWatch.onScreen(vm.appContext, ActLog.screen); FrameStats.onScreen(ActLog.screen)
+        }
     }
     val texts by vm.texts.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -120,6 +127,7 @@ fun TvApp(vm: AppViewModel = viewModel()) {
     val ctx = LocalContext.current
     // TV 0.8.3: reads this box once (memory, decoders, the TV's screen modes, soundbar formats) and sets defaults for it.
     LaunchedEffect(Unit) {
+        if (!BuildConfig.IS_TV) return@LaunchedEffect // 0.9.5: TV box setup and the TV memory lines are for the TV app only
         runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { TvBox.info(ctx) } }
         runCatching { TvBox.setupOnce(ctx, vm) }
         // TV 0.9.11: memory right after the start too (the log showed 227 of 256 MB 5 s in, on Who's watching).
@@ -137,7 +145,7 @@ fun TvApp(vm: AppViewModel = viewModel()) {
     }
     // TV 0.8.7: 4K HDHUB starts in the background 15 s after a profile opens (it often needs 12+ s to load).
     LaunchedEffect(profile?.id) {
-        if (profile == null) return@LaunchedEffect
+        if (profile == null || !BuildConfig.IS_TV) return@LaunchedEffect // 0.9.5: TV only
         kotlinx.coroutines.delay(15_000)
         TvIdle.waitQuiet() // TV 0.9.13: not while you're moving around Home
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CsPlugins.tvPrewarm(ctx) } }
@@ -196,6 +204,8 @@ fun TvApp(vm: AppViewModel = viewModel()) {
     }
 
     CompositionLocalProvider(LocalTexts provides texts) {
+        // 0.9.5: the phone app in big-screen mode asks for the account terms as the phone layout does.
+        if (!BuildConfig.IS_TV) LegalNoticeGate(vm)
         if (tvAskExit.value) TvExitDialog(onStay = { tvAskExit.value = false })
         LaunchedEffect(profile == null) { if (profile == null) { stack.clear(); sidebar = false } }
         // After switching sections, make sure something on the new screen has focus.
@@ -215,7 +225,10 @@ fun TvApp(vm: AppViewModel = viewModel()) {
             // blurry by itself, almost free on a stick), the see-through page colour on top.
             if (Palette.glass) TvGlassBackdrop()
             if (Palette.glass) Box(Modifier.fillMaxSize().background(Bg))
-            if (profile == null && gateOpen && !tvEmailGate.value) TvLinkGate(onDone = { gateOpen = false }, onEmail = { tvEmailGate.value = true })
+            // 0.9.5: big-screen mode on the phone app signs in like the phone (no "link with your phone" code page).
+            if (!BuildConfig.IS_TV && profile == null && gateOpen) CloudGate(onDone = { gateOpen = false })
+            else if (!BuildConfig.IS_TV && profile == null && texts["streamMode"] == null) ModeChooser(vm) {}
+            else if (profile == null && gateOpen && !tvEmailGate.value) TvLinkGate(onDone = { gateOpen = false }, onEmail = { tvEmailGate.value = true })
             else if (profile == null && gateOpen) CloudGate(onDone = { gateOpen = false; tvEmailGate.value = false }, onPhone = { tvEmailGate.value = false })
             // TV 0.8.5: Turbo + Elite from the start (no question); Settings can still change both.
             else if (profile == null && texts["streamMode"] == null) LaunchedEffect(Unit) { vm.setText("streamMode", "elite"); ActLog.add("APP", "TV: Turbo + Elite on by default") }
@@ -255,6 +268,15 @@ fun TvApp(vm: AppViewModel = viewModel()) {
                         Modifier.fillMaxSize()
                             .padding(start = if (fullPage) 0.dp else TvRailW)
                             .onFocusChanged { contentFocused[0] = it.hasFocus }
+                            // 0.9.5 (big screen): a click / tap on the page closes the open side bar (keys keep working as on TV).
+                            .then(if (BuildConfig.IS_TV) Modifier else Modifier.pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                        if (sidebar && ev.type == androidx.compose.ui.input.pointer.PointerEventType.Press) sidebar = false
+                                    }
+                                }
+                            })
                             // While the menu is open, keys never go to the page (the search keypad used to keep them):
                             // focus is sent back to the menu.
                             .onPreviewKeyEvent { e ->

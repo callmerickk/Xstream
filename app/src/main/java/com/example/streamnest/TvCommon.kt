@@ -1,5 +1,6 @@
 package com.example.streamnest
 
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.gestures.awaitFirstDown
 
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -116,10 +117,12 @@ fun Modifier.tvCard(
     onClick: () -> Unit,
 ): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
-    val anim = animateFloatAsState(if (focused) 1f else 0f, tween(150), label = "tvFocus")
+    val interaction = remember { MutableInteractionSource() }
+    // 0.9.5 (big screen, phone app): the mouse pointer lights a card like the remote's focus does. TV app: focus only.
+    val hovered = if (BuildConfig.IS_TV) false else interaction.collectIsHoveredAsState().value
+    val anim = animateFloatAsState(if (focused || hovered) 1f else 0f, tween(150), label = "tvFocus")
     val click = rememberUpdatedState(onClick)
     val focusCb = rememberUpdatedState(onFocus)
-    val interaction = remember { MutableInteractionSource() }
     this
         .zIndex(if (focused) 1f else 0f)
         .graphicsLayer {
@@ -269,6 +272,7 @@ fun <T> TvRow(
         CompositionLocalProvider(LocalBringIntoViewSpec provides rowSpec) {
             LazyRow(
                 Modifier.fillMaxWidth()
+                    .bigScreenRowMouse(state) // 0.9.5: mouse wheel (Shift) / drag moves the row in big-screen mode
                     .onFocusChanged { if (it.hasFocus) rowFocus.value?.invoke() }
                     .focusProperties {
                         enter = { if (lastIdx >= 0 && attachedIdx[0] == lastIdx) lastFr else if (lastIdx < 0 && firstOn[0]) firstFr else FocusRequester.Default }

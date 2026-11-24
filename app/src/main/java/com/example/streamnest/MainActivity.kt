@@ -62,6 +62,10 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         if (intent.getBooleanExtra("musicHome", false)) MusicPlayer.splash.value = true
         SocialIntent.take(intent)
         enableEdgeToEdge()
+        // 0.9.5 (bigScreen): big screens (tablet landscape, PC emulator, wide window, keys/mouse without touch) get the
+        // TV interface; worked out before the first frame, so nothing flashes. Device tier logged in the background.
+        BigScreen.update(this, resources.configuration)
+        DeviceTier.logLater(this)
         // StreamX TV (tv flavor) gets the remote-friendly TV interface; the phone app keeps its own.
         // TV 0.9.14: the start logo (window background) is only for the first moments; then plain black again behind the
         // video and every page.
@@ -71,8 +75,9 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                     // 0.9.76: Glass theme (phones) — one blurred picture behind every page.
                     // 0.9.2: not drawn at all while the video player is open (it only cost frames under the video).
-                    if (!BuildConfig.IS_TV && Palette.glass && !GlassBg.paused) GlassBackdrop(GlassBg.url)
-                    if (BuildConfig.IS_TV) TvApp() else App()
+                    if (!BuildConfig.IS_TV && !BigScreen.on && Palette.glass && !GlassBg.paused) GlassBackdrop(GlassBg.url)
+                    // 0.9.5: the phone app in big-screen mode uses the TV interface too (BigScreen.tvUi = IS_TV when off).
+                    if (BigScreen.tvUi) TvApp() else App()
                     // 0.9.1 (accessGate): approval-only access + "Update required" (approval off until turned on in Access requests).
                     if (Feature.accessGate && !BuildConfig.IS_TV) AccessGate(androidx.lifecycle.viewmodel.compose.viewModel<AppViewModel>())
                     UpdatePrompt()
@@ -117,6 +122,10 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         TvIdle.lastKeyAt = android.os.SystemClock.elapsedRealtime()
+        // 0.9.5 (bigScreen): Esc on a keyboard works as Back (the TV interface's Back: close, Home, side bar).
+        if (!BuildConfig.IS_TV && BigScreen.on && event.keyCode == android.view.KeyEvent.KEYCODE_ESCAPE)
+            return super.dispatchKeyEvent(android.view.KeyEvent(event.downTime, event.eventTime, event.action, android.view.KeyEvent.KEYCODE_BACK,
+                event.repeatCount, event.metaState, event.deviceId, event.scanCode, event.flags, event.source))
         val r = super.dispatchKeyEvent(event)
         runCatching { ActLog.onKey(window.decorView, event) }
         return r
@@ -150,6 +159,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             if (d and turn.inv() != 0) ActLog.add("APP", "display change handled: " + cfgDiff(d))
             lastCfg = android.content.res.Configuration(newConfig)
         }
+        // 0.9.5 (bigScreen): turned to portrait → phone layout again; landscape on a tablet → TV interface.
+        runCatching { BigScreen.update(this, newConfig) }
     }
     override fun onResume() { super.onResume(); com.lagradost.cloudstream3.CommonActivity.activity = this; ActLog.add("APP", "in front"); if (BuildConfig.IS_TV) TvSmall.front(this, true); runCatching { Cloud.onAppForeground() }; LiveServer.start(this, 2_500) }
 
