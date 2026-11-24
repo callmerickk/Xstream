@@ -1,3 +1,7 @@
+Live server updated to 3.1.7.
+
+---
+
 Live server updated to 3.1.6.
 
 ---
