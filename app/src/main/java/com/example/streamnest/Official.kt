@@ -45,7 +45,7 @@ data class OfficialSet(
 )
 
 object Official {
-    private const val PATH = "xshared/devAddons/official.json"
+    private const val PATH = Brand.SHARED_ROOT + "/devAddons/official.json"
 
     suspend fun fetch(): OfficialSet? = withContext(Dispatchers.IO) {
         runCatching { Api.json.decodeFromString<OfficialSet>(XNs.read("devAddons/official")!!) }.getOrNull()?.takeIf { it.at > 0 }
@@ -66,13 +66,13 @@ object Official {
         runCatching {
             Api.http.newCall(Request.Builder().url("${CloudConfig.DB_URL}/$PATH?auth=$t")
                 .put(Api.json.encodeToString(OfficialSet.serializer(), s.copy(at = System.currentTimeMillis())).toRequestBody("application/json".toMediaType())).build())
-                .execute().use { r -> if (r.isSuccessful) null else if (r.code == 401 || r.code == 403) "Not allowed: the Firebase rule for xshared/devAddons, and the owner's account." else "HTTP ${r.code}" }
+                .execute().use { r -> if (r.isSuccessful) null else if (r.code == 401 || r.code == 403) "Not allowed: the Firebase rule for shared/devAddons, and the owner's account." else "HTTP ${r.code}" }
         }.getOrElse { "Couldn't reach the cloud." }
     }
 
     /** Every other account: the published set is applied when a profile opens (the developer's own phone is left alone). */
     suspend fun apply(vm: AppViewModel, ctx: Context) {
-        if (BuildConfig.IS_TV || LiveLock.on) return
+        if (BuildConfig.IS_TV) return
         CsPlugins.init(ctx)
         val pr = CsPlugins.prefsOrNull()
         // The developer's phone is never overwritten: once it has been seen as the developer's, it stays that way
@@ -83,6 +83,13 @@ object Official {
         // Applied once per published version, so a phone's own changes aren't undone at every start.
         val fresh = s.at > (pr?.getLong("officialAt", 0L) ?: 0L)
         for (u in s.addons) if (vm.addons.value.none { it.baseUrl == Api.normalize(u) }) runCatching { vm.installAddon(u) }
+        // A new publish: exactly the developer's add-ons (others removed), like the plugins below.
+        if (fresh && s.addons.isNotEmpty()) {
+            val keep = s.addons.map { Api.normalize(it) }.toSet()
+            val extra = vm.addons.value.filter { it.baseUrl !in keep }
+            if (extra.isNotEmpty()) withContext(Dispatchers.Main) { extra.forEach { a -> runCatching { vm.removeAddon(a) } } }
+            if (extra.isNotEmpty()) ActLog.add("PLUGIN", "add-ons replaced by the published set · removed: ${extra.joinToString { it.manifest.name }}")
+        }
         val missing = s.csRepos.filter { r -> CsPlugins.repos.value.none { it.url == r } }
         missing.forEach { CsPlugins.addRepo(it) }
         if (missing.isNotEmpty() || CsPlugins.catalog.value.isEmpty()) runCatching { CsPlugins.refresh() }
@@ -151,7 +158,7 @@ fun OfficialSetPage(vm: AppViewModel, onBack: () -> Unit) {
 }
 
 /**
- * Developer's Corner publishing: one section at a time, or everything at once. Xstream and StreamX (phone and TV)
+ * Developer's Corner publishing: one section at a time, or everything at once. StreamX and StreamX (phone and TV)
  * read the same cloud, so one publish reaches every account on every device.
  */
 object PublishAll {

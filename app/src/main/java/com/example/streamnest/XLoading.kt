@@ -31,7 +31,7 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 
 /**
- * Xstream phone loading screen (StreamX TV style): no poster behind, only a soft dark blur; a landscape frame in the
+ * StreamX phone loading screen (StreamX TV style): no poster behind, only a soft dark blur; a landscape frame in the
  * middle plays the title's trailer (muted) — or its stills, slowly, when there's no trailer — with the progress running
  * around the frame, and the heartbeat line and percentage under it.
  */

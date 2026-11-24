@@ -1,0 +1,6 @@
+HSPLcom/example/streamnest/**->**(**)**
+Lcom/example/streamnest/**;
+HSPLandroidx/compose/**->**(**)**
+Landroidx/compose/**;
+HSPLcoil/**->**(**)**
+Lcoil/**;

@@ -23,16 +23,16 @@ private object SeriesCache { val map = ConcurrentHashMap<String, Pair<Long, Meta
 /** A series' episode list (from your addons), cached for 6 hours. */
 suspend fun AppViewModel.seriesMeta(id: String): Meta? {
     SeriesCache.map[id]?.let { (at, m) -> if (System.currentTimeMillis() - at < 6 * 3600_000L) return m }
-    val m = runCatching { fullMeta(Meta(id = id, type = "series")) }.getOrNull()?.takeIf { !it.videos.isNullOrEmpty() } ?: savedShow(id)
-    // 0.8.12: kept only with its episodes (an empty answer stayed for 6 h before).
-    if (m != null && !m.videos.isNullOrEmpty()) SeriesCache.map[id] = System.currentTimeMillis() to m
+    val m = runCatching { fullMeta(Meta(id = id, type = "series")) }.getOrNull()?.takeIf { BuildConfig.IS_TV || !it.videos.isNullOrEmpty() } ?: savedShow(id)
+    // 0.9.71 (from Xstream 0.8.12): on phones kept only with its episodes (an empty answer stayed for 6 h before).
+    if (BuildConfig.IS_TV || (m != null && !m.videos.isNullOrEmpty())) SeriesCache.map[id] = System.currentTimeMillis() to m
     return m
 }
 
 fun Progress.fraction(): Float = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 fun Progress.isSeries(): Boolean = key.contains(":")
 /** An episode watched to (about) the end — Continue Watching then points at the next one. */
-fun Progress.finished(): Boolean = isSeries() && fraction() >= 0.90f
+fun Progress.finished(): Boolean = isSeries() && fraction() >= 0.95f
 
 fun cwTimeLeft(p: Progress): String {
     val left = ((p.durationMs - p.positionMs).coerceAtLeast(0L) / 60_000L).toInt()
@@ -77,15 +77,3 @@ fun Progress.asMeta(): Meta = Meta(
     id = key.substringBefore(":"), type = if (isSeries()) "series" else "movie",
     name = title.substringBefore("  S").trim(), poster = image, background = image,
 )
-
-
-/**
- * Continue watching → the player (the saved link; fresh links only when there is none).
- */
-fun Progress.toPlayer(startMs: Long = positionMs): Screen.Player {
-    val type = if (isSeries()) "series" else "movie"
-    // 0.8.13: the saved link plays at once again (fresh look-ups every time made starts slow); a fake / dead one is caught
-    // by the size + length checks and backups, and replaced quietly.
-    return if (url.isBlank()) Screen.Player(title, "", emptyList(), key, image, startMs, type = type, find = true)
-    else Screen.Player(title, url, subs, key, image, startMs, type = type, source = source, addon = addon)
-}

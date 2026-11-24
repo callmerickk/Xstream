@@ -12,7 +12,7 @@ fun StreamItem.text(): String = noSourceName(listOfNotNull(
     stream.name, stream.title, stream.description, stream.behaviorHints?.filename, addonName,
 ).joinToString(" \n "))
 
-/** 0.8.16: the source's own name says nothing about a copy's quality ("4K HDHUB" gives 1080p / 720p copies too). */
+/** 0.9.71 (from Xstream 0.8.16): the source's own name says nothing about a copy's quality ("4K HDHUB" gives 1080p / 720p copies too). */
 private val sourceNames = Regex("(?i)4k[ ._-]*hd[ ._-]*hub")
 fun noSourceName(t: String): String = sourceNames.replace(t, " ")
 

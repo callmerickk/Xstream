@@ -213,7 +213,7 @@ fun PersonScreen(vm: AppViewModel, p: Screen.Person, onBack: () -> Unit, onOpen:
                 err != null -> item(span = { GridItemSpan(maxLineSpan) }) {
                     Column(Modifier.fillMaxWidth().padding(top = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         PersonNote(err)
-                        Text("Try again", Modifier.padding(top = 12.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF15161C))
+                        Text("Try again", Modifier.padding(top = 12.dp).clip(RoundedCornerShape(20.dp)).background(glassy(Color(0xFF15161C)))
                             .quietClick { attempt++ }.padding(horizontal = 18.dp, vertical = 9.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
@@ -275,7 +275,7 @@ fun PersonScreen(vm: AppViewModel, p: Screen.Person, onBack: () -> Unit, onOpen:
                         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf("all" to "All", "movie" to "Movies", "tv" to "Series").forEach { (k, label) ->
                                 val on = filter == k
-                                Text(label, Modifier.clip(RoundedCornerShape(20.dp)).background(if (on) Color.White else Color(0xFF15161C))
+                                Text(label, Modifier.clip(RoundedCornerShape(20.dp)).background(if (on) Color.White else glassy(Color(0xFF15161C)))
                                     .quietClick { filter = k }.padding(horizontal = 18.dp, vertical = 9.dp),
                                     fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) Color.Black else Color(0xFFC9CED9))
                             }
@@ -300,7 +300,7 @@ fun PersonScreen(vm: AppViewModel, p: Screen.Person, onBack: () -> Unit, onOpen:
         }
         // Back button stays on top.
         Box(
-            Modifier.statusBarsPadding().padding(start = 16.dp, top = 6.dp).size(42.dp).clip(CircleShape).background(Color(0xFF15161C)).quietClick(onBack),
+            Modifier.statusBarsPadding().padding(start = 16.dp, top = 6.dp).size(42.dp).clip(CircleShape).background(glassy(Color(0xFF15161C))).quietClick(onBack),
             Alignment.Center,
         ) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Back", Modifier.size(26.dp), tint = Color.White) }
         if (opening) Box(Modifier.align(Alignment.Center).clip(RoundedCornerShape(16.dp)).background(Color(0xE615161C)).padding(horizontal = 18.dp, vertical = 12.dp)) {
@@ -324,5 +324,5 @@ private fun PersonNote(text: String) =
 private fun PersonShimmer(modifier: Modifier, corner: Int) {
     val tr = rememberInfiniteTransition(label = "shimmer")
     val a by tr.animateFloat(0.35f, 0.8f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "a")
-    Box(modifier.graphicsLayer { alpha = a }.clip(RoundedCornerShape(corner.dp)).background(Color(0xFF15161C)))
+    Box(modifier.graphicsLayer { alpha = a }.clip(RoundedCornerShape(corner.dp)).background(glassy(Color(0xFF15161C))))
 }

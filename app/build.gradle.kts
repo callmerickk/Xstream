@@ -5,6 +5,26 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// ── Brand layer: the only part that differs between StreamX and Xstream ──
+// The shared code reads these through Brand.kt (BuildConfig) and the manifest placeholders below.
+// StreamX's values: BRAND_NAME "StreamX", IS_BETA false, UPDATE_REPO "callmerickk/StreamNest",
+// UPDATE_CDN "https://streamx-dl.callmerick093.workers.dev", APK_PHONE "StreamX-phone.apk", APK_TV "StreamX-TV.apk",
+// SHARED_ROOT "shared", invite "streamx" / "streamx-watch.pages.dev" / "/join", no brand res folder.
+val brand = mapOf(
+    "BRAND_NAME" to "Xstream",
+    "UPDATE_REPO" to "callmerickk/Xstream",
+    // Xstream has no download relay: updates come straight from GitHub.
+    "UPDATE_CDN" to "",
+    "APK_PHONE" to "Xstream-phone.apk",
+    "APK_TV" to "Xstream-TV.apk",
+    // Xstream's own cloud shelf (falls back to shared/ for reading).
+    "SHARED_ROOT" to "xshared",
+    "INVITE_SCHEME" to "xstream",
+    "INVITE_HOST" to "streamx-home.callmerick093.workers.dev",
+    "INVITE_PATH" to "/xjoin",
+)
+val brandBeta = true
+
 android {
     lint { abortOnError = false; checkReleaseBuilds = false }
     namespace = "com.example.streamnest"
@@ -13,57 +33,45 @@ android {
         applicationId = "com.example.xstream"
         minSdk = 24
         targetSdk = 34
-        versionCode = 54
-        versionName = "0.8.20"
+        versionCode = 60
+        versionName = "0.9.0"
+        brand.forEach { (k, v) -> buildConfigField("String", k, "\"$v\"") }
+        buildConfigField("boolean", "IS_BETA", brandBeta.toString())
+        manifestPlaceholders["brandName"] = brand.getValue("BRAND_NAME")
+        manifestPlaceholders["inviteScheme"] = brand.getValue("INVITE_SCHEME")
+        manifestPlaceholders["inviteHost"] = brand.getValue("INVITE_HOST")
+        manifestPlaceholders["invitePath"] = brand.getValue("INVITE_PATH")
+        resValue("string", "brand_name", brand.getValue("BRAND_NAME"))
+        resValue("string", "widget_start", "Start something in " + brand.getValue("BRAND_NAME"))
     }
-    // Two apps from one project: the phone app and StreamX TV (Fire TV / Android TV).
+    // Two apps from one project: the phone app and Xstream TV (Fire TV / Android TV).
     // "gradle assembleDebug" builds both APKs.
     flavorDimensions += "device"
     productFlavors {
         create("phone") {
             dimension = "device"
             buildConfigField("boolean", "IS_TV", "false")
-            // Xstream: plugins and addons (no Live server — that is the separate app Xstream Live, branch "live").
             buildConfigField("boolean", "HAS_LIVE", "false")
-            buildConfigField("boolean", "LIVE_ONLY", "false")
-            buildConfigField("boolean", "HAS_AI", "true")
-            buildConfigField("boolean", "HAS_SOCIAL", "true")
-            // Xstream Music (its own launcher entry, widget, YouTube Music data).
-            buildConfigField("boolean", "HAS_MUSIC", "true")
-            // Testing app: no "Publish for everyone" buttons.
-            buildConfigField("boolean", "NO_PUBLISH", "true")
-            // Universal: 64-bit and 32-bit ARM phones.
-            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
-            // The app's own words are in its code; the libraries' translations into ~80 languages are left out (smaller APK).
-            resourceConfigurations += listOf("en")
-        }
-        // Xstream for every phone (32-bit too), without the Live server. Same app id: either one installs over the other.
-        create("universal") {
-            dimension = "device"
-            buildConfigField("boolean", "IS_TV", "false")
-            buildConfigField("boolean", "HAS_LIVE", "false")
-            buildConfigField("boolean", "LIVE_ONLY", "false")
-            buildConfigField("boolean", "HAS_AI", "true")
-            buildConfigField("boolean", "HAS_SOCIAL", "true")
             buildConfigField("boolean", "HAS_MUSIC", "false")
-            buildConfigField("boolean", "NO_PUBLISH", "false")
+            // Testing app: no "Publish for everyone" buttons (as Xstream always had).
+            buildConfigField("boolean", "NO_PUBLISH", "true")
+            resValue("string", "app_name", brand.getValue("BRAND_NAME"))
+            // Every phone: 64-bit and 32-bit ARM, so the app installs and runs everywhere.
             ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
             resourceConfigurations += listOf("en")
         }
         create("tv") {
             dimension = "device"
             applicationIdSuffix = ".tv"
-            versionCode = 42
-            versionName = "TV 0.7.2 beta"
+            versionCode = 43
+            versionName = "TV 0.9.0 beta"
             buildConfigField("boolean", "IS_TV", "true")
             buildConfigField("boolean", "HAS_LIVE", "false")
-            buildConfigField("boolean", "LIVE_ONLY", "false")
-            buildConfigField("boolean", "HAS_AI", "true")
-            buildConfigField("boolean", "HAS_SOCIAL", "true")
             buildConfigField("boolean", "HAS_MUSIC", "false")
             buildConfigField("boolean", "NO_PUBLISH", "false")
+            resValue("string", "app_name", brand.getValue("BRAND_NAME") + " TV")
             // Fire TV Sticks run 32-bit Android; 32-bit ARM also runs on every 64-bit TV box.
-            ndk { abiFilters += listOf("armeabi-v7a") }
+            ndk { abiFilters += listOf("armeabi-v7a") + (if (project.hasProperty("smokeX86")) listOf("x86_64") else emptyList()) }
         }
     }
     // One fixed key for every build, so new APKs install over the old app without uninstalling.
@@ -102,18 +110,16 @@ android {
         // coroutines 1.11 is built with a newer Kotlin than this project's compiler; reading its metadata is safe.
         freeCompilerArgs += listOf("-Xskip-metadata-version-check")
     }
-    buildFeatures { compose = true; buildConfig = true }
-    // Offline voice (Vosk) and face detection live here: universal and TV only.
+    buildFeatures { compose = true; buildConfig = true; resValues = true }
+    // Xstream's brand resources (its logo colours) override the shared ones.
     sourceSets {
-        getByName("phone").java.srcDir("src/full/java")
-        getByName("universal").java.srcDir("src/full/java")
-        getByName("tv").java.srcDir("src/full/java")
+        getByName("phone").res.srcDir("src/brand/res")
+        getByName("tv").res.srcDir("src/brand/res")
     }
     packaging {
         // Keep one copy of the C++ runtime, and store native libraries compressed (much smaller APK).
         jniLibs {
             pickFirsts += listOf("**/libc++_shared.so")
-            // Xstream Live: no Watch together (video calls) — its 11 MB calling library is left out.
             useLegacyPackaging = true
         }
     }
@@ -145,17 +151,16 @@ dependencies {
     implementation("androidx.media3:media3-datasource-okhttp:1.7.1")
     // NextLib (as CloudStream): FFmpeg audio AND video decoders for ExoPlayer — Dolby Digital / DD+ / DTS / TrueHD and
     // video formats the phone can't decode play anyway. (Only the needed ARM library is packaged, see abiFilters.)
-    implementation("io.github.anilbeesetti:nextlib-media3ext:1.7.1-0.9.0")
+    "phoneImplementation"("io.github.anilbeesetti:nextlib-media3ext:1.7.1-0.9.0")
+    // TV 0.8.6: Media3's FFmpeg extension (Apache-2.0) built with LGPL-2.1 FFmpeg, audio decoders only (libs/, see FFMPEG.md).
+    "tvImplementation"(files("libs/ffmpeg-audio-lgpl.aar"))
+    "tvImplementation"("androidx.media3:media3-decoder:1.7.1")
     // VLC engine: backup for the rare files ExoPlayer can't open (ExoPlayer plays first, like Nuvio).
     implementation("org.videolan.android:libvlc-all:3.6.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.2")
     // "Hey Aiden": offline wake word, Vosk (Apache 2.0) + JNA.
-    "phoneImplementation"("com.alphacephei:vosk-android:0.3.47@aar")
-    "phoneImplementation"("net.java.dev.jna:jna:5.13.0@aar")
-    "universalImplementation"("com.alphacephei:vosk-android:0.3.47@aar")
-    "universalImplementation"("net.java.dev.jna:jna:5.13.0@aar")
-    "tvImplementation"("com.alphacephei:vosk-android:0.3.47@aar")
-    "tvImplementation"("net.java.dev.jna:jna:5.13.0@aar")
+    implementation("com.alphacephei:vosk-android:0.3.47@aar")
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
     // Watch together voice + video (WebRTC, org.webrtc). Only the ARM library of each app is packaged (abiFilters).
     implementation("io.getstream:stream-webrtc-android:1.3.9")
     // StreamX VPN: WireGuard's official Android library (open source), and a QR scanner for WireGuard QR codes.
@@ -172,7 +177,7 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.5")
     // JavaScript engine for StreamX plugins (Plugins.kt).
     implementation("org.mozilla:rhino:1.7.15")
-    // CloudStream plugins run on Xstream's own CloudStream library (com.lagradost.*). The open-source libraries plugins
+    // CloudStream plugins run on StreamX's own CloudStream library (com.lagradost.*). The open-source libraries plugins
     // call directly (all MIT / Apache 2.0): HTML parsing, JSON, URLs, and AppCompat / Material for their settings.
     implementation("org.jsoup:jsoup:1.18.1")
     // Plugins are built with coroutines 1.11 (runBlocking is "runBlockingK" there): use the same version.
@@ -182,10 +187,7 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
     implementation("com.google.code.gson:gson:2.11.0")
     // Subtitles › Follow the speaker (beta): on-device face + lip contours (Apache-licensed ML Kit client, no network).
-    // Xstream Live (phone) leaves it out (stub in src/phone).
-    "phoneImplementation"("com.google.mlkit:face-detection:16.1.6")
-    "universalImplementation"("com.google.mlkit:face-detection:16.1.6")
-    "tvImplementation"("com.google.mlkit:face-detection:16.1.6")
+    implementation("com.google.mlkit:face-detection:16.1.6")
     implementation("io.ktor:ktor-http:2.3.12")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")

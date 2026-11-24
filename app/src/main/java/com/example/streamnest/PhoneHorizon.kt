@@ -56,7 +56,7 @@ import androidx.lifecycle.viewModelScope
 import java.util.Calendar
 
 /**
- * Xstream's profile page ("Horizon"): a night sky over the glowing curved ground of the StreamX bar. The last profile used
+ * Profile page "Horizon" (0.9.74, from Xstream 0.8.6): a night sky over the glowing curved ground of the StreamX bar. The last profile used
  * is already chosen, so its Continue watching floats above the horizon at once (tap a poster: it plays straight away).
  * No Continue watching (new, or cleared): "Picked for you" from the profile's taste (picked titles, genres, languages,
  * what it finished). Profiles sit on the ground, two per row, the main profile bottom-right where the right thumb rests.
@@ -64,24 +64,24 @@ import java.util.Calendar
  * posters (tap it again to open it).
  */
 
-private data class HItem(val key: String, val title: String, val sub: String, val poster: String?, val wide: String?, val progress: Float?,
+private data class HzItem(val key: String, val title: String, val sub: String, val poster: String?, val wide: String?, val progress: Float?,
                          val cw: Progress? = null, val meta: Meta? = null)
 
-private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+private fun hzGreeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
     in 5..11 -> "Good morning"; in 12..16 -> "Good afternoon"; in 17..21 -> "Good evening"; else -> "Late night"
 }
 
-private fun cwItem(p: Progress): HItem {
+private fun hzCwItem(p: Progress): HzItem {
     val imdb = p.key.substringBefore(":")
     val show = p.title.substringBefore("  S").trim()
     val ep = Regex("S(\\d+)E(\\d+)").find(p.title.substringAfter("  ", ""))?.let { "S${it.groupValues[1]} E${it.groupValues[2]} · " } ?: ""
     val left = if (p.durationMs > 0) ((p.durationMs - p.positionMs) / 60_000).coerceAtLeast(1) else null
-    return HItem(p.key, show, ep + (left?.let { "$it min left" } ?: "Continue"),
+    return HzItem(p.key, show, ep + (left?.let { "$it min left" } ?: "Continue"),
         if (imdb.startsWith("tt")) "https://images.metahub.space/poster/medium/$imdb/img" else p.image, p.image,
         if (p.durationMs > 0) (p.positionMs.toFloat() / p.durationMs).coerceIn(0f, 1f) else null, cw = p)
 }
 
-private fun pickItem(m: Meta): HItem = HItem(m.id, m.name,
+private fun hzPickItem(m: Meta): HzItem = HzItem(m.id, m.name,
     listOfNotNull(m.releaseInfo?.take(4), m.genres?.firstOrNull(), if (m.type == "series") "Series" else "Movie").joinToString(" · "),
     hdPoster(m) ?: m.poster, m.background ?: m.poster, null, meta = m)
 
@@ -102,7 +102,7 @@ fun HorizonWhoIsWatching(vm: AppViewModel, active: Boolean, onPicked: () -> Unit
     var after by remember { mutableStateOf<(() -> Unit)?>(null) }
     val allowAuto = remember { !StartupState.autoPickDone && JoinIntent.code.value == null }
     LaunchedEffect(Unit) { StartupState.autoPickDone = true }
-    val secs = texts["autoProfileSecs"]?.toIntOrNull() ?: 10
+    val secs = (texts["autoProfileSecs"] ?: Defaults["autoProfileSecs"] ?: "5").toIntOrNull() ?: 5
     val countdown = remember { Animatable(0f) }
     val leave = remember { Animatable(0f) }
     val enter = remember { Animatable(0f) }
@@ -133,15 +133,18 @@ fun HorizonWhoIsWatching(vm: AppViewModel, active: Boolean, onPicked: () -> Unit
     // What floats above the horizon for the chosen profile.
     val locked = sel != null && ProfileLock.hasPin(sel.id)
     val fallback = remember { mutableStateMapOf<String, List<Meta>>() }
-    val items: List<HItem> = remember(selId, texts, fallback[selId]) {
+    // StreamX: a profile's Continue watching is read off the screen's thread.
+    val cwOf = remember { mutableStateMapOf<String, List<Progress>>() }
+    LaunchedEffect(selId, texts) { selId?.let { id -> cwOf[id] = runCatching { vm.progressOf(id).filter { it.durationMs <= 0 || it.positionMs < it.durationMs * 0.95 } }.getOrDefault(emptyList()) } }
+    val items: List<HzItem> = remember(selId, texts, fallback[selId], cwOf[selId]) {
         val id = selId ?: return@remember emptyList()
-        val cw = vm.progressOf(id).take(7).map(::cwItem)
-        cw.ifEmpty { (vm.pickedOf(id).ifEmpty { fallback[id].orEmpty() }).filter { it.type == "movie" || it.type == "series" }.take(7).map(::pickItem) }
+        val cw = cwOf[id].orEmpty().take(7).map(::hzCwItem)
+        cw.ifEmpty { (vm.pickedOf(id).ifEmpty { fallback[id].orEmpty() }).filter { it.type == "movie" || it.type == "series" }.take(7).map(::hzPickItem) }
     }
     val isCw = items.firstOrNull()?.cw != null
     LaunchedEffect(selId) {
         val p = sel ?: return@LaunchedEffect
-        if (vm.progressOf(p.id).isNotEmpty() || vm.pickedOf(p.id).isNotEmpty() || fallback.containsKey(p.id)) return@LaunchedEffect
+        if (runCatching { vm.progressOf(p.id) }.getOrDefault(emptyList()).isNotEmpty() || vm.pickedOf(p.id).isNotEmpty() || fallback.containsKey(p.id)) return@LaunchedEffect
         // Nothing yet: popular titles in the profile's genres (kids: animation and family).
         val g = if (p.kids) listOf("Animation", "Family") else vm.textOf(p.id, "tasteGenres")?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
         fallback[p.id] = runCatching {
@@ -152,24 +155,24 @@ fun HorizonWhoIsWatching(vm: AppViewModel, active: Boolean, onPicked: () -> Unit
     var center by remember(selId) { mutableIntStateOf(0) }
     val cur = items.getOrNull(center) ?: items.firstOrNull()
 
-    fun play(it: HItem) {
+    fun play(it: HzItem) {
         val p = sel ?: return
         val c = it.cw; val m = it.meta
         go(p) {
             when {
-                c != null -> onPlay(c.toPlayer())
+                c != null -> onPlay(Screen.Player(c.title, c.url, c.subs, c.key, c.image, c.positionMs, source = c.source, addon = c.addon))
                 m != null && m.type == "series" -> vm.viewModelScope.launch {
                     val full = vm.fullMeta(m) ?: m
                     val first = full.videos.orEmpty().filter { (it.season ?: 0) > 0 && it.episode != null }.sortedWith(compareBy({ it.season }, { it.episode })).firstOrNull()
                     if (first == null) onOpen(full)
                     else onPlay(Screen.Player("${full.name}  S${first.season}E${first.episode}", "", emptyList(), key = first.id,
-                        image = first.thumbnail ?: full.background ?: full.poster, type = "series", meta = full, find = true, quick = vm.qsActive()))
+                        image = first.thumbnail ?: full.background ?: full.poster, type = "series", meta = full, find = true))
                 }
-                m != null -> onPlay(Screen.Player(m.name, "", emptyList(), key = m.id, image = m.background ?: m.poster, type = "movie", meta = m, find = true, quick = vm.qsActive()))
+                m != null -> onPlay(Screen.Player(m.name, "", emptyList(), key = m.id, image = m.background ?: m.poster, type = "movie", meta = m, find = true))
             }
         }
     }
-    fun info(it: HItem) {
+    fun info(it: HzItem) {
         val p = sel ?: return
         val m = it.meta ?: it.cw?.let { c -> Meta(id = c.key.substringBefore(":"), type = if (c.key.contains(":")) "series" else "movie", name = it.title, poster = it.poster) }
         if (m != null) go(p) { onOpen(m) }
@@ -194,10 +197,10 @@ fun HorizonWhoIsWatching(vm: AppViewModel, active: Boolean, onPicked: () -> Unit
         }
         Column(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = groundH - 12.dp).graphicsLayer { alpha = enter.value; translationY = (1f - enter.value) * 14.dp.toPx() }) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Wordmark("Xstream", 22.sp)
+                Wordmark("${Brand.NAME}", 22.sp)
                 Spacer(Modifier.weight(1f))
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(greeting(), fontSize = 11.sp, color = Muted)
+                    Text(hzGreeting(), fontSize = 11.sp, color = Muted)
                     Text((if (isCw || locked) "" else "Welcome, ") + (sel?.name ?: ""), fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                 }
             }
@@ -210,7 +213,7 @@ fun HorizonWhoIsWatching(vm: AppViewModel, active: Boolean, onPicked: () -> Unit
                         Text("Unlock to see what's playing", Modifier.padding(top = 10.dp), fontSize = 13.sp, color = Muted)
                     }
                 } else if (items.isEmpty()) Box(Modifier.fillMaxSize())
-                else Stage(items, center, { center = it; stopped = true }, { play(it) })
+                else HzStage(items, center, { center = it; stopped = true }, { play(it) })
             }
             // Title, details and the buttons.
             if (!locked && cur != null) Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -232,12 +235,12 @@ fun HorizonWhoIsWatching(vm: AppViewModel, active: Boolean, onPicked: () -> Unit
         }
         // The ground with the profiles.
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(groundH)) {
-            HorizonGround(Modifier.matchParentSize(), edgeTop = 0.08f)
+            PhoneHorizonGround(Modifier.matchParentSize(), edgeTop = 0.08f)
             Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 12.dp, top = 40.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(6.dp).clip(CircleShape).background(BrandRed))
                 Text(if (editMode) "  Tap a profile to edit" else "  Who's watching?", fontSize = 13.sp, color = Color(0xFFC6C9D4))
                 Spacer(Modifier.weight(1f))
-                // 0.8.19 "no lift": the countdown sits in a small pill here (it used to push the profile up).
+                // 0.9.74 "no lift": the countdown sits in a small pill here (it used to push the profile up).
                 val ringing = countdown.value > 0f && !stopped && !editMode
                 if (ringing && sel != null) Text("Opening ${sel.name} in ${left}s", Modifier.clip(RoundedCornerShape(12.dp)).background(BrandRed.copy(alpha = 0.22f))
                     .border(1.dp, BrandRed.copy(alpha = 0.5f), RoundedCornerShape(12.dp)).clickable { stopped = true }.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -247,7 +250,7 @@ fun HorizonWhoIsWatching(vm: AppViewModel, active: Boolean, onPicked: () -> Unit
                     Text(if (editMode) " Done" else " Edit", fontSize = 12.sp, color = Muted)
                 }
             }
-            ProfileGround(vm, profiles, selId, editMode, countdown.value.takeIf { it > 0f && !stopped }, left,
+            HzProfileGround(vm, profiles, selId, editMode, countdown.value.takeIf { it > 0f && !stopped }, left,
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(bottom = 14.dp, top = 76.dp),
                 onAdd = { stopped = true; adding = true },
             ) { p ->
@@ -265,7 +268,7 @@ fun HorizonWhoIsWatching(vm: AppViewModel, active: Boolean, onPicked: () -> Unit
 
 /** The fan of posters: the centre one big with its progress; the next two tilted at its sides; up to four more below. */
 @Composable
-private fun Stage(items: List<HItem>, center: Int, onCenter: (Int) -> Unit, onPlay: (HItem) -> Unit) {
+private fun HzStage(items: List<HzItem>, center: Int, onCenter: (Int) -> Unit, onPlay: (HzItem) -> Unit) {
     val c = center.coerceIn(0, items.lastIndex)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val bigH = (maxHeight - 64.dp).coerceIn(150.dp, 290.dp)
@@ -312,7 +315,7 @@ private fun Stage(items: List<HItem>, center: Int, onCenter: (Int) -> Unit, onPl
 
 /** Profiles on the ground: two per row, the main profile bottom-right (right-thumb reach), Add bottom-left. */
 @Composable
-private fun ProfileGround(vm: AppViewModel, profiles: List<Profile>, selId: String?, editMode: Boolean, ring: Float?, left: Int, modifier: Modifier,
+private fun HzProfileGround(vm: AppViewModel, profiles: List<Profile>, selId: String?, editMode: Boolean, ring: Float?, left: Int, modifier: Modifier,
                           onAdd: () -> Unit, onTap: (Profile) -> Unit) {
     val main = profiles.firstOrNull() ?: return
     val others = profiles.drop(1)
@@ -334,7 +337,7 @@ private fun ProfileGround(vm: AppViewModel, profiles: List<Profile>, selId: Stri
                         Column(Modifier.width(avD + 30.dp).clickable(remember { MutableInteractionSource() }, null) { if (p == null) onAdd() else onTap(p) },
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             val selected = p != null && p.id == selId && !editMode
-                            // 0.8.19 "no lift": the chosen profile keeps its size and place (its ring shows it).
+                            // 0.9.74 "no lift": the chosen profile keeps its size and place (its ring shows it).
                             val d = avD
                             Box(Modifier.size(avD + 22.dp), Alignment.Center) {
                                 if (p == null) Box(Modifier.size(avD * 0.85f).clip(CircleShape).background(Color(0xFF24262F)).border(1.dp, Color(0x33FFFFFF), CircleShape), Alignment.Center) {
@@ -359,5 +362,23 @@ private fun ProfileGround(vm: AppViewModel, profiles: List<Profile>, selId: Stri
             }
         }
         if (addLine) Text("＋ Add profile", Modifier.padding(top = 6.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onAdd).padding(8.dp), fontSize = 12.sp, color = Muted)
+    }
+}
+
+
+/** The StreamX bar's "earth": a dark curved ground with a glowing edge (accent colours), used under the profile page. */
+@Composable
+fun PhoneHorizonGround(modifier: Modifier, edgeTop: Float = 0.12f) {
+    val a = Palette.accent; val a2 = Palette.accent2
+    Canvas(modifier) {
+        val w = size.width; val h = size.height
+        val yl = h * (edgeTop + 0.07f); val peak = h * (edgeTop - 0.06f).coerceAtLeast(0f); val yr = h * (edgeTop + 0.05f)
+        val surface = androidx.compose.ui.graphics.Path().apply { moveTo(0f, yl); quadraticBezierTo(w / 2, peak, w, yr); lineTo(w, h); lineTo(0f, h); close() }
+        drawPath(surface, Brush.verticalGradient(listOf(Color(0xFA120E18), Color(0xFF07080C)), startY = peak, endY = h))
+        val edge = androidx.compose.ui.graphics.Path().apply { moveTo(0f, yl); quadraticBezierTo(w / 2, peak, w, yr) }
+        val light = Brush.horizontalGradient(listOf(a2, a, a.copy(alpha = 0.35f), a.copy(alpha = 0.08f)))
+        drawPath(edge, light, style = androidx.compose.ui.graphics.drawscope.Stroke(16.dp.toPx()), alpha = 0.10f)
+        drawPath(edge, light, style = androidx.compose.ui.graphics.drawscope.Stroke(7.dp.toPx()), alpha = 0.22f)
+        drawPath(edge, light, style = androidx.compose.ui.graphics.drawscope.Stroke(2.2.dp.toPx()))
     }
 }

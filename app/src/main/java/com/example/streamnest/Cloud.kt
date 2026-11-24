@@ -39,7 +39,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** The Xstream Firebase project (public identifiers — the database rules are what protect the data). */
+/** The StreamX Firebase project (public identifiers — the database rules are what protect the data). */
 object CloudConfig {
     const val API_KEY = "AIzaSyCO9LSPvlSVMYBA0E9Z7M9yTg8Dg1zyUns"
     const val PROJECT_ID = "streamx-d976a"
@@ -47,15 +47,11 @@ object CloudConfig {
     const val WEB_CLIENT_ID = "51125528685-qfne7qo3qihoo3ke6hl1ehi50s6ot03h.apps.googleusercontent.com"
 }
 
-/**
- * Xstream's own shelf in the cloud: everything the developer publishes from Xstream (defaults, look, built-in add-ons,
- * source ranks, payments, logs) lives under xshared/, so it never reaches StreamX accounts (StreamX reads shared/).
- * Reading falls back to the old shared/ copy until something has been published under xshared/.
- */
+/** The cloud shelf the developer publishes to (Brand.SHARED_ROOT: StreamX shared/, Xstream xshared/). */
 object XNs {
-    const val ROOT = "xshared"
+    const val ROOT = Brand.SHARED_ROOT
     fun url(path: String, auth: String? = null) = "${CloudConfig.DB_URL}/$ROOT/$path.json" + (auth?.let { "?auth=$it" } ?: "")
-    /** Reads xshared/<path> (falls back to shared/<path>). Null when neither has it. */
+    /** Reads <ROOT>/<path> (falls back to shared/<path>). Null when neither has it. */
     suspend fun read(path: String, auth: String? = null): String? {
         val q = auth?.let { "?auth=$it" } ?: ""
         val own = runCatching { Api.get("${CloudConfig.DB_URL}/$ROOT/$path.json$q") }.getOrNull()
@@ -91,7 +87,7 @@ object Cloud {
     val user = MutableStateFlow<CloudUser?>(null)
     /** Short status line for the account page ("Synced 10:42", "Offline — will retry"…). */
     val status = MutableStateFlow("")
-    /** Xstream: true right after a sign-in until the account's first copy has arrived (or failed). "Who's watching?" waits. */
+    /** StreamX: true right after a sign-in until the account's first copy has arrived (or failed). "Who's watching?" waits. */
     val restoring = MutableStateFlow(false)
     /** Profiles found in the account on the last restore (-1 = not known yet). */
     val restoredProfiles = MutableStateFlow(-1)
@@ -123,16 +119,7 @@ object Cloud {
     private val http: OkHttpClient get() = Api.http
     private val sse: OkHttpClient by lazy { Api.http.newBuilder().readTimeout(0, TimeUnit.MILLISECONDS).build() }
 
-    /** 0.8.9: for "is there internet?" — the live link waits quietly for it instead of retrying every minute. */
-    @Volatile private var appCtx: Context? = null
-    private fun online(): Boolean = runCatching {
-        val cm = appCtx?.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return@runCatching true
-        val c = cm.getNetworkCapabilities(cm.activeNetwork ?: return@runCatching false) ?: return@runCatching false
-        c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) && c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-    }.getOrDefault(true)
-
     fun init(ctx: Context) {
-        appCtx = ctx.applicationContext
         if (started) return
         started = true
         prefs = ctx.getSharedPreferences("cloud", Context.MODE_PRIVATE)
@@ -242,6 +229,37 @@ object Cloud {
         if (email.isBlank() || password.isEmpty()) throw CloudError("Enter your email and password.")
         val o = idt("signInWithPassword", buildJsonObject { put("email", email.trim()); put("password", password); put("returnSecureToken", true) })
         onSignedIn(o, google = false)
+    }
+
+    // ── TV link (TV 0.8.6) ──
+    /** TV: a short-lived account only used to show a link code and receive the phone's approval. (uid, idToken) */
+    suspend fun linkAccount(): Pair<String, String> {
+        val r = java.security.SecureRandom()
+        val id = (1..20).map { "abcdefghijklmnopqrstuvwxyz0123456789"[r.nextInt(36)] }.joinToString("")
+        val o = idt("signUp", buildJsonObject { put("email", "tv-$id@link.streamx.tv"); put("password", id + "Zx9!"); put("returnSecureToken", true) })
+        return (s(o, "localId") ?: throw CloudError("Sign-in failed")) to (s(o, "idToken") ?: throw CloudError("Sign-in failed"))
+    }
+    suspend fun dropLinkAccount(idTok: String) { runCatching { idt("delete", buildJsonObject { put("idToken", idTok) }) } }
+    /** Phone: this device's sign-in, handed to a TV you approve. */
+    fun handoverToken(): String? = refreshToken
+    /** TV: signs in with the sign-in a phone handed over. */
+    suspend fun signInWithHandover(rt: String) {
+        val o = withContext(Dispatchers.IO) {
+            val req = Request.Builder().url("https://securetoken.googleapis.com/v1/token?key=${CloudConfig.API_KEY}")
+                .post(FormBody.Builder().add("grant_type", "refresh_token").add("refresh_token", rt).build()).build()
+            http.newCall(req).execute().use { r ->
+                val t = r.body?.string().orEmpty()
+                if (!r.isSuccessful) throw CloudError("The phone's sign-in didn't work — try again")
+                Api.json.parseToJsonElement(t).jsonObject
+            }
+        }
+        val idTok = s(o, "id_token") ?: throw CloudError("Sign-in failed")
+        val look = runCatching { idt("lookup", buildJsonObject { put("idToken", idTok) })["users"]!!.jsonArray[0].jsonObject }.getOrNull()
+        val google = look?.get("providerUserInfo")?.let { it.toString().contains("google.com") } == true
+        onSignedIn(buildJsonObject {
+            put("localId", s(o, "user_id") ?: ""); put("idToken", idTok); put("refreshToken", s(o, "refresh_token") ?: rt)
+            put("expiresIn", s(o, "expires_in") ?: "3600"); put("email", look?.let { s(it, "email") } ?: "")
+        }, google = google)
     }
 
     /** [googleIdToken] from Credential Manager (phone). */
@@ -395,7 +413,8 @@ object Cloud {
         // phone's, and then the phone ignored the TV's Continue Watching as "older").
         if (!waitingForCloud) setLocalAt(path, if (BuildConfig.IS_TV) maxOf(System.currentTimeMillis(), localAt(path) + 1) else System.currentTimeMillis())
         synchronized(dirtyLock) { dirty.add(path) }
-        schedulePush(if (path.endsWith("/prog")) 5000 else 1500)
+        // TV 0.8.5: your place goes to the cloud at once (other devices see it within a second or two).
+        schedulePush(if (path.endsWith("/prog")) (if (BuildConfig.IS_TV) 600 else 5000) else 1500)
     }
 
     /** A profile was deleted here: remove it from the cloud too. */
@@ -408,6 +427,31 @@ object Cloud {
             val body = buildJsonObject { put("p/$pid", JsonNull); put("app/avatar_$pid", JsonNull) }
             runCatching { patch(u.uid, t, body) }
         }
+    }
+
+    /** TV 0.8.5: what each profile is playing right now on another device (profile id → title key, when heard). */
+    val live = MutableStateFlow<Map<String, Pair<String, Long>>>(emptyMap())
+
+    /** Tells the account's other devices what this profile is playing now (null = stopped). */
+    fun nowPlaying(pid: String?, key: String?) {
+        if (!started || pid == null) return
+        scope.launch {
+            val u = user.value ?: return@launch
+            if (!canSync) return@launch
+            val t = token() ?: return@launch
+            val body = buildJsonObject {
+                if (key == null) put("live/$pid", JsonNull)
+                else put("live/$pid", buildJsonObject { put("k", key); put("at", System.currentTimeMillis()); put("dev", DEVICE_FIELD) })
+            }
+            runCatching { patch(u.uid, t, body) }
+        }
+    }
+
+    private fun liveNode(pid: String, el: JsonElement?) {
+        val o = el as? JsonObject
+        val k = (o?.get("k") as? JsonPrimitive)?.contentOrNull
+        val dev = (o?.get("dev") as? JsonPrimitive)?.contentOrNull
+        live.value = if (o == null || k == null) live.value - pid else if (dev == DEVICE_FIELD) live.value else live.value + (pid to (k to System.currentTimeMillis()))
     }
 
     private fun schedulePush(delayMs: Long) {
@@ -495,15 +539,7 @@ object Cloud {
                     tokenLock.withLock { idExp = 0L }
                     delay(30_000)
                 }
-                else -> {
-                    status.value = "Offline — will retry"
-                    if (!online()) {
-                        ActLog.add("SYNC", "offline — waiting for the internet")
-                        var w = 0; while (!online() && w < 720) { delay(5_000); w++ }
-                        backoff = 2000L; continue
-                    }
-                    ActLog.add("SYNC", "link $result · retry in ${backoff / 1000}s"); delay(backoff); backoff = (backoff * 2).coerceAtMost(60_000L)
-                }
+                else -> { status.value = "Offline — will retry"; ActLog.add("SYNC", "link $result · retry in ${backoff / 1000}s"); delay(backoff); backoff = (backoff * 2).coerceAtMost(60_000L) }
             }
         }
     }
@@ -528,6 +564,7 @@ object Cloud {
         val h = host ?: return
         val app = root?.get("app") as? JsonObject
         val prof = root?.get("p") as? JsonObject
+        runCatching { live.value = emptyMap(); (root?.get("live") as? JsonObject)?.forEach { (k, v) -> liveNode(k, v) } }
         // App fields first (the profile list decides which profiles exist).
         val localIds = withContext(Dispatchers.Main) { h.cloudProfileIds() }
         val appFields = LinkedHashSet<String>()
@@ -572,6 +609,9 @@ object Cloud {
 
     private suspend fun visit(seg: List<String>, el: JsonElement) {
         when {
+            seg.size == 2 && seg[0] == "live" -> liveNode(seg[1], el)
+            seg.size == 1 && seg[0] == "live" -> { if (el is JsonObject) el.forEach { (k, v) -> liveNode(k, v) } else live.value = emptyMap() }
+            seg.isNotEmpty() && seg[0] == "live" -> Unit
             seg.size == 2 && seg[0] == "app" -> fieldNode("app", null, seg[1], el)
             seg.size == 3 && seg[0] == "p" -> fieldNode("p", seg[1], seg[2], el)
             seg.size == 2 && seg[0] == "p" && el is JsonNull -> Unit // a profile node removed; the profile list handles it

@@ -39,7 +39,7 @@ fun SourceTestHub(vm: AppViewModel, onBack: () -> Unit) {
     }
 }
 
-/** Settings › Plugins: JavaScript (Xstream format), CloudStream and Nuvio. */
+/** Settings › Plugins: JavaScript (StreamX format), CloudStream and Nuvio. */
 @Composable
 fun XPluginsPage(vm: AppViewModel, onBack: () -> Unit) {
     var tab by remember { mutableIntStateOf(1) }

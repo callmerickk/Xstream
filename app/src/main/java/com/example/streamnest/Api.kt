@@ -52,9 +52,9 @@ object Api {
             .addInterceptor(TmdbAuth)
             .addInterceptor(Vpn.SmartRetry)
             .addInterceptor(ActLog.Net)
-        // 0.8.15: a private DNS is never swapped for the phone's own one (the internet provider's, which blocks some
-        // servers like MovieBox's aoneroom.com) — Cloudflare → Google → Quad9 → AdGuard instead, like CloudStream.
-        b.dns(CachedDns(if (dohFor(provider) != null) ChainDns(provider) else Dns.SYSTEM))
+        // TV 0.9.1 (from Xstream 0.8.15): on the TV a private DNS is never swapped for the box's own one (the internet
+        // provider's, which blocks servers like MovieBox's aoneroom.com) — Cloudflare → Google → Quad9 → AdGuard instead.
+        b.dns(CachedDns(if (BuildConfig.IS_TV && dohFor(provider) != null) ChainDns(provider) else dohFor(provider)?.let { FallbackDns(it) } ?: Dns.SYSTEM))
         return b.build()
     }
 
@@ -106,15 +106,18 @@ object Api {
         }
     }
 
+    /** If the chosen DNS can't answer, fall back to the normal one instead of failing. */
     /**
-     * 0.8.15: the chosen private DNS first, then the other private ones; the phone's own DNS only for home-network
-     * names (10.x / .local) or when no private one can be reached at all (no internet → the error is the same).
+     * TV 0.9.1: the chosen private DNS first, then the other private ones; the box's own DNS only for home-network names.
+     * A name no DNS knows is remembered 10 min (asked 20+ times, 1.5 s each, before).
      */
     private class ChainDns(first: String) : Dns {
         private val order = (listOf(first) + listOf("cloudflare", "google", "quad9", "adguard")).distinct().mapNotNull { n -> dohFor(n)?.let { n to it } }
-        /** 0.8.16: a name no DNS knows (a site that moved, like vegamovies.mq) is remembered 10 min — it was asked 20+ times, 1.5 s each. */
         private val gone = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        /** TV 0.9.3: the DNS that answered last is asked first (Cloudflare often fails on Fire TV sticks; Google answers). */
+        @Volatile private var lead: String? = null
         override fun lookup(hostname: String): List<InetAddress> {
+            val order = lead?.let { l -> order.sortedBy { if (it.first == l) 0 else 1 } } ?: order
             gone[hostname]?.let { if (System.currentTimeMillis() - it < 600_000) throw java.net.UnknownHostException("$hostname: not found (remembered)") }
             if (hostname.endsWith(".local") || hostname == "localhost" || hostname.matches(Regex("[0-9.]+"))) return Dns.SYSTEM.lookup(hostname)
             val tried = ArrayList<String>()
@@ -123,6 +126,7 @@ object Api {
                     val r = dns.lookup(hostname)
                     if (r.isNotEmpty()) {
                         dohOk.incrementAndGet()
+                        if (tried.isNotEmpty() && lead != name) { lead = name; ActLog.add("NET", "DNS: $name answers here — asked first from now on") }
                         if (tried.isNotEmpty()) ActLog.add("NET", "DNS: $hostname found by $name (${tried.joinToString()} didn't answer)")
                         return r
                     }
@@ -130,14 +134,12 @@ object Api {
                 } catch (e: Exception) { tried += "$name: ${e.javaClass.simpleName}" }
             }
             dohFallbacks.incrementAndGet()
-            // Only when the DNS servers answered "no such name" (not when the internet was off).
             if (tried.all { it.endsWith("UnknownHostException") || it.endsWith("no address") }) gone[hostname] = System.currentTimeMillis()
             ActLog.add("NET", "DNS: $hostname not found — ${tried.joinToString()}")
             throw java.net.UnknownHostException("$hostname: no private DNS answered (${tried.joinToString()})")
         }
     }
 
-    /** If the chosen DNS can't answer, fall back to the normal one instead of failing. */
     private class FallbackDns(val primary: Dns) : Dns {
         override fun lookup(hostname: String): List<InetAddress> =
             try { primary.lookup(hostname).also { dohOk.incrementAndGet() } } catch (e: Exception) { dohFallbacks.incrementAndGet(); Dns.SYSTEM.lookup(hostname) }
@@ -230,8 +232,9 @@ object Api {
 }
 
 
-/** 0.8.12: a reply over 16 MB is refused (read into memory it can need 10× that and crash the app). */
+/** TV 0.9.1 (from Xstream 0.8.12): on the TV a reply over 16 MB is refused (read into memory it can need 10× that). */
 fun okhttp3.ResponseBody.cappedString(): String {
+    if (!BuildConfig.IS_TV) return string()
     val max = 16L * 1024 * 1024
     if (contentLength() > max) throw java.io.IOException("reply too big (${contentLength() / 1048576} MB)")
     val src = source()

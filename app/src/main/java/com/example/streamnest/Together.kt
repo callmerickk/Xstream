@@ -72,14 +72,14 @@ data class RoomState(
     @Transient val receivedAt: Long = 0,
 )
 
-/** Someone in the room: [seen] in server time; [mic]/[cam] on; [rtc] = their Xstream can do voice/video. */
+/** Someone in the room: [seen] in server time; [mic]/[cam] on; [rtc] = their StreamX can do voice/video. */
 /** [by]: who brought this person into the room (their inviter), used to show "+N" on that person for the others. */
 @Serializable data class RoomMember(val name: String = "", val seen: Long = 0, val mic: Boolean = false, val cam: Boolean = false, val rtc: Boolean = false, val by: String = "")
 @Serializable data class RoomReact(val k: String = "", val by: String = "", val at: Long = 0)
 @Serializable data class ChatMsg(val by: String = "", val name: String = "", val text: String = "", val at: Long = 0)
 
 /**
- * Watch together: a room (4-letter code) in the Xstream cloud, followed live (a streaming connection, ~0.2 s).
+ * Watch together: a room (4-letter code) in the StreamX cloud, followed live (a streaming connection, ~0.2 s).
  * Play, pause and seeking by anyone happen for everyone; the host's player is the clock (its position goes out every
  * 2 s, stamped with the server's time). Pause stops everyone on the same frame; small gaps are closed by playing a
  * little faster / slower; someone buffering makes everyone wait. Voice / video signalling (Call) goes through the room.
@@ -128,28 +128,6 @@ object Together {
     private var bestAt = 0L
 
     val me: String get() = Cloud.user.value?.uid ?: ""
-
-    // 0.8.17: the host's room is remembered for 2 minutes, so an app restart (crash, Android closing it) rejoins it.
-    @Volatile var appCtx: android.content.Context? = null
-    private fun roomPrefs() = appCtx?.getSharedPreferences("together", android.content.Context.MODE_PRIVATE)
-    fun saveRoom(c: String?) { runCatching { roomPrefs()?.edit()?.apply { if (c == null) clear() else putString("code", c).putLong("at", System.currentTimeMillis()) }?.apply() } }
-    /** At app start: back into your own room if you were its host less than 2 minutes ago. */
-    fun resumeIfRecent(ctx: android.content.Context) {
-        appCtx = ctx.applicationContext
-        val p = roomPrefs() ?: return
-        val c = p.getString("code", null) ?: return
-        if (System.currentTimeMillis() - p.getLong("at", 0L) > 120_000) { saveRoom(null); return }
-        io.launch {
-            var w = 0; while (Cloud.user.value == null && w < 40) { delay(500); w++ }
-            val body = call("GET", "${base(c)}/state")
-            val st = body?.takeIf { it != "null" }?.let { runCatching { Api.json.decodeFromString<RoomState>(it) }.getOrNull() }
-            if (st == null || st.host != me || code.value != null) { saveRoom(null); return@launch }
-            isHost = true
-            start(c)
-            ActLog.add("TOGETHER", "back in your room $c after a restart")
-            withContext(Dispatchers.Main) { Snack.show("You're back in your watch party ($c) — open the video to carry on") }
-        }
-    }
     fun active() = code.value != null
     fun serverNow() = System.currentTimeMillis() + offset
 
@@ -210,7 +188,6 @@ object Together {
                     ?: return "Couldn't create the room. Check the Firebase rules (rooms) and your connection."
                 isHost = true
                 start(c)
-                ActLog.add("TOGETHER", "room created: $c")
                 return null
             }
         }
@@ -223,7 +200,7 @@ object Together {
         val c = c0.trim().uppercase()
         if (c.length != 4) return null to "Room codes have 4 letters."
         val body = call("GET", "${base(c)}/state") ?: return null to "Couldn't reach the room."
-        if (body == "null") return null to "This room has ended — ask your friend to start a new one."
+        if (body == "null") return null to "No room with code $c."
         val st = runCatching { Api.json.decodeFromString<RoomState>(body) }.getOrNull() ?: return null to "That room looks broken."
         isHost = st.host == me
         // You and whoever invited you (the link / ring sender, else the room's host) become watch friends.
@@ -233,7 +210,6 @@ object Together {
         // Learn the server clock before the video opens (so it starts at the right second).
         stamped("${base(c)}/members/$me", memberJson(), "seen")
         start(c)
-        ActLog.add("TOGETHER", "joined room $c${if (isHost) " (as its host, back again)" else ""}")
         return st.copy(receivedAt = System.currentTimeMillis()) to null
     }
 
@@ -252,7 +228,6 @@ object Together {
         if (o == null || o["end"] != null) {
             val who = o?.get("end")?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
             val msg = if (who.isNullOrBlank()) "The watch party ended" else "$who ended the watch party"
-            ActLog.add("TOGETHER", "room $c ended: ${if (o == null) "the room is gone" else "${who ?: "the host"} ended it"}")
             withContext(Dispatchers.Main) { Snack.show(msg) }
             if (!isHost) ended.tryEmit(msg)
             leave(); return
@@ -265,9 +240,6 @@ object Together {
         }
         val m = (o["members"] as? JsonObject)?.mapValues { (_, v) -> runCatching { Api.json.decodeFromJsonElement(RoomMember.serializer(), v) }.getOrDefault(RoomMember()) } ?: emptyMap()
         if (m != members.value) {
-            val before = members.value
-            (m.keys - before.keys).filter { it != me }.forEach { u -> ActLog.add("TOGETHER", "room $c: ${m[u]?.name?.ifBlank { null } ?: "a friend"} joined") }
-            (before.keys - m.keys).filter { it != me }.forEach { u -> ActLog.add("TOGETHER", "room $c: ${before[u]?.name?.ifBlank { null } ?: "a friend"} left") }
             members.value = m
             // People who came in through you become your watch friends (both ways).
             m.forEach { (uid, mm) -> if (uid != me && mm.by == me) Social.befriend(uid, mm.name) }
@@ -340,7 +312,6 @@ object Together {
         beat = io.launch {
             while (isActive) {
                 stamped("${base(c)}/members/$me", memberJson(), "seen")
-                if (isHost) saveRoom(c)
                 // Someone else buffering for over 1.5 s (and still here): everyone waits for them.
                 repeat(20) {
                     val now = serverNow()
@@ -349,14 +320,11 @@ object Together {
                     waitingFor.value = w?.let { here[it.key]?.name?.ifBlank { "a friend" } }
                     // The room's creator went silent for 45 s (phone off, app closed, no internet): the room is over.
                     val host = remote.value?.host
-                    // 0.8.17: the host gets 2 minutes to come back (an app restart, a phone call) before the room ends.
                     if (!isHost && host != null && joinedAt > 0 && System.currentTimeMillis() - joinedAt > 50_000) {
                         val hm = here[host]
-                        val n = hm?.name?.ifBlank { null } ?: "The host"
-                        if (hm != null && now - hm.seen in 20_000..120_000 && waitingFor.value == null) waitingFor.value = "$n (reconnecting)"
-                        if (hm == null || now - hm.seen > 120_000) {
+                        if (hm == null || now - hm.seen > 45_000) {
+                            val n = hm?.name?.ifBlank { null } ?: "The host"
                             withContext(Dispatchers.Main) { Snack.show("$n left — the watch party ended") }
-                            ActLog.add("TOGETHER", "room $c ended: the host was gone for 2 minutes")
                             ended.tryEmit("$n left"); leave(); return@launch
                         }
                     }
@@ -452,8 +420,6 @@ object Together {
     fun leave() {
         val c = code.value
         val host = isHost
-        if (c != null) ActLog.add("TOGETHER", if (host) "room $c ended by you" else "left room $c")
-        saveRoom(null)
         leaveQuietly()
         Call.stop()
         code.value = null; remote.value = null; members.value = emptyMap(); buf.value = emptyMap(); isHost = false; chat.value = emptyList(); unread.value = 0
@@ -576,7 +542,7 @@ private fun ChatSection() {
     var text by remember { mutableStateOf("") }
     var pop by remember { mutableStateOf(ctx.getSharedPreferences("call", android.content.Context.MODE_PRIVATE).getBoolean("chatPop", true)) }
     DisposableEffect(Unit) { Together.chatOpen = true; Together.unread.value = 0; onDispose { Together.chatOpen = false } }
-    Column(Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF15161C)).verticalScroll(rememberScrollState(Int.MAX_VALUE)).padding(10.dp),
+    Column(Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(14.dp)).background(glassy(Color(0xFF15161C))).verticalScroll(rememberScrollState(Int.MAX_VALUE)).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (msgs.isEmpty()) Text("No messages yet. Say hi 👋", fontSize = 12.5.sp, color = Color(0xFF9AA3B5))
         // Only messages from people you approved (and who approved you) show.
@@ -621,27 +587,33 @@ private fun TogetherRoomControls(c: String, mem: Map<String, RoomMember>) {
     fun granted(p: String) = androidx.core.content.ContextCompat.checkSelfPermission(ctx, p) == android.content.pm.PackageManager.PERMISSION_GRANTED
     val ask = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { ok ->
         val what = askFor; askFor = null
+        ActLog.add("ROOM", "call · ${if (what == "mic") "microphone" else "camera"} permission ${if (ok) "allowed" else "refused"}")
         if (ok) { if (what == "mic") Call.setMic(true) else if (what == "cam") Call.setCam(true) }
         else {
-            Snack.show("Allow it in Xstream's settings page to use it")
+            // 0.9.76: say exactly what to do, then open StreamX's settings page.
+            Snack.show("${if (what == "mic") "Microphone" else "Camera"} is off for ${Brand.NAME} — in the page that opens tap Permissions › ${if (what == "mic") "Microphone" else "Camera"} › \"Allow only while using the app\"", millis = 6000)
             runCatching { ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${ctx.packageName}")).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
         }
     }
     fun want(kind: String, on: Boolean) {
         val perm = if (kind == "mic") android.Manifest.permission.RECORD_AUDIO else android.Manifest.permission.CAMERA
-        if (on && !granted(perm)) { askFor = kind; ask.launch(perm); return }
+        if (on && !granted(perm)) {
+            // 0.9.76: "Only this time" closes the app when Android takes the permission back — ask for "While using the app".
+            Snack.show("Choose \"While using the app\" — \"Only this time\" closes ${Brand.NAME} later", millis = 4500)
+            askFor = kind; ask.launch(perm); return
+        }
         if (kind == "mic") Call.setMic(on) else Call.setCam(on)
     }
     LaunchedEffect(Unit) { Call.init(ctx) }
     val grey = Color(0xFF9AA3B5)
 
     // Room code + sync state
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF191A20)).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(glassy(Color(0xFF191A20))).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Column {
             Text("Room code", fontSize = 11.sp, color = grey)
             Text(c, fontSize = 26.sp, fontWeight = FontWeight.Bold, letterSpacing = 5.sp)
         }
-        Text("Copy", Modifier.padding(start = 10.dp).clip(RoundedCornerShape(50)).background(Color(0xFF23242B)).clickable {
+        Text("Copy", Modifier.padding(start = 10.dp).clip(RoundedCornerShape(50)).background(glassy(Color(0xFF23242B))).clickable {
             runCatching { (ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("Room code", c)) }
             Snack.show("Room code copied")
         }.padding(horizontal = 11.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -649,6 +621,15 @@ private fun TogetherRoomControls(c: String, mem: Map<String, RoomMember>) {
         val (dot, label) = when { waiting != null -> Color(0xFFFFB547) to "Waiting for $waiting"; live -> Color(0xFF3CCF7A) to "In sync"; else -> Color(0xFFFFB547) to "Connecting…" }
         Box(Modifier.size(7.dp).clip(CircleShape).background(dot))
         Text(label, Modifier.padding(start = 5.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = dot, maxLines = 1)
+    }
+    // 0.9.76: the voice / video call's own state, and why the camera couldn't start.
+    val callState by Call.status.collectAsState()
+    val camErr by Call.camError.collectAsState()
+    val callLine = camErr?.let { "Camera couldn't start — $it" } ?: callState.takeIf { it.isNotEmpty() && (mic || cam || mem.size > 1) }
+    if (callLine != null) {
+        val good = camErr == null && callState == "Connected"
+        Text(callLine, Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(10.dp)).background(glassy(Color(0xFF191A20))).padding(horizontal = 12.dp, vertical = 8.dp),
+            fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = if (good) Color(0xFF3CCF7A) else Color(0xFFFFB547))
     }
 
     // Who's watching
@@ -663,7 +644,7 @@ private fun TogetherRoomControls(c: String, mem: Map<String, RoomMember>) {
     Text("Watching now · ${everyone.size}", Modifier.padding(top = 14.dp, bottom = 6.dp), fontSize = 12.sp, color = grey, fontWeight = FontWeight.SemiBold)
     namesFor?.let { k -> hiddenBy[k]?.let { l ->
         Text("Also here with ${here[k]?.name?.ifBlank { "your friend" } ?: "your friend"}: " + l.joinToString(", ") { it.value.name.ifBlank { "Guest" } },
-            Modifier.fillMaxWidth().padding(bottom = 6.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF191A20)).clickable { namesFor = null }.padding(10.dp), fontSize = 12.sp, color = grey)
+            Modifier.fillMaxWidth().padding(bottom = 6.dp).clip(RoundedCornerShape(10.dp)).background(glassy(Color(0xFF191A20))).clickable { namesFor = null }.padding(10.dp), fontSize = 12.sp, color = grey)
     } }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         here.entries.sortedBy { if (it.key == Together.me) 0 else 1 }.forEach { (uid, m) ->
@@ -704,7 +685,7 @@ private fun TogetherRoomControls(c: String, mem: Map<String, RoomMember>) {
         else androidx.compose.material3.Switch(on, set,
             colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = Color(0xFFE50914), checkedThumbColor = Color.White))
     }
-    @Composable fun chip(t: String, act: () -> Unit) = Text(t, Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF23242B)).border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(50))
+    @Composable fun chip(t: String, act: () -> Unit) = Text(t, Modifier.clip(RoundedCornerShape(50)).background(glassy(Color(0xFF23242B))).border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(50))
         .clickable { act() }.padding(horizontal = 11.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
 
     section("Chat")
@@ -807,9 +788,8 @@ object JoinIntent {
         // streamx://join/CODE (old invites) or https://streamx-watch.pages.dev/join/CODE (WhatsApp links)
         val c = intent?.getStringExtra("joinCode") ?: intent?.data?.let { u ->
             when {
-                u.scheme == "streamx" || u.scheme == "xstream" -> u.lastPathSegment ?: u.host
-                u.host?.endsWith("streamx-watch.pages.dev") == true -> u.getQueryParameter("c") ?: u.pathSegments.getOrNull(1)
-                u.host?.endsWith("workers.dev") == true -> u.getQueryParameter("c") ?: u.pathSegments.getOrNull(1)
+                u.scheme == Brand.INVITE_SCHEME -> u.lastPathSegment ?: u.host
+                u.host?.endsWith(Brand.INVITE_HOST) == true -> u.getQueryParameter("c") ?: u.pathSegments.getOrNull(1)
                 else -> null
             }
         }
@@ -850,9 +830,9 @@ object Invites {
 
     /** The text shared by "Share / Invite" (also copied to the clipboard). */
     fun shareText(code: String, title: String): String =
-        "🎬 Watch \"$title\" with me on Xstream!\nhttps://streamx-home.callmerick093.workers.dev/xjoin/$code" + (Together.me.takeIf { it.isNotBlank() }?.let { "?by=$it" } ?: "") + "\nRoom code: $code"
+        "🎬 Watch \"$title\" with me on ${Brand.NAME}!\n${Brand.INVITE_URL}/$code" + (Together.me.takeIf { it.isNotBlank() }?.let { "?by=$it" } ?: "") + "\nRoom code: $code"
 
-    /** Rings a buddy: their Xstream shows "<you> started watching <title> — tap to join". */
+    /** Rings a buddy: their StreamX shows "<you> started watching <title> — tap to join". */
     suspend fun ring(b: Buddy, code: String, title: String): String? = withContext(Dispatchers.IO) {
         val t = Cloud.token() ?: return@withContext "Sign in first (Settings › Account & Cloud Sync)."
         val inv = Invite(Together.me, Together.myName.ifBlank { "A friend" }, title, code, System.currentTimeMillis())
@@ -929,10 +909,10 @@ fun TogetherInvite(code: String?, title: String, ensureRoom: suspend () -> Strin
                 // No room (not signed in / Firebase rule missing): still share an invite with the app link.
                 if (c == null) Snack.show("Couldn't open a room (sign in, and add the \"rooms\" rule in Firebase) — sharing the app link")
                 val text = if (c != null) Invites.shareText(c, title)
-                    else "🎬 Let's watch \"$title\" together on Xstream!\nGet Xstream: https://github.com/callmerickk/Xstream/releases/latest"
+                    else "🎬 Let's watch \"$title\" together on ${Brand.NAME}!\nGet ${Brand.NAME}: ${Brand.REPO_URL}/releases/latest"
                 runCatching {
                     val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    cm.setPrimaryClip(android.content.ClipData.newPlainText("Xstream invite", text))
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("${Brand.NAME} invite", text))
                 }
                 Snack.show("Invite copied — paste it in any chat")
                 runCatching {

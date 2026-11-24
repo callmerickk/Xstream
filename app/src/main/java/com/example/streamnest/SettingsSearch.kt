@@ -99,7 +99,7 @@ val SettingsIndex = listOf(
     SettingEntry("DNS provider", "Cloudflare, Google, Quad9, AdGuard.", listOf("network"), "dns doh network blocked"),
     SettingEntry("Licenses & Attribution", "Data sources and licenses.", listOf("about"), "license about"),
     SettingEntry("Update Log", "What's new and check for updates.", listOf("updates"), "changelog version update"),
-    SettingEntry("Startup animation", "Xstream logo animation when the app opens.", listOf("advanced"), "splash intro logo animation startup"),
+    SettingEntry("Startup animation", "${Brand.NAME} logo animation when the app opens.", listOf("advanced"), "splash intro logo animation startup"),
     SettingEntry("Auto-open last profile", "Countdown ring on \"Who's watching?\".", listOf("advanced"), "timer countdown profile auto select startup"),
     SettingEntry("Skip \"Who's watching?\"", "Open the last profile straight away.", listOf("advanced"), "remember last profile startup"),
     SettingEntry("Clear Continue Watching Cache", "Refresh watch progress.", listOf("advanced"), "cache"),

@@ -128,7 +128,7 @@ Answer ONLY with one JSON object of this shape (no other text):
 {"explain":"plain-language answer, short paragraphs","changes":[{"key":"…","value":"…","why":"…"}],"pluginsOn":["plugin name"],"pluginsOff":["plugin name"],"designs":[{"font":"…","weight":800,"spacing":4,"color":"#FFFFFF","accent":"#E50914","accentIndex":0,"upper":true,"italic":false,"note":"why this look"}]}
 Leave lists empty when they don't apply. Only these keys may be changed: ${AllowedKeys.joinToString()}.
 """.trim()
-    val system = "You are the developer's assistant inside Xstream, an Android streaming app (CloudStream plugins in Turbo mode, Stremio add-ons in Classic mode). Be precise and practical. $rules"
+    val system = "You are the developer's assistant inside ${Brand.NAME}, an Android streaming app (CloudStream plugins in Turbo mode, Stremio add-ons in Classic mode). Be precise and practical. $rules"
     val user = when (task) {
         AssistTask.Logs -> "Read this activity log from the app. Find what went wrong (slow starts, failures, crashes, freezes), explain the cause of each in plain words, and propose setting changes that would help.\n\nCurrent settings:\n${settingsSnapshot()}\n\nLog:\n${logExcerpt()}"
         AssistTask.AutoPlay -> "Tune auto-play (which plugins Quick Play / Upgrade to 4K use, languages, filters) so streams start fast and in good quality. Use the timings in the log. ${input.ifBlank { "" }}\n\nCurrent settings:\n${settingsSnapshot()}\n\nPlugin timings from the log:\n${logExcerpt(220).lines().filter { " PLUGIN " in it || " PLAY " in it }.takeLast(160).joinToString("\n")}"
@@ -204,7 +204,7 @@ fun DevAssistantPage(vm: AppViewModel, onBack: () -> Unit) {
                     scope.launch {
                         val (sys, user) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { vm.assistPrompt(task, input) }
                         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.setPrimaryClip(ClipData.newPlainText("Xstream prompt", "$sys\n\n$user"))
+                        cm.setPrimaryClip(ClipData.newPlainText("${Brand.NAME} prompt", "$sys\n\n$user"))
                         Snack.show("Prompt copied — paste it into any AI chat, then paste the answer below")
                     }
                 }) { Text("Copy prompt", color = Color.White) }

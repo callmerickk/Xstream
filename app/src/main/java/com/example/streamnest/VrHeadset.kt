@@ -390,7 +390,7 @@ private fun nextAudio(player: Player) {
 
 private fun browseItems(vm: AppViewModel): List<Pair<String, List<Meta>>> = listOf(
     "Continue watching" to vm.progress.value.take(5).map { it.toMeta() },
-    "Top 10" to (HomeShuffle.frozen["movie"].orEmpty() + HomeShuffle.frozen["series"].orEmpty()).take(5),
+    "Top picks" to vm.shelves.value.firstOrNull()?.items.orEmpty().take(5),  // StreamX: first Home row
     "Watchlist" to vm.myList.value.take(5),
 ).filter { it.second.isNotEmpty() }
 
@@ -706,4 +706,17 @@ void main() {
 }
 """
     }
+}
+
+
+/** 0.8.7: a VR headset (the old panorama picture read as "gallery"). */
+val VrHeadsetIcon: ImageVector by lazy {
+    ImageVector.Builder("VrHeadset", 24.dp, 24.dp, 24f, 24f).apply {
+        addPath(androidx.compose.ui.graphics.vector.PathParser().parsePathString(
+            "M2.5 8.5c0-1.4 1.1-2.5 2.5-2.5h14c1.4 0 2.5 1.1 2.5 2.5v6c0 1.4-1.1 2.5-2.5 2.5h-3.4l-2.1-2.6a1.9 1.9 0 0 0-3 0L8.4 17H5a2.5 2.5 0 0 1-2.5-2.5z").toNodes(),
+            fill = null, stroke = androidx.compose.ui.graphics.SolidColor(Color.White), strokeLineWidth = 1.9f,
+            strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round)
+        addPath(androidx.compose.ui.graphics.vector.PathParser().parsePathString("M7.5 9.9a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2z M16.5 9.9a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2z").toNodes(),
+            fill = null, stroke = androidx.compose.ui.graphics.SolidColor(Color.White), strokeLineWidth = 1.9f)
+    }.build()
 }

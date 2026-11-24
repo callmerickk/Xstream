@@ -37,7 +37,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 
 private val VMuted = Color(0xFF9AA3B5)
-private val VCard = Color(0xFF15161C)
+private val VCard: Color get() = glassy(Color(0xFF15161C))
 private val VGreen = Color(0xFF3DDC84)
 
 @Composable
@@ -53,7 +53,7 @@ private fun VLabel(t: String, new: Boolean = false) = Row(Modifier.padding(start
 @Composable
 private fun VDivider() = Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0x0DFFFFFF)))
 
-/** Settings › Network & DNS › VPN: on/off with the IP check, how Xstream uses it, your VPN accounts, countries. */
+/** Settings › Network & DNS › VPN: on/off with the IP check, how StreamX uses it, your VPN accounts, countries. */
 @Composable
 fun VpnSection() {
     val ctx = LocalContext.current
@@ -96,10 +96,10 @@ fun VpnSection() {
                     fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = when (st) { Vpn.St.ON -> VGreen; Vpn.St.ERROR -> Color(0xFFFF6B6B); else -> Color.White })
                 Text(when {
                     st == Vpn.St.ON && c != null -> listOfNotNull(c.ping.takeIf { it > 0 }?.let { "$it ms" }, c.mbps.takeIf { it > 0 }?.let { "${it.toInt()} Mbps" },
-                        if (mode == "smart") "only blocked sources" else "all of Xstream", if (c.src != "sx") "via ${c.src}" else null).joinToString(" · ")
+                        if (mode == "smart") "only blocked sources" else "all of ${Brand.NAME}", if (c.src != "sx") "via ${c.src}" else null).joinToString(" · ")
                     st == Vpn.St.ERROR || st == Vpn.St.CONNECTING -> msg
-                    other -> "Xstream goes through it. Android allows one VPN at a time."
-                    else -> "Xstream uses your normal internet"
+                    other -> "${Brand.NAME} goes through it. Android allows one VPN at a time."
+                    else -> "${Brand.NAME} uses your normal internet"
                 }, fontSize = 12.5.sp, color = VMuted)
             }
             Switch(st == Vpn.St.ON || st == Vpn.St.CONNECTING, { on -> if (on) turnOn() else scope.launch { Vpn.disconnect() } },
@@ -121,7 +121,7 @@ fun VpnSection() {
         }
     }
 
-    VLabel("How Xstream uses it")
+    VLabel("How ${Brand.NAME} uses it")
     VCardBox {
         @Composable fun opt(k: String, t: String, s: String) = Row(Modifier.fillMaxWidth().clickable { Vpn.setMode(k) }.padding(horizontal = 18.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) { Text(t, fontSize = 16.sp, fontWeight = FontWeight.Medium); Text(s, fontSize = 12.5.sp, color = VMuted) }
@@ -130,7 +130,7 @@ fun VpnSection() {
         opt("smart", "Smart (recommended)", "Only sources that don't work in India go through the VPN. Everything else stays direct and fast." +
             if (hosts.isNotEmpty()) " Now: ${hosts.size} source${if (hosts.size > 1) "s" else ""}." else "")
         VDivider()
-        opt("all", "Everything in Xstream", "Hides your IP from every source. A little slower to start.")
+        opt("all", "Everything in ${Brand.NAME}", "Hides your IP from every source. A little slower to start.")
         VDivider()
         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -145,7 +145,7 @@ fun VpnSection() {
     VLabel("Your VPN accounts")
     VCardBox {
         val accts = remember(servers) { Vpn.ownAccounts() }
-        if (accts.isEmpty()) Text("Use a VPN you already have (Proton VPN, Mullvad…). Sign in once on its own website, inside Xstream.",
+        if (accts.isEmpty()) Text("Use a VPN you already have (Proton VPN, Mullvad…). Sign in once on its own website, inside ${Brand.NAME}.",
             Modifier.padding(horizontal = 18.dp, vertical = 14.dp), fontSize = 13.sp, color = VMuted)
         accts.forEachIndexed { i, (src, n) ->
             if (i > 0) VDivider()
@@ -156,11 +156,11 @@ fun VpnSection() {
                     Text(src, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     Text("$n countr${if (n == 1) "y" else "ies"} · connects without signing in again", fontSize = 12.5.sp, color = VMuted)
                 }
-                Text("Remove", Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF23242B)).clickable { Vpn.removeAccount(src) }.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("Remove", Modifier.clip(RoundedCornerShape(50)).background(glassy(Color(0xFF23242B))).clickable { Vpn.removeAccount(src) }.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
         }
         VDivider()
-        Text("＋ Connect a VPN", Modifier.padding(horizontal = 18.dp, vertical = 12.dp).clip(RoundedCornerShape(50)).background(Color(0xFF23242B))
+        Text("＋ Connect a VPN", Modifier.padding(horizontal = 18.dp, vertical = 12.dp).clip(RoundedCornerShape(50)).background(glassy(Color(0xFF23242B)))
             .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(50)).clickable { sheet = true }.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
     }
 
@@ -172,7 +172,7 @@ fun VpnSection() {
             Column(Modifier.weight(1f)) { Text("Auto — fastest", fontSize = 16.sp, fontWeight = FontWeight.Medium); Text(best?.let { "Now: ${it.name}" } ?: "Test speed to find the fastest", fontSize = 12.5.sp, color = VMuted) }
             RadioButton(auto, { Vpn.setAuto() })
         }
-        if (servers.isEmpty()) { VDivider(); Text("No countries yet. Connect your VPN account above (Xstream's own servers appear here once they're added).", Modifier.padding(horizontal = 18.dp, vertical = 14.dp), fontSize = 13.sp, color = VMuted) }
+        if (servers.isEmpty()) { VDivider(); Text("No countries yet. Connect your VPN account above (${Brand.NAME}'s own servers appear here once they're added).", Modifier.padding(horizontal = 18.dp, vertical = 14.dp), fontSize = 13.sp, color = VMuted) }
         servers.groupBy { it.src }.toList().sortedBy { if (it.first == "sx") 0 else 1 }.forEach { (src, list) ->
             VDivider()
             Text(if (src == "sx") "XSTREAM" else "${src.uppercase()} · YOUR ACCOUNT", Modifier.padding(start = 18.dp, top = 10.dp, bottom = 2.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = VMuted)
@@ -201,13 +201,13 @@ fun VpnSection() {
         }
         VDivider()
         Row(Modifier.padding(horizontal = 18.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (testing) "Testing…" else "↻ Test speed", Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF23242B)).clickable(enabled = !testing && servers.isNotEmpty()) {
+            Text(if (testing) "Testing…" else "↻ Test speed", Modifier.clip(RoundedCornerShape(50)).background(glassy(Color(0xFF23242B))).clickable(enabled = !testing && servers.isNotEmpty()) {
                 val i = android.net.VpnService.prepare(ctx)
                 if (i != null) permit.launch(i) else scope.launch { Vpn.testAll() }
             }.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
     }
-    Text("Only Xstream uses the VPN; your other apps keep your normal internet. Android shows a 🔑 key in the status bar while it's on.",
+    Text("Only ${Brand.NAME} uses the VPN; your other apps keep your normal internet. Android shows a 🔑 key in the status bar while it's on.",
         Modifier.padding(horizontal = 24.dp, vertical = 10.dp), fontSize = 12.5.sp, color = VMuted)
 
     if (sheet) ConnectVpnSheet { sheet = false }
@@ -235,7 +235,7 @@ private fun ConnectVpnSheet(onDone: () -> Unit) {
     Dialog(onDismissRequest = onDone, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.fillMaxWidth(0.94f).heightIn(max = 640.dp).clip(RoundedCornerShape(24.dp)).background(VCard).verticalScroll(rememberScrollState()).padding(vertical = 16.dp)) {
             Text("Connect a VPN", Modifier.padding(horizontal = 18.dp), fontSize = 19.sp, fontWeight = FontWeight.Bold)
-            Text("Sign in once on your VPN's own website, right here in Xstream. Xstream never sees your password; it only keeps the connection files the site gives you (on this phone only).",
+            Text("Sign in once on your VPN's own website, right here in ${Brand.NAME}. ${Brand.NAME} never sees your password; it only keeps the connection files the site gives you (on this phone only).",
                 Modifier.padding(horizontal = 18.dp, vertical = 6.dp), fontSize = 12.5.sp, color = VMuted)
             VpnProviders.forEach { p ->
                 val off = p.tag == "no"
@@ -246,14 +246,14 @@ private fun ConnectVpnSheet(onDone: () -> Unit) {
                         Text(p.note, fontSize = 12.sp, color = VMuted)
                     }
                     if (p.tag == "free") Text("FREE", Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0x263DDC84)).padding(horizontal = 7.dp, vertical = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = VGreen)
-                    if (p.tag == "paid") Text("PAID", Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF23242B)).padding(horizontal = 7.dp, vertical = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFCFD3DC))
+                    if (p.tag == "paid") Text("PAID", Modifier.clip(RoundedCornerShape(6.dp)).background(glassy(Color(0xFF23242B))).padding(horizontal = 7.dp, vertical = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFCFD3DC))
                 }
             }
             Text("Other WireGuard VPN", Modifier.padding(start = 18.dp, top = 10.dp, bottom = 4.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = VMuted)
             Row(Modifier.padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                @Composable fun chip(t: String, a: () -> Unit) = Text(t, Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF23242B)).clickable { a() }.padding(horizontal = 12.dp, vertical = 7.dp), fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                @Composable fun chip(t: String, a: () -> Unit) = Text(t, Modifier.clip(RoundedCornerShape(50)).background(glassy(Color(0xFF23242B))).clickable { a() }.padding(horizontal = 12.dp, vertical = 7.dp), fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                 chip("File") { file.launch(arrayOf("*/*")) }
-                chip("QR code") { qr.launch(com.journeyapps.barcodescanner.ScanOptions().setPrompt("Scan a WireGuard QR code").setBeepEnabled(false).setOrientationLocked(false)) }
+                chip("QR code") { qr.launch(com.journeyapps.barcodescanner.ScanOptions().setPrompt("Scan a WireGuard QR code").setBeepEnabled(false).setOrientationLocked(true).setCaptureActivity(PortraitScanActivity::class.java)) }
                 chip("Paste") { paste = true }
             }
             Text("Close", Modifier.align(Alignment.End).padding(end = 12.dp, top = 8.dp).clip(RoundedCornerShape(10.dp)).clickable { onDone() }.padding(10.dp), fontWeight = FontWeight.Bold)
@@ -285,7 +285,7 @@ private fun readConfs(bytes: ByteArray, name: String): List<Pair<String, String>
     return if ("[Interface]" in t && "PrivateKey" in t) listOf(name to t) else emptyList()
 }
 
-/** The VPN's own website inside Xstream. Downloads (WireGuard files) are caught; nothing typed on the page is read. */
+/** The VPN's own website inside StreamX. Downloads (WireGuard files) are caught; nothing typed on the page is read. */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun VpnSiteDialog(p: VpnProvider, onClose: () -> Unit, onFiles: (List<Pair<String, String>>) -> Unit) {
@@ -305,7 +305,7 @@ private fun VpnSiteDialog(p: VpnProvider, onClose: () -> Unit, onFiles: (List<Pa
                 Text("✕", Modifier.clip(CircleShape).clickable { onClose() }.padding(10.dp), fontSize = 16.sp)
                 Text("🔒 " + (runCatching { android.net.Uri.parse(url).host }.getOrNull() ?: url), Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1B1C23))
                     .padding(horizontal = 10.dp, vertical = 8.dp), fontSize = 13.sp, color = Color(0xFFCFD3DC), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (got > 0) "Done ($got)" else "Done", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(50)).background(if (got > 0) Color(0xFFE50914) else Color(0xFF23242B))
+                Text(if (got > 0) "Done ($got)" else "Done", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(50)).background(if (got > 0) Color(0xFFE50914) else glassy(Color(0xFF23242B)))
                     .clickable { if (got > 0) onFiles(collected.toList()) else onClose() }.padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
             AndroidView(factory = { c ->
@@ -349,10 +349,10 @@ private fun VpnSiteDialog(p: VpnProvider, onClose: () -> Unit, onFiles: (List<Pa
             }, modifier = Modifier.weight(1f).fillMaxWidth(), onRelease = { it.destroy() })
             val ctx = androidx.compose.ui.platform.LocalContext.current
             Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("🛡 Sign in as usual. When the site offers a WireGuard file, download it; Xstream takes it. Xstream can't read what you type here.",
+                Text("🛡 Sign in as usual. When the site offers a WireGuard file, download it; ${Brand.NAME} takes it. ${Brand.NAME} can't read what you type here.",
                     Modifier.weight(1f), fontSize = 12.sp, color = VMuted)
                 // Still blank? Sign in in the phone's browser, download the file there, then use "Add a file".
-                Text("Open in browser", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(50)).background(Color(0xFF23242B))
+                Text("Open in browser", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(50)).background(glassy(Color(0xFF23242B)))
                     .clickable { runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(p.url))) } }
                     .padding(horizontal = 12.dp, vertical = 8.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }

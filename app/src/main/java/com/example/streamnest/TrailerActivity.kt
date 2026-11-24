@@ -80,7 +80,7 @@ import kotlinx.coroutines.delay
  *
  * Why an Activity: a WebView playing video inside Compose (AndroidView) under clips / graphicsLayer transforms /
  * alpha (or inside a pager) often draws a black picture while the sound plays. Here the WebView is a plain child of
- * a FrameLayout (match_parent, default layer type, no clip, no alpha); our Xstream controls are a separate
+ * a FrameLayout (match_parent, default layer type, no clip, no alpha); our StreamX controls are a separate
  * ComposeView stacked on top of it.
  */
 
@@ -188,7 +188,7 @@ class TrailerActivity : ComponentActivity() {
 
         val root = FrameLayout(this).apply { setBackgroundColor(AColor.BLACK) }
         rootView = root
-        // Xstream: the trailer plays as real video in our own player when YouTube gives its direct address; the
+        // StreamX: the trailer plays as real video in our own player when YouTube gives its direct address; the
         // embedded YouTube page is only the fallback.
         if (keys.isNotEmpty()) lifecycleScope.launch {
             val src = YtDirect.resolve(keys[ui.index])

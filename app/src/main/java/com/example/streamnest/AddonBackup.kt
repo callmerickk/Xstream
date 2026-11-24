@@ -33,7 +33,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * Addon backups in the Xstream cloud: an export is stored under a code the app makes up (like K7Q-4ZP), valid for 7
+ * Addon backups in the StreamX cloud: an export is stored under a code the app makes up (like K7Q-4ZP), valid for 7
  * days; anyone with the code can import it. Needs the Firebase rule for "shares" (read for everyone, write when signed in).
  */
 object AddonShare {
@@ -50,7 +50,7 @@ object AddonShare {
 
     /** Uploads the backup; returns the code, or null with [error] set. */
     suspend fun upload(json: String): Pair<String?, String?> = withContext(Dispatchers.IO) {
-        val t = Cloud.token() ?: return@withContext null to "Sign in to Xstream (Settings › Account) to send to the cloud."
+        val t = Cloud.token() ?: return@withContext null to "Sign in to ${Brand.NAME} (Settings › Account) to send to the cloud."
         val code = newCode()
         val body = buildJsonObject { put("data", json); put("at", System.currentTimeMillis()); put("by", Cloud.user.value?.uid ?: "") }
         val ok = runCatching {
@@ -91,17 +91,17 @@ fun AddonBackupCard(vm: AppViewModel) {
 
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) runCatching { ctx.contentResolver.openOutputStream(uri)?.use { it.write(vm.exportAddons(withAccounts).toByteArray()) } }
-            .onSuccess { sheet = null; Snack.show("Saved · Xstream-addons.json") }.onFailure { error = "Couldn't save the file." }
+            .onSuccess { sheet = null; Snack.show("Saved · ${Brand.NAME}-addons.json") }.onFailure { error = "Couldn't save the file." }
     }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             val txt = runCatching { ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } }.getOrNull()
-            if (txt != null && vm.describeBackup(txt) != null) { pending = txt; error = null } else error = "That file isn't a Xstream addon backup."
+            if (txt != null && vm.describeBackup(txt) != null) { pending = txt; error = null } else error = "That file isn't a ${Brand.NAME} addon backup."
         }
     }
     fun copy(text: String) {
         val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        cm.setPrimaryClip(android.content.ClipData.newPlainText("Xstream code", text))
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("${Brand.NAME} code", text))
         Snack.show("Code copied")
     }
 
@@ -117,7 +117,7 @@ fun AddonBackupCard(vm: AppViewModel) {
 
     if (sheet != null) AlertDialog(
         onDismissRequest = { if (!busy) sheet = null },
-        containerColor = Color(0xFF121318),
+        containerColor = glassy(Color(0xFF121318)),
         title = { Text(when (sheet) { "export" -> "Export addons"; "code" -> "Your code"; else -> "Import addons" }, fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -149,10 +149,10 @@ fun AddonBackupCard(vm: AppViewModel) {
                         }
                         if (fromCloud) OutlinedTextField(codeIn, { codeIn = it.uppercase().take(8) }, Modifier.fillMaxWidth().tvOkKeyboard(top = 8.dp), singleLine = true,
                             placeholder = { Text("K7Q-4ZP") }, label = { Text("Code") }, keyboardOptions = tvKeyboard())
-                        else OutlinedButton({ pick.launch(arrayOf("application/json", "text/plain", "*/*")) }, Modifier.fillMaxWidth()) { Text("Pick Xstream-addons.json") }
+                        else OutlinedButton({ pick.launch(arrayOf("application/json", "text/plain", "*/*")) }, Modifier.fillMaxWidth()) { Text("Pick ${Brand.NAME}-addons.json") }
                         pending?.let { p ->
                             Text("Found: " + (vm.describeBackup(p) ?: ""), fontSize = 13.sp, color = Color(0xFFD5D8DF),
-                                modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(Color(0xFF1A1B21)).padding(10.dp))
+                                modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(glassy(Color(0xFF1A1B21))).padding(10.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 RadioButton(replace, { replace = true }); Text("Replace — your addons become exactly this", fontSize = 13.sp)
                             }
@@ -181,7 +181,7 @@ fun AddonBackupCard(vm: AppViewModel) {
                     if (fromCloud) { busy = true; error = null; scope.launch {
                         val (j, e) = AddonShare.download(codeIn)
                         busy = false
-                        if (j != null && vm.describeBackup(j) != null) pending = j else error = e ?: "That isn't a Xstream addon backup."
+                        if (j != null && vm.describeBackup(j) != null) pending = j else error = e ?: "That isn't a ${Brand.NAME} addon backup."
                     } }
                 }, enabled = !busy && fromCloud && codeIn.isNotBlank(), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914))) { Text("Find") }
                 else Button({
@@ -197,7 +197,7 @@ fun AddonBackupCard(vm: AppViewModel) {
         },
         dismissButton = {
             when (sheet) {
-                "export" -> TextButton({ save.launch("Xstream-addons.json") }, enabled = !busy) { Text("Save to phone") }
+                "export" -> TextButton({ save.launch("${Brand.NAME}-addons.json") }, enabled = !busy) { Text("Save to phone") }
                 "code" -> TextButton({ sheet = null }) { Text("Done") }
                 else -> TextButton({ sheet = null }, enabled = !busy) { Text("Cancel") }
             }

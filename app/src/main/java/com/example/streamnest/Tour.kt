@@ -75,7 +75,7 @@ object Tour {
 fun Modifier.tourTarget(id: String): Modifier = onGloballyPositioned { Tour.rects[id] = it.boundsInRoot() }
 
 val HomeTour = listOf(
-    TourStep(null, "Welcome to Xstream", "A quick look around. Tap Next for each tip, or Skip any time. You can replay it from Settings › User manual."),
+    TourStep(null, "Welcome to ${Brand.NAME}", "A quick look around. Tap Next for each tip, or Skip any time. You can replay it from Settings › User manual."),
     TourStep("deck", "Hero cards", "Swipe to see more. Tap a card to open the title. Hold (long-press) a card to turn trailers on inside the cards — hold again to turn them off.", TourGesture.Hold),
     TourStep("cw", "Continue Watching", "Pick up where you stopped. Long-press a card for details, choosing a source, starting over or removing it."),
     TourStep("capsule", "Filters", "Show only Movies or Series. The arrow takes you back to the top."),
@@ -128,12 +128,14 @@ fun TourOverlay(screen: String, allSteps: List<TourStep>) {
     val rect = step.target?.let { Tour.rects[it] }?.takeIf { it.width > 4 && it.height > 4 && it.top >= 0 }
     val pulse = rememberInfiniteTransition(label = "tour")
     val ring by pulse.animateFloat(0f, 1f, infiniteRepeatable(tween(1300), RepeatMode.Restart), label = "ring")
-    BoxWithConstraints(
-        Modifier.fillMaxSize()
-            // The tour takes every touch (the app underneath waits).
-            .pointerInput(Unit) { awaitPointerEventScope { while (true) { awaitPointerEvent().changes.forEach { it.consume() } } } },
-    ) {
+    // 0.9.68: Back = Skip (Samsung: the tour couldn't be closed).
+    androidx.activity.compose.BackHandler { ActLog.add("TOUR", "$screen · back = skip"); Tour.finish(screen) }
+    LaunchedEffect(i) { ActLog.add("TOUR", "$screen · step ${i + 1}/${steps.size} shown") }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
         val pad = with(density) { 10.dp.toPx() }
+        // 0.9.68: the dim layer blocks the app underneath (an ordinary click target), instead of a whole-screen touch
+        // swallower that on some Samsung phones also swallowed the card's Skip / Next.
+        Box(Modifier.fillMaxSize().clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {})
         Canvas(Modifier.fillMaxSize()) {
             val dim = Path().apply {
                 fillType = PathFillType.EvenOdd
@@ -165,6 +167,11 @@ fun TourOverlay(screen: String, allSteps: List<TourStep>) {
                 .clip(RoundedCornerShape(20.dp)).background(Color(0xF2151820)).border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(20.dp))
                 .padding(18.dp),
         ) {
+            Row(Modifier.fillMaxWidth().offset(y = (-8).dp), horizontalArrangement = Arrangement.End) {
+                Box(Modifier.size(36.dp).clip(CircleShape).clickable { ActLog.add("TOUR", "$screen · closed"); Tour.finish(screen) }, Alignment.Center) {
+                    Text("✕", fontSize = 16.sp, color = Color(0xFFB6BDCC))
+                }
+            }
             AnimatedContent(i, transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(120)) }, label = "tourText") { k ->
                 val s = steps.getOrNull(k) ?: step
                 Column {
@@ -178,11 +185,11 @@ fun TourOverlay(screen: String, allSteps: List<TourStep>) {
                         Box(Modifier.size(width = if (k == i) 16.dp else 6.dp, height = 6.dp).clip(CircleShape).background(if (k == i) Color.White else Color(0x55FFFFFF)))
                     }
                 }
-                Text("Skip", Modifier.clip(RoundedCornerShape(16.dp)).clickable { Tour.finish(screen) }.padding(horizontal = 12.dp, vertical = 8.dp),
+                Text("Skip", Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(16.dp)).clickable { ActLog.add("TOUR", "$screen · skip"); Tour.finish(screen) }.padding(horizontal = 14.dp, vertical = 14.dp),
                     fontSize = 14.sp, color = Color(0xFFB6BDCC))
                 Text(if (i == steps.lastIndex) "Got it" else "Next",
-                    Modifier.padding(start = 6.dp).clip(RoundedCornerShape(18.dp)).background(Color.White)
-                        .clickable { if (i == steps.lastIndex) Tour.finish(screen) else i++ }.padding(horizontal = 18.dp, vertical = 9.dp),
+                    Modifier.padding(start = 6.dp).heightIn(min = 48.dp).clip(RoundedCornerShape(18.dp)).background(Color.White)
+                        .clickable { if (i == steps.lastIndex) Tour.finish(screen) else i++ }.padding(horizontal = 20.dp, vertical = 14.dp),
                     fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Black)
             }
         }

@@ -11,7 +11,7 @@
     <ImageView
         android:layout_width="52dp"
         android:layout_height="52dp"
-        android:contentDescription="Xstream"
+        android:contentDescription="@string/brand_name"
         android:src="@drawable/logo_signal" />
 
     <LinearLayout
@@ -47,7 +47,7 @@
             android:layout_height="wrap_content"
             android:ellipsize="end"
             android:maxLines="1"
-            android:text="Start something in Xstream"
+            android:text="@string/widget_start"
             android:textColor="#FF9AA3B2"
             android:textSize="12sp" />
 

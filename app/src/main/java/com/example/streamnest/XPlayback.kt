@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /**
- * Xstream: Quick Play and Stream Filters as one clean "Playback" page — a big Quick Play switch, then rows of chips
+ * StreamX: Quick Play and Stream Filters as one clean "Playback" page — a big Quick Play switch, then rows of chips
  * (quality, audio, picture, hide). No paragraphs. The addon picker and speeds live in Developer's Corner.
  */
 @Composable
@@ -30,7 +30,7 @@ fun QuickPlayPage(vm: AppViewModel, onBack: () -> Unit) {
     val texts by vm.texts.collectAsStateWithLifecycle()
     fun v(k: String) = texts[k] ?: Defaults[k] ?: ""
     val langs = v("qsLangs").split(",").map { it.trim() }.filter { it.isNotEmpty() }
-    // What you see = Xstream's own picks with your changes on top; a tap changes only your layer.
+    // What you see = StreamX's own picks with your changes on top; a tap changes only your layer.
     val rules = remember(texts["tagRules"], texts["devTagRules"]) { effectiveRules(texts["devTagRules"], texts["tagRules"]) }
     fun setRule(id: String, r: TagRule) = vm.setText("tagRules", encodeUserRules(parseUserRules(texts["tagRules"] ?: "") + (id to r)))
     val red = Accent
@@ -78,7 +78,7 @@ fun QuickPlayPage(vm: AppViewModel, onBack: () -> Unit) {
                 PChip(d.label, on) { setRule(d.id, if (on) TagRule.Off else TagRule.Include) }
             }
         }
-        // Every tag, for those who want more: tap cycles Prefer → Hide → Only → off (your layer on top of Xstream's).
+        // Every tag, for those who want more: tap cycles Prefer → Hide → Only → off (your layer on top of StreamX's).
         var allOpen by remember { mutableStateOf(false) }
         Text(if (allOpen) "Hide all tags" else "All tags…", Modifier.padding(horizontal = 18.dp).padding(top = 16.dp).clip(RoundedCornerShape(14.dp))
             .background(Color(0x14FFFFFF)).clickable { allOpen = !allOpen }.padding(horizontal = 14.dp, vertical = 9.dp), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)

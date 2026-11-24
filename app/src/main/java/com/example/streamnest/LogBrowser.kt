@@ -67,7 +67,7 @@ fun LogBrowser(onClose: () -> Unit) {
                         fontSize = 12.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (dev != null && text != null) {
-                    Text("Copy", Modifier.clip(RoundedCornerShape(50)).background(Color(0xFF23242B)).clickable {
+                    Text("Copy", Modifier.clip(RoundedCornerShape(50)).background(glassy(Color(0xFF23242B))).clickable {
                         val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                         cm.setPrimaryClip(android.content.ClipData.newPlainText("log", text)); Snack.show("Log copied")
                     }.padding(horizontal = 12.dp, vertical = 7.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -111,7 +111,7 @@ fun LogBrowser(onClose: () -> Unit) {
                     when {
                         app == null -> {
                             val apps = list.groupBy { it.app }
-                            val order = listOf("Xstream Mobile", "Xstream Live", "StreamX Mobile", "StreamX TV")
+                            val order = listOf("StreamX Mobile", "StreamX TV", "Xstream Mobile", "Xstream Live", "Xstream TV")
                             items(order.filter { it in apps } + apps.keys.filter { it !in order }) { a ->
                                 val g = apps[a].orEmpty()
                                 Entry(a, "${g.map { it.ver }.distinct().size} versions · ${g.size} devices · last ${fmt.format(Date(g.maxOf { it.at }))}") { app = a }

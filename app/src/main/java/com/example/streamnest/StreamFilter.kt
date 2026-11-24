@@ -3,7 +3,7 @@ package com.example.streamnest
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * The "SX|…" line of the Xstream formatter (PenguPlay / AIOStreams custom formatter): exact facts about a stream
+ * The "SX|…" line of the StreamX formatter (PenguPlay / AIOStreams custom formatter): exact facts about a stream
  * (title, year, season, episode, resolution, language codes, size in bytes, length). Hidden in Sources.
  */
 fun StreamItem.sx(): Map<String, String> {

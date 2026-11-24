@@ -86,8 +86,7 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 
 private val Sub = Color(0xFF9AA3B5)
-private val Card = Color(0xFF15161C)
-
+private val Card: Color get() = glassy(Color(0xFF15161C))
 private fun mmss(ms: Long): String { val s = (ms / 1000).coerceAtLeast(0); return "%d:%02d".format(s / 60, s % 60) }
 
 /** Home: the "Music" chip (64-bit app with the Live server on). */

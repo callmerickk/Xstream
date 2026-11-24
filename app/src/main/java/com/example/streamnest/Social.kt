@@ -118,7 +118,7 @@ object Social {
     fun publishCard() { if (me.isNotBlank()) io.launch { send("PUT", "card/$me", nameJson(myName)) } }
     suspend fun cardName(uid: String): String = get("card/$uid").obj()?.s("n") ?: ""
 
-    /** Xstream: sends a message to someone's inbox (used by recommendations). */
+    /** StreamX: sends a message to someone's inbox (used by recommendations). */
     suspend fun sendRaw(to: String, m: SocialMsg) = inbox(to, m)
 
     private suspend fun inbox(to: String, m: SocialMsg) {

@@ -21,7 +21,7 @@ fun AppViewModel.upgradeAllowed(): Boolean =
     streamMode() != "elite" || !isOn(texts.value["eliteWifiStrict"] ?: "no") || isOnWifi(appContext)
 
 /**
- * An addon's name in Xstream: the name you gave it (Settings › Addons › pencil, kept per addon link), else its own
+ * An addon's name in StreamX: the name you gave it (Settings › Addons › pencil, kept per addon link), else its own
  * name; two addons with the same own name are numbered ("AIOStreams Stable 2") so each stays separate. This name is
  * what links, Quick Start, rankings and roles (Pengu → quick server, HdHub → HD step…) go by.
  */

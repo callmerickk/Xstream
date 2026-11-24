@@ -13,7 +13,7 @@ import java.util.Date
 import java.util.Locale
 
 /*
- * "X", the Xstream movie buddy: a real multi-turn conversation for the voice assistant.
+ * "X", the StreamX movie buddy: a real multi-turn conversation for the voice assistant.
  * Every turn the AI answers with a tiny JSON object: what to say aloud, plus an optional action
  * (search / recommend / play / open) that the app carries out with its own catalog search.
  */
@@ -115,7 +115,7 @@ class XConversation(private val vm: AppViewModel) {
             "- They said \"${t.q.take(120)}\"" + if (t.titles.isNotEmpty()) "; you suggested ${t.titles.take(4).joinToString()}" else ""
         }
         return """
-You are ${aiName()}, the Xstream movie buddy: a confident, warm, witty friend (a man's voice) who lives inside the Xstream streaming app and knows movies and TV inside out. Today is $today, it is the ${partOfDay()} for them.
+You are ${aiName()}, the ${Brand.NAME} movie buddy: a confident, warm, witty friend (a man's voice) who lives inside the ${Brand.NAME} streaming app and knows movies and TV inside out. Today is $today, it is the ${partOfDay()} for them.
 You know this person well and talk like an old friend who remembers what they love: use their name now and then, refer to what they watched or liked, notice their mood, and personalise every suggestion. Their audio languages, in order: ${vm.qsLangs().joinToString()}.
 You are talking${if (name != null) " to $name" else ""} by VOICE: everything in "say" is read aloud.${if (p?.kids == true) " This is a KIDS profile: only suggest titles suitable for children (G / PG / U)." else ""}
 Their taste:

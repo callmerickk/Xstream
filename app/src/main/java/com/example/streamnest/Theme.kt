@@ -7,13 +7,19 @@ import androidx.compose.foundation.IndicationNodeFactory
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.node.DelegatableNode
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -27,10 +33,63 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import androidx.compose.ui.node.invalidateDraw
 
-val Bg: Color get() = Palette.bg
+/** 0.9.76: with the Glass theme (phones) pages are see-through over the blurred picture drawn behind the whole app. */
+val Bg: Color get() = if (Palette.glass && !BuildConfig.IS_TV) Color(0x8C070810) else Palette.bg
+/** 0.9.76: a dark panel colour that turns frosted (see-through) with the Glass theme, so every page follows it. */
+fun glassy(c: Color): Color = if (Palette.glass && !BuildConfig.IS_TV) c.copy(alpha = 0.62f) else c
+
+/**
+ * 0.9.76: the picture behind the whole app with the Glass theme (Home's top card, the open title…).
+ * 0.9.78: never cleared — a missing picture keeps the last one (the page went black after the player or a sync).
+ */
+object GlassBg {
+    private val s = androidx.compose.runtime.mutableStateOf<String?>(null)
+    var url: String? get() = s.value; set(v) { if (v != null) s.value = v }
+}
+
+/**
+ * 0.9.78: the Glass backdrop as the TV draws it — the picture at 192×108, blurred ONCE in the background (three box passes
+ * ≈ a gaussian) and kept, then simply drawn: nothing is blurred per frame, so scrolling over it costs almost nothing. The
+ * picture's own colours show through (a lighter dim than before), and the last backdrop stays while a new one is made.
+ */
+@Composable
+fun GlassBackdrop(url: String?) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val small = androidx.compose.runtime.remember(url) { url?.replace(Regex("/t/p/(original|w1280|w780)/"), "/t/p/w300/")?.replace("/background/large/", "/background/small/")?.replace("/background/medium/", "/background/small/")?.replace("/poster/large/", "/poster/small/") }
+    var last by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var tint by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(Color(0xFF070810)) }
+    androidx.compose.runtime.LaunchedEffect(small) {
+        val u = small ?: return@LaunchedEffect
+        TvGlass.blurred[u]?.let { last = it; GlassTints[u]?.let { t -> tint = t }; return@LaunchedEffect }
+        val b = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            runCatching {
+                val r = coil.request.ImageRequest.Builder(ctx).data(u).size(192, 108).allowHardware(false).build()
+                val d = (coil.Coil.imageLoader(ctx).execute(r) as? coil.request.SuccessResult)?.drawable ?: return@runCatching null
+                val bm = (d as? android.graphics.drawable.BitmapDrawable)?.bitmap ?: android.graphics.Bitmap.createBitmap(192, 108, android.graphics.Bitmap.Config.ARGB_8888).also { x ->
+                    val c = android.graphics.Canvas(x); d.setBounds(0, 0, 192, 108); d.draw(c) }
+                val bl = TvGlass.blur(android.graphics.Bitmap.createScaledBitmap(bm, 192, 108, true), 7, 3)
+                // 0.9.78: the page's shade takes the picture's own colour (its average, kept very dark).
+                val px = android.graphics.Bitmap.createScaledBitmap(bl, 1, 1, true).getPixel(0, 0)
+                GlassTints[u] = Color(((px shr 16 and 0xFF) * 0.2f + 4) / 255f, ((px shr 8 and 0xFF) * 0.2f + 5) / 255f, ((px and 0xFF) * 0.2f + 9) / 255f)
+                bl.asImageBitmap()
+            }.getOrNull()
+        }
+        if (b != null) { if (TvGlass.blurred.size > 6) { TvGlass.blurred.clear(); GlassTints.keys.retainAll(setOf(u)) }; TvGlass.blurred[u] = b; last = b; GlassTints[u]?.let { tint = it } }
+    }
+    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(Color(0xFF07080C))) {
+        androidx.compose.animation.Crossfade(last, Modifier.fillMaxSize(), animationSpec = androidx.compose.animation.core.tween(600), label = "glassBg") { b ->
+            if (b != null) androidx.compose.foundation.Image(b, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                filterQuality = androidx.compose.ui.graphics.FilterQuality.High, alpha = 0.8f)
+        }
+        val t by androidx.compose.animation.animateColorAsState(tint, androidx.compose.animation.core.tween(600), label = "glassTint")
+        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color(0x33000000), 0.6f to t.copy(alpha = 0.5f), 1f to t.copy(alpha = 0.8f))))
+    }
+}
+/** 0.9.78: each backdrop's dark shade in the picture's own colour (made once with the blurred picture). */
+private val GlassTints = java.util.concurrent.ConcurrentHashMap<String, Color>()
 val Accent: Color get() = Palette.accent
 /** Card / placeholder surface: a deep neutral graphite (no blue cast), so artwork colours look true. */
-val Surface1 = Color(0xFF15161C)
+val Surface1: Color get() = if (Palette.glass) Color(0x2EFFFFFF) else Color(0xFF15161C)
 
 // Rounded wordmark font used for the app name (Poppins, free Google font).
 val BrandFont = FontFamily(
@@ -44,7 +103,7 @@ fun StreamNestTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = BtnColor, onPrimary = OnBtn,
-            background = Bg, surface = Bg, surfaceVariant = Surface1,
+            background = Bg, surface = if (Palette.glass && !BuildConfig.IS_TV) Color(0xEB12131A) else Bg, surfaceVariant = Surface1,
             onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = Color(0xFFB6BDCC),
         ),
     ) {
@@ -54,6 +113,12 @@ fun StreamNestTheme(content: @Composable () -> Unit) {
         if (BuildConfig.IS_TV) CompositionLocalProvider(
             LocalContentColor provides Color.White,
             LocalIndication provides TvFocusIndication,
+            // TV 0.8.7: Material buttons ("Publish these add-ons for everyone", dialog buttons, icon buttons) showed almost
+            // nothing when focused. Their own focus layer is now a clear white wash, drawn inside the button's own shape.
+            LocalRippleConfiguration provides androidx.compose.material3.RippleConfiguration(
+                color = Color.White,
+                rippleAlpha = androidx.compose.material.ripple.RippleAlpha(draggedAlpha = 0.16f, focusedAlpha = 0.34f, hoveredAlpha = 0.12f, pressedAlpha = 0.22f),
+            ),
         ) { content() }
         else CompositionLocalProvider(
             LocalContentColor provides Color.White,
@@ -93,14 +158,17 @@ private object TvFocusIndication : IndicationNodeFactory {
                 }
             }
         }
-        /** Follows the item's shape: round items get a circle, short ones a pill, the rest rounded corners. */
+        /**
+         * TV 0.8.7: round items get a circle; everything else a small 10 dp corner. Most items are clipped to their own
+         * shape (chip, pill, card) before they are clickable, so the wash is cut to exactly that shape. The old guess (a
+         * pill for anything short) drew a pill inside 14 dp chips — the highlight didn't match the button.
+         */
         private fun androidx.compose.ui.graphics.drawscope.DrawScope.radius(): Float {
             val w = size.width; val h = size.height
             val mn = minOf(w, h); val mx = maxOf(w, h)
             return when {
                 mx > 0f && (mx - mn) / mx < 0.15f -> mn / 2f
-                h <= 56.dp.toPx() -> h / 2f
-                else -> 14.dp.toPx()
+                else -> 10.dp.toPx()
             }
         }
         override fun androidx.compose.ui.graphics.drawscope.ContentDrawScope.draw() {
@@ -129,28 +197,29 @@ private object TvFocusIndication : IndicationNodeFactory {
     }
 }
 
-/** Brand red used for the "X" in the Xstream wordmark. */
+/** Brand red used for the "X" in the StreamX wordmark. */
 val BrandRed = Color(0xFFE50914)
 
-/** App name wordmark. "Xstream" is drawn as a red "X" + white "stream"; any custom name is drawn plainly. */
+/** App name wordmark. "StreamX" is drawn as "Stream" + a red "X"; any custom name is drawn plainly. */
 @Composable
 fun Wordmark(name: String, fontSize: TextUnit = 18.sp, animated: Boolean = false) {
-    val n0 = name.trim()
+    val n = name.trim()
     // The developer's designed look for the app name (Developer's Corner › AI assistant), when there is one.
-    parseNameStyle(Public.vm?.texts?.value?.get("appNameStyle"))?.let { StyledName(n0.ifBlank { "Xstream" }, it, fontSize); return }
-    // The old name (synced from a StreamX profile) shows as Xstream too.
-    val brand = n0.lowercase() == "xstream" || n0.lowercase() == "streamx"
-    if (brand && animated) { HangingWordmark("Xstream", fontSize); return }
+    parseNameStyle(Public.vm?.texts?.value?.get("appNameStyle"))?.let { StyledName(n.ifBlank { "${Brand.NAME}" }, it, fontSize); return }
+    // Brand: either app's name (a name synced from the other app) is drawn as this app's wordmark.
+    val brand = n.lowercase() == "streamx" || n.lowercase() == "xstream"
+    if (animated && brand) { HangingWordmark(Brand.NAME, fontSize); return }
     if (brand) {
+        val b = Brand.NAME
         Text(
             buildAnnotatedString {
-                withStyle(SpanStyle(color = BrandRed)) { append("X") }
-                append("stream")
-                if (BuildConfig.LIVE_ONLY) withStyle(SpanStyle(fontWeight = FontWeight.Medium, color = Color(0xFFDADDE8))) { append(" Live") }
+                // StreamX: "Stream" + red "X". Xstream: red "X" + "stream".
+                if (Brand.X_FIRST) { withStyle(SpanStyle(color = BrandRed)) { append(b.take(1)) }; append(b.drop(1)) }
+                else { append(b.dropLast(1)); withStyle(SpanStyle(color = BrandRed)) { append(b.takeLast(1)) } }
             },
             fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = fontSize, letterSpacing = (-0.5).sp, color = Color.White,
         )
-    } else Text(n0, fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = fontSize, letterSpacing = (-0.5).sp)
+    } else Text(n, fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = fontSize, letterSpacing = (-0.5).sp)
 }
 
 /**
@@ -185,7 +254,7 @@ private fun Responsive(content: @Composable () -> Unit) {
 private object LogoSwing { var played = false }
 
 /**
- * The same Xstream wordmark (white "Stream", red "X"), animated: when the app opens the X is attached, then comes loose at
+ * The same StreamX wordmark (white "Stream", red "X"), animated: when the app opens the X is attached, then comes loose at
  * one corner and swings from "Stream" like a hanging sign until it settles.
  */
 @Composable
@@ -199,17 +268,27 @@ private fun HangingWordmark(n: String, fontSize: TextUnit) {
         angle.animateTo(-4f, androidx.compose.animation.core.tween(140, easing = androidx.compose.animation.core.FastOutSlowInEasing))
         angle.animateTo(34f, androidx.compose.animation.core.spring(dampingRatio = 0.22f, stiffness = 38f))
     }
-    androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.Top) {
+    if (Brand.X_FIRST) androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.Top) {
+        // Xstream: the red X hangs from its top-right corner, where it touches "stream".
         Text(
             n.take(1),
             androidx.compose.ui.Modifier.graphicsLayer {
                 rotationZ = -angle.value
-                // Hangs from its top-right corner, where it touches "stream".
                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.88f, 0.16f)
             },
             fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = fontSize, letterSpacing = (-0.5).sp, color = BrandRed,
         )
         Text(n.drop(1), fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = fontSize, letterSpacing = (-0.5).sp, color = Color.White)
-        if (BuildConfig.LIVE_ONLY) Text(" Live", fontFamily = BrandFont, fontWeight = FontWeight.Medium, fontSize = fontSize, letterSpacing = (-0.5).sp, color = Color(0xFFDADDE8))
+    } else androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.Top) {
+        Text(n.dropLast(1), fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = fontSize, letterSpacing = (-0.5).sp, color = Color.White)
+        Text(
+            n.takeLast(1),
+            androidx.compose.ui.Modifier.graphicsLayer {
+                rotationZ = angle.value
+                // Hangs from its top-left corner, where it touches "Stream".
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.12f, 0.16f)
+            },
+            fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = fontSize, letterSpacing = (-0.5).sp, color = BrandRed,
+        )
     }
 }

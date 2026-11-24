@@ -1,7 +1,5 @@
 package com.example.streamnest
 
-import kotlinx.coroutines.sync.withPermit
-
 import android.net.Uri
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
@@ -47,7 +45,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,6 +53,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.offset
@@ -82,6 +80,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.material.icons.filled.Shuffle
 import coil.compose.AsyncImage
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -120,11 +120,6 @@ data class SearchGroup(
 )
 
 object SearchState {
-    /** 0.8.7: what you typed and the collection you opened survive a trip to a title page, so Back returns to them. */
-    var text by androidx.compose.runtime.mutableStateOf<String?>(null)
-    var openGroup by androidx.compose.runtime.mutableStateOf<SearchGroup?>(null)
-    val groupTab = HashMap<String, String>()
-    val groupScroll = HashMap<String, Int>()
     val hits = MutableStateFlow<List<SearchHit>>(emptyList())
     /** Collections / studios matching the search, shown as stacked cards above the results. */
     val groups = MutableStateFlow<List<SearchGroup>>(emptyList())
@@ -134,9 +129,17 @@ object SearchState {
     val suggestions = MutableStateFlow<List<String>>(emptyList())
     /** The query whose results are currently shown ("" = none). */
     val query = MutableStateFlow("")
+    /** TV 0.8.8: the last search couldn't reach the internet (shown as "couldn't connect", not "no results"). */
+    val failed = MutableStateFlow(false)
     internal var job: Job? = null
 
-    /** 0.8.10: each profile has its own search (text, results, open collection); switching brings back that profile's own. */
+    /** 0.9.71 (from Xstream 0.8.7): what you typed and the collection you opened survive a trip to a title page (Back returns to them). */
+    var text by androidx.compose.runtime.mutableStateOf<String?>(null)
+    var openGroup by androidx.compose.runtime.mutableStateOf<SearchGroup?>(null)
+    val groupTab = HashMap<String, String>()
+    val groupScroll = HashMap<String, Int>()
+
+    /** 0.9.71 (from Xstream 0.8.10): each profile has its own search (text, results, open collection). Phone only. */
     private data class Snap(val text: String?, val openGroup: SearchGroup?, val tab: Map<String, String>, val scroll: Map<String, Int>,
         val hits: List<SearchHit>, val groups: List<SearchGroup>, val dym: String?, val sugg: List<String>, val query: String)
     private val byProfile = HashMap<String, Snap>()
@@ -144,7 +147,9 @@ object SearchState {
     fun forProfile(pid: String) {
         if (owner == pid) return
         owner?.let { byProfile[it] = Snap(text, openGroup, HashMap(groupTab), HashMap(groupScroll), hits.value, groups.value, didYouMean.value, suggestions.value, query.value) }
+        val first = owner == null
         owner = pid
+        if (first) return
         job?.cancel(); loading.value = false
         val s = byProfile[pid]
         text = s?.text; openGroup = s?.openGroup
@@ -306,8 +311,13 @@ fun AppViewModel.searchPremium(q: String) {
         return
     }
     val ck = query.lowercase()
-    fun publish(hits: List<SearchHit>, final: Boolean) {
-        SearchState.hits.value = hits.filterNot { isJunkTitle(it.meta.name) || it.meta.isAddonError() }
+    // TV 0.8.3: the TV shows only the results (no collection cards / did-you-mean), so it skips that work and keeps
+    // the first 40 — the search was running the Fire TV Stick out of memory.
+    val tv = BuildConfig.IS_TV
+    fun publish(hits0: List<SearchHit>, final: Boolean) {
+        // 0.9.71 (from Xstream 0.8.8): shorts/extras and addon error "titles" are hidden on phones.
+        val hits = if (tv) hits0.take(40) else hits0.filterNot { isJunkTitle(it.meta.name) || it.meta.isAddonError() }
+        SearchState.hits.value = hits
         SearchState.suggestions.value = hits.asSequence()
             .map { it.meta.name.trim().lowercase() }
             .filter { it.isNotEmpty() && it != ck }
@@ -318,6 +328,36 @@ fun AppViewModel.searchPremium(q: String) {
     synchronized(SearchCache) { SearchCache[ck] }?.let { publish(it, true); synchronized(GroupCache) { GroupCache[ck] }?.let { g -> SearchState.groups.value = g.first; SearchState.didYouMean.value = g.second }; return }
     SearchState.loading.value = true
     SearchState.groups.value = emptyList(); SearchState.didYouMean.value = null
+    // TV 0.8.7: one provider only (TMDB) — one search call, then the top film's collection; no addon catalogues and no
+    // per-title detail calls (that burst got the app closed on 1 GB sticks).
+    SearchState.failed.value = false
+    if (tv) {
+        // TV 0.8.8: a search that is replaced by a newer one never writes to the screen (it used to put "no results"
+        // over the next search); a connection failure is retried once, then shown as "couldn't connect"; every search
+        // is logged (words, results, time) so a bad one can be found.
+        SearchState.job = viewModelScope.launch {
+            delay(150)
+            val key = tmdbKey()
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            var err: String? = null
+            var res: Pair<List<SearchHit>, SearchGroup?>? = null
+            for (attempt in 0..1) {
+                try { res = tvLeanSearch(key, query) { first -> if (isActive) publish(first, false) }; break }
+                catch (c: kotlinx.coroutines.CancellationException) { throw c }
+                catch (e: Exception) { err = "${e.javaClass.simpleName}: ${e.message}".take(140); if (attempt == 0) delay(900) }
+            }
+            if (!isActive) return@launch
+            val (hits, group) = res ?: (emptyList<SearchHit>() to null)
+            SearchState.failed.value = res == null
+            SearchState.groups.value = listOfNotNull(group)
+            publish(hits, true)
+            if (hits.isNotEmpty()) synchronized(SearchCache) { SearchCache[ck] = hits }
+            if (res != null) synchronized(GroupCache) { GroupCache[ck] = SearchState.groups.value to null }
+            ActLog.add("SEARCH", "\"$query\" · ${hits.size} results${group?.let { " · ${it.name}" } ?: ""} · ${android.os.SystemClock.elapsedRealtime() - t0} ms" +
+                (if (res == null) " · FAILED $err" else if (key.isEmpty()) " · no TMDB key" else ""))
+        }
+        return
+    }
     SearchState.job = viewModelScope.launch {
         delay(250)
         val key = tmdbKey()
@@ -341,22 +381,23 @@ fun AppViewModel.searchPremium(q: String) {
             }
             // Collections by name (TMDB collection search, studios) start at once; the ones the best results belong to
             // (MCU Avengers, Harry Potter 1–8, X-Men) come with the first results, so cards and results show together.
-            val named: kotlinx.coroutines.Deferred<List<SearchGroup>>? = if (key.isNotEmpty()) async { runCatching { searchGroups(key, query) }.getOrDefault(emptyList<SearchGroup>()) } else null
-            val universeByName = if (key.isNotEmpty()) async { runCatching { universeFor(key, query) }.getOrNull() } else null
-            // 0.8.10: the universe card (MCU…) is added the moment it is ready — never dropped by a 2.5 s timer (checking its
-            // titles takes longer the first time). Typed by name ("mcu") or the one the top results belong to ("avengers").
+            val named: kotlinx.coroutines.Deferred<List<SearchGroup>>? = if (key.isNotEmpty() && !tv) async { runCatching { searchGroups(key, query) }.getOrDefault(emptyList<SearchGroup>()) } else null
+            val universeByName = if (key.isNotEmpty() && !tv) async { runCatching { universeFor(key, query) }.getOrNull() } else null
+            // 0.9.71 (from Xstream 0.8.10): the universe card (MCU…) is added the moment it is ready — never dropped by a
+            // 2.5 s timer (checking its titles takes longer the first time).
             var lateUni: SearchGroup? = null
             val tmdbDone = kotlinx.coroutines.CompletableDeferred<Unit>()
-            if (key.isNotEmpty()) launch {
+            if (key.isNotEmpty() && !tv) launch {
                 val uni = universeByName?.await() ?: run {
                     withTimeoutOrNull(15_000) { tmdbDone.await() }
                     tmdbSeen.universes.sortedBy { it.first }.firstOrNull { it.first < 5 }?.let { u -> runCatching { universeById(key, u.second, u.third) }.getOrNull() }
                 } ?: return@launch
                 lateUni = uni
                 val cur = SearchState.groups.value
-                if (cur.none { it.kind == "universe" && it.name == uni.name }) SearchState.groups.value = (listOf(uni) + cur).take(5)
+                if (SearchState.query.value == query && cur.none { it.kind == "universe" && it.name == uni.name }) SearchState.groups.value = (listOf(uni) + cur).take(5)
             }
             suspend fun allGroups(hits: List<SearchHit>): List<SearchGroup> {
+                if (tv) return emptyList()
                 val fromHits = runCatching { collectionsOf(key, tmdbSeen.collections.sortedBy { it.first }.map { it.second }.distinct().take(3)) }.getOrDefault(emptyList())
                 val byName = named?.let { withTimeoutOrNull(1_200) { it.await() } }.orEmpty()
                 val sameTitle = titleFamilies(query, hits)
@@ -382,8 +423,8 @@ fun AppViewModel.searchPremium(q: String) {
                     SearchState.groups.value = allGroups(first); groupsDone = true
                     put(first)
                 } }.getOrDefault(emptyList<SearchHit>())
-                if (!groupsDone || SearchState.groups.value.isEmpty()) SearchState.groups.value = allGroups(r)
                 tmdbDone.complete(Unit)
+                if (!groupsDone || SearchState.groups.value.isEmpty()) SearchState.groups.value = allGroups(r)
                 put(r)
             }
         }
@@ -391,7 +432,7 @@ fun AppViewModel.searchPremium(q: String) {
         publish(all, true)
         // Looks misspelled (nothing close to what was typed): suggest the nearest real title.
         val best = all.minOfOrNull { matchRank(query, it.meta.name) } ?: 9
-        val dym = if (best >= 3 && key.isNotEmpty()) runCatching { didYouMean(key, query, all) }.getOrNull() else null
+        val dym = if (best >= 3 && key.isNotEmpty() && !tv) runCatching { didYouMean(key, query, all) }.getOrNull() else null
         SearchState.didYouMean.value = dym
         if (all.isNotEmpty()) synchronized(SearchCache) { SearchCache[ck] = all }
         synchronized(GroupCache) { GroupCache[ck] = SearchState.groups.value to dym }
@@ -410,50 +451,6 @@ private fun tmdbMetaOf(o: JsonObject, kindHint: String): Meta? {
     return Meta(id = "tmdb:$kind:$id", type = if (kind == "tv") "series" else "movie", name = o.sStr("title") ?: o.sStr("name") ?: return null,
         poster = "${SIMG}w342$poster", background = o.sStr("backdrop_path")?.let { "${SIMG}w780$it" }, description = o.sStr("overview"),
         releaseInfo = (o.sStr("release_date") ?: o.sStr("first_air_date"))?.take(4))
-}
-
-/**
- * 0.8.9: every title of a collection / universe / studio is checked on TMDB once (remembered): it must have an IMDb id;
- * a film must run at least 60 min, a series must be a scripted show with episodes of 20 min or more; documentaries,
- * talk, reality and news are dropped (Team Thor, One-Shots, "Assembled"). Kept titles get their IMDb id, so they open
- * at once and the right film plays. A title TMDB couldn't be asked about (no internet) is kept as it is.
- */
-private val checkedTitles = java.util.concurrent.ConcurrentHashMap<String, Meta>()
-private val droppedTitles: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
-private suspend fun realTitles(key: String, items: List<Meta>): List<Meta> = coroutineScope {
-    val gate = kotlinx.coroutines.sync.Semaphore(12)
-    items.map { m ->
-        async {
-            if (!m.id.startsWith("tmdb:")) return@async m
-            checkedTitles[m.id]?.let { return@async it }
-            if (m.id in droppedTitles) return@async null
-            val p = m.id.split(":")
-            val kind = p.getOrNull(1) ?: return@async m
-            val tid = p.getOrNull(2) ?: return@async m
-            // 0.8.10: remembered on the phone (instant next time); a light request (no pictures / keywords).
-            val prefs = Public.vm?.appContext?.getSharedPreferences("colCheck", android.content.Context.MODE_PRIVATE)
-            prefs?.getString(m.id, null)?.let { v ->
-                return@async if (v.startsWith("tt")) m.copy(id = v).also { checkedTitles[m.id] = it; rememberColImdb(m.id, v) } else { droppedTitles += m.id; null }
-            }
-            val d = gate.withPermit { runCatching { detailCache["$kind:$tid"] ?: withContext(Dispatchers.Default) {
-                Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/$kind/$tid?api_key=$key&append_to_response=external_ids")).jsonObject } }.getOrNull() } ?: return@async m
-            val imdb = (d.sObj("external_ids")?.sStr("imdb_id") ?: d.sStr("imdb_id"))?.takeIf { it.startsWith("tt") }
-            val genres = d.sArr("genres").mapNotNull { it.sStr("id")?.toIntOrNull() }
-            val runtime = if (kind == "tv") (d["episode_run_time"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }?.maxOrNull() ?: 0
-                else d.sStr("runtime")?.toIntOrNull() ?: 0
-            val why = when {
-                imdb == null -> "no IMDb id"
-                genres.any { it in setOf(99, 10767, 10764, 10763) } -> "documentary / talk / reality / news"
-                kind == "tv" && runtime in 1..19 -> "episodes ${runtime} min"
-                kind != "tv" && runtime in 1..59 -> "${runtime} min short"
-                isJunkTitle(m.name) -> "special"
-                else -> null
-            }
-            runCatching { prefs?.edit()?.putString(m.id, if (why == null) imdb!! else "x")?.apply() }
-            if (why != null) { droppedTitles += m.id; ActLog.add("APP", "collection: left out \"${m.name}\" ($why)"); null }
-            else m.copy(id = imdb!!).also { checkedTitles[m.id] = it; rememberColImdb(m.id, imdb) }
-        }
-    }.awaitAll().filterNotNull().distinctBy { it.id }
 }
 
 /** Film series (TMDB collections) and studios / franchises matching the search, each with its titles oldest first. */
@@ -509,6 +506,49 @@ private fun isUniverseTag(n: String): Boolean {
         "conjuring universe" in l || "wizarding world" in l || "horror comedy universe" in l || "spider-man universe" in l || "shared universe" in l
 }
 
+/**
+ * 0.9.71 (from Xstream 0.8.9/0.8.10): every title of a collection / universe / studio is checked on TMDB once (remembered):
+ * it must have an IMDb id; a film must run at least 60 min, a series must be a scripted show with episodes of 20 min or
+ * more; documentaries, talk, reality and news are dropped. Kept titles get their IMDb id, so they open at once and the
+ * right film plays. A title TMDB couldn't be asked about (no internet) is kept as it is.
+ */
+private val checkedTitles = java.util.concurrent.ConcurrentHashMap<String, Meta>()
+private val droppedTitles: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+private suspend fun realTitles(key: String, items: List<Meta>): List<Meta> = coroutineScope {
+    val gate = kotlinx.coroutines.sync.Semaphore(12)
+    items.map { m ->
+        async {
+            if (!m.id.startsWith("tmdb:")) return@async m
+            checkedTitles[m.id]?.let { return@async it }
+            if (m.id in droppedTitles) return@async null
+            val p = m.id.split(":")
+            val kind = p.getOrNull(1) ?: return@async m
+            val tid = p.getOrNull(2) ?: return@async m
+            val prefs = Public.vm?.appContext?.getSharedPreferences("colCheck", android.content.Context.MODE_PRIVATE)
+            prefs?.getString(m.id, null)?.let { v ->
+                return@async if (v.startsWith("tt")) m.copy(id = v).also { checkedTitles[m.id] = it; rememberColImdb(m.id, v) } else { droppedTitles += m.id; null }
+            }
+            val d = gate.withPermit { runCatching { detailCache["$kind:$tid"] ?: withContext(Dispatchers.Default) {
+                Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/$kind/$tid?api_key=$key&append_to_response=external_ids")).jsonObject } }.getOrNull() } ?: return@async m
+            val imdb = (d.sObj("external_ids")?.sStr("imdb_id") ?: d.sStr("imdb_id"))?.takeIf { it.startsWith("tt") }
+            val genres = d.sArr("genres").mapNotNull { it.sStr("id")?.toIntOrNull() }
+            val runtime = if (kind == "tv") (d["episode_run_time"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }?.maxOrNull() ?: 0
+                else d.sStr("runtime")?.toIntOrNull() ?: 0
+            val why = when {
+                imdb == null -> "no IMDb id"
+                genres.any { it in setOf(99, 10767, 10764, 10763) } -> "documentary / talk / reality / news"
+                kind == "tv" && runtime in 1..19 -> "episodes ${runtime} min"
+                kind != "tv" && runtime in 1..59 -> "${runtime} min short"
+                isJunkTitle(m.name) -> "special"
+                else -> null
+            }
+            runCatching { prefs?.edit()?.putString(m.id, if (why == null) imdb!! else "x")?.apply() }
+            if (why != null) { droppedTitles += m.id; ActLog.add("APP", "collection: left out \"${m.name}\" ($why)"); null }
+            else m.copy(id = imdb!!).also { checkedTitles[m.id] = it; rememberColImdb(m.id, imdb) }
+        }
+    }.awaitAll().filterNotNull().distinctBy { it.id }
+}
+
 private val universeCache = java.util.concurrent.ConcurrentHashMap<String, SearchGroup>()
 
 /** The universe asked for by name ("MCU", "Marvel Cinematic Universe", "YRF Spy Universe"), or null. */
@@ -531,12 +571,12 @@ private suspend fun universeById(key: String, kid: String, tagName: String): Sea
             runCatching {
                 val url = if (kind == "tv") "https://api.themoviedb.org/3/discover/tv?api_key=$key&with_keywords=$kid&sort_by=first_air_date.asc&first_air_date.lte=$today&page=$pg"
                     else "https://api.themoviedb.org/3/discover/movie?api_key=$key&with_keywords=$kid&sort_by=primary_release_date.asc&primary_release_date.lte=$today&page=$pg"
-                // 0.8.8: only the real films and series — no One-Shots, shorts, specials, documentaries / making-ofs,
-                // talk or reality shows, or titles almost nobody rated.
+                // 0.9.71 (from Xstream 0.8.8): only the real films and series — no One-Shots, shorts, specials,
+                // documentaries / making-ofs, talk or reality shows, or titles almost nobody rated.
                 Api.json.parseToJsonElement(Api.get(url)).jsonObject.sArr("results")
                     .filter { j ->
                         val votes = j.sStr("vote_count")?.toIntOrNull() ?: 0
-                        val genres = (j["genre_ids"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() }.orEmpty()
+                        val genres = (j["genre_ids"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }.orEmpty()
                         votes >= (if (kind == "tv") 15 else 40) && genres.none { it in setOf(99, 10767, 10764, 10763) } &&
                             !isJunkTitle(j.sStr("title") ?: j.sStr("name") ?: "")
                     }
@@ -640,7 +680,7 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
     var q by remember(initial, searchPid) { mutableStateOf(if (initial.isNotEmpty()) initial else SearchState.text ?: "") }
     LaunchedEffect(q) { SearchState.text = q }
     val adultPref = vm.texts.collectAsStateWithLifecycle().value["adultOn"]
-    SearchAdult.on = adultPref != "no"
+    SearchAdult.on = adultPref == "yes"
     val hits by SearchState.hits.collectAsStateWithLifecycle()
     val loading by SearchState.loading.collectAsStateWithLifecycle()
     val suggestions by SearchState.suggestions.collectAsStateWithLifecycle()
@@ -649,7 +689,7 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
     val dym by SearchState.didYouMean.collectAsStateWithLifecycle()
     var openGroup by remember(searchPid) { mutableStateOf(SearchState.openGroup) }
     LaunchedEffect(openGroup) { SearchState.openGroup = openGroup }
-    // Opening a title from a collection keeps the collection open behind it: Back comes back to it.
+    // 0.9.71: opening a title from a collection keeps the collection open behind it: Back comes back to it.
     openGroup?.let { g -> GroupPage(g, onClose = { openGroup = null }) { m -> onOpen(m) } }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
@@ -674,7 +714,7 @@ fun PremiumSearch(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
         val said = r.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim()
         if (!said.isNullOrEmpty()) { setQuery(said); addRecent(said); keyboard?.hide(); focus.clearFocus() }
     }
-    // Xstream: the in-app voice panel (falls back to the phone's dialog when the phone has no speech service).
+    // StreamX: the in-app voice panel (falls back to the phone's dialog when the phone has no speech service).
     var voiceSheet by remember { mutableStateOf(false) }
     /** The search bar is tapped: recent searches show instead of Discover. */
     var fieldFocused by remember { mutableStateOf(false) }
@@ -982,7 +1022,7 @@ private fun GroupWidgets(groups: List<SearchGroup>, onOpen: (SearchGroup) -> Uni
 @Composable
 private fun GroupCard(g: SearchGroup, modifier: Modifier, big: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(26.dp)
-    Box(modifier.clip(shape).background(Color(0xFF15161C)).border(1.dp, Color(0x26FFFFFF), shape).clickable(onClick = onClick)) {
+    Box(modifier.clip(shape).background(glassy(Color(0xFF15161C))).border(1.dp, Color(0x26FFFFFF), shape).clickable(onClick = onClick)) {
         g.backdrop?.let { AsyncImage(it, null, Modifier.fillMaxSize().graphicsLayer { alpha = 0.55f }, contentScale = ContentScale.Crop) }
         Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(Color(0xE6000000), Color(0x33000000)))))
         // the posters, fanned like a deck of cards
@@ -1008,7 +1048,7 @@ private fun GroupCard(g: SearchGroup, modifier: Modifier, big: Boolean, onClick:
 @Composable
 private fun GroupPage(g: SearchGroup, onClose: () -> Unit, onOpen: (Meta) -> Unit) {
     androidx.compose.ui.window.Dialog(onClose, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
-        // 0.8.8: coming Back from a title reopens this page — no window animation (it flashed), same tab and scroll.
+        // 0.9.71 (from Xstream 0.8.8): coming Back from a title reopens this page — no window animation (it flashed).
         val dlgView = androidx.compose.ui.platform.LocalView.current
         SideEffect { (dlgView.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window?.setWindowAnimations(0) }
         Column(Modifier.fillMaxSize().background(Color(0xFF0B0C10)).statusBarsPadding()) {
@@ -1050,8 +1090,75 @@ private fun GroupPage(g: SearchGroup, onClose: () -> Unit, onOpen: (Meta) -> Uni
 
 
 /** Settings › Layout › Adult content (on by default): 18+ titles and collections in search. */
-object SearchAdult { @Volatile var on: Boolean = true }
+object SearchAdult { @Volatile var on: Boolean = false }
 
 
-/** 0.8.8: shorts and extras that crowd collections and results (Marvel One-Shots, "Assembled", making-ofs, specials). */
+/**
+ * TV 0.8.7 search: TMDB only. Best name match first (exact, then starting with it, then every word); a film that is
+ * part of a series brings its whole collection right after it, oldest first (Avatar → The Way of Water → Fire and Ash);
+ * the rest by TMDB's own relevance / popularity.
+ */
+private suspend fun tvLeanSearch(key: String, query: String, onFirst: (List<SearchHit>) -> Unit): Pair<List<SearchHit>, SearchGroup?> {
+    if (key.isEmpty()) return emptyList<SearchHit>() to null
+    fun hitOf(m: Meta) = SearchHit(m, m.background, null, m.releaseInfo?.take(4), null, false)
+    val yearQ = Regex("\\b(19|20)\\d{2}\\b").find(query)?.value
+    val clean = query.replace(Regex("\\b(19|20)\\d{2}\\b"), "").trim().ifEmpty { query }
+    suspend fun tmdb(q: String): List<JsonObject> {
+        val body = withContext(Dispatchers.IO) { Api.get("https://api.themoviedb.org/3/search/multi?api_key=$key&query=${Uri.encode(q)}&include_adult=${SearchAdult.on}&page=1") }
+        return withContext(Dispatchers.Default) { Api.json.parseToJsonElement(body).jsonObject.sArr("results") }
+    }
+    var res = tmdb(clean)
+    // TV 0.8.8: small spelling slips ("dhurandar" → Dhurandhar): when nothing matches well, the start of the word is
+    // searched too and the closest-spelled titles come first.
+    var fuzzy = false
+    if (clean.length >= 5 && res.none { o -> matchRank(query, (o.sStr("title") ?: o.sStr("name")).orEmpty()) <= 2 }) {
+        val words = clean.split(' ').filter { it.isNotBlank() }
+        val head = words.first().let { w -> w.take(maxOf(4, (w.length * 0.6).toInt())) }
+        val alt = runCatching { tmdb((listOf(head) + words.drop(1)).joinToString(" ")) }.getOrDefault(emptyList())
+        if (alt.isNotEmpty()) { res = (res + alt).distinctBy { it.sStr("id") + it.sStr("media_type") }; fuzzy = true }
+    }
+    val metas = res.mapIndexedNotNull { i, o -> tmdbMetaOf(o, "movie")?.let { Triple(i, it, o) } }
+    val ordered = metas.sortedWith(compareBy<Triple<Int, Meta, JsonObject>>({ matchRank(query, it.second.name) },
+        { if (fuzzy) spellGap(clean, it.second.name) else 0 },
+        { if (yearQ != null && it.second.releaseInfo != yearQ) 1 else 0 }, { it.first })).map { it.second }
+    val first = ordered.map(::hitOf)
+    onFirst(first)
+    val top = ordered.firstOrNull { it.type == "movie" && matchRank(query, it.name) <= 2 } ?: return first to null
+    val tid = top.id.substringAfterLast(":")
+    val group = runCatching {
+        withTimeoutOrNull(4_000) {
+            withContext(Dispatchers.IO) {
+                val d = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/movie/$tid?api_key=$key")).jsonObject
+                val cid = d.sObj("belongs_to_collection")?.sStr("id") ?: return@withContext null
+                val c = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/collection/$cid?api_key=$key")).jsonObject
+                val parts = c.sArr("parts").sortedBy { it.sStr("release_date") ?: "9999" }.mapNotNull { tmdbMetaOf(it, "movie") }
+                if (parts.size < 2) null else SearchGroup(c.sStr("name") ?: top.name, "${parts.size} films · in order", parts.take(3).mapNotNull { it.poster },
+                    c.sStr("backdrop_path")?.let { "${SIMG}w780$it" }, parts)
+            }
+        }
+    }.getOrNull() ?: return first to null
+    // The collection right after the film you searched for, in order; then everything else.
+    val ids = group.items.map { it.id }.toSet()
+    val at = ordered.indexOfFirst { it.id in ids }.coerceAtLeast(0)
+    val rest = ordered.filter { it.id !in ids }
+    val out = rest.take(at) + group.items + rest.drop(at)
+    return out.distinctBy { it.id }.map(::hitOf) to group
+}
+
+
+/** How far apart two titles are in spelling (letters to change), on the part as long as what was typed. */
+private fun spellGap(typed: String, title: String): Int {
+    val a = typed.lowercase().filter { it.isLetterOrDigit() }
+    val b = title.lowercase().filter { it.isLetterOrDigit() }.take(a.length + 2)
+    if (a.isEmpty() || b.isEmpty()) return 99
+    var prev = IntArray(b.length + 1) { it }
+    for (i in 1..a.length) {
+        val cur = IntArray(b.length + 1); cur[0] = i
+        for (j in 1..b.length) cur[j] = minOf(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1)
+        prev = cur
+    }
+    return prev.last()
+}
+
+/** 0.9.71 (from Xstream 0.8.8): shorts and extras that crowd collections and results (Marvel One-Shots, "Assembled", making-ofs, specials). */
 fun isJunkTitle(n: String): Boolean = Regex("(?i)\\bone[- ]shot\\b|\\bassembled\\b|making of|behind the scenes|special presentation|\\bfeaturette\\b|\\bgag reel\\b|\\bbloopers?\\b|\\brecap\\b|\\bsneak peek\\b|\\bdeleted scenes?\\b").containsMatchIn(n)

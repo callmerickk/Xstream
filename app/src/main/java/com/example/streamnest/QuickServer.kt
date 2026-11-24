@@ -39,7 +39,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Connect PenguPlay: the user signs in on PenguPlay's own page (named there — they are making an account with it),
- * taps "Copy URL", comes back, and Xstream adds that personal link as one more quick server account.
+ * taps "Copy URL", comes back, and StreamX adds that personal link as one more quick server account.
  */
 object QuickServer {
     const val DEFAULT_CONNECT = "https://pengu.uk/configure"
@@ -94,7 +94,7 @@ object BuiltIns {
             val url = m[k]?.takeIf { it.startsWith("http") } ?: continue
             if (vm.addons.value.none { it.baseUrl == Api.normalize(url) }) vm.installAddon(url, family = k)
         }
-        // Xstream: the default Quick Play addon, chosen in Developer's Corner. Everyone gets it in Quick Start; users only
+        // StreamX: the default Quick Play addon, chosen in Developer's Corner. Everyone gets it in Quick Start; users only
         // see the Quick Play on / off switch.
         val qp = m["quickPlay"]?.takeIf { it.startsWith("http") } ?: return
         val base = Api.normalize(qp)
@@ -120,7 +120,7 @@ object BuiltIns {
         runCatching {
             Api.http.newCall(Request.Builder().url(XNs.url("devAddons", t))
                 .patch(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r ->
-                if (r.isSuccessful) { cur = values; null } else if (r.code == 401 || r.code == 403) "Not allowed: add the Firebase rule for xshared/devAddons, and use the owner's account." else "HTTP ${r.code}"
+                if (r.isSuccessful) { cur = values; null } else if (r.code == 401 || r.code == 403) "Not allowed: add the Firebase rule for shared/devAddons, and use the owner's account." else "HTTP ${r.code}"
             }
         }.getOrElse { "Couldn't reach the cloud." }
     }
@@ -165,7 +165,7 @@ fun PenguConnectSheet(vm: AppViewModel, onClose: () -> Unit) {
             if (e == null) { clearClip(); step = "done" } else { err = e; step = "missing" }
         }
     }
-    // Back from PenguPlay's page: the copied link is read as soon as Xstream has the screen again.
+    // Back from PenguPlay's page: the copied link is read as soon as StreamX has the screen again.
     LaunchedEffect(focused, step) { if (focused && step == "waiting") { kotlinx.coroutines.delay(400); tryAdd(clip()) } }
 
     Box(Modifier.fillMaxSize().background(Color(0x99000000)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
@@ -174,7 +174,7 @@ fun PenguConnectSheet(vm: AppViewModel, onClose: () -> Unit) {
         AnimatedVisibility(true, enter = fadeIn(tween(200)) + slideInVertically(tween(320)) { it / 3 }, exit = fadeOut()) {
             val shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
             Column(
-                Modifier.fillMaxWidth().widthIn(max = 560.dp).clip(shape).background(Color(0xFF121318)).border(1.dp, Color(0x1FFFFFFF), shape)
+                Modifier.fillMaxWidth().widthIn(max = 560.dp).clip(shape).background(glassy(Color(0xFF121318))).border(1.dp, Color(0x1FFFFFFF), shape)
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                     .navigationBarsPadding().padding(22.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -186,7 +186,7 @@ fun PenguConnectSheet(vm: AppViewModel, onClose: () -> Unit) {
                 when (step) {
                     "ask" -> {
                         Text("FASTER PLAY", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = BrandRed, letterSpacing = 1.5.sp)
-                        Text("Connect PenguPlay with Xstream", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 27.sp)
+                        Text("Connect PenguPlay with ${Brand.NAME}", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 27.sp)
                         Text("Get your own quick server account. Videos start instantly, even when it's busy.", fontSize = 14.sp, color = Color(0xFFC9CED9), lineHeight = 20.sp)
                         listOf("Instant start on most titles", "Your own account, so busy hours don't slow you down", "Set up automatically, nothing to configure").forEach {
                             Row(verticalAlignment = Alignment.CenterVertically) {

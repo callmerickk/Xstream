@@ -63,7 +63,7 @@ fun MoodDiscover(vm: AppViewModel, onOpen: (Meta) -> Unit) {
             items(MoodPicks.size) { i ->
                 val on = i == mood
                 Text(MoodPicks[i].label,
-                    Modifier.clip(RoundedCornerShape(20.dp)).background(if (on) Color.White else Color(0xFF15161C))
+                    Modifier.clip(RoundedCornerShape(20.dp)).background(if (on) Color.White else glassy(Color(0xFF15161C)))
                         .border(1.dp, if (on) Color.White else Color(0xFF2A3242), RoundedCornerShape(20.dp))
                         .clickable { mood = i }.padding(horizontal = 16.dp, vertical = 9.dp),
                     fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (on) Color.Black else Color.White)
@@ -74,7 +74,7 @@ fun MoodDiscover(vm: AppViewModel, onOpen: (Meta) -> Unit) {
             else LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(list, key = { it.id }) { m ->
                     Column(Modifier.width(108.dp).clip(RoundedCornerShape(12.dp)).clickable { onOpen(m) }) {
-                        AsyncImage(m.poster, m.name, Modifier.width(108.dp).height(160.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF15161C)),
+                        AsyncImage(m.poster, m.name, Modifier.width(108.dp).height(160.dp).clip(RoundedCornerShape(12.dp)).background(glassy(Color(0xFF15161C))),
                             contentScale = ContentScale.Crop)
                         Text(m.name, Modifier.padding(top = 4.dp), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color(0xFFD5D9E2))
                     }

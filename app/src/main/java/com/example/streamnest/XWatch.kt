@@ -36,7 +36,7 @@ import java.util.Locale
 )
 
 /**
- * Xstream's watch diary (per profile, on this phone): filled while you watch, read by My Space's charts. Keeps 90 days.
+ * StreamX's watch diary (per profile, on this phone): filled while you watch, read by My Space's charts. Keeps 90 days.
  * Only real watching counts: the time between two saves of the same title (seeks and jumps are ignored).
  */
 object WatchLog {
@@ -220,7 +220,7 @@ fun WeeklyRecap() {
         }
         if (night > 15 * 60_000L) Text("Night owl: ${hm(night)} after 11 PM", Modifier.padding(top = 10.dp), fontSize = 12.5.sp, color = Color(0xFFD6D9E2))
         Box(Modifier.padding(top = 14.dp).fillMaxWidth().height(44.dp).clip(RoundedCornerShape(22.dp)).background(Color.White).clickable {
-            val txt = "My week on Xstream: ${hm(total)} watched" + (top?.let { " · most watched: ${it.t}" } ?: "") + " · $eps episodes, $films films"
+            val txt = "My week on ${Brand.NAME}: ${hm(total)} watched" + (top?.let { " · most watched: ${it.t}" } ?: "") + " · $eps episodes, $films films"
             runCatching { ctx.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, txt), "Share my week").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
         }, Alignment.Center) { Text("Share my week", color = Color(0xFF111111), fontWeight = FontWeight.Bold) }
     }

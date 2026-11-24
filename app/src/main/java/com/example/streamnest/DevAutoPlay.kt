@@ -85,7 +85,7 @@ fun AutoPlayLogicScreen(vm: AppViewModel, onBack: () -> Unit) {
                     Text("Upgrade servers: ${rule.hostRank.joinToString(" → ")}", Modifier.padding(top = 6.dp), fontSize = 12.sp, color = Color(0xFFC9CED9))
                     if (rule.blockHosts.isNotEmpty()) Text("Skipped: ${rule.blockHosts.joinToString(", ")}", Modifier.padding(top = 2.dp), fontSize = 12.sp, color = Color(0xFFC9CED9))
                 }
-                if (BuildConfig.IS_TV) Text("Xstream TV still uses the classic logic.", Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Muted)
+                if (BuildConfig.IS_TV) Text("${Brand.NAME} TV still uses the classic logic.", Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Muted)
                 Spacer(Modifier.height(14.dp))
                 val last = history.lastOrNull()
                 Text("Undo last change",
@@ -217,7 +217,7 @@ fun RefreshLabScreen(vm: AppViewModel, onBack: () -> Unit) {
                     Text(step, Modifier.padding(top = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     if (total > 0) LinearProgressIndicator(progress = { done.toFloat() / total }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), color = Accent)
                 }
-                Text("Keep Xstream open while it runs (the screen stays on). Titles are picked fresh each time, so CNCVerse hasn't cached them yet.",
+                Text("Keep ${Brand.NAME} open while it runs (the screen stays on). Titles are picked fresh each time, so CNCVerse hasn't cached them yet.",
                     Modifier.padding(top = 10.dp), fontSize = 12.sp, color = Muted)
             }
         }

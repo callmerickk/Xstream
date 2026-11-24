@@ -54,7 +54,7 @@ object CrashLog {
             runCatching {
                 val ver = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull() ?: "?"
                 val text = buildString {
-                    append("Xstream ").append(ver).append(" · ").append(android.os.Build.MODEL)
+                    append("${Brand.NAME} ").append(ver).append(" · ").append(android.os.Build.MODEL)
                     append(" · Android ").append(android.os.Build.VERSION.RELEASE).append('\n')
                     append("Thread: ").append(thread.name).append('\n')
                     append(android.util.Log.getStackTraceString(e))
@@ -91,6 +91,11 @@ object CrashLog {
                     else -> "other (${e.reason})"
                 } ?: return@forEach
                 val mem = "pss ${e.pss / 1024} MB · rss ${e.rss / 1024} MB"
+                // Closed while in the background (the phone tidying up, e.g. vivo every few minutes): not an error.
+                if (e.reason == android.app.ApplicationExitInfo.REASON_LOW_MEMORY &&
+                    e.importance > android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE) {
+                    ActLog.add("APP", "closed by the phone while in the background · $mem"); return@forEach
+                }
                 val tomb = if (e.reason == android.app.ApplicationExitInfo.REASON_ANR)
                     runCatching { e.traceInputStream?.bufferedReader()?.use { r -> anrMain(r.readText()) } }.getOrNull().orEmpty()
                     else ""
@@ -113,7 +118,7 @@ object CrashLog {
     fun clear(ctx: Context) { runCatching { File(ctx.filesDir, FILE).delete() } }
 }
 
-/** "Xstream closed unexpectedly last time" — shows the saved error once, over everything. */
+/** "StreamX closed unexpectedly last time" — shows the saved error once, over everything. */
 @Composable
 fun CrashNotice() {
     val ctx = LocalContext.current
@@ -123,7 +128,7 @@ fun CrashNotice() {
     BackHandler { close() }
     val fr = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { fr.requestFocus() } }
-    // Only the important part: the error line and the first lines that mention Xstream code.
+    // Only the important part: the error line and the first lines that mention StreamX code.
     val lines = t.lines()
     val short = (lines.take(4) + lines.drop(4).filter { it.contains("streamnest") }.take(10)).joinToString("\n")
     Box(
@@ -131,10 +136,10 @@ fun CrashNotice() {
         Alignment.Center,
     ) {
         Column(
-            Modifier.widthIn(max = 680.dp).padding(24.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF15161C))
+            Modifier.widthIn(max = 680.dp).padding(24.dp).clip(RoundedCornerShape(20.dp)).background(glassy(Color(0xFF15161C)))
                 .border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(20.dp)).padding(22.dp),
         ) {
-            Text("Xstream closed unexpectedly last time", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text("${Brand.NAME} closed unexpectedly last time", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Text("Take a photo or screenshot of this and send it to get it fixed. Press OK or BACK to close.", Modifier.padding(top = 6.dp), fontSize = 13.sp, color = Muted)
             Box(
                 Modifier.padding(top = 14.dp).fillMaxWidth().heightIn(max = 260.dp).clip(RoundedCornerShape(12.dp))

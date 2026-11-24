@@ -28,7 +28,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 const val XSTREAM_LEGAL_VERSION = 1
-const val XSTREAM_LEGAL_NOTICE = "Xstream is a media player and organiser. It does not host, upload, store or distribute any movies, shows, music or other content. Everything you play is found and streamed by third-party add-ons, plug-ins and websites that you choose to use, and comes directly from those third-party services.\n\nWe do not control, check or endorse that content and are not responsible for it. You are solely responsible for making sure that what you watch or listen to, and how you use it, is legal where you live, including copyright and licensing laws.\n\nCopyright owners who want material removed should contact the website or file host where it is hosted.\n\nBy tapping \"I understand and agree\" you confirm you are 18+ (or have a parent's permission) and accept these terms."
+const val XSTREAM_LEGAL_NOTICE = "${Brand.NAME} is a media player and organiser. It does not host, upload, store or distribute any movies, shows, music or other content. Everything you play is found and streamed by third-party add-ons, plug-ins and websites that you choose to use, and comes directly from those third-party services.\n\nWe do not control, check or endorse that content and are not responsible for it. You are solely responsible for making sure that what you watch or listen to, and how you use it, is legal where you live, including copyright and licensing laws.\n\nCopyright owners who want material removed should contact the website or file host where it is hosted.\n\nBy tapping \"I understand and agree\" you confirm you are 18+ (or have a parent's permission) and accept these terms."
 
 private tailrec fun Context.legalActivity(): Activity? = when (this) {
     is Activity -> this
@@ -47,8 +47,10 @@ fun LegalNoticeGate(vm: AppViewModel) {
     var acceptedNow by remember(uid) { mutableStateOf(false) }
     val accepted = acceptedNow || uid == null || run {
         val prefs = context.getSharedPreferences("xstream_legal", Context.MODE_PRIVATE)
-        prefs.getInt("version_" + uid, 0) >= XSTREAM_LEGAL_VERSION ||
-            (texts["legalVersion"]?.toIntOrNull() ?: 0) >= XSTREAM_LEGAL_VERSION && texts["legalAcceptedUid"] == uid && !texts["legalAcceptedAt"].isNullOrBlank()
+        // TV 0.8.7: on a TV it's asked once per device and account — saved on the device itself, never again there for
+        // that account (agreeing on the phone doesn't skip the TV, and an update / Clear cache doesn't bring it back).
+        prefs.getInt("version_" + uid, 0) >= XSTREAM_LEGAL_VERSION || (!BuildConfig.IS_TV &&
+            (texts["legalVersion"]?.toIntOrNull() ?: 0) >= XSTREAM_LEGAL_VERSION && texts["legalAcceptedUid"] == uid && !texts["legalAcceptedAt"].isNullOrBlank())
     }
     // The account's saved settings arrive a moment after sign-in: wait for them before deciding (no flash either way).
     var settled by remember(uid) { mutableStateOf(false) }
@@ -82,7 +84,7 @@ fun LegalNoticeGate(vm: AppViewModel) {
                         onClick = {
                             val now = System.currentTimeMillis().toString()
                             context.getSharedPreferences("xstream_legal", Context.MODE_PRIVATE).edit()
-                                .putInt("version_" + uid, XSTREAM_LEGAL_VERSION).putLong("accepted_at_" + uid, now.toLong()).apply()
+                                .putInt("version_" + uid, XSTREAM_LEGAL_VERSION).putLong("accepted_at_" + uid, now.toLong()).commit()
                             vm.setText("legalVersion", XSTREAM_LEGAL_VERSION.toString())
                             vm.setText("legalAcceptedAt", now)
                             vm.setText("legalAcceptedUid", uid.orEmpty())

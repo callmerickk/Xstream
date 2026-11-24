@@ -36,6 +36,8 @@ object DlEngine {
 
     val live = MutableStateFlow<Map<Long, DlLive>>(emptyMap())
     private val jobs = ConcurrentHashMap<Long, Job>()
+    /** 0.9.77: downloads running now (memory lines). */
+    fun running(): Int = jobs.size
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var prefs: android.content.SharedPreferences? = null
 
@@ -137,10 +139,10 @@ object DlEngine {
         put(d.dmId, DlLive(f.length(), f.length(), 0, false, true, false))
         jobs.remove(d.dmId)
         ActLog.add("APP", "download finished: ${d.title} (${f.length() / 1_048_576} MB)")
+        // 0.9.73 (from Xstream): shown in the gallery / file manager right away (phones).
+        if (!BuildConfig.IS_TV) runCatching { android.media.MediaScannerConnection.scanFile(ctx, arrayOf(d.file), null, null) }
         if (jobs.values.none { it.isActive }) DlService.stop(ctx)
         DlService.finished(ctx, d.title)
-        // 0.8.16: shown in the gallery / file manager right away.
-        runCatching { android.media.MediaScannerConnection.scanFile(ctx, arrayOf(d.file), null, null) }
     }
 }
 

@@ -228,7 +228,7 @@ fun ProfileEditor(vm: AppViewModel, p: Profile?, onDone: () -> Unit) {
                     OutlinedTextField(link, { link = it.trim() }, Modifier.fillMaxWidth().padding(top = 12.dp).tvOkKeyboard(), singleLine = true,
                         placeholder = { Text("https://…/picture.gif") }, shape = RoundedCornerShape(12.dp), keyboardOptions = tvKeyboard())
                     if (link.startsWith("http")) Box(Modifier.fillMaxWidth().padding(top = 14.dp), Alignment.Center) {
-                        AsyncImage(link, null, Modifier.size(84.dp).clip(CircleShape).background(Color(0xFF222228)), contentScale = ContentScale.Crop)
+                        AsyncImage(link, null, Modifier.size(84.dp).clip(CircleShape).background(glassy(Color(0xFF222228))), contentScale = ContentScale.Crop)
                     }
                 }
             },

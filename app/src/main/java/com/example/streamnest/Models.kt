@@ -79,7 +79,7 @@ data class Meta(
 )
 
 @Serializable data class CatalogResponse(@kotlinx.serialization.SerialName("metas") val rawMetas: List<Meta> = emptyList()) {
-    /** 0.8.7: addons (AIOStreams) put their error messages in as fake titles ("[❌] PenguPlay — Failed to parse meta"): hidden. */
+    /** 0.9.71 (from Xstream): addons (AIOStreams) put their error messages in as fake titles ("[❌] PenguPlay — Failed to parse meta"): hidden. */
     val metas: List<Meta> get() = rawMetas.filterNot { it.isAddonError() }
 }
 fun Meta.isAddonError(): Boolean = id.startsWith("aiostreamserror") || name.contains("[❌]") || name.contains("❌") ||
@@ -95,10 +95,10 @@ data class StreamItem(val addonName: String, val stream: StreamInfo)
 
 @Serializable
 data class Progress(val key: String, val title: String, val image: String?, val url: String, val subs: List<Subtitle>, val positionMs: Long, val durationMs: Long, val updated: Long,
-    /** 0.8.9: which source / addon gave [url] (the resumed video shows its source and the right quality tick). */
+    /** 0.9.69 (from Xstream 0.8.9): which source / addon gave [url] (the resumed video shows its source and the right quality tick). */
     val source: String? = null, val addon: String? = null)
 
-/** 0.8.9: the link playing now and where it came from (saved with Continue watching). */
+/** 0.9.69 (from Xstream 0.8.9): the link playing now and where it came from (saved with Continue watching). */
 object PlayingSrc { /** players on screen */ @Volatile var open = 0; @Volatile var url: String? = null; @Volatile var source: String? = null; @Volatile var addon: String? = null }
 
 data class Channel(val name: String, val logo: String?, val group: String?, val url: String)

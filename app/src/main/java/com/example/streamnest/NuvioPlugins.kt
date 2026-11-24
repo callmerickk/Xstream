@@ -59,9 +59,9 @@ import java.util.concurrent.atomic.AtomicInteger
 // ───────────── Runtime: a hidden WebView (modern JavaScript) with our fetch / require bridge ─────────────
 
 /**
- * Xstream's Nuvio plugin runtime. Plugins are JavaScript with `getStreams(tmdbId, mediaType, season, episode)`; they
+ * StreamX's Nuvio plugin runtime. Plugins are JavaScript with `getStreams(tmdbId, mediaType, season, episode)`; they
  * run in a hidden WebView (full modern JavaScript: async / await, Promise, URL, TextEncoder…). fetch goes through
- * Xstream's network (no browser limits), and require() gives cheerio, crypto-js (bundled, MIT) and a small axios.
+ * StreamX's network (no browser limits), and require() gives cheerio, crypto-js (bundled, MIT) and a small axios.
  */
 object NuvioRuntime {
     private val main = Handler(Looper.getMainLooper())
@@ -73,6 +73,18 @@ object NuvioRuntime {
 
     private fun js(code: String) = main.post { runCatching { web?.evaluateJavascript(code, null) } }
     private fun q(s: String) = Api.json.encodeToString(s)
+    /** Phone 0.9.78: Nuvio plugins' page requests get the same Cloudflare relay as CloudStream plugins when a file
+     *  site's connection is cut (TV keeps the plain client). Built once. */
+    @Volatile private var relayFor: Pair<okhttp3.OkHttpClient, Pair<okhttp3.OkHttpClient, okhttp3.OkHttpClient>>? = null
+    /** (following redirects, not following), rebuilt only when Api.http changes (DNS setting). */
+    private fun clients(): Pair<okhttp3.OkHttpClient, okhttp3.OkHttpClient> {
+        val base = Api.http
+        relayFor?.takeIf { it.first === base }?.let { return it.second }
+        val f = if (BuildConfig.IS_TV) base else base.newBuilder().apply { interceptors().add(0, PageRelay) }.build()
+        val pair = f to f.newBuilder().followRedirects(false).followSslRedirects(false).build()
+        relayFor = base to pair
+        return pair
+    }
 
     private val bridge = object {
         @JavascriptInterface fun ready() { ready.complete(Unit) }
@@ -98,7 +110,7 @@ object NuvioRuntime {
                 method(method, rb)
             }.build()
         }.getOrElse { e -> js("__xFetchDone($id, ${buildJsonObject { put("error", e.message ?: "bad request") }})"); return }
-        val client = if (follow) Api.http else Api.http.newBuilder().followRedirects(false).followSslRedirects(false).build()
+        val client = clients().let { if (follow) it.first else it.second }
         client.newCall(req).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
                 sink?.invoke("    · fetch ✗ $method ${url.take(100)} · ${e.javaClass.simpleName}: ${e.message}")
@@ -133,7 +145,7 @@ object NuvioRuntime {
                 val libs = runCatching { ctx.assets.open("nuvio/libs.js").bufferedReader().readText() }.getOrDefault("window.__xLibs={};")
                 val boot = ctx.assets.open("nuvio/bootstrap.js").bufferedReader().readText()
                 val html = "<!doctype html><html><head><meta charset=\"utf-8\"></head><body><script>$libs</script><script>$boot</script></body></html>"
-                w.loadDataWithBaseURL("https://xstream.plugins/", html, "text/html", "utf-8", null)
+                w.loadDataWithBaseURL("https://streamx.plugins/", html, "text/html", "utf-8", null)
                 web = w
             }
         }
@@ -253,7 +265,7 @@ object NuvioTester {
                 NuvioRuntime.sink = null
                 logFile.value = runCatching {
                     val d = File(ctx.filesDir, "source-tests").apply { mkdirs() }
-                    File(d, "xstream-nuvio-test-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.txt").apply { writeText(synchronized(buf) { buf.toString() }) }
+                    File(d, "streamx-nuvio-test-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.txt").apply { writeText(synchronized(buf) { buf.toString() }) }
                 }.getOrNull()
                 running.value = false; step.value = "Done"
                 SourceTester.releaseTestSurface()
@@ -270,7 +282,7 @@ object NuvioTester {
     }
 
     private suspend fun run(ctx: Context, vm: AppViewModel, manual: Meta?, playTest: Boolean) {
-        w("Xstream ${BuildConfig.VERSION_NAME} · Nuvio plugin test · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}")
+        w("${Brand.NAME} ${BuildConfig.VERSION_NAME} · Nuvio plugin test · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}")
         if (NuvioPlugins.catalog.value.isEmpty()) NuvioPlugins.refresh()?.let { w("Repositories: $it") }
         val list = NuvioPlugins.enabledScrapers()
         w("Plugins switched on: " + list.joinToString { "${it.name} ${it.version}" }.ifEmpty { "none" })
@@ -369,7 +381,7 @@ fun NuvioPluginList(vm: AppViewModel) {
         }
         if (repos.isEmpty()) Text("No Nuvio repository yet. Paste a repository's manifest.json link above.", fontSize = 12.5.sp, color = Muted)
         repos.forEach { r ->
-            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFF15161C)).border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(16.dp)).padding(12.dp)) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(glassy(Color(0xFF15161C))).border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(16.dp)).padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(names[r] ?: r.substringAfter("githubusercontent.com/").substringBefore("/"), Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     Text("${cat.count { it.repo == r }} plugins", fontSize = 11.sp, color = Muted)
@@ -401,10 +413,10 @@ fun NuvioTestTab(vm: AppViewModel) {
     var manual by remember { mutableStateOf<Meta?>(null) }
     var msg by remember { mutableStateOf<String?>(null) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 120.dp)) {
-        item { Text("Nuvio plugins run in Xstream's own JavaScript runtime (fetch, cheerio, crypto-js, axios). Tested here only — Quick Play doesn't use them yet.", Modifier.padding(16.dp), fontSize = 12.5.sp, color = Muted) }
+        item { Text("Nuvio plugins run in ${Brand.NAME}'s own JavaScript runtime (fetch, cheerio, crypto-js, axios). Tested here only — Quick Play doesn't use them yet.", Modifier.padding(16.dp), fontSize = 12.5.sp, color = Muted) }
         item { NuvioPluginList(vm) }
         item {
-            Column(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFF15161C)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(glassy(Color(0xFF15161C))).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Test", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.CenterVertically) { Text("Play the best link of each server", Modifier.weight(1f), fontSize = 13.sp); Switch(play, { play = it }) }
                 Text("One title (optional):", fontSize = 12.sp, color = Muted)
@@ -421,7 +433,7 @@ fun NuvioTestTab(vm: AppViewModel) {
         }
         res.forEach { r ->
             item {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF15161C)).padding(12.dp)) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(glassy(Color(0xFF15161C))).padding(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(if (r.ok) "✓" else "✗", color = if (r.ok) Color(0xFF3DD68C) else Color(0xFFFF8A80), fontWeight = FontWeight.Bold)
                         Text("  ${r.plugin} · ${r.title}", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Bold)

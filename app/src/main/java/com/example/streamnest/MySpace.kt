@@ -132,7 +132,7 @@ fun MySpaceScreen(
                         ProfileAvatar(vm, profile, 64.dp, Modifier.clickable(onClick = onProfile))
                         Column(Modifier.weight(1f).padding(start = 14.dp)) {
                             Text(profile?.name ?: "", fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            // Xstream: tags wrap onto a new line instead of sliding under each other; no Switch button (long-press
+                            // StreamX: tags wrap onto a new line instead of sliding under each other; no Switch button (long-press
                             // your picture in the dock and slide to another profile).
                             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                             androidx.compose.foundation.layout.FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -150,34 +150,10 @@ fun MySpaceScreen(
                     }
                 }
             }
-            // Xstream: Library, Watch together, Watchlist, Notifications and Clear Continue Watching live in Library now;
+            // StreamX: Library, Watch together, Watchlist, Notifications and Clear Continue Watching live in Library now;
             // My Space shows your charts instead.
             if (!BuildConfig.IS_TV) item { WeeklyRecap() }
             item { LaunchedEffect(profile?.id) { WatchLog.load(ctx, profile?.id) } ; WatchCharts { k -> progress.firstOrNull { it.key == k }?.let { onOpen(it.toMeta()) } ?: onOpen(Meta(id = k.substringBefore(":"), type = if (k.contains(":")) "series" else "movie", name = "")) } }
-            if (!BuildConfig.IS_TV) item { DownloadsSection(onPlay) }
-            if (!BuildConfig.IS_TV) item {
-                var tasteOpen by remember { mutableStateOf(false) }
-                Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color(0xFF15161C))
-                    .clickable { tasteOpen = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Tune, null, tint = Color(0xFFB6BDCC))
-                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                        Text("Your taste & languages", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Text(vm.tasteLangs().joinToString(" · ") { c -> TasteLangs.firstOrNull { it.code == c }?.name ?: c }.ifBlank { "Pick what Home is made from" }, fontSize = 12.sp, color = Color(0xFF9AA3B5))
-                    }
-                }
-                if (tasteOpen) TasteOnboarding(vm) { tasteOpen = false }
-            }
-            if (!BuildConfig.IS_TV) item {
-                val di by Donate.info.collectAsState()
-                if (di.on) Row(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color(0x1FE50914)).border(1.dp, Color(0x55E50914), RoundedCornerShape(18.dp))
-                    .clickable { Donate.ask.value = true }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Favorite, null, tint = Color(0xFFFF5A64))
-                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                        Text("Support Xstream", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Text("Keep the servers running and new features coming", fontSize = 12.sp, color = Color(0xFF9AA3B5))
-                    }
-                }
-            }
             item { Spacer(Modifier.navigationBarsPadding().height(120.dp)) }
         }
     }
@@ -281,7 +257,7 @@ private fun OldLibraryPage(vm: AppViewModel, onBack: (() -> Unit)?, onOpen: (Met
         else item {
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(progress, key = { it.key }) { p ->
-                    ContinueCard(p, onClick = { onPlay(p.toPlayer()) }, onRemove = { vm.removeProgress(p.key) })
+                    ContinueCard(p, onClick = { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs, source = p.source, addon = p.addon)) }, onRemove = { vm.removeProgress(p.key) })
                 }
             }
         }
@@ -457,7 +433,7 @@ fun WatchlistPage(vm: AppViewModel, onBack: () -> Unit, onOpen: (Meta) -> Unit, 
     }
     if (pickTitle) PremiumAlert(onDismissRequest = { pickTitle = false }, title = { Text("Plan which title?") }, text = {
         Column(Modifier.heightIn(max = 460.dp).verticalScrollCompat()) {
-            // Xstream: search any title, not only the ones in your watchlist.
+            // StreamX: search any title, not only the ones in your watchlist.
             TitleSearchBox(vm) { m -> pickTitle = false; planFor = m }
             if (myList.isNotEmpty()) Text("From your watchlist", Modifier.padding(top = 14.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = HubMuted)
             if (myList.isEmpty()) Text("Add titles to your watchlist first.", fontSize = 13.sp, color = HubMuted)
@@ -545,7 +521,7 @@ fun NotificationsPage(onBack: () -> Unit, onTogether: () -> Unit, embedded: Bool
         Public.vm?.setText("bellGone", (gone + idOf(a)).toList().takeLast(120).joinToString("|"))
     }
     if (!embedded) BackHandler { onBack() }
-    LazyColumn(Modifier.fillMaxSize().background(Bg), contentPadding = PaddingValues(bottom = 120.dp)) {
+    LazyColumn(Modifier.fillMaxSize().background(if (embedded) Color.Transparent else Bg), contentPadding = PaddingValues(bottom = if (embedded) 12.dp else 120.dp)) {
         if (!embedded) item { PageHead("Notifications", onBack) }
         if (alerts.isNotEmpty()) item { Text("Tap to open · swipe left to remove", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), fontSize = 12.sp, color = HubMuted) }
         if (pending.isNotEmpty()) item {

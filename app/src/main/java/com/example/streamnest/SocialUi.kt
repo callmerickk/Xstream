@@ -382,7 +382,7 @@ fun PlanFlow(meta: Meta, item: SharedItem?, friends: List<Person>, startAt: Long
     val scope = rememberCoroutineScope()
     var at by remember { mutableStateOf<Long?>(null) }
     var who by remember { mutableStateOf<String?>(if (existing != null) "keep" else null) }
-    // Xstream: the day and time are picked inside the app (no phone calendar pop-up).
+    // StreamX: the day and time are picked inside the app (no phone calendar pop-up).
     if (at == null) { DateTimeSheet(startAt, title = "When do you want to watch ${meta.name}?", onPicked = { at = it }, onCancel = onDone); return }
     val time = at ?: return
     fun save(with: List<Person>) {

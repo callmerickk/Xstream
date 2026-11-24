@@ -8,7 +8,7 @@ import androidx.compose.ui.graphics.Color
  * Values changed inside the app are saved on the phone and override these defaults.
  */
 val Defaults: Map<String, String> = linkedMapOf(
-    "appName" to "Xstream",
+    "appName" to Brand.NAME,
     "showBrand" to "yes",
     "forYou" to "For You",
     "badge" to "#{rank} in {catalog} Today",
@@ -42,11 +42,11 @@ val Defaults: Map<String, String> = linkedMapOf(
     "autoSlide" to "yes",
     "slideSeconds" to "5",
     // Settings values (changed from Help & Settings, not listed in the text editor)
-    "theme" to "Elegant",
+    "theme" to "Crimson",
     "accent2" to "#FF6A5C",
     "amoled" to "no",
     "navStyle" to "adaptive",
-    "navBar" to (if (BuildConfig.LIVE_ONLY) "orbit" else "streamx"),
+    "navBar" to "streamx",
     "showHero" to "yes",
     "rowsHidden" to "",
     "rowsOrder" to "",
@@ -55,7 +55,7 @@ val Defaults: Map<String, String> = linkedMapOf(
     "posterWidth" to "Balanced",
     "posterCorner" to "Rounded",
     "landscapePosters" to "yes",
-    "shuffleRows" to "yes",
+    "shuffleRows" to "no",
     "rankedRows" to "yes",
     "addonPosters" to "yes",
     "hideLabels" to "no",
@@ -126,9 +126,8 @@ val Defaults: Map<String, String> = linkedMapOf(
     "accent" to "#E50914",
     "btnColor" to "",
     "btnText" to "",
-    "background" to "#0F1014",
-    // Xstream Live: deep indigo glow at the top over a navy-black page (like the big streaming apps).
-    "deckTint" to (if (BuildConfig.LIVE_ONLY) "#2B2F7A" else "#3A0E17"),
+    "background" to "#07080C",
+    "deckTint" to "#3A0E17",
     "cardCorner" to "34",
     // Collections (Nuvio-style)
     "traktClientId" to "",
@@ -189,6 +188,8 @@ object Palette {
     /** Selected buttons, chips and switches (a custom theme can set them; otherwise the accent). */
     var button by mutableStateOf(Color(0xFFE50914))
     var onButton by mutableStateOf(Color.White)
+    /** TV 0.9.3: the Glass theme — see-through pages and cards over a soft blur of the current poster (TV only). */
+    var glass by mutableStateOf(false)
 }
 
 val BtnColor: Color get() = Palette.button
@@ -213,6 +214,13 @@ fun isOn(v: String) = v.trim().lowercase() == "yes"
  * Settings kept separately for phones and TVs by default (each profile can change this per section with
  * "Same on all devices / Only on this device type"). Everything else follows the profile to every device.
  */
+/**
+ * 0.9.78 (phone): the look (theme, colours, Home style, bars) arriving by sync is not applied on the phone. Before, a TV's
+ * theme replaced the phone's — the phone's Glass turned off and everything went black. (Still sent, so the TV is unchanged.)
+ */
+val LookDeviceKeys = setOf("theme", "themePicked", "accent", "accent2", "background", "deckTint", "btnColor", "btnText",
+    "amoled", "homeStyle", "navBar", "navStyle", "cardCorner")
+
 val DefaultDeviceKeys = listOf(
     "qsQuality", "tagRules", "autoRegex", "playerEngine", "playerChoice", "autoPlayMode", "fastStart", "qsPreload",
     "subSize", "subBold", "subColor", "subBg", "subOutline", "subOutlineColor", "seekThumbs",

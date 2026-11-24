@@ -12,7 +12,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-/** 0.8.17 (from StreamX TV 0.9.14): Home's catalogs in one request through StreamX's Cloudflare Worker (`/bundle`). Empty map = use the usual way. */
+/** TV 0.9.14: Home's catalogs in one request through StreamX's Cloudflare Worker (`/bundle`). Empty map = use the usual way. */
 object HomeBundle {
     private const val URL = "https://streamx-home.callmerick093.workers.dev/bundle"
     private const val KEY = "sx-home-1"

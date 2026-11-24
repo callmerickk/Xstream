@@ -47,18 +47,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Xstream Live's own bottom bar ("Orbit"): a floating glass capsule. The selected tab grows into a lit pill with its
+ * 0.9.75 (from Xstream): the Orbit bottom bar ("Orbit"): a floating glass capsule. The selected tab grows into a lit pill with its
  * name (indigo → red light behind it); the others are icons only. Springy, with a soft halo under the capsule.
  * Settings › Layout › Bottom bar switches between StreamX bar, Capsule and Orbit.
  */
 @Composable
-fun LiveBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> Unit, modifier: Modifier = Modifier) {
+fun PhoneOrbitBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> Unit, modifier: Modifier = Modifier) {
     val haptics = LocalHapticFeedback.current
     val items = listOf(
         Triple(0, Icons.Default.Home, t("navHome")),
         Triple(1, Icons.Default.Search, t("navSearch")),
-        Triple(3, Icons.Default.VideoLibrary, t("navLibrary")),
-        Triple(2, Icons.Default.Person, "Me"),
+        Triple(2, Icons.Default.VideoLibrary, t("navLibrary")),
+        Triple(3, Icons.Default.Person, "Me"),
     )
     val shape = RoundedCornerShape(50)
     Box(
@@ -82,8 +82,8 @@ fun LiveBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> U
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
         ) {
             items.forEach { (idx, icon, label) ->
-                if (idx == 2) MeItem(tab == 2, vm, onTab) else
-                OrbitItem(tab == idx, icon, label) {
+                if (idx == 3) PxMeItem(tab == 3, vm, onTab) else
+                PxOrbitItem(tab == idx, icon, label) {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onTab(idx)
                 }
@@ -93,7 +93,7 @@ fun LiveBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> U
 }
 
 @Composable
-private fun RowScope.OrbitItem(selected: Boolean, icon: ImageVector?, label: String, gesture: Modifier? = null,
+private fun RowScope.PxOrbitItem(selected: Boolean, icon: ImageVector?, label: String, gesture: Modifier? = null,
     iconContent: (@Composable () -> Unit)? = null, onClick: () -> Unit) {
     val springy = spring<Float>(dampingRatio = 0.62f, stiffness = Spring.StiffnessMediumLow)
     val grow by animateFloatAsState(if (selected) 1f else 0f, springy, label = "orbitGrow")
@@ -138,7 +138,7 @@ private fun RowScope.OrbitItem(selected: Boolean, icon: ImageVector?, label: Str
  * slide up and let go on one to switch (like StreamX).
  */
 @Composable
-private fun RowScope.MeItem(selected: Boolean, vm: AppViewModel, onTab: (Int) -> Unit) {
+private fun RowScope.PxMeItem(selected: Boolean, vm: AppViewModel, onTab: (Int) -> Unit) {
     val haptics = LocalHapticFeedback.current
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val current by vm.current.collectAsStateWithLifecycle()
@@ -155,7 +155,7 @@ private fun RowScope.MeItem(selected: Boolean, vm: AppViewModel, onTab: (Int) ->
                 while (true) { val e = awaitPointerEvent(); if (e.changes.all { !it.pressed }) return@withTimeoutOrNull false }
                 @Suppress("UNREACHABLE_CODE") false
             } == null
-            if (!held) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); onTab(2); return@awaitEachGesture }
+            if (!held) { haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove); onTab(3); return@awaitEachGesture }
             haptics.performHapticFeedback(HapticFeedbackType.LongPress); switcher = true; hover = -1
             while (true) {
                 val e = awaitPointerEvent()
@@ -174,16 +174,16 @@ private fun RowScope.MeItem(selected: Boolean, vm: AppViewModel, onTab: (Int) ->
             if (wantsAdd) { switcher = false; adding = true }
             if (pick != null) {
                 switcher = false
-                if (pick.id == vm.current.value?.id) onTab(2) else ProfileLock.ask(pick) { vm.selectProfile(pick); onTab(2) }
+                if (pick.id == vm.current.value?.id) onTab(3) else ProfileLock.ask(pick) { vm.selectProfile(pick); onTab(3) }
             }
         }
     }
     val row = this
     Box {
-        row.OrbitItem(selected, null, "Me", gesture = gesture, iconContent = {
+        row.PxOrbitItem(selected, null, "Me", gesture = gesture, iconContent = {
             ProfileAvatar(vm, current, 26.dp, if (selected) Modifier.border(1.5.dp, Color.White, CircleShape) else Modifier, animate = true)
-        }) { onTab(2) }
-        if (switcher) SxProfileSwitcher(vm, hover, onDismiss = { switcher = false }, onPicked = { switcher = false; onTab(2) }, onAdd = { switcher = false; adding = true })
+        }) { onTab(3) }
+        if (switcher) SxProfileSwitcher(vm, hover, onDismiss = { switcher = false }, onPicked = { switcher = false; onTab(3) }, onAdd = { switcher = false; adding = true })
         if (adding) ProfileEditor(vm, null) { adding = false }
     }
 }

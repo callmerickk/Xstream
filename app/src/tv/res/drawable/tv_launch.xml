@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TV 0.9.14: the StreamX logo from the very first frame (the stick used to show ~3 s of black while the app started). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/tv_launch_bg" />
+    <item android:drawable="@drawable/logo_signal" android:gravity="center" android:width="78dp" android:height="78dp" />
+</layer-list>

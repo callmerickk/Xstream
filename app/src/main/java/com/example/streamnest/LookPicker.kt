@@ -204,7 +204,7 @@ private fun LookSheet(title: String, sub: String, onDismiss: () -> Unit, content
     Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { onDismiss() }, Alignment.BottomCenter) {
             Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(Color(0xFF16171D))
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(glassy(Color(0xFF16171D)))
                     .border(BorderStroke(1.dp, Color(0x22FFFFFF)), RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                     .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) { }
                     .navigationBarsPadding().padding(horizontal = 18.dp).padding(top = 10.dp, bottom = 18.dp)
@@ -285,7 +285,7 @@ internal fun LookSection(vm: AppViewModel, onEditTheme: (CustomTheme?) -> Unit) 
     when (sheet) {
         "style" -> LookSheet("Home style", "How the top of Home and the rows look. The colours follow your theme.", { sheet = null }) {
             val opts = listOf(Triple("live", "Live", "Curved card with trailer and glow"), Triple("streamx", "Stack", "A big card with the next ones stacked behind"),
-                Triple("classic", "Classic", "Full-width poster, Xstream original"))
+                Triple("classic", "Classic", "Xstream's original deck"))
             opts.chunked(2).forEach { row ->
                 Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     row.forEach { (k, n, d) ->
@@ -304,7 +304,7 @@ internal fun LookSection(vm: AppViewModel, onEditTheme: (CustomTheme?) -> Unit) 
         }
         "bar" -> LookSheet("Bottom bar", "Works with every Home style.", { sheet = null }) {
             listOf(Triple("orbit", "Orbit", "Clear pill with the red glow line (Live)"), Triple("streamx", "Horizon", "The glowing curved edge, water rings on Me"),
-                Triple("capsule", "Capsule", "The floating capsule (Xstream original)")).forEach { (k, n, d) ->
+                Triple("capsule", "Capsule", "The floating capsule dock")).forEach { (k, n, d) ->
                 PickCard(bar == k, Modifier.fillMaxWidth().padding(bottom = 10.dp), onClick = { vm.setText("navBar", k); sheet = null }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box { MiniHome("rows", k, look, Modifier.size(120.dp, 78.dp)); if (bar == k) Tick(Modifier.align(Alignment.TopEnd).padding(4.dp)) }
@@ -323,6 +323,7 @@ internal fun LookSection(vm: AppViewModel, onEditTheme: (CustomTheme?) -> Unit) 
                     Box {
                         MiniHome(style, bar, c, Modifier.fillMaxWidth().height(96.dp))
                         if (selected) Tick(Modifier.align(Alignment.TopEnd).padding(4.dp))
+                        if (name == "Glass") NewBadge(Modifier.align(Alignment.TopStart).padding(4.dp))
                     }
                     Text(name, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp), maxLines = 1)
                     Text(note.ifBlank { " " }, fontSize = 10.sp, color = Muted, maxLines = 1)
@@ -360,4 +361,12 @@ internal fun LookSection(vm: AppViewModel, onEditTheme: (CustomTheme?) -> Unit) 
             }
         }
     }
+}
+
+
+/** 0.9.76: a small red "NEW" label (the Glass theme). */
+@Composable
+internal fun NewBadge(modifier: Modifier = Modifier) {
+    Text("NEW", modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFFE50914)).padding(horizontal = 6.dp, vertical = 2.dp),
+        fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.White, letterSpacing = 0.8.sp)
 }

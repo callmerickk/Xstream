@@ -10,7 +10,7 @@ import android.widget.RemoteViews
 
 /**
  * Home screen widget "Continue watching": your latest title with its progress and a Resume button. Tapping it opens the
- * title in Xstream and presses Play (it resumes where you stopped).
+ * title in StreamX and presses Play (it resumes where you stopped).
  */
 class ContinueWidget : AppWidgetProvider() {
     override fun onUpdate(ctx: Context, mgr: AppWidgetManager, ids: IntArray) {

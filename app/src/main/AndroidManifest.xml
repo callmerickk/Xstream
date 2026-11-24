@@ -13,7 +13,6 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Needed on Android 11+ to find the phone's speech-recognition and text-to-speech engines -->
     <queries>
         <intent><action android:name="android.speech.RecognitionService" /></intent>
@@ -25,16 +24,10 @@
         android:roundIcon="@mipmap/ic_launcher_signal_round"
         android:usesCleartextTraffic="true"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Xstream">
-        <!-- Xstream VPN (WireGuard): only Xstream's own traffic, only while switched on in Network & DNS. -->
+        android:theme="@style/Theme.StreamX">
+        <!-- StreamX VPN (WireGuard): only StreamX's own traffic, only while switched on in Network & DNS. -->
         <service android:name=".UpdateService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".DlService" android:exported="false" android:foregroundServiceType="dataSync" />
-        <!-- Music (Live server songs): background playback with the media notification and lock-screen controls. -->
-        <service android:name=".MusicService" android:exported="true" android:foregroundServiceType="mediaPlayback">
-            <intent-filter>
-                <action android:name="androidx.media3.session.MediaSessionService" />
-            </intent-filter>
-        </service>
         <service
             android:name="com.wireguard.android.backend.GoBackend$VpnService"
             android:exported="false"
@@ -48,26 +41,20 @@
             android:exported="true"
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize">
-            <!-- "Open" after installing / updating always opens Xstream itself (not Xstream Music): Android asks for this
-                 category first. -->
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.INFO" />
-            </intent-filter>
-            <!-- 0.8.17: Xstream's own invite links (StreamX keeps streamx://join and streamx-watch.pages.dev/join):
-                 xstream://join/CODE, and https://streamx-home.callmerick093.workers.dev/xjoin/CODE (verified for Xstream). -->
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density|fontScale|uiMode|navigation|keyboard|layoutDirection|colorMode|touchscreen">
+            <!-- Watch together invite links: <inviteScheme>://join/CODE (brand values from app/build.gradle.kts) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="xstream" android:host="join" />
+                <data android:scheme="${inviteScheme}" android:host="join" />
             </intent-filter>
+            <!-- WhatsApp invite links: https://<inviteHost><invitePath>/CODE open the app straight into the room. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="streamx-home.callmerick093.workers.dev" android:pathPrefix="/xjoin" />
+                <data android:scheme="https" android:host="${inviteHost}" android:pathPrefix="${invitePath}" />
             </intent-filter>
         </activity>
         <!-- Full-screen YouTube trailers in a plain Activity (TrailerActivity.kt): fixes the black-picture WebView video. -->
@@ -76,19 +63,27 @@
             android:exported="false"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
-            android:theme="@style/Theme.Xstream" />
+            android:theme="@style/Theme.StreamX" />
+        <!-- 0.9.67: the QR scanner (Link a TV, VPN codes) always opens upright. -->
+        <activity
+            android:name=".PortraitScanActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:stateNotNeeded="true"
+            android:theme="@style/zxing_CaptureTheme"
+            android:windowSoftInputMode="stateAlwaysHidden" />
         <!-- CloudStream plugin settings screens (CsSettingsActivity.kt). -->
         <activity
             android:name=".CsSettingsActivity"
             android:exported="false"
-            android:theme="@style/Theme.Xstream.PluginSettings" />
+            android:theme="@style/Theme.StreamX.PluginSettings" />
         <!-- Home screen widget: Continue watching (ContinueWidget.kt). -->
         <!-- Watch together: reminders for planned watches (Social.kt). -->
         <receiver android:name=".PlanAlarmReceiver" android:exported="false" />
         <receiver
             android:name=".ContinueWidget"
             android:exported="false"
-            android:label="Xstream · Continue watching">
+            android:label="${brandName} · Continue watching">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -96,19 +91,6 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_continue_info" />
         </receiver>
-        <!-- Home screen widget: Xstream Music (MusicHomeScreen.kt). -->
-        <receiver
-            android:name=".MusicWidget"
-            android:exported="false"
-            android:label="Xstream Music">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_music_info" />
-        </receiver>
-        <receiver android:name=".MusicWidgetControl" android:exported="false" />
         <!-- In-app updates (Updates.kt): shares the downloaded APK with the installer. -->
         <provider
             android:name="androidx.core.content.FileProvider"

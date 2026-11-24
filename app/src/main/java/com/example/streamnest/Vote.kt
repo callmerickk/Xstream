@@ -59,8 +59,6 @@ suspend fun AppViewModel.buildRecommendations(): List<Meta> = coroutineScope {
     liked.forEachIndexed { i, l -> l.genres.forEach { g -> genreScore[g] = (genreScore[g] ?: 0) + (if (i < 5) 3 else 2) } }
     myList.value.forEach { m -> m.genres.orEmpty().forEach { g -> genreScore[g] = (genreScore[g] ?: 0) + 1 } }
     v.values.filter { it.v < 0 }.forEach { d -> d.genres.forEach { g -> genreScore[g] = (genreScore[g] ?: 0) - 1 } }
-    // Genres picked on the taste screen count like a few likes each.
-    texts.value["tasteGenres"]?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.forEach { g -> genreScore[g] = (genreScore[g] ?: 0) + 2 }
     var genres = genreScore.entries.filter { it.value > 0 }.sortedByDescending { it.value }.map { it.key }.take(3)
     if (kids) genres = listOf("Animation", "Family")
     if (genres.isEmpty() && liked.isEmpty()) return@coroutineScope emptyList()

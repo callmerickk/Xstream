@@ -36,7 +36,7 @@ import java.util.concurrent.TimeUnit
  * in [hostRank] order and [blockHosts] skipped.
  * "classic": exactly the 0.9.43 behaviour (one ask that waits up to 20 s, then every 2 s until links come).
  *
- * TV always uses classic until the same rule is brought to Xstream TV.
+ * TV always uses classic until the same rule is brought to StreamX TV.
  */
 @Serializable
 data class CncRule(

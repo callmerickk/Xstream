@@ -86,7 +86,7 @@ fun AiLogo(vm: AppViewModel, modifier: Modifier) {
 
 @Composable
 internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean = false) {
-    // Xstream: users only see the debrid services; keys, the AI's logo and voice are set in Developer's Corner and
+    // StreamX: users only see the debrid services; keys, the AI's logo and voice are set in Developer's Corner and
     // published for everyone.
     if (!dev) { DebridPage(vm, onBack); return }
     val texts by vm.texts.collectAsStateWithLifecycle()
@@ -117,8 +117,8 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean
             var msg by remember { mutableStateOf<String?>(null) }
             SettingsCard {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Set the keys, the AI's logo (use a link) and its voice here, then publish. Every Xstream user gets them when they sign in.", fontSize = 13.sp, color = Muted)
-                    if (!BuildConfig.NO_PUBLISH) Button({ msg = "Publishing…"; scope.launch { msg = DevDefaults.publish(vm) ?: "Published ✓ — everyone gets these on their next start" } },
+                    Text("Set the keys, the AI's logo (use a link) and its voice here, then publish. Every ${Brand.NAME} user gets them when they sign in.", fontSize = 13.sp, color = Muted)
+                    Button({ msg = "Publishing…"; scope.launch { msg = DevDefaults.publish(vm) ?: "Published ✓ — everyone gets these on their next start" } },
                         Modifier.padding(top = 10.dp).fillMaxWidth(), shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn)) { Text("Publish for everyone", fontWeight = FontWeight.SemiBold) }
                     msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Muted) }
@@ -171,7 +171,7 @@ internal fun IntegrationsPage(vm: AppViewModel, onBack: () -> Unit, dev: Boolean
                     Text(if (it == "ok") "✓ Connected. Your AI assistant is ready." else "✕ $it", Modifier.padding(top = 8.dp),
                         fontSize = 14.sp, color = if (it == "ok") Color(0xFF5CD98A) else Color(0xFFFF6B6B))
                 }
-                Text("If a model isn't available for your key, Xstream switches to one that is.", Modifier.padding(top = 6.dp), fontSize = 12.sp, color = Muted)
+                Text("If a model isn't available for your key, ${Brand.NAME} switches to one that is.", Modifier.padding(top = 6.dp), fontSize = 12.sp, color = Muted)
                 Text("Your key is stored only on this phone and sent only to ${provider.label}.", Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Muted)
             }
             RowDivider(20.dp)
@@ -269,7 +269,7 @@ private fun KeyField(vm: AppViewModel, key: String, label: String, desc: String,
 }
 
 
-/** Xstream Integrations for users: the debrid services only. */
+/** StreamX Integrations for users: the debrid services only. */
 @Composable
 private fun DebridPage(vm: AppViewModel, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().pageScroll().navigationBarsPadding().padding(bottom = 40.dp)) {

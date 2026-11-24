@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Black from the very first frame, so the Xstream intro animation starts straight away (no grey/logo flash). -->
+    <!-- Black from the very first frame, so the StreamX intro animation starts straight away (no grey/logo flash). -->
     <!-- MaterialComponents (an AppCompat descendant): CloudStream plugins' own settings build Material buttons from the
          app's or the screen's context, which crashed with a plain AppCompat theme. -->
-    <style name="Theme.Xstream" parent="Theme.MaterialComponents.NoActionBar">
+    <style name="Theme.StreamX" parent="Theme.MaterialComponents.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:windowBackground">@android:color/black</item>
@@ -12,7 +12,7 @@
         <item name="android:navigationBarColor">@android:color/black</item>
     </style>
     <!-- CloudStream plugin settings (CsSettingsActivity): see-through, Material components for the plugins' own dialogs. -->
-    <style name="Theme.Xstream.PluginSettings" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <style name="Theme.StreamX.PluginSettings" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>

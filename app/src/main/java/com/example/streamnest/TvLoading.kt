@@ -3,6 +3,8 @@ package com.example.streamnest
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -51,7 +53,7 @@ import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.sin
 
-// ───────────── Xstream TV loading screen (Rick's pick) ─────────────
+// ───────────── StreamX TV loading screen (Rick's pick) ─────────────
 //  Background: a slow-motion "moment" — the title's own scene stills, slowly zooming and drifting, crossfading.
 //  Front: the poster, with the loading progress running around its border; beside it "Did you know?" facts about the
 //  title, and the heartbeat line writing itself across as the video loads (real percentage + what's happening).
@@ -92,18 +94,19 @@ private fun MomentBackground(stills: List<String>) {
     val two = remember(stills) { stills.take(2) }
     var i by remember(two) { mutableIntStateOf(0) }
     LaunchedEffect(two) {
-        two.getOrNull(1)?.let { ctx.imageLoader.enqueue(tvRequest(ctx, it, 960, 540)) }
+        two.getOrNull(1)?.let { ctx.imageLoader.enqueue(tvRequest(ctx, it, 640, 360)) }
         if (two.size < 2) return@LaunchedEffect
         while (true) { delay(12_000); i = 1 - i }
     }
     Crossfade(targetState = i, animationSpec = tween(1400), label = "moment", modifier = Modifier.fillMaxSize()) { k ->
         val url = two.getOrNull(k) ?: return@Crossfade
         val t = remember(k) { Animatable(0f) }
-        LaunchedEffect(k) { t.animateTo(1f, tween(13_500, easing = LinearEasing)) }
+        // TV 0.8.4: on a 1 GB stick the picture stays still (a moving picture stutters while the stream opens).
+        LaunchedEffect(k) { if (!TvSmall.on(ctx)) t.animateTo(1f, tween(13_500, easing = LinearEasing)) }
         // Zoom in on the first picture, zoom out on the second: a slow cinematic push and pull.
         val (s0, s1, dx) = if (k == 0) Triple(1.04f, 1.16f, -0.02f) else Triple(1.16f, 1.04f, 0.02f)
         AsyncImage(
-            tvRequest(ctx, url, 960, 540), null,
+            tvRequest(ctx, url, 640, 360), null,
             Modifier.fillMaxSize().graphicsLayer {
                 val v = t.value
                 val sc = s0 + (s1 - s0) * v
@@ -130,81 +133,75 @@ fun TvMomentLoader(
     var info by remember(imdbId) { mutableStateOf<TmdbInfo?>(null) }
     LaunchedEffect(imdbId) { if (imdbId.startsWith("tt")) info = runCatching { vm.tmdbInfo(imdbId, type) }.getOrNull() }
     val stills = remember(info, fallbackArt) { info?.backdrops?.takeIf { it.isNotEmpty() } ?: listOfNotNull(info?.backdrop ?: fallbackArt ?: poster) }
-    val facts = remember(info, story, title) { loadingFacts(info, story, title) }
-    var factIdx by remember(facts) { mutableIntStateOf(0) }
-    LaunchedEffect(facts) { while (facts.size > 1) { delay(4_200); factIdx = (factIdx + 1) % facts.size } }
-    // Never goes backwards on screen.
-    var shown by remember { mutableIntStateOf(0) }
-    LaunchedEffect(percent) { if (percent > shown) shown = percent }
-    val p by animateFloatAsState(shown / 100f, tween(400), label = "loadPct")
+    // TV 0.8.3: one smooth, continuous run to 95 %, then it holds there until the picture starts (no steps, no jumps).
+    // Only the drawing reads it, so nothing else on the screen is redrawn while it moves.
+    val prog = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { prog.animateTo(0.95f, tween(16_000, easing = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0.55f, 0.25f, 1f))) }
+    val p: () -> Float = { prog.value }
     val ctx = LocalContext.current
 
+    // TV 0.7.4 layout: the title's picture blurred behind (a tiny copy stretched up: a free blur on Android 9), a large
+    // landscape card in the middle with the moment moving inside it and the progress running around its edge, and the
+    // heartbeat line with the percentage under it.
     Box(modifier.fillMaxSize().background(Color.Black)) {
-        MomentBackground(stills)
-        // Darkened so the front reads, a little more at the edges (vignette).
-        Box(Modifier.fillMaxSize().background(Color(0x99050608)))
-        Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color.Transparent, Color(0xCC050608)), radius = 1400f)))
-
-        Row(Modifier.align(Alignment.Center).padding(horizontal = 70.dp), verticalAlignment = Alignment.CenterVertically) {
-            // Poster with the progress running around its border.
-            Box(Modifier.size(196.dp, 294.dp)) {
-                Box(Modifier.fillMaxSize().padding(7.dp).shadow(24.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp)).background(Surface1)) {
-                    AsyncImage(tvRequest(ctx, poster ?: info?.poster ?: fallbackArt ?: "", 360, 540), title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        // TV 0.7.5: no poster behind — a soft, dark "frosted" glow only (one gradient: nothing to decode, no lag).
+        Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0xFF1C1A22), Color(0xFF0B0A0F), Color.Black), radius = 1500f)))
+        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.size(536.dp, 314.dp)) {
+                Box(Modifier.fillMaxSize().padding(8.dp).shadow(26.dp, RoundedCornerShape(22.dp)).clip(RoundedCornerShape(22.dp)).background(Surface1)) {
+                    MomentBackground(stills)
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Color(0xB3000000))))
+                    Text(title, Modifier.align(Alignment.BottomStart).padding(18.dp), fontFamily = BrandFont, fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                // The border path and its measure are built once per size; only the segment follows [p].
-                androidx.compose.foundation.layout.Spacer(Modifier.fillMaxSize().drawWithCache {
+                // TV 0.8.4: the border progress runs on the screen's drawing thread (an animated vector), so it stays smooth
+                // while the app is busy opening the stream. The drawn version below is the fallback.
+                val borderId = remember { ctx.resources.getIdentifier("tv_loader_border", "drawable", ctx.packageName) }
+                if (borderId != 0) RtAnim(borderId, Modifier.fillMaxSize())
+                else androidx.compose.foundation.layout.Spacer(Modifier.fillMaxSize().drawWithCache {
                     val sw = 3.dp.toPx()
-                    val inset = sw / 2f + 1.dp.toPx()
-                    val r = 19.dp.toPx()
+                    val inset = sw / 2f + 2.dp.toPx()
+                    val r = 27.dp.toPx()
                     val path = Path().apply { addRoundRect(RoundRect(inset, inset, size.width - inset, size.height - inset, CornerRadius(r, r))) }
                     val pm = PathMeasure().apply { setPath(path, false) }
                     val seg = Path()
                     val track = Stroke(sw); val glow = Stroke(sw + 4.dp.toPx(), cap = StrokeCap.Round); val line = Stroke(sw, cap = StrokeCap.Round)
                     onDrawBehind {
                         drawPath(path, Color(0x1FFFFFFF), style = track)
-                        if (p > 0.002f) {
+                        val pv = p()
+                        if (pv > 0.002f) {
                             seg.reset()
-                            pm.getSegment(0f, pm.length * p.coerceIn(0f, 1f), seg, true)
+                            pm.getSegment(0f, pm.length * pv.coerceIn(0f, 1f), seg, true)
                             drawPath(seg, MomentRed, style = glow, alpha = 0.25f)
                             drawPath(seg, MomentRed, style = line)
                         }
                     }
                 })
             }
-            Spacer(Modifier.width(44.dp))
-            Column(Modifier.widthIn(max = 470.dp)) {
-                Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFD0D4DD), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("DID YOU KNOW", Modifier.padding(top = 12.dp), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 2.5.sp, color = Color(0xFFFF5A5F))
-                AnimatedContent(
-                    targetState = facts.getOrElse(factIdx) { "" },
-                    transitionSpec = { (fadeIn(tween(450)) + slideInVertically(tween(450)) { it / 6 }) togetherWith fadeOut(tween(300)) },
-                    label = "fact", modifier = Modifier.padding(top = 6.dp).heightIn(min = 96.dp),
-                ) { f ->
-                    Text(f, fontFamily = BrandFont, fontWeight = FontWeight.SemiBold, fontSize = 22.sp, lineHeight = 29.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                }
-                Spacer(Modifier.height(14.dp))
-                // Measures how fast this TV draws the first ~40 frames; slow TVs get the plain bar.
-                var slow by remember { mutableStateOf(LoaderPerf.slow == true) }
-                LaunchedEffect(Unit) {
-                    if (LoaderPerf.slow != null) return@LaunchedEffect
-                    val t0 = withFrameNanos { it }; var n = 0; var last = t0
-                    while (n < 40) { last = withFrameNanos { it }; n++ }
-                    val avgMs = (last - t0) / 1_000_000f / n
-                    LoaderPerf.slow = avgMs > 35f
-                    slow = LoaderPerf.slow == true
-                    if (slow) ActLog.add("APP", "loading screen: plain bar (%.0f ms a frame)".format(avgMs))
-                }
-                if (slow) PlainBar(p, Modifier.fillMaxWidth().padding(top = 18.dp).height(6.dp))
-                else HeartbeatBar(p, Modifier.fillMaxWidth().height(44.dp))
-                Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.Bottom) {
-                    Text("$stage…", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFFC9CED8))
-                    Text("$shown%", fontFamily = BrandFont, fontSize = 24.sp, fontWeight = FontWeight.Light)
-                }
-                Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    facts.indices.take(6).forEach { j ->
-                        Box(Modifier.size(6.dp).clip(CircleShape).background(if (j == factIdx % facts.size.coerceAtMost(6)) Color.White else Color(0x40FFFFFF)))
-                    }
-                }
+            val beatId = remember { ctx.resources.getIdentifier("tv_loader_heartbeat", "drawable", ctx.packageName) }
+            if (beatId != 0) {
+                Box(Modifier.width(380.dp).padding(top = 18.dp)) { RtAnim(beatId, Modifier.fillMaxWidth().height(40.dp)) }
+                Text("$stage…", Modifier.width(380.dp).padding(top = 4.dp), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFFC9CED8))
+                return@Column
+            }
+            // Measures how fast this TV draws the first ~40 frames; slow TVs get the plain bar.
+            var slow by remember { mutableStateOf(LoaderPerf.slow == true) }
+            LaunchedEffect(Unit) {
+                if (LoaderPerf.slow != null) return@LaunchedEffect
+                val t0 = withFrameNanos { it }; var n = 0; var last = t0
+                while (n < 40) { last = withFrameNanos { it }; n++ }
+                val avgMs = (last - t0) / 1_000_000f / n
+                LoaderPerf.slow = avgMs > 35f
+                slow = LoaderPerf.slow == true
+                if (slow) ActLog.add("APP", "loading screen: plain bar (%.0f ms a frame)".format(avgMs))
+            }
+            Box(Modifier.width(380.dp).padding(top = 18.dp)) {
+                if (slow) PlainBar(p, Modifier.fillMaxWidth().padding(top = 18.dp).height(5.dp))
+                else HeartbeatBar(p, Modifier.fillMaxWidth().height(40.dp))
+            }
+            Row(Modifier.width(380.dp).padding(top = 4.dp), verticalAlignment = Alignment.Bottom) {
+                Text("$stage…", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFFC9CED8))
+                LoaderPercent(p)
             }
         }
     }
@@ -214,8 +211,29 @@ fun TvMomentLoader(
  * The heartbeat progress line. The whole trace is built once per size and only revealed up to [p] (a clip), so nothing
  * is recomputed per frame; a small dot marks the head.
  */
+/** An animated vector (runs on the drawing thread from Android 7.1 on), started once. */
 @Composable
-internal fun HeartbeatBar(p: Float, modifier: Modifier) {
+private fun RtAnim(id: Int, modifier: Modifier) {
+    androidx.compose.ui.viewinterop.AndroidView({ c ->
+        android.widget.ImageView(c).apply {
+            scaleType = android.widget.ImageView.ScaleType.FIT_XY
+            val d = androidx.core.content.ContextCompat.getDrawable(c, id)
+            setImageDrawable(d)
+            (d as? android.graphics.drawable.Animatable)?.start()
+        }
+    }, modifier)
+}
+
+@Composable
+private fun LoaderPercent(p: () -> Float) {
+    Text("${(p() * 100).toInt()}%", fontFamily = BrandFont, fontSize = 22.sp, fontWeight = FontWeight.Light)
+}
+
+@Composable
+internal fun HeartbeatBar(p: Float, modifier: Modifier) = HeartbeatBar({ p }, modifier)
+
+@Composable
+internal fun HeartbeatBar(p: () -> Float, modifier: Modifier) {
     androidx.compose.foundation.layout.Spacer(modifier.drawWithCache {
         val w = size.width; val h = size.height
         val y0 = h * 0.62f; val amp = h * 0.5f; val per = w / 7f
@@ -235,7 +253,7 @@ internal fun HeartbeatBar(p: Float, modifier: Modifier) {
         val line = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
         val brush = Brush.horizontalGradient(listOf(Color(0x40E50914), Color(0xE6FF464F), Color.White), startX = 0f, endX = w)
         onDrawBehind {
-            val head = w * p.coerceIn(0f, 1f)
+            val head = w * p().coerceIn(0f, 1f)
             drawLine(Color(0x24FFFFFF), Offset(head, y0), Offset(w, y0), 1.5f)
             if (head < 2f) return@onDrawBehind
             clipRect(right = head) {
@@ -251,8 +269,8 @@ internal fun HeartbeatBar(p: Float, modifier: Modifier) {
 
 /** Plain progress bar (used on TVs that draw the heartbeat too slowly). */
 @Composable
-private fun PlainBar(p: Float, modifier: Modifier) {
-    Box(modifier.clip(RoundedCornerShape(3.dp)).background(Color(0x24FFFFFF))) {
-        Box(Modifier.fillMaxHeight().fillMaxWidth(p.coerceIn(0f, 1f)).background(MomentRed))
-    }
+private fun PlainBar(p: () -> Float, modifier: Modifier) {
+    androidx.compose.foundation.layout.Spacer(modifier.clip(RoundedCornerShape(3.dp)).background(Color(0x24FFFFFF)).drawBehind {
+        drawRect(MomentRed, size = Size(size.width * p().coerceIn(0f, 1f), size.height))
+    })
 }

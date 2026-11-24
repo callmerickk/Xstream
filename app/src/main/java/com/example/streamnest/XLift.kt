@@ -46,7 +46,7 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-/** Xstream: what a long-press on any poster does (set by Home). Gets the title and where its card is on screen. */
+/** StreamX: what a long-press on any poster does (set by Home). Gets the title and where its card is on screen. */
 val LocalTitleHold = staticCompositionLocalOf<((Meta, Rect) -> Unit)?> { null }
 
 /** Tap opens the title; long-press lifts it out (when a [LocalTitleHold] is set). */

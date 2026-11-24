@@ -7,8 +7,8 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -16,6 +16,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -27,7 +28,6 @@ import okhttp3.Request
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.decodeFromString
 import java.io.File
 import androidx.compose.ui.graphics.Color
 import kotlinx.serialization.json.JsonArray
@@ -44,9 +44,8 @@ import java.security.SecureRandom
 const val CINEMETA = "https://v3-cinemeta.strem.io"
 
 class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
-    /** The open screens (kept here so a phone rebuilding the screen doesn't close the player — vivo). */
+    /** The open screens (Home underneath). Here, not in the composable, so a rebuilt screen keeps them. */
     val navStack = androidx.compose.runtime.mutableStateListOf<Screen>()
-
     private val ctx: Context get() = getApplication<Application>()
     private val sp = app.getSharedPreferences("addons", Context.MODE_PRIVATE)
     // "library" holds app-wide settings (custom texts, playlist) and also the FIRST profile's watch data,
@@ -63,8 +62,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     val texts = MutableStateFlow(
         (glob.getString("custom", null)?.let { runCatching { Api.json.decodeFromString<Map<String, String>>(it) }.getOrNull() } ?: emptyMap())
-            // v0.7 rename: drop the old default name so "Xstream" shows
-            .filterNot { it.key == "appName" && (it.value.trim().equals("streamnest", ignoreCase = true) || it.value.trim().equals("streamx", ignoreCase = true)) }
+            // v0.7 rename: drop the old default name so "StreamX" shows
+            .filterNot { it.key == "appName" && it.value.trim().equals("streamnest", ignoreCase = true) }
             // v0.9.3: the old default audio order gains English (Hindi → English → Original audio)
             .mapValues { (k, v) -> if (k == "qsLangs" && v.replace(" ", "") == "hindi,original") "hindi,english,original" else v }
             // v0.9.5: ExoPlayer first (smoothest, like Nuvio) with VLC as backup; the old VLC-first choice moves over once.
@@ -84,7 +83,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     val myList = MutableStateFlow<List<Meta>>(emptyList())
     val doneKeys = MutableStateFlow<Set<String>>(emptySet())
     val doneMs = MutableStateFlow(0L)
-    /** Xstream: where you are in EVERY episode you started (Continue Watching keeps only the latest one per series). */
+    /** StreamX: where you are in EVERY episode you started (Continue Watching keeps only the latest one per series). */
     val epProgress = MutableStateFlow<Map<String, Progress>>(emptyMap())
 
     private fun loadProfiles(): List<Profile> {
@@ -111,19 +110,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     private fun prefsForId(pid: String): SharedPreferences =
         if (pid == "p1") glob else ctx.getSharedPreferences("library_$pid", Context.MODE_PRIVATE)
 
-    private fun prefsFor(p: Profile): SharedPreferences =
-        if (p.id == "p1") glob else ctx.getSharedPreferences("library_${p.id}", Context.MODE_PRIVATE)
-
-    // ── The profile page reads another profile's things before it is opened (no switch needed) ──
-    /** That profile's Continue watching, newest first (unfinished only). */
-    fun progressOf(pid: String): List<Progress> = runCatching {
-        prefsForId(pid).getString("progress", null)?.let { Api.json.decodeFromString<List<Progress>>(it) }
-    }.getOrNull().orEmpty().filter { it.durationMs <= 0 || it.positionMs < it.durationMs * 0.95 }.sortedByDescending { it.updated }
-    /** One of that profile's own settings. */
+    /** 0.9.74 (from Xstream): one of that profile's own settings. */
     fun textOf(pid: String, key: String): String? = if (pid == dataPid) profTexts[key] else runCatching {
         prefsForId(pid).getString("pcustom", null)?.let { Api.json.decodeFromString<Map<String, String>>(it)[key] }
     }.getOrNull()
-    /** "Picked for you" kept per profile (shown at once on the profile page; refreshed while the profile is used). */
+    /** 0.9.74 (from Xstream): "Picked for you" kept per profile (shown at once on the profile page). */
     fun pickedOf(pid: String): List<Meta> = runCatching {
         prefsForId(pid).getString("pickedFor", null)?.let { Api.json.decodeFromString<List<Meta>>(it) }
     }.getOrNull().orEmpty()
@@ -132,22 +123,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         prefsForId(pid).edit().putString("pickedFor", Api.json.encodeToString(list.take(10).map { it.copy(videos = null) })).apply()
     }
 
-    /** Home's pictures to the disk cache: row posters, and the big cards' tall posters and backdrops. */
-    fun warmHome(rows: List<Shelf>) {
-        // 0.8.9: the cards draw the large copy (hiResArt), so that is the one warmed; the first card of every row too.
-        val urls = rows.take(14).flatMap { s -> s.items.take(12).map { hiResArt(it.poster) } } +
-            rows.take(14).mapNotNull { s -> s.items.firstOrNull() }.flatMap { listOf(hdPoster(it), hiResArt(backdropOf(it) ?: it.poster)) } +
-            rows.take(3).flatMap { s -> s.items.take(10).flatMap { listOf(hdPoster(it), backdropOf(it)) } }
-        Posters.warm(appContext, urls)
-        // Tall TMDB posters (Top 10 rows): looked up once, remembered on the phone, downloaded before Home shows.
-        viewModelScope.launch(Dispatchers.IO) {
-            val gate = kotlinx.coroutines.sync.Semaphore(4)
-            rows.take(14).flatMap { it.items.take(10) }.distinctBy { it.id }.filter { TmdbPosters.cached(it) == null }.take(80).map { m ->
-                launch { gate.withPermit { runCatching { TmdbPosters.portrait(m) }.getOrNull()?.let { Posters.warm(appContext, listOf(it)) } } }
-            }
-            rows.take(14).flatMap { it.items.take(10) }.mapNotNull { TmdbPosters.cached(it) }.let { Posters.warm(appContext, it) }
-        }
-    }
+    private fun prefsFor(p: Profile): SharedPreferences =
+        if (p.id == "p1") glob else ctx.getSharedPreferences("library_${p.id}", Context.MODE_PRIVATE)
 
     fun selectProfile(p: Profile) {
         if (texts.value["lastProfile"] != p.id) setText("lastProfile", p.id)
@@ -155,7 +132,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         // Each profile has its own settings, addons and collections.
         val switched = dataPid != p.id
         if (switched) loadProfileData(p.id)
-        SearchState.forProfile(p.id)
+        if (!BuildConfig.IS_TV) SearchState.forProfile(p.id)
         current.value = p
         lib = prefsFor(p)
         progress.value = lib.getString("progress", null)?.let { runCatching { warm("p:${p.id}", it) { r -> Api.json.decodeFromString<List<Progress>>(r) } }.getOrNull() } ?: emptyList()
@@ -171,11 +148,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         // New-episode alerts: remember this profile's shows (after the addons are ready).
         viewModelScope.launch { delay(8000); runCatching { EpisodeAlerts.snapshot(ctx, this@AppViewModel) } }
         // Look up the streams of your top Continue Watching titles early, so their title pages prepare instantly.
+        // TV 0.8.4: on the TV only the top title, only the quick plugins, and only once Home has settled (20 s) — asking
+        // every plugin for two titles at start-up was what made a 1 GB Fire TV stick crawl.
         viewModelScope.launch {
-            delay(5000)
-            progress.value.sortedByDescending { it.updated }.take(2).forEach { pr ->
+            delay(if (BuildConfig.IS_TV) 20_000 else 5000)
+            progress.value.sortedByDescending { it.updated }.take(if (BuildConfig.IS_TV) 1 else 3).forEach { pr -> // 0.9.79: phone top 3, one after another
+                if (!BuildConfig.IS_TV) TvIdle.waitQuiet(1_500, 15_000)
                 val type = if (pr.key.contains(":")) "series" else "movie"
-                runCatching { if (qsActive()) quickStreams(type, pr.key) else allStreams(type, pr.key) }
+                if (BuildConfig.IS_TV) runCatching {
+                    // Only the quick ones: the streaming playlists and MovieBox (their pages are then kept 15 minutes).
+                    val q = qsAddons().filter { n -> listOf("netflix", "prime", "hotstar", "moviebox").any { n.contains(it, true) } && !n.endsWith("M") }.toSet()
+                    if (q.isNotEmpty()) kotlinx.coroutines.withTimeoutOrNull(30_000) { streamsFlow(type, pr.key, only = q).first { it.second } }
+                } else runCatching { if (qsActive()) quickStreams(type, pr.key) else allStreams(type, pr.key) }
             }
         }
     }
@@ -218,7 +202,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             ctx.getSharedPreferences("ai_logo", Context.MODE_PRIVATE).edit().putInt("hash", payload.hashCode()).apply()
             imgVersion.value = imgVersion.value + 1
         }
-        // On the developer's phone the AI logo goes to every Xstream account (shared/appLook).
+        // On the developer's phone the AI logo goes to every StreamX account (shared/appLook).
         if (Public.dev && payload.isNotBlank()) AppLook.publishAi(logo = payload)
     }
 
@@ -286,10 +270,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     fun refreshRecommended() {
         recJob?.cancel()
-        recJob = viewModelScope.launch {
-            runCatching { recommended.value = buildRecommendations() }
-            current.value?.let { p -> savePicked(p.id, recommended.value) }
-        }
+        recJob = viewModelScope.launch { runCatching { recommended.value = buildRecommendations(); if (!BuildConfig.IS_TV) current.value?.let { p -> savePicked(p.id, recommended.value) } } }
     }
 
     /** Back to the "Who's watching?" screen. */
@@ -301,11 +282,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         dataPid?.let { src ->
             val from = prefsForId(src)
             prefsForId(p.id).edit().apply {
-                // (Not the taste picks: a new person picks their own.)
-                from.getString("pcustom", null)?.let { raw ->
-                    val m = runCatching { Api.json.decodeFromString<Map<String, String>>(raw) }.getOrNull()
-                    putString("pcustom", if (m == null) raw else Api.json.encodeToString(m.filterKeys { !it.startsWith("taste") }))
-                }
+                from.getString("pcustom", null)?.let { putString("pcustom", it) }
                 from.getString("paddons", null)?.let { putString("paddons", it) }
             }.apply()
             runCatching { colFileFor(src).takeIf { it.exists() }?.copyTo(colFileFor(p.id), overwrite = true) }
@@ -432,11 +409,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     // ───────────── Custom texts & colors ─────────────
     init {
         Public.vm = this
-        viewModelScope.launch { texts.collect { LiveLock.on = BuildConfig.LIVE_ONLY && it["devSources"] != "on" } }
         StreamHeaders.init(app); AddonSpeed.init(app); Relay.warmUp()
         // Source ranking: this phone's copy now, the shared one from the cloud in the background.
         AutoPlayRules.init(app); Ranker.init(app); HostStats.init(app)
-        if (!BuildConfig.IS_TV && BuildConfig.HAS_SOCIAL) { Buddies.init(app); Invites.start(app); runCatching { Together.resumeIfRecent(app) } }
+        if (!BuildConfig.IS_TV) { Buddies.init(app); Invites.start(app) }
         ProfileLock.init(app)
         AppLook.init(app); Call.init(app); Vpn.resume(app)
         Downloads.init(app)
@@ -471,10 +447,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         parseColor(m["deckTint"]!!)?.let { Palette.tint = it }
         parseColor(m["accent2"]!!)?.let { Palette.accent2 = it }
         if (isOn(m["amoled"]!!)) Palette.bg = Color.Black
-        // Xstream Live: always the navy-black page with a dark navy glow at the top (the account's Xstream colours aren't used).
-        // (Xstream: the colours are the chosen theme — "Midnight" is the Live colours — on any Home style.)
-        // Until a theme is picked in the new Theme picker, the Live style keeps its Midnight colours (as in 0.8.5).
-        if (BuildConfig.LIVE_ONLY || homeStyleOf(m) == "live" && m["themePicked"] != "1") { Palette.bg = Color(0xFF0F1014); Palette.tint = Color(0xFF16204A) }
+        Palette.glass = m["theme"] == "Glass"  // 0.9.75: phones too
         m["cardCorner"]!!.trim().toIntOrNull()?.let { Palette.corner = it.coerceIn(0, 50) }
         // Buttons: the theme's own button colours, else the accent with readable text.
         Palette.button = parseColor(m["btnColor"].orEmpty()) ?: Palette.accent
@@ -514,8 +487,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     // ───────────── Watch data (per profile) ─────────────
     fun saveProgress(p: Progress) {
-        // 0.8.12: an episode counts from its first seconds (closing S4E1 early brought Continue back to the finished S3E23).
-        if (p.positionMs < (if (p.key.contains(":")) 1_000 else 10_000)) return
+        if (p.positionMs < 10_000) return
         ContinueWidget.update(ctx, p)
         WatchLog.record(ctx, current.value?.id, p)
         if (p.key.contains(":")) {
@@ -532,10 +504,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         val others = progress.value.filter { it.key != p.key && !(series && it.key.contains(":") && it.key.substringBefore(":") == base) }
         // Watched: a movie past 92 % (credits) leaves the row; an episode past 95 % (or at its credits) is replaced by
         // the next episode, shown as Up next.
-        val done = p.durationMs > 0 && p.positionMs > p.durationMs * (if (series) 0.90 else 0.90)
+        val done = p.durationMs > 0 && p.positionMs > p.durationMs * (if (series) 0.95 else 0.92)
         // No limit: every title you started stays (and syncs with your cloud) until it is finished or removed.
         progress.value = (if (done && !series) others else listOf(if (done) p.copy(positionMs = p.durationMs) else p) + others)
-        if (done && !series) addWatched(p)
+        if (done && !series && !BuildConfig.IS_TV) addWatched(p)
         val ed = lib.edit().putString("progress", Api.json.encodeToString(progress.value))
         if (done && p.key !in doneKeys.value) {
             doneKeys.value = doneKeys.value + p.key
@@ -545,14 +517,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
         ed.apply()
         markCur("prog")
-        if (done && series) viewModelScope.launch { sweepFinished() }
+        if (done && series && !BuildConfig.IS_TV) viewModelScope.launch { runCatching { sweepFinished() } }
     }
 
     /**
-     * 0.8.7: a finished episode with NOTHING after it (the last episode of the show so far, like VisionQuest S1E8) leaves
-     * "Pick up where you left off" and goes to Watched — before, it stayed in the row labelled "Watched".
+     * 0.9.72 (from Xstream 0.8.7): a finished episode with NOTHING after it (the last episode out so far) leaves Continue
+     * watching and goes to Library › Watched. Phone only.
      */
     suspend fun sweepFinished() {
+        if (BuildConfig.IS_TV) return
         val done = progress.value.filter { it.isSeries() && it.finished() }
         for (p in done) {
             val meta = runCatching { seriesMeta(p.key.substringBefore(":")) }.getOrNull() ?: continue
@@ -568,7 +541,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
     }
 
-    // ───────────── Library › Watched (finished movies) ─────────────
+    // ───────────── Library › Watched (0.9.72, from Xstream) ─────────────
     val watched = MutableStateFlow<List<Progress>>(emptyList())
     fun loadWatched() { watched.value = runCatching { Api.json.decodeFromString<List<Progress>>(lib.getString("watched", null) ?: "[]") }.getOrDefault(emptyList()) }
     private fun addWatched(p: Progress) {
@@ -582,7 +555,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     fun removeProgress(key: String) {
-        // Xstream: removing a title from Continue Watching also takes it out of My Space's charts (and its episodes).
+        // StreamX: removing a title from Continue Watching also takes it out of My Space's charts (and its episodes).
         WatchLog.remove(appContext, current.value?.id, key)
         progress.value = progress.value.filter { it.key != key }
         val ed = lib.edit().putString("progress", Api.json.encodeToString(progress.value))
@@ -602,6 +575,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         if (doneEps.isNotEmpty()) markCur("done")
     }
 
+    /** TV 0.9.10: mark one episode watched / unwatched (episode menus). */
+    fun setEpWatched(key: String, on: Boolean) {
+        val ed = lib.edit()
+        if (on) {
+            if (key !in doneKeys.value) { doneKeys.value = doneKeys.value + key; ed.putStringSet("done", doneKeys.value); markCur("done") }
+            epProgress.value[key]?.let { p -> if (p.durationMs > 0) { epProgress.value = epProgress.value + (key to p.copy(positionMs = p.durationMs)); ed.putString("eprog", Api.json.encodeToString(epProgress.value)); markCur("eprog") } }
+            if (progress.value.any { it.key == key }) {
+                progress.value = progress.value.map { if (it.key == key && it.durationMs > 0) it.copy(positionMs = it.durationMs) else it }
+                ed.putString("progress", Api.json.encodeToString(progress.value)); markCur("prog")
+            }
+        } else {
+            if (key in doneKeys.value) { doneKeys.value = doneKeys.value - key; ed.putStringSet("done", doneKeys.value); markCur("done") }
+            if (key in epProgress.value) { epProgress.value = epProgress.value - key; ed.putString("eprog", Api.json.encodeToString(epProgress.value)); markCur("eprog") }
+            if (progress.value.any { it.key == key }) {
+                progress.value = progress.value.filter { it.key != key }
+                ed.putString("progress", Api.json.encodeToString(progress.value)); markCur("prog")
+            }
+        }
+        ed.apply()
+    }
+
     fun clearHistory() {
         progress.value = emptyList()
         doneKeys.value = emptySet()
@@ -619,14 +613,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         if (c != null && c.first == raw) return c.second as T
         return decode(raw)
     }
+    /** TV 0.9.0: another profile's Continue watching, for the profile page (read off the main thread, kept for selectProfile). */
+    @Suppress("UNCHECKED_CAST")
+    suspend fun progressOf(pid: String): List<Progress> = withContext(Dispatchers.Default) {
+        runCatching {
+            val r = prefsForId(pid).getString("progress", null) ?: return@runCatching emptyList<Progress>()
+            (warmed["p:$pid"]?.takeIf { it.first == r }?.second as? List<Progress>)
+                ?: Api.json.decodeFromString<List<Progress>>(r).also { warmed["p:$pid"] = r to it }
+        }.getOrDefault(emptyList())
+    }
+
     suspend fun prewarmProfile(pid: String) {
         if (!BuildConfig.IS_TV) return
         withContext(Dispatchers.Default) {
             runCatching {
                 val pp = prefsForId(pid)
-                pp.getString("paddons", null)?.let { r -> warmed["a:$pid"] = r to Api.json.decodeFromString<List<Addon>>(r) }
-                pp.getString("progress", null)?.let { r -> warmed["p:$pid"] = r to Api.json.decodeFromString<List<Progress>>(r) }
-                pp.getString("mylist", null)?.let { r -> warmed["l:$pid"] = r to Api.json.decodeFromString<List<Meta>>(r) }
+                pp.getString("paddons", null)?.takeIf { warmed["a:$pid"]?.first != it }?.let { r -> warmed["a:$pid"] = r to Api.json.decodeFromString<List<Addon>>(r) }
+                pp.getString("progress", null)?.takeIf { warmed["p:$pid"]?.first != it }?.let { r -> warmed["p:$pid"] = r to Api.json.decodeFromString<List<Progress>>(r) }
+                pp.getString("mylist", null)?.takeIf { warmed["l:$pid"]?.first != it }?.let { r -> warmed["l:$pid"] = r to Api.json.decodeFromString<List<Meta>>(r) }
                 pp.getString("pcustom", null)
             }
         }
@@ -668,9 +672,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     /** Addons switched on in Help & Settings > Content & Discovery > Addons. */
     private val active: List<Addon> get() {
         val off = texts.value["addonsOff"].orEmpty().split("|").filter { it.isNotBlank() }.toSet()
-        val on = addons.value.filter { it.baseUrl !in off }
-        // Xstream Live: the account's addons are ignored (only the title details and subtitles stay).
-        return if (liveLocked()) on.filter { isPinnedFixed(it) || isPostersPlus(it) } else on
+        return addons.value.filter { it.baseUrl !in off }
     }
 
     /** Base URLs of the switched-on addons that can describe this title (used by the episode-alert check). */
@@ -686,8 +688,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     /** Cinemeta (all the titles' details) and OpenSubtitles always stay at the top; other addons can be pinned too. */
-    /** Xstream Live: Posters+ is the one addon whose rows show on Home. */
-    fun isPostersPlus(a: Addon) = "slokker" in a.baseUrl || "postersplus" in a.baseUrl || a.manifest.name.contains("posters+", true) || a.manifest.name.contains("posters plus", true)
     fun isPinnedFixed(a: Addon) = a.baseUrl == CINEMETA || a.manifest.id.contains("opensubtitles", true) || a.manifest.name.contains("opensubtitles", true)
     fun isPinned(a: Addon) = isPinnedFixed(a) || a.baseUrl in texts.value["addonsPinned"].orEmpty().split("|")
     private fun pinFirst(list: List<Addon>): List<Addon> =
@@ -748,7 +748,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     /** Everything about your addons as a small JSON text: links in order, on / off, pins, Quick play and the play settings. */
     /** [withAccounts] false: the quick server accounts (PenguPlay, AIOStreams) are left out. */
     fun exportAddons(withAccounts: Boolean = true): String = buildJsonObject {
-        put("app", "Xstream"); put("v", 1); put("at", System.currentTimeMillis())
+        put("app", Brand.NAME); put("v", 1); put("at", System.currentTimeMillis())
         put("addons", buildJsonArray {
             addons.value.filter { a -> withAccounts || !listOf("pengu", "aiostream").any { k -> k in (a.manifest.name + " " + a.baseUrl).lowercase() } }.forEach { a -> add(buildJsonObject {
                 put("url", a.baseUrl); put("name", a.manifest.name); put("on", isAddonOn(a)); put("pinned", isPinned(a) && !isPinnedFixed(a))
@@ -769,8 +769,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     /** Puts an export in place: [replace] = your addons become exactly that list; else only the missing ones are added. */
     suspend fun importAddons(json: String, replace: Boolean): String {
-        val o = runCatching { Api.json.parseToJsonElement(json).jsonObject }.getOrNull() ?: return "That isn't a Xstream addon backup."
-        val items = o["addons"]?.jsonArray?.mapNotNull { it as? JsonObject } ?: return "That isn't a Xstream addon backup."
+        val o = runCatching { Api.json.parseToJsonElement(json).jsonObject }.getOrNull() ?: return "That isn't a ${Brand.NAME} addon backup."
+        val items = o["addons"]?.jsonArray?.mapNotNull { it as? JsonObject } ?: return "That isn't a ${Brand.NAME} addon backup."
         val have = addons.value.associateBy { it.baseUrl }
         val got = ArrayList<Addon>(); var failed = 0
         for (it in items) {
@@ -791,7 +791,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
         withContext(Dispatchers.Main) {
             setText("addonsOff", off.joinToString("|")); setText("addonsPinned", pins.joinToString("|"))
-            // Xstream: addons that came from someone's backup are "borrowed" — their settings page (with that person's
+            // StreamX: addons that came from someone's backup are "borrowed" — their settings page (with that person's
             // account in the link) stays hidden.
             got.filter { it.baseUrl !in have }.forEach { setText("addonBorrowed:${it.baseUrl}", "yes") }
             if (replace) o["settings"]?.jsonObject?.forEach { (k, v) -> if (k in backupKeys) v.jsonPrimitive.contentOrNull?.let { setText(k, it) } }
@@ -803,7 +803,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     }
 
     /** Switched-on addons that keep loading on their server (CNCVerse): asked again every 5 s (SlowAddons.kt). */
-    fun slowStreamAddons(type: String, id: String): List<Addon> = if (pluginMode() || liveMode()) emptyList() else active.filter { it.supports("stream", type, id) && SlowAddons.isSlow(it) }
+    fun slowStreamAddons(type: String, id: String): List<Addon> = if (pluginMode()) emptyList() else active.filter { it.supports("stream", type, id) && SlowAddons.isSlow(it) }
     fun streamUrl(a: Addon, type: String, id: String) = "${a.baseUrl}/stream/$type/${enc(id)}.json"
 
     /** Puts the addons in this order (by name; the ones not named keep their place after them). Source Test uses it. */
@@ -830,7 +830,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         if (!pat.startsWith("http")) return m
         val id = m.id.substringBefore(':')
         val imdb = m.id.takeIf { it.startsWith("tt") }?.substringBefore(':')
-        val tmdb = m.id.takeIf { it.startsWith("tmdb:") }?.removePrefix("tmdb:")?.substringBefore(':')
+        // "tmdb:movie:299536" or "tmdb:299536" → 299536 (it used to give "movie": broken poster links in collections).
+        val tmdb = m.id.takeIf { it.startsWith("tmdb:") }?.split(':')?.lastOrNull()?.takeIf { it.all(Char::isDigit) }
         if (("{imdb" in pat && imdb == null) || ("{tmdb" in pat && tmdb == null)) return m
         val url = pat.replace("{imdb_id}", imdb ?: id).replace("{imdb}", imdb ?: id).replace("{tmdb_id}", tmdb ?: "").replace("{tmdb}", tmdb ?: "")
             .replace("{type}", m.type).replace("{id}", m.id)
@@ -840,35 +841,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
     private var refreshJob: Job? = null
 
     /** Rows the developer pushed to every account (texts["homeRows"], sent with the developer's defaults). */
-    fun pushedRows(): List<PushedRow> {
-        // Home styles "Live" and "StreamX" show StreamX's published rows; "Classic" shows Xstream's own.
-        val sx = homeStyleOf(texts.value) != "classic" && !texts.value["homeRowsSx"].isNullOrBlank()
-        val raw = if (sx) texts.value["homeRowsSx"].orEmpty() else texts.value["homeRows"].orEmpty()
-        return runCatching { Api.json.decodeFromString<List<PushedRow>>(raw) }.getOrDefault(emptyList())
-    }
+    fun pushedRows(): List<PushedRow> = runCatching { Api.json.decodeFromString<List<PushedRow>>(texts.value["homeRows"].orEmpty()) }.getOrDefault(emptyList())
 
     /** Addon error placeholders shown as titles ("[❌] CNCVerse Bridge · 404 - Not Found"). */
     private fun isErrorCard(m: Meta) = m.id.startsWith("aiostreamserror") || m.name.startsWith("[❌]") || m.name.startsWith("[\u274C]")
 
     fun refresh() {
-        viewModelScope.launch { delay(4_000); runCatching { sweepFinished() } }
+        if (!BuildConfig.IS_TV) viewModelScope.launch { delay(4_000); runCatching { sweepFinished() } }
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             loading.value = true
             // Home posters only from catalogue addons (Cinemeta, TMDB, Posters+…), never from streaming addons
             // (CNCVerse Bridge / AIOStreams put error cards like "[❌] … 404" in their lists). If every addon streams,
             // they are used after all so Home is never empty.
-            // Xstream Live: Home rows only from Posters+ (Cinemeta stays only for title details and episodes).
-            val catalogOnly = if (liveLocked() && active.any { isPostersPlus(it) }) active.filter { isPostersPlus(it) }
-                else active.filter { !it.streams && it.manifest.catalogs.isNotEmpty() }.ifEmpty { active }
-            // 0.8.17 (from StreamX TV): every Home catalog in ONE request through the Cloudflare Worker; any it couldn't get
-            // is fetched directly, at most 6 at a time.
-            val bundle: Map<String, String> = if (current.value?.kids != true) {
+            val catalogOnly = active.filter { !it.streams && it.manifest.catalogs.isNotEmpty() }.ifEmpty { active }
+            // TV 0.9.14: every Home catalog in ONE request through StreamX's Cloudflare Worker (it fetches them all at once
+            // over Cloudflare's fast network); any it couldn't get is fetched directly as before.
+            // 0.9.75: phones too (one request instead of a dozen slow catalog calls, e.g. Posters+ ~2 s each).
+            // 0.9.76: sites that always refuse the Worker (BingeCat: 6 of 33 missed every time) are fetched directly at
+            // once instead of waiting for the bundle first.
+            fun bundleSkip(u: String) = runCatching { java.net.URI(u).host.orEmpty() }.getOrDefault("").let { h -> h == "bingecat.com" || h.endsWith(".bingecat.com") }
+            val bundleJob = async { if (current.value?.kids != true) {
                 val urls = catalogOnly.flatMap { a -> a.manifest.catalogs.filter { c -> c.extra.orEmpty().none { it.isRequired } }
-                    .map { c -> "${a.baseUrl}/catalog/${c.type}/${enc(c.id)}.json" } }.take(48)
-                runCatching { HomeBundle.fetch(urls) }.getOrDefault(emptyMap())
-            } else emptyMap()
-            val gate = kotlinx.coroutines.sync.Semaphore(6)
+                    .map { c -> "${a.baseUrl}/catalog/${c.type}/${enc(c.id)}.json" } }.take(48).filterNot { bundleSkip(it) }
+                // TV 0.9.15: the saved Home is already on screen, so the refresh waits until the remote is quiet.
+                if (BuildConfig.IS_TV && shelves.value.isNotEmpty()) TvIdle.waitQuiet()
+                // 0.9.79: the phone too, briefly (at most 6 s) — Home's refresh doesn't land in the middle of a scroll.
+                else if (!BuildConfig.IS_TV && shelves.value.isNotEmpty()) TvIdle.waitQuiet(1_200, 6_000)
+                HomeBundle.fetch(urls)
+            } else emptyMap() }
+            // TV 0.9.15: catalogs the Worker didn't return are fetched directly, at most 3 at a time.
+            val gate = kotlinx.coroutines.sync.Semaphore(if (BuildConfig.IS_TV) 3 else 64)
             val result = if (current.value?.kids == true) kidsShelves() else coroutineScope {
                 catalogOnly.flatMap { a ->
                     a.manifest.catalogs
@@ -879,6 +882,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                                     // A catalog can declare its card shape (Posters+ trending rows: landscape): its cards
                                     // take it when they don't say themselves.
                                     val cu = "${a.baseUrl}/catalog/${c.type}/${enc(c.id)}.json"
+                                    val bundle: Map<String, String> = if (bundleSkip(cu)) emptyMap() else bundleJob.await()
                                     val items = (bundle[cu]?.let { t -> runCatching { Api.json.decodeFromString<CatalogResponse>(t) }.getOrNull() }
                                         ?: gate.withPermit { Api.fetch<CatalogResponse>(cu) }).metas
                                         .map { m -> if (m.posterShape == null && c.posterShape != null) m.copy(posterShape = c.posterShape) else m }
@@ -891,8 +895,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 }.take(48).awaitAll()
             }
             // The developer's published rows (Home Layout › Publish): fetched for every account, shown first and locked.
-            val sxLayout = homeStyleOf(texts.value) != "classic"
-            val pushed = if (current.value?.kids == true || BuildConfig.IS_TV || (Public.dev && !sxLayout)) emptyList() else pushedRows().map { r ->
+            val pushed = if (current.value?.kids == true || BuildConfig.IS_TV || Public.dev) emptyList() else pushedRows().map { r ->
                 async { runCatching {
                     val items = Api.fetch<CatalogResponse>(r.src).metas.map { m -> if (m.posterShape == null && r.shape != null) m.copy(posterShape = r.shape) else m }
                     Shelf(r.title, items, src = r.src, pinned = true)
@@ -904,7 +907,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 else kotlinx.coroutines.withTimeoutOrNull(5_000) { runCatching { ServiceRows.rows() }.getOrNull() }.orEmpty()
             // 0.8: Home is managed by the developer. When a layout is published, every other account shows only those rows
             // (its own catalogue addons no longer add rows); the developer still sees everything.
-            val own = if (pushed.isNotEmpty() && (!Public.dev || sxLayout)) emptyList() else result.filterNotNull()
+            val own = if (pushed.isNotEmpty() && !Public.dev) emptyList() else result.filterNotNull()
             shelves.value = (pushed + own.filter { it.src == null || it.src !in pushedSrc }).let { l -> if (svc.isEmpty()) l else l.take(3) + svc + l.drop(3) }
                 .filter { it.items.isNotEmpty() }.map { s -> s.copy(items = s.items.filter { !isErrorCard(it) }.map { posterFromPattern(it) }.distinctBy { it.type + it.id }) }
             loading.value = false
@@ -917,9 +920,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             val snap = shelves.value
             if (pid != null && current.value?.kids != true && snap.isNotEmpty()) launch(Dispatchers.IO) {
                 runCatching {
-                    // 0.8.7: saved shuffled (top-10 rows keep their order), so the next start shows its cards at once and
-                    // looks a little different each time; the fresh rows replace them quietly.
-                    val slim = snap.map { s -> s.copy(items = s.items.take(24).let { l -> if (s.pinned || Regex("(?i)top ?10").containsMatchIn(s.title)) l else l.take(12).shuffled() + l.drop(12) }.map { it.copy(videos = null, cast = null, director = null, writer = null, trailerStreams = null) }) }
+                    val slim = snap.map { s -> s.copy(items = s.items.take(24).map { it.copy(videos = null, cast = null, director = null, writer = null, trailerStreams = null) }) }
                     File(ctx.filesDir, "shelves_$pid.json").writeText(Api.json.encodeToString(slim))
                 }
             }
@@ -1013,41 +1014,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
     }
 
-    // 0.8.9: one request per title at a time (Home asked the same title 2–3 times at once), answers kept 10 min.
-    private val metaRunning = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Meta?>>()
-    private val metaDone = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Meta>>()
-
     suspend fun fullMeta(m: Meta): Meta? {
+        if (BuildConfig.IS_TV) return fullMetaTv(m)
+        // 0.9.71 (from Xstream 0.8.9/0.8.12): one request per title at a time, kept 10 min; shows count only with episodes,
+        // and their episode list is saved on the phone (shown at once next time, also offline).
         val k = m.type + ":" + m.id
         metaDone[k]?.let { (at, v) -> if (System.currentTimeMillis() - at < 600_000) return v }
         val d = metaRunning.getOrPut(k) { viewModelScope.async(Dispatchers.IO) { runCatching { fullMetaNow(m) }.getOrNull() } }
         val r = try { d.await() } finally { if (d.isCompleted) metaRunning.remove(k, d) }
-        // 0.8.12: a show's details count only with its episodes (one without them made Play start S1E1 with no list).
         val full = r != null && (m.type != "series" || !r.videos.isNullOrEmpty())
         if (full) { metaDone[k] = System.currentTimeMillis() to r!!; if (m.type == "series") saveShow(r) }
         else if (m.type == "series") savedShow(m.id)?.let { return it }
         return r
     }
-    /** 0.8.12: a show's episode list kept on the phone (shown at once, also offline). */
+    private val metaRunning = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<Meta?>>()
+    private val metaDone = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, Meta>>()
     private fun showPrefs() = appContext.getSharedPreferences("shows", android.content.Context.MODE_PRIVATE)
-    private fun saveShow(m: Meta) { runCatching { showPrefs().edit().putString(m.id.substringBefore(":"), Api.json.encodeToString(m)).apply() } }
-    fun savedShow(id: String): Meta? = runCatching { showPrefs().getString(id.substringBefore(":"), null)?.let { Api.json.decodeFromString<Meta>(it) } }.getOrNull()
+    private fun saveShow(m: Meta) { runCatching { showPrefs().edit().putString(m.id.substringBefore(":"), Api.json.encodeToString(Meta.serializer(), m)).apply() } }
+    fun savedShow(id: String): Meta? = if (BuildConfig.IS_TV) null else
+        runCatching { showPrefs().getString(id.substringBefore(":"), null)?.let { Api.json.decodeFromString(Meta.serializer(), it) } }.getOrNull()
 
+    /** Phone: Cinemeta first for IMDb titles, then your addons all at once (first in your order within 4 s, shows 12 s). */
     private suspend fun fullMetaNow(m0: Meta): Meta? {
-        // 0.8.9: collection titles with TMDB ids become IMDb titles first (an addon asked for "tmdb:movie:…" can wait 20 s).
         val m = if (m0.id.startsWith("tmdb:")) resolveForOpen(m0) ?: return null else m0
-        // 0.8.8: IMDb titles get their details from Cinemeta first; an addon's error message ("[❌] PenguPlay — Failed to
-        // parse meta") is never taken as the title.
         val series = m.type == "series"
         fun good(x: Meta?) = x != null && !x.isAddonError() && x.name.isNotBlank() && (!series || !x.videos.isNullOrEmpty())
         if (m.id.startsWith("tt")) kotlinx.coroutines.withTimeoutOrNull(if (series) 12_000 else 6_000) { runCatching { Api.fetch<MetaResponse>("$CINEMETA/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull() }
             ?.takeIf { good(it) }?.let { return it }
-        // Addons all at once, the first in your order that answers wins; nobody is waited on for more than 4 s.
         val list = active.filter { it.supports("meta", m.type, m.id) }
         if (list.isEmpty()) return null
-        return coroutineScope {
+        val got = coroutineScope {
             val jobs = list.map { a -> async { runCatching { Api.fetch<MetaResponse>("${a.baseUrl}/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull()?.takeIf { good(it) } } }
-            // Shows wait longer: only details with the episode list are taken.
             val end = System.currentTimeMillis() + if (series) 12_000 else 4_000
             var res: Meta? = null
             for (j in jobs) {
@@ -1058,6 +1055,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             jobs.forEach { it.cancel() }
             res
         }
+        // Nothing complete: the old way (first addon that answers at all), so a title never loses its details.
+        return got ?: fullMetaTv(m)
+    }
+
+    /** TV (unchanged): the first addon in your order that answers. */
+    private suspend fun fullMetaTv(m: Meta): Meta? {
+        for (a in active.filter { it.supports("meta", m.type, m.id) }) {
+            val r = runCatching { Api.fetch<MetaResponse>("${a.baseUrl}/meta/${m.type}/${enc(m.id)}.json").meta }.getOrNull()
+            if (r != null) return r
+        }
+        return null
     }
 
     suspend fun streams(type: String, id: String): List<StreamItem> = coroutineScope {
@@ -1120,25 +1128,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
         val lock = Any()
         var done = 0
-        // 0.8.18: the Cloudflare link finder asks all addons at once; an addon's cloud answer is shown until its own
-        // direct answer arrives (which then replaces it). Counted as answered on whichever comes first.
-        val answered = BooleanArray(addons.size)
-        // 0.8.20: an addon whose cloud answer has links is not asked a second time. started = its direct call was
-        // launched; skipDirect = it never will be (cloud answered); cloudN = addons answered by the cloud.
-        val started = BooleanArray(addons.size)
-        val skipDirect = BooleanArray(addons.size)
-        var cloudN = 0
-        val bases = addons.map { CloudFind.baseOf(it.baseUrl) }
-        val cloud: kotlinx.coroutines.Deferred<Map<String, List<StreamInfo>>>? = if (addons.isEmpty() || BuildConfig.IS_TV) null else async {
-            runCatching { CloudFind.find(type, id, bases) }.getOrDefault(emptyMap<String, List<StreamInfo>>())
-        }
-        // 0.8.20: always asked directly: quick-play addons and CNCVerse (links can be tied to the device), and addons
-        // whose cloud links were refused earlier this session.
-        fun mustAsk(i: Int): Boolean = addons[i].label() in qsAddons() || addons[i].label().contains("CNCVerse", ignoreCase = true) || bases[i] in CloudFind.directOnly
-
-        fun startDirect(i: Int) {
-            val a = addons[i]
-            if (synchronized(lock) { if (started[i]) true else { started[i] = true; false } }) return
+        addons.forEachIndexed { i, a ->
             launch {
                 val t0 = android.os.SystemClock.elapsedRealtime()
                 // One shared request per addon + title (title page, player, upgrade and Sources all ask the same thing —
@@ -1152,57 +1142,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                     " in ${"%.1f".format((android.os.SystemClock.elapsedRealtime() - t0) / 1000f)} s", once = "addon:${a.label()}")
                 AddonSpeed.record(a.label(), android.os.SystemClock.elapsedRealtime() - t0, res.isSuccess)
                 val r = right(res.getOrDefault(emptyList()))
-                // 0.8.20: links the addon itself gave are no longer "cloud links" (a refusal of them is a real refusal).
-                r.forEach { si -> si.stream.url?.let { u -> CloudFind.cloudUrls.remove(u) } }
                 val snapshot = synchronized(lock) {
-                    // A cloud answer already counted: the direct one replaces it (kept if the direct one is empty).
-                    if (answered[i]) { if (r.isNotEmpty()) results[i] = r } else { results[i] = r; answered[i] = true; done++ }
-                    results.filterNotNull().flatten().distinctBy { it.stream.url } to (done == total)
+                    results[i] = r; done++
+                    results.filterNotNull().flatten() to (done == total)
                 }
                 send(snapshot)
-            }
-        }
-
-        /** Cloud answers go to addons that haven't answered yet. early = the first look (within 1500 ms): addons that can skip their direct call do. */
-        suspend fun applyCloud(m: Map<String, List<StreamInfo>>, early: Boolean) {
-            if (m.isEmpty()) return
-            val pending = addons.indices.filter { i -> synchronized(lock) { !answered[i] } }
-            for (i in pending) {
-                val a = addons[i]
-                val l = m[bases[i]].orEmpty()
-                if (l.isEmpty()) continue
-                val r = right(l.map { StreamItem(a.label(), it).also { si -> StreamHeaders.remember(si) } })
-                if (r.isEmpty()) continue
-                // Marked before it is shown, so a refusal of one of these links is always recognised as a cloud refusal.
-                CloudFind.markCloud(bases[i], r.map { it.stream.url })
-                val snapshot = synchronized(lock) {
-                    if (answered[i]) null else {
-                        results[i] = r; answered[i] = true; done++; cloudN++
-                        if (early && !mustAsk(i)) skipDirect[i] = true
-                        results.filterNotNull().flatten().distinctBy { it.stream.url } to (done == total)
-                    }
-                }
-                if (snapshot != null) send(snapshot)
-            }
-        }
-
-        if (cloud == null) {
-            // TV, or nothing to ask the cloud about: exactly as before.
-            addons.indices.forEach { startDirect(it) }
-        } else {
-            // The ones that are always asked directly don't wait for the cloud.
-            addons.indices.filter { mustAsk(it) }.forEach { startDirect(it) }
-            launch {
-                val early = kotlinx.coroutines.withTimeoutOrNull(1500) { cloud.await() }
-                if (early != null) applyCloud(early, true)
-                // Cloud empty / failed / slow: everything that hasn't answered is asked directly now.
-                synchronized(lock) { addons.indices.filter { !skipDirect[it] && !started[it] } }.forEach { startDirect(it) }
-                val line = synchronized(lock) {
-                    "addons: $cloudN from the cloud, ${started.count { it }} asked directly (${skipDirect.count { it }} skipped — cloud already answered)"
-                }
-                ActLog.add("NET", line)
-                // Slower than 1500 ms: its answer still fills addons that are pending (the old behaviour).
-                if (early == null) applyCloud(cloud.await(), false)
             }
         }
         plugins.forEachIndexed { j, pl ->
@@ -1217,29 +1161,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
     }
 
-    /** 0.8.20: one addon asked directly (a cloud link of it was refused). Empty when the addon is gone or has nothing. */
-    suspend fun askAddonDirect(type: String, id: String, base: String): List<StreamItem> {
-        val a = active.firstOrNull { CloudFind.baseOf(it.baseUrl) == base } ?: return emptyList()
-        val l = try {
-            AddonCalls.streams("${a.baseUrl}/stream/$type/${enc(id)}.json", retry = a.label() in qsAddons())
-                .filter { !it.url.isNullOrBlank() }.map { StreamItem(a.label(), it).also { si -> StreamHeaders.remember(si) } }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            emptyList<StreamItem>()
-        }
-        kotlinx.coroutines.withTimeoutOrNull(1500) { TitleMatch.ensureYear(type, id) }
-        val r = l.filterNot { TitleMatch.wrong(it, type, id) || it.isInstantDownload() }
-        r.forEach { si -> si.stream.url?.let { u -> CloudFind.cloudUrls.remove(u) } }
-        return r
-    }
-
     // ───────────── Last working link per title (Playback > Reuse last link) ─────────────
     @Serializable data class LastLink(val url: String, val source: String? = null, val addon: String? = null, val at: Long = 0)
 
     fun lastLink(key: String): LastLink? = lib.getString("link_$key", null)?.let { runCatching { Api.json.decodeFromString<LastLink>(it) }.getOrNull() }
         ?.takeIf { !isLocalUrl(it.url) }
-        ?.takeIf { !liveLocked() || it.addon == LiveServer.NAME }
         ?.takeIf { System.currentTimeMillis() - it.at < 6L * 3600 * 1000 } // provider links expire; reuse for 6 hours (a refused link is refreshed automatically)
     /** The app's own local relay (127.0.0.1:port): its port changes every start, so it is never saved for Continue Watching. */
     private fun isLocalUrl(u: String) = Regex("^https?://(127\\.0\\.0\\.1|localhost)(:|/)", RegexOption.IGNORE_CASE).containsMatchIn(u)
@@ -1274,6 +1200,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         if (t != null && k in perTitlePrefs) lib.getString("pt_${t}_$k", null)?.let { return it }
         return lib.getString("pp_$k", "") ?: ""
     }
+    /** Only this title's own value (no fallback to the last title's). */
+    fun titlePref(k: String): String? = titleScope?.let { lib.getString("pt_${it}_$k", null) }?.takeIf { it.isNotBlank() }
     fun setPlayerPref(k: String, value: String) {
         val e = lib.edit().putString("pp_$k", value)
         titleScope?.takeIf { k in perTitlePrefs }?.let { e.putString("pt_${it}_$k", value) }
@@ -1360,7 +1288,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
      * More subtitles for the player's "Find subtitles online": your subtitle addons plus OpenSubtitles (through its
      * free Stremio addon, no account needed). Same file listed twice is shown once.
      */
-    suspend fun onlineSubtitles(type: String, id: String): List<Subtitle> = coroutineScope {
+    /** TV 0.9.4: the online subtitle list is kept 20 minutes (it's fetched ahead while the video plays, so Audio &
+     *  Subtitles opens with it ready). */
+    private val subsListCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<Subtitle>>>()
+    suspend fun onlineSubtitles(type: String, id: String): List<Subtitle> {
+        if (BuildConfig.IS_TV) subsListCache["$type|$id"]?.takeIf { System.currentTimeMillis() - it.first < 20 * 60_000L }?.let { return it.second }
+        return onlineSubtitlesFresh(type, id).also { if (BuildConfig.IS_TV && it.isNotEmpty()) { if (subsListCache.size > 30) subsListCache.clear(); subsListCache["$type|$id"] = System.currentTimeMillis() to it } }
+    }
+    private suspend fun onlineSubtitlesFresh(type: String, id: String): List<Subtitle> = coroutineScope {
         val mine = async { runCatching { subtitles(type, id) }.getOrDefault(emptyList()) }
         val os = async {
             runCatching { Api.fetch<SubsResponse>("https://opensubtitles-v3.strem.io/subtitles/$type/${enc(id)}.json").subtitles }
@@ -1461,6 +1396,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }.awaitAll().flatten().distinctBy { it.type + it.id }
     }
 
+    /**
+     * TV: the same addon search, but light enough for a 1 GB Fire TV Stick: at most 2 search catalogs per addon, 3 requests
+     * at a time, 30 results per catalog. (Asking every catalog at once ran the stick out of memory.)
+     */
+    suspend fun searchNowLight(q: String): List<Meta> = coroutineScope {
+        val gate = kotlinx.coroutines.sync.Semaphore(3)
+        active.flatMap { a ->
+            a.manifest.catalogs.filter { c -> c.extra.orEmpty().any { it.name == "search" } && !c.id.contains("dummy", true) }.take(2).map { c ->
+                async {
+                    gate.acquire()
+                    try {
+                        runCatching {
+                            kotlinx.coroutines.withTimeoutOrNull(5_000) {
+                                Api.fetch<CatalogResponse>("${a.baseUrl}/catalog/${c.type}/${enc(c.id)}/search=${Uri.encode(q)}.json").metas.take(30)
+                            }
+                        }.getOrNull().orEmpty()
+                    } finally { gate.release() }
+                }
+            }
+        }.awaitAll().flatten().distinctBy { it.type + it.id }
+    }
+
     suspend fun genreTitles(genres: List<String>, types: List<String>): List<Meta> = coroutineScope {
         val lists = genres.take(3).flatMap { g ->
             types.map { type ->
@@ -1532,7 +1489,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         if (!imdb.startsWith("tt")) return null
         val url = if (parts.size >= 3) "https://api.introdb.app/segments?imdb_id=$imdb&season=${parts[1]}&episode=${parts[2]}"
         else "https://api.introdb.app/segments?imdb_id=$imdb"
-        // 0.8.17: at most 4 s (introdb.app once took 20 s; SkipDB is the backup).
+        // TV 0.9.14: at most 4 s (it once hung 20 s and the episode had no skip times); SkipDB is the backup.
         val r = kotlinx.coroutines.withTimeoutOrNull(4_000) { runCatching { Api.fetch<Segments>(url) }.getOrNull() } ?: return null
         // Only trust data for exactly this episode / movie.
         if (parts.size >= 3) {
@@ -1546,7 +1503,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     private val skipDbCache = java.util.concurrent.ConcurrentHashMap<String, Segments>()
     /**
-     * 0.8.17 (from StreamX TV 0.9.14): SkipDB (skipdb.tv) — skip times for exactly this copy's length: we send our file's duration and it shifts
+     * TV 0.9.14: SkipDB (skipdb.tv) — skip times for exactly this copy's length: we send our file's duration and it shifts
      * its times to fit (a 25 fps MovieBox copy runs ~4 % faster, so fixed times landed early). Null = nothing there.
      */
     suspend fun skipDb(key: String, durationMs: Long): Segments? {
@@ -1725,10 +1682,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         viewModelScope.launch(Dispatchers.IO) {
             val cached = runCatching { File(ctx.filesDir, "shelves_$pid.json").takeIf { it.exists() }?.readText()?.let { Api.json.decodeFromString<List<Shelf>>(it) } }.getOrNull()
             if (!cached.isNullOrEmpty()) withContext(Dispatchers.Main) { if (dataPid == pid && (shelves.value.isEmpty() || loading.value)) shelves.value = cached.map { s -> s.copy(items = s.items.distinctBy { it.type + it.id }) } }
-            // 0.8.8: their pictures are fetched to the phone's cache now — while the profile page shows — so Home opens
-            // with every card drawn (the Top 10 / Trending rows were empty boxes for 2–3 s).
+            // 0.9.72 (from Xstream): the saved rows' pictures are fetched while the profile page shows, so Home opens drawn.
             if (!cached.isNullOrEmpty() && !BuildConfig.IS_TV) runCatching { warmHome(cached) }
         }
+    }
+
+    /**
+     * 0.9.72 (from Xstream's warmHome): Home's pictures to the disk cache — the first 12 posters of every row, the first
+     * card's big pictures in every row, and the big cards of the first 3 rows. Tall Top 10 posters only when already known
+     * (no extra lookups — less data).
+     */
+    fun warmHome(rows: List<Shelf>) {
+        // 0.9.79: only the rows you see first (4); the rest are fetched one row ahead as you scroll (Home).
+        val n = 4
+        val urls = rows.take(n).flatMap { s -> s.items.take(12).map { hiResArt(it.poster) } } +
+            rows.take(n).mapNotNull { s -> s.items.firstOrNull() }.flatMap { listOf(hdPoster(it), hiResArt(backdropOf(it) ?: it.poster)) } +
+            rows.take(3).flatMap { s -> s.items.take(10).flatMap { listOf(hdPoster(it), backdropOf(it)) } } +
+            rows.take(n).flatMap { it.items.take(10) }.mapNotNull { TmdbPosters.cached(it) }
+        Posters.warm(appContext, urls)
     }
 
     init {
@@ -1746,7 +1717,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         Api.setDns(appTexts["dns"] ?: "cloudflare")
         Cloud.init(ctx)
         Cloud.attach(this)
-        // Xstream: a friend's recommendation lands in your watchlist.
+        // StreamX: a friend's recommendation lands in your watchlist.
         Recs.init(ctx)
         Recs.addToList = { m -> viewModelScope.launch(Dispatchers.Main) { if (myList.value.none { it.id == m.id }) toggleList(m) } }
     }
@@ -1802,7 +1773,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 val remote = decodeMap(value) ?: emptyMap()
                 val local = settingsOf(id)
                 val merged = if (field == "set") {
-                    val dev = deviceOnlyKeys(remote)
+                    // 0.9.78 (phone): the look arriving from another device (a TV's theme) never replaces this phone's.
+                    val dev = deviceOnlyKeys(remote) + (if (BuildConfig.IS_TV) emptySet() else LookDeviceKeys)
                     local.filterKeys { it in dev } + remote.filterKeys { it !in dev }
                 } else {
                     val dev = deviceOnlyKeys(local)

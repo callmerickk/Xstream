@@ -1,5 +1,11 @@
 package com.example.streamnest
 
+import androidx.compose.foundation.gestures.awaitFirstDown
+
+import androidx.compose.foundation.gestures.awaitEachGesture
+
+import androidx.compose.ui.input.pointer.pointerInput
+
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -69,6 +75,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -80,7 +87,7 @@ import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 
-/* ───────────── Xstream TV: shared focus helpers, rows and cards ───────────── */
+/* ───────────── StreamX TV: shared focus helpers, rows and cards ───────────── */
 
 /** Left padding of TV rows / screens: 48dp on full-screen pages, smaller next to the left rail (see TvApp). */
 val LocalTvEdge = staticCompositionLocalOf { 48.dp }
@@ -227,6 +234,7 @@ fun <T> TvRow(
     key: (T) -> Any,
     modifier: Modifier = Modifier,
     title: String? = null,
+    titleEnd: (@Composable () -> Unit)? = null,
     state: LazyListState = rememberLazyListState(),
     spacing: Dp = 12.dp,
     restoreIndex: Int = -1,
@@ -251,15 +259,19 @@ fun <T> TvRow(
     var lastIdx by remember { mutableIntStateOf(-1) }
     val lastFr = remember { FocusRequester() }
     val attachedIdx = remember { intArrayOf(-1) }
+    // TV 0.8.5: a row you haven't been in yet starts at its first card (not the card under the one you came from).
+    val firstOn = remember { booleanArrayOf(false) }
     val rowSpec = LocalTvRowSpec.current ?: LocalBringIntoViewSpec.current
     Column(modifier.fillMaxWidth()) {
-        if (title != null) TvRowTitle(title)
+        if (title != null && titleEnd != null) Row(Modifier.fillMaxWidth().padding(end = TvEdge), verticalAlignment = Alignment.Bottom) {
+            TvRowTitle(title, Modifier.weight(1f)); titleEnd()
+        } else if (title != null) TvRowTitle(title)
         CompositionLocalProvider(LocalBringIntoViewSpec provides rowSpec) {
             LazyRow(
                 Modifier.fillMaxWidth()
                     .onFocusChanged { if (it.hasFocus) rowFocus.value?.invoke() }
                     .focusProperties {
-                        enter = { if (lastIdx >= 0 && attachedIdx[0] == lastIdx) lastFr else FocusRequester.Default }
+                        enter = { if (lastIdx >= 0 && attachedIdx[0] == lastIdx) lastFr else if (lastIdx < 0 && firstOn[0]) firstFr else FocusRequester.Default }
                     }
                     .focusGroup(),
                 state = state,
@@ -267,12 +279,14 @@ fun <T> TvRow(
                 horizontalArrangement = Arrangement.spacedBy(spacing),
             ) {
                 itemsIndexed(items, key = { _, it -> key(it) }) { i, it ->
-                    var m: Modifier = if (i == 0) edgeMod else Modifier
+                    // TV 0.8.8: a card counts as "there" only once it is placed on screen. A row the list prepares ahead of
+                    // time (composed but not placed) has no focus target yet — sending focus to it crashed the app (0.8.7).
+                    var m: Modifier = if (i == 0) edgeMod.onGloballyPositioned { firstOn[0] = true } else Modifier
+                    if (i == 0) DisposableEffect(Unit) { onDispose { firstOn[0] = false } }
                     if (i == restoreIndex && restoreRequester != null) m = m.focusRequester(restoreRequester)
                     if (i == lastIdx) {
-                        m = m.focusRequester(lastFr)
+                        m = m.focusRequester(lastFr).onGloballyPositioned { attachedIdx[0] = i }
                         DisposableEffect(i) {
-                            attachedIdx[0] = i
                             onDispose { if (attachedIdx[0] == i) attachedIdx[0] = -1 }
                         }
                     }
@@ -450,8 +464,43 @@ fun Modifier.tvOkKeyboard(top: Dp = 0.dp, corner: Dp = 12.dp, ring: Boolean = tr
                     cornerRadius = CornerRadius(corner.toPx() + g), style = Stroke(2.dp.toPx()))
             }
         }
+        // Touch screens (the TV app on a tablet / touch display): a tap on the box starts typing at once.
+        .pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                if (!editing) { editing = true; scope.launch { androidx.compose.runtime.withFrameNanos { }; inner.tryFocus(); kb?.show() } }
+            }
+        }
         .focusable()
         .focusProperties { canFocus = editing }
         .focusRequester(inner)
         .onFocusChanged { if (editing && !it.isFocused && !it.hasFocus) editing = false }
+}
+
+
+/**
+ * Touch: phones always; the TV app too when the screen can be touched (a tablet or a big touch display) — then every
+ * tap, swipe and gesture of the phone app works alongside the remote.
+ */
+object TouchInput { @Volatile var on: Boolean = !BuildConfig.IS_TV }
+
+
+/** TV 0.8.5: holding OK on a card (about half a second) calls [onLong] instead of the normal press. */
+fun Modifier.tvLongPress(onLong: (() -> Unit)?): Modifier = if (onLong == null) this else composed {
+    val fired = remember { booleanArrayOf(false) }
+    val cb = rememberUpdatedState(onLong)
+    onPreviewKeyEvent { e ->
+        if (e.key != Key.DirectionCenter && e.key != Key.Enter && e.key != Key.NumPadEnter) return@onPreviewKeyEvent false
+        when (e.type) {
+            KeyEventType.KeyDown -> {
+                val rc = e.nativeKeyEvent.repeatCount
+                if (rc == 0) { fired[0] = false; false }
+                else { if (rc >= 5) fired[0] = true; true }
+            }
+            // TV 0.8.8: the options open when OK is let go after a long hold. Opening them while OK was still down sent
+            // that release into the options — onto Resume, so the title started playing.
+            KeyEventType.KeyUp -> if (fired[0]) { fired[0] = false; cb.value(); true } else false
+            else -> false
+        }
+    }
 }

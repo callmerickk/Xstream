@@ -17,22 +17,17 @@ import coil.decode.VideoFrameDecoder
 /** A FragmentActivity (still a ComponentActivity) so the fingerprint prompt can be shown. */
 // AppCompat (still a FragmentActivity underneath): CloudStream plugins expect the app's screen to be one.
 class MainActivity : androidx.appcompat.app.AppCompatActivity() {
-    /** 0.8.12: in the background (not while a video plays in a small window) the hidden players and picture memory are
-     *  freed, so Android stops closing the app (it was using 440–625 MB there). */
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN && !isInPictureInPictureMode) {
-            runCatching { Preloader.release() }
-            runCatching { Prepare.stopOthers() }
-            runCatching { coil.Coil.imageLoader(this).memoryCache?.clear() }
-            ActLog.add("APP", "in the background — freed hidden players and pictures (memory ${PlayerCount.usedMb()} MB)")
-        }
-    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.lagradost.cloudstream3.CommonActivity.activity = this
         CrashLog.install(this)
+        TouchInput.on = !BuildConfig.IS_TV || packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
         ActLog.init(this)
+        runCatching { FrameStats.attach(this) }
+        if (BuildConfig.IS_TV && savedInstanceState == null) { TvSmall.startedAt = android.os.SystemClock.elapsedRealtime(); TvSmall.checkLastRun(this) }
+        // The phone rebuilt the screen (a display change the app doesn't handle itself): say what changed.
+        if (savedInstanceState != null) ActLog.add("APP", "screen rebuilt by Android" + (lastCfg?.let { " · " + cfgDiff(resources.configuration.diff(it)) } ?: ""))
+        lastCfg = android.content.res.Configuration(resources.configuration)
         CrashLog.logExitReasons(this)
         // App icon picked with "Later": apply it now that the app was fully closed and opened again.
         if (!started) { started = true; AppIcons.signalOnce(this); AppIcons.applyPendingOnColdStart(this); AppIcons.keepOne(this) }
@@ -42,10 +37,11 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory(enforceMinimumFrameDelay = true)) else add(GifDecoder.Factory(enforceMinimumFrameDelay = true))
                 add(VideoFrameDecoder.Factory())
                 if (!BuildConfig.IS_TV) add(HdPoster)
-                // 0.8.17: pictures fetched at the size they are drawn (a small card never downloads a 1280-px backdrop).
-                add(ImgSize)
+                // TV 0.9.13: pictures fetched at the size they are shown (a card never downloads a 1280-px backdrop).
+                add(TvImgSize)  // 0.9.75: phones too (as Xstream 0.8.17 ImgSize)
             }.okHttpClient { Posters.client() }.crossfade(if (BuildConfig.IS_TV) 0 else 120).allowRgb565(true)
-                .memoryCache { coil.memory.MemoryCache.Builder(this).maxSizePercent(if (BuildConfig.IS_TV) 0.25 else 0.12).build() }  // 0.8.8: 25 % (~96 MB) left too little for the player
+                // TV 0.8.4: a 1 GB Fire TV stick keeps fewer pictures in memory (Android was closing the app in search).
+                .memoryCache { coil.memory.MemoryCache.Builder(this).maxSizePercent(if (BuildConfig.IS_TV && TvSmall.on(this)) 0.12 else 0.25).build() }
                 .diskCache { coil.disk.DiskCache.Builder().directory(cacheDir.resolve("posters")).maxSizeBytes(400L * 1024 * 1024).build() }
                 .respectCacheHeaders(false)
                 .build()
@@ -64,13 +60,16 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         if (intent.getBooleanExtra("musicHome", false)) MusicPlayer.splash.value = true
         SocialIntent.take(intent)
         enableEdgeToEdge()
-        // Xstream TV (tv flavor) gets the remote-friendly TV interface; the phone app keeps its own.
+        // StreamX TV (tv flavor) gets the remote-friendly TV interface; the phone app keeps its own.
+        // TV 0.9.14: the start logo (window background) is only for the first moments; then plain black again behind the
+        // video and every page.
+        if (BuildConfig.IS_TV) window.decorView.postDelayed({ runCatching { window.setBackgroundDrawableResource(android.R.color.black) } }, 4_000)
         setContent {
             StreamNestTheme {
                 androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                    // 0.9.76: Glass theme (phones) — one blurred picture behind every page.
+                    if (!BuildConfig.IS_TV && Palette.glass) GlassBackdrop(GlassBg.url)
                     if (BuildConfig.IS_TV) TvApp() else App()
-                    // 0.8.18: approval-only access + "Update required" (off until turned on in Settings › Access requests).
-                    if (!BuildConfig.IS_TV) AccessGate(androidx.lifecycle.viewmodel.compose.viewModel<AppViewModel>())
                     UpdatePrompt()
                     ProfileLockDialog()
                     // Source Test running: the screen stays awake; afterwards your normal screen timeout applies again.
@@ -87,8 +86,9 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 }
             }
         }
-        // From StreamX: vivo (Android 16) takes the app's screen off the window for a moment when the player turns
-        // sideways; by default that throws the whole screen away (the player closed). Kept until the app itself closes.
+        // vivo (Android 16) takes the app's screen off the window for a moment when the player turns sideways; by default
+        // that throws the whole screen away (0.9.63: the player closed; 0.9.64: it restarted and lost its ready stream).
+        // Kept until the app itself closes instead; logged when it happens.
         runCatching {
             val cv = (window.decorView.findViewById<android.view.ViewGroup>(android.R.id.content)).getChildAt(0) as androidx.compose.ui.platform.ComposeView
             cv.setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnLifecycleDestroyed(this))
@@ -102,19 +102,50 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
     // Activity log: every tap and remote key, with the button it hit.
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        // 0.9.79: the phone's start-up work waits while you touch the screen (as the TV waits for the remote).
+        if (!BuildConfig.IS_TV) TvIdle.lastKeyAt = android.os.SystemClock.elapsedRealtime()
         val r = super.dispatchTouchEvent(ev)
         runCatching { ActLog.onTouch(window.decorView, ev) }
         return r
     }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        TvIdle.lastKeyAt = android.os.SystemClock.elapsedRealtime()
         val r = super.dispatchKeyEvent(event)
         runCatching { ActLog.onKey(window.decorView, event) }
         return r
     }
 
-    override fun onPause() { super.onPause(); ActLog.add("APP", "to background") }
-    override fun onResume() { super.onResume(); com.lagradost.cloudstream3.CommonActivity.activity = this; ActLog.add("APP", "in front"); runCatching { Cloud.onAppForeground() }; LiveServer.start(this, 2_500) }
+    override fun onPause() { super.onPause(); ActLog.add("APP", "to background"); if (BuildConfig.IS_TV) TvSmall.front(this, false) }
+
+    /** TV 0.8.4: Android says memory is short → drop the pictures kept in memory (they reload from disk). */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // TV 0.9.11: "running low" (10) only trims (the picture loader halves its own memory); the pictures on screen are
+        // cleared only when it's critical (15+), so posters no longer vanish and reload at every small squeeze.
+        // TV 0.9.15: Fire TV sends "critical" within the first second of every start even with 300 MB free; obeying it threw
+        // away every poster, so each one loaded twice. Pictures are cleared only when memory is really short.
+        if (BuildConfig.IS_TV && level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW && level != android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            val early = android.os.SystemClock.elapsedRealtime() - TvSmall.startedAt < 20_000
+            if (!early && TvSmall.reallyShort(this)) {
+                runCatching { coil.Coil.imageLoader(this).memoryCache?.clear() }
+                ActLog.add("APP", "memory short (level $level) — pictures cleared · ${TvSmall.mem(this)}")
+            } else ActLog.add("APP", "memory signal (level $level) ignored${if (early) " (start)" else ""} · ${TvSmall.mem(this)}")
+        }
+    }
+
+    /** Display changes handled without rebuilding the screen; anything beyond turning the phone is logged. */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        runCatching {
+            val d = lastCfg?.let { newConfig.diff(it) } ?: 0
+            val turn = android.content.pm.ActivityInfo.CONFIG_ORIENTATION or android.content.pm.ActivityInfo.CONFIG_SCREEN_SIZE or
+                android.content.pm.ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE or android.content.pm.ActivityInfo.CONFIG_SCREEN_LAYOUT
+            if (d and turn.inv() != 0) ActLog.add("APP", "display change handled: " + cfgDiff(d))
+            lastCfg = android.content.res.Configuration(newConfig)
+        }
+    }
+    override fun onResume() { super.onResume(); com.lagradost.cloudstream3.CommonActivity.activity = this; ActLog.add("APP", "in front"); if (BuildConfig.IS_TV) TvSmall.front(this, true); runCatching { Cloud.onAppForeground() }; LiveServer.start(this, 2_500) }
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
@@ -134,6 +165,17 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     companion object {
         /** false only on the first Activity of a fresh process (a "cold start"). */
         private var started = false
+        /** The display settings last seen (kept across a rebuilt screen, to say what changed). */
+        private var lastCfg: android.content.res.Configuration? = null
+        private fun cfgDiff(d: Int): String {
+            val I = android.content.pm.ActivityInfo::class.java
+            val names = listOf("ORIENTATION", "SCREEN_SIZE", "SMALLEST_SCREEN_SIZE", "SCREEN_LAYOUT", "DENSITY", "FONT_SCALE", "UI_MODE",
+                "LOCALE", "LAYOUT_DIRECTION", "NAVIGATION", "KEYBOARD", "KEYBOARD_HIDDEN", "TOUCHSCREEN", "COLOR_MODE", "MCC", "MNC", "FONT_WEIGHT_ADJUSTMENT")
+            val hit = names.filter { n -> runCatching { (I.getField("CONFIG_$n").getInt(null) and d) != 0 }.getOrDefault(false) }
+            val known = names.sumOf { n -> runCatching { I.getField("CONFIG_$n").getInt(null) }.getOrDefault(0) }
+            val rest = d and known.inv()
+            return (hit.joinToString(", ") { it.lowercase().replace('_', ' ') } + if (rest != 0) " + other 0x${Integer.toHexString(rest)}" else "").ifBlank { "nothing listed (0x${Integer.toHexString(d)})" }
+        }
     }
 }
 
@@ -181,14 +223,29 @@ object Posters {
     /** Downloads these pictures to the disk cache now (not decoded), so drawing them later is instant. */
     fun warm(ctx: android.content.Context, urls: List<String?>) {
         val loader = Coil.imageLoader(ctx)
-        urls.filterNotNull().filter { it.startsWith("http") && asked.add(it) }.take(260).forEach { u ->
+        urls.filterNotNull().filter { it.startsWith("http") && asked.add(it) }.take(80).forEach { u ->
             loader.enqueue(coil.request.ImageRequest.Builder(ctx).data(u).memoryCachePolicy(coil.request.CachePolicy.DISABLED).size(1, 1).build())
         }
     }
 }
 
-/** 0.8.17 (from StreamX TV 0.9.13): picks the smallest TMDB / Metahub picture that still fills the size it's drawn at. */
-object ImgSize : coil.intercept.Interceptor {
+
+/**
+ * TV 0.8.4 — small boxes (1 GB Fire TV sticks): is this one of them, a memory line for the log, and whether Android closed
+ * the app while it was on screen (Android 9 never says why; the "on screen" mark left behind tells us).
+ */
+/** TV 0.9.13: when the remote was last pressed; background starters wait while you move around. */
+object TvIdle {
+    @Volatile var lastKeyAt = 0L
+    /** Waits until no key for [quietMs] (at most [maxMs]). */
+    suspend fun waitQuiet(quietMs: Long = 1500, maxMs: Long = 20_000) {
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        while (android.os.SystemClock.elapsedRealtime() - lastKeyAt < quietMs && android.os.SystemClock.elapsedRealtime() - t0 < maxMs) kotlinx.coroutines.delay(300)
+    }
+}
+
+/** TV 0.9.13: picks the smallest TMDB / Metahub picture that still fills the size it's drawn at. */
+object TvImgSize : coil.intercept.Interceptor {
     private val tmdb = Regex("(image\\.tmdb\\.org/t/p/)(w\\d+|original)(/)")
     override suspend fun intercept(chain: coil.intercept.Interceptor.Chain): coil.request.ImageResult {
         val req = chain.request
@@ -214,3 +271,43 @@ object ImgSize : coil.intercept.Interceptor {
     }
 }
 
+object TvSmall {
+    // TV 0.9.13: asked once (it was asked again on every check).
+    @Volatile private var small: Boolean? = null
+    fun on(ctx: android.content.Context): Boolean = small ?: runCatching {
+        val mi = android.app.ActivityManager.MemoryInfo()
+        (ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(mi)
+        mi.totalMem < 1_600L * 1024 * 1024
+    }.getOrDefault(false).also { small = it }
+
+    fun mem(ctx: android.content.Context): String = runCatching {
+        val rt = Runtime.getRuntime()
+        val mi = android.app.ActivityManager.MemoryInfo()
+        (ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(mi)
+        "app ${(rt.totalMemory() - rt.freeMemory()) / 1048576}/${rt.maxMemory() / 1048576} MB · native ${android.os.Debug.getNativeHeapAllocatedSize() / 1048576} MB · box free ${mi.availMem / 1048576} MB" + if (mi.lowMemory) " · LOW" else ""
+    }.getOrDefault("?")
+
+    private fun prefs(ctx: android.content.Context) = ctx.getSharedPreferences("tvsmall", android.content.Context.MODE_PRIVATE)
+    @Volatile var startedAt = 0L
+    /** TV 0.9.15: the last screen and key, written only with the existing minute mark (no extra work per key). */
+    @Volatile var lastScreen = ""
+    @Volatile var lastKey = ""
+    /** The app's own memory is really short: its heap above 60 % or the box under 120 MB free. */
+    fun reallyShort(ctx: android.content.Context): Boolean = runCatching {
+        val rt = Runtime.getRuntime()
+        val mi = android.app.ActivityManager.MemoryInfo()
+        (ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(mi)
+        (rt.totalMemory() - rt.freeMemory()) > rt.maxMemory() * 0.6 || mi.availMem < 120L * 1024 * 1024
+    }.getOrDefault(false)
+    fun front(ctx: android.content.Context, on: Boolean) { runCatching { prefs(ctx).edit().putBoolean("front", on).putLong("at", System.currentTimeMillis()).putString("scr", lastScreen).putString("key", lastKey).apply() } }
+    /** Called once at start: the last run ended while on screen (no "to background") → Android closed it. */
+    fun checkLastRun(ctx: android.content.Context) {
+        runCatching {
+            val p = prefs(ctx)
+            if (p.getBoolean("front", false)) ActLog.add("ERROR", "Android closed the app while you were using it (likely memory) · last seen ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(p.getLong("at", 0L)))} · ${p.getString("mem", "")} · screen: ${p.getString("scr", "")} · key: ${p.getString("key", "")}")
+            // TV 0.9.15: a crash saved last time goes into the log too (it used to show only on screen).
+            CrashLog.read(ctx)?.let { t -> ActLog.add("CRASH", t.lines().take(40).joinToString(" | ").take(4000)) }
+        }
+    }
+    fun beat(ctx: android.content.Context) { runCatching { prefs(ctx).edit().putLong("at", System.currentTimeMillis()).putString("mem", mem(ctx)).putString("scr", lastScreen).putString("key", lastKey).apply() } }
+}

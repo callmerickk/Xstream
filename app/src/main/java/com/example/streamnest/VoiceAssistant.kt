@@ -164,7 +164,7 @@ internal fun heartbeat(t: Float): Float {
     return 1f + bump(t, 0f, 0.16f, 0.12f) + bump(t, 0.22f, 0.16f, 0.07f)
 }
 
-// Xstream: the dock's red — a dark ember inside, a red → orange rim with a fading tail as it spins.
+// StreamX: the dock's red — a dark ember inside, a red → orange rim with a fading tail as it spins.
 private val OrbFill = Brush.radialGradient(listOf(Color(0xFF3A0D12), Color(0xFF1A0A0D), Color(0xFF0D0709)))
 private val OrbRim = Brush.sweepGradient(listOf(Color(0xFFE50914), Color(0xFFFF6A3D), Color(0x33E50914), Color(0xFFE50914)))
 
@@ -271,8 +271,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
     private fun begin() {
         if (begun || !alive) return
         begun = true
-        // 0.8.8: AIDEN listens with the phone's own recognizer (as fast as the search mic); the live audio session is
-        // no longer used for listening.
+        if (GeminiLiveDev.usable(ctx, vm) && startLive()) return
         if (ttsReady || !voiceOut) greet() else listen()
     }
 
@@ -470,7 +469,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
         state = XState.Thinking
         val my = ++seq
         job = scope.launch {
-            // 0.8.8: simple commands run at once, without waiting for the AI ("play Avengers", "open Loki",
+            // 0.9.73 (from Xstream): simple commands run at once, without waiting for the AI ("play Avengers", "open Loki",
             // "search Marvel", "my list").
             val quick = runCatching { quickCommand(q) }.getOrNull()
             val r = try {
@@ -686,7 +685,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
         if (key.isEmpty() || !micGranted()) return false
         val who = vm.current.value?.name?.trim()?.takeIf { it.isNotBlank() && it != "Me" }
         val last = vm.progress.value.firstOrNull()?.title?.substringBefore("  S")?.takeIf { it.isNotBlank() }
-        val sys = "You are ${aiName()}, the movie and TV buddy inside the Xstream app" + (who?.let { ", talking with $it" } ?: "") + ". " +
+        val sys = "You are ${aiName()}, the movie and TV buddy inside the ${Brand.NAME} app" + (who?.let { ", talking with $it" } ?: "") + ". " +
             "Talk like a real friend on a phone call: warm, natural, relaxed, a little playful, short (one or two sentences unless asked for more). " +
             "Answer in the language the user speaks: English, Hindi or Hinglish. " +
             "For anything about titles — what to watch, recommendations, finding, opening, playing, continuing, an episode, or controlling the video " +
@@ -701,7 +700,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
             }
             putJsonArray("required") { add(JsonPrimitive("request")) }
         }
-        val tool = LiveTool("streamx", "Does what the user asks inside Xstream: recommend or find movies and shows, open a title, play a title or an episode, " +
+        val tool = LiveTool("streamx", "Does what the user asks inside ${Brand.NAME}: recommend or find movies and shows, open a title, play a title or an episode, " +
             "continue watching, or control the playing video (pause, resume, skip forward or back, next episode). Returns what happened.", params) { args ->
             val q = (args["request"] as? JsonPrimitive)?.contentOrNull.orEmpty()
             val r = convo.reply(q)
@@ -840,7 +839,7 @@ private class XSession(private val ctx: Context, private val vm: AppViewModel, p
 }
 
 /**
- * AIDEN, the Xstream movie buddy, in a bubble that springs out of the AI button (Home stays behind it, blurred).
+ * AIDEN, the StreamX movie buddy, in a bubble that springs out of the AI button (Home stays behind it, blurred).
  * Hands-free: it listens, answers out loud and listens again. Tap the core to talk, stop or interrupt.
  * The words of each answer light up exactly as the voice says them.
  */
@@ -1363,9 +1362,10 @@ fun aidenGreeting(vm: AppViewModel): String {
 fun AidenWake(vm: AppViewModel, onOpen: () -> Unit) {
     if (BuildConfig.IS_TV) return
     val texts by vm.texts.collectAsState()
-    // 0.8.19: AI shows only when the user taps the AI button: the spoken hello is off for everyone (once).
-    LaunchedEffect(Unit) { if (vm.store("aiOff0819") != "1") { vm.storePut("aiOff0819", "1"); vm.setText("aiWake", "no"); vm.setText("wakeOn", "no") } }
-    if (!isOn(texts["aiWake"] ?: "no") || vm.store("aiOff0819") != "1") return
+    // 0.9.74: AI shows only when the user taps the AI button. The spoken greeting bubble is off for everyone (once),
+    // and stays off unless turned on again in Settings.
+    LaunchedEffect(Unit) { if (vm.store("aiWakeOff0974") != "1") { vm.storePut("aiWakeOff0974", "1"); vm.setText("aiWake", "no") } }
+    if (!isOn(texts["aiWake"] ?: "no") || vm.store("aiWakeOff0974") != "1") return
     val ctx = LocalContext.current
     var open by remember { mutableStateOf(false) }
     val text = remember { aidenGreeting(vm) }

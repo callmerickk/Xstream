@@ -24,8 +24,11 @@ object PlayTiming {
     fun init(ctx: Context) { if (prefs == null) prefs = ctx.getSharedPreferences("play_timing", Context.MODE_PRIVATE) }
 
     /** Play was pressed (or the player opened without a press, e.g. next episode). */
+    /** Which play this is (a player only closes its own record). */
+    @Volatile var session = 0
     fun begin(what: String, detail: String) {
         cur?.let { finish("left before the first picture") }
+        session++
         t0 = SystemClock.elapsedRealtime()
         title = what
         marked = HashSet()
@@ -45,8 +48,6 @@ object PlayTiming {
     }
 
     fun active(): Boolean = cur != null
-    /** The play being timed is for [what] (a player closing must not end the next title's timing). */
-    fun activeFor(what: String): Boolean = cur != null && title == what
 
     /** The play ended (first picture, error or left): saved to the log. */
     fun finish(result: String) {

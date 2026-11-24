@@ -42,6 +42,20 @@ object SiteAddress {
             .mapNotNull { (_, v) -> runCatching { v.jsonPrimitive.contentOrNull }.getOrNull()?.takeIf { it.startsWith("http") } }
     }.getOrDefault(emptyList())
 
+    /**
+     * A result page on another VegaMovies / RogMovies address than the working one (search on vegamovies.lease answered
+     * with pages on vegamovies.chat, which doesn't exist): the same page on the working address. Null = keep it.
+     */
+    fun rehost(api: MainAPI, url: String): String? = runCatching {
+        if (kind(api) == null) return null
+        val base = api.mainUrl.trimEnd('/')
+        val u = java.net.URI(url); val b = java.net.URI(base)
+        if (u.host == null || b.host == null || u.host.equals(b.host, true)) return null
+        val h = u.host.lowercase()
+        if (!(h.contains("vega") || h.contains("rogmovies"))) return null
+        base + (u.rawPath ?: "") + (u.rawQuery?.let { "?$it" } ?: "")
+    }.getOrNull()
+
     /** Makes sure [api] uses an address that answers. true = it changed (worth searching again). */
     suspend fun fix(api: MainAPI, force: Boolean = true): Boolean = withContext(Dispatchers.IO) {
         val k = kind(api) ?: return@withContext false

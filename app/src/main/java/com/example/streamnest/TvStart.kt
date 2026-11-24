@@ -41,10 +41,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.runtime.key
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -62,6 +69,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
@@ -86,23 +97,26 @@ private val SplashPurple = Brush.radialGradient(listOf(Color(0x737828BE), Color.
 
 /**
  * TV 0.7 start: light on purpose (the blurred red / purple blobs and the 14× zooming X made Fire TV sticks stutter).
- * Dark background, the logo pops in, "Xstream" slides in beside it, a short hold, then everything fades. Only layer
+ * Dark background, the logo pops in, "StreamX" slides in beside it, a short hold, then everything fades. Only layer
  * alpha / scale / translation animate.
  */
 @Composable
-fun TvStartupSplash(onDone: () -> Unit) {
-    val mark = remember { Animatable(0f) }
+fun TvStartupSplash(onFading: () -> Unit = {}, onDone: () -> Unit) {
+    // TV 0.9.14: the logo is already on screen from the app's window (no black wait), so it starts visible.
+    val mark = remember { Animatable(1f) }
     val word = remember { Animatable(0f) }
     val out = remember { Animatable(1f) }
     val done by rememberUpdatedState(onDone)
 
     LaunchedEffect(Unit) {
         withFrameNanos { }
-        launch { mark.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 320f)) }
-        delay(260)
+        delay(120)
         word.animateTo(1f, tween(380, easing = FastOutSlowInEasing))
-        delay(420)
-        out.animateTo(0f, tween(320))
+        delay(380)
+        // Who's watching starts drawing underneath, then the splash fades over it (a cross-fade, never an empty screen).
+        onFading()
+        delay(120)
+        out.animateTo(0f, tween(520, easing = FastOutSlowInEasing))
         StartupState.splashShown = true
         done()
     }
@@ -132,191 +146,309 @@ fun TvStartupSplash(onDone: () -> Unit) {
  * Remote: ◀ ▶ moves between profiles, OK opens, any key stops the countdown.
  */
 @Composable
-fun TvProfileGate(vm: AppViewModel, active: Boolean, onPicked: () -> Unit) {
+fun TvProfileGate(vm: AppViewModel, active: Boolean, onResume: ((Progress) -> Unit)? = null, onPicked: () -> Unit) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val texts by vm.texts.collectAsStateWithLifecycle()
-    val posters by vm.wallPosters.collectAsStateWithLifecycle()
-    LaunchedEffect(active) { if (active) vm.loadWallPosters() }
+    // TV 0.9.0: Add first, then the other profiles, the main profile always last on the right.
+    val slots: List<Profile?> = remember(profiles) {
+        val main = profiles.firstOrNull { it.id == "p1" }
+        (if (profiles.size < 5) listOf<Profile?>(null) else emptyList()) + profiles.filter { it.id != "p1" } + listOfNotNull(main)
+    }
     val lastId = texts["lastProfile"] ?: ""
-    val startIdx = profiles.indexOfFirst { it.id == lastId }.coerceAtLeast(0)
-    val frs = remember(profiles.size) { List(profiles.size + 1) { FocusRequester() } }
+    val startIdx = slots.indexOfFirst { it != null && it.id == lastId }.takeIf { it >= 0 } ?: slots.lastIndex
+    val frs = remember(slots.size) { List(slots.size) { FocusRequester() } }
+    val resumeFr = remember { FocusRequester() }
     var focusedIdx by remember { mutableIntStateOf(-1) }
     var adding by remember { mutableStateOf(false) }
     var cancelled by remember { mutableStateOf(false) }
     var leaving by remember { mutableStateOf<String?>(null) }
+    var resumeItem by remember { mutableStateOf<Progress?>(null) }
     val allowAuto = remember { !StartupState.autoPickDone }
     val secs = (texts["autoProfileSecs"] ?: Defaults["autoProfileSecs"] ?: "5").toIntOrNull() ?: 5
     val countdown = remember { Animatable(0f) }
     val enter = remember { Animatable(0f) }
     val leave = remember { Animatable(0f) }
 
-    fun pick(p: Profile) {
+    // The profile whose Continue watching is shown: the one with focus, else the last one that had it (TV 0.9.4: it
+    // went back to the main profile as soon as focus moved up to the cards), else the one that opens by itself.
+    var lastIdx by remember(slots.size) { mutableIntStateOf(startIdx) }
+    LaunchedEffect(focusedIdx) { if (focusedIdx >= 0) lastIdx = focusedIdx }
+    val shownIdx = if (focusedIdx >= 0) focusedIdx else lastIdx
+    val shown = slots.getOrNull(shownIdx)
+    var stack by remember { mutableStateOf<List<Progress>>(emptyList()) }
+    var stackIdx by remember { mutableIntStateOf(0) }
+    val stackFr = remember { FocusRequester() }
+    val stripFr = remember { FocusRequester() }
+    var stackFocused by remember { mutableStateOf(false) }
+    var stripFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(shown?.id) {
+        val p = shown
+        if (p == null || ProfileLock.hasPin(p.id)) { stack = emptyList(); return@LaunchedEffect }
+        delay(120)
+        stack = vm.progressOf(p.id).filter { !it.finished() }.sortedByDescending { it.updated }.take(5)
+        stackIdx = 0
+    }
+
+    fun pick(p: Profile, resume: Progress? = null) {
         if (leaving != null) return
         cancelled = true
+        resumeItem = resume
         leaving = p.id
     }
     LaunchedEffect(Unit) { StartupState.autoPickDone = true }
     LaunchedEffect(leaving) {
         val id = leaving ?: return@LaunchedEffect
-        // Open at once: a short pulse, then the profile (its data is read off the main thread first).
-        leave.animateTo(1f, tween(180))
+        leave.animateTo(1f, tween(220, easing = FastOutSlowInEasing))
         profiles.firstOrNull { it.id == id }?.let { vm.prewarmProfile(it.id); vm.selectProfile(it) }
-        onPicked()
+        val r = resumeItem
+        if (r != null && onResume != null) onResume(r) else onPicked()
     }
-    LaunchedEffect(active) { if (active) enter.animateTo(1f, tween(800, easing = FastOutSlowInEasing)) }
-    LaunchedEffect(active, profiles.size) {
-        if (!active || profiles.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(focusedIdx) { delay(200); slots.getOrNull(focusedIdx)?.let { runCatching { vm.prewarmProfile(it.id) } } }
+    LaunchedEffect(active) { if (active) enter.animateTo(1f, tween(700, easing = FastOutSlowInEasing)) }
+    LaunchedEffect(active, slots.size) {
+        if (!active || slots.isEmpty()) return@LaunchedEffect
         withFrameNanos { }
         repeat(4) { if (frs.getOrNull(startIdx)?.tryFocus() == true) return@LaunchedEffect; delay(60) }
     }
-    LaunchedEffect(active, cancelled, adding, profiles.size) {
-        if (!allowAuto || !active || cancelled || adding || secs <= 0 || profiles.isEmpty() || leaving != null) return@LaunchedEffect
+    LaunchedEffect(active, cancelled, adding, slots.size) {
+        val target = slots.getOrNull(startIdx)
+        if (!allowAuto || !active || cancelled || adding || secs <= 0 || target == null || leaving != null) return@LaunchedEffect
         delay(1000)
         countdown.snapTo(0f)
         countdown.animateTo(1f, tween(secs * 1000, easing = LinearEasing))
-        profiles.getOrNull(startIdx)?.let { pick(it) }
+        pick(target)
     }
-    // Recomposes once a second (not every frame) for the "in N" text.
     val remaining by remember { derivedStateOf { (secs - (countdown.value * secs).toInt()).coerceAtLeast(1) } }
-    val counting = !cancelled && allowAuto && secs > 0 && leaving == null
-
-    val drift = rememberInfiniteTransition(label = "wall")
-    val wallY by drift.animateFloat(0f, 1f, infiniteRepeatable(tween(16000, easing = LinearEasing), RepeatMode.Reverse), label = "wallY")
-    val arcY = 330.dp
+    val counting = !cancelled && allowAuto && secs > 0 && leaving == null && slots.getOrNull(startIdx) != null
+    val accent = Accent
 
     Box(
-        Modifier.fillMaxSize().background(Color(0xFF0B0B10))
-            .graphicsLayer { alpha = 1f - leave.value * 0.9f }
+        Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0A0C17), Color(0xFF0F1014))))
+            // TV 0.9.14: picking a profile no longer dims everything to grey: a short zoom, then Home fades in.
+            .graphicsLayer { alpha = 1f - leave.value * 0.3f; val sc = 1f + leave.value * 0.04f; scaleX = sc; scaleY = sc }
             .onPreviewKeyEvent { cancelled = true; false },
     ) {
-        // Poster wall drifting slowly (layer translation only).
-        if (posters.isNotEmpty() && active) {
-            Column(
-                Modifier.fillMaxWidth().requiredWidth(1000.dp).padding(top = 10.dp)
-                    .graphicsLayer { alpha = 0.75f * enter.value; translationY = -wallY * 60.dp.toPx() },
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+        // Stars, the red glow and the glowing curved ground the profiles stand on (a few shapes: cheap on any box).
+        Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = enter.value }) {
+            val w = size.width; val h = size.height
+            GateStars.forEach { (x, y, r) -> drawCircle(Color.White, r * density, Offset(w * x, h * y), alpha = 0.55f) }
+            val y = h * 0.73f
+            drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = 0.26f), Color.Transparent), Offset(w / 2f, y), w * 0.42f), w * 0.42f, Offset(w / 2f, y))
+            val ground = Path().apply { moveTo(0f, y + h * 0.05f); quadraticTo(w / 2f, y - h * 0.05f, w, y + h * 0.05f); lineTo(w, h); lineTo(0f, h); close() }
+            drawPath(ground, Brush.verticalGradient(listOf(Color(0xFF140E1A), Color(0xFF06070B)), y - h * 0.05f, h))
+            val edge = Path().apply { moveTo(0f, y + h * 0.05f); quadraticTo(w / 2f, y - h * 0.05f, w, y + h * 0.05f) }
+            val line = Brush.horizontalGradient(listOf(accent.copy(alpha = 0.1f), accent, accent.copy(alpha = 0.1f)))
+            drawPath(edge, line, alpha = 0.3f, style = Stroke(10.dp.toPx(), cap = StrokeCap.Round))
+            drawPath(edge, line, style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round))
+        }
+
+        Row(Modifier.padding(start = 42.dp, top = 26.dp), verticalAlignment = Alignment.CenterVertically) {
+            Image(painterResource(AppLook.logoRes(AppLook.logo.value)), null, Modifier.size(28.dp))
+            Spacer(Modifier.width(10.dp))
+            Wordmark(t("appName"), 19.sp)
+        }
+
+        // "Opening Rick in 5 · ◀ ▶ change": a small pill top-right (the profiles never move).
+        if (counting || leaving != null) {
+            val name = profiles.firstOrNull { it.id == leaving }?.name ?: slots.getOrNull(startIdx)?.name ?: ""
+            Row(
+                Modifier.align(Alignment.TopEnd).padding(top = 24.dp, end = 40.dp)
+                    .graphicsLayer { alpha = if (countdown.value > 0f || leaving != null) 1f else 0f }
+                    .clip(CircleShape).background(Color(0x12FFFFFF)).border(1.dp, Color(0x24FFFFFF), CircleShape)
+                    .padding(start = 8.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                posters.chunked(8).take(4).forEach { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { url ->
-                            val req = tvImage(url, 118.dp, 177.dp)
-                            AsyncImage(req, null, Modifier.weight(1f).height(177.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF1A1A22)),
-                                contentScale = ContentScale.Crop)
-                        }
-                    }
+                Canvas(Modifier.size(15.dp)) {
+                    val sw = 1.8.dp.toPx()
+                    drawArc(Color(0x33FFFFFF), 0f, 360f, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw))
+                    drawArc(accent, -90f, 360f * (1f - countdown.value), false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw, cap = StrokeCap.Round))
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(buildAnnotatedString {
+                    append("Opening ")
+                    withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append(name) }
+                    if (leaving == null) append(" in $remaining s") else append("…")
+                }, fontSize = 11.sp, color = Color(0xFFD7DAE2))
+                if (leaving == null) {
+                    Box(Modifier.padding(horizontal = 8.dp).size(1.dp, 12.dp).background(Color(0x2EFFFFFF)))
+                    Text("◀ ▶ change", fontSize = 10.sp, color = Color(0xFF8A90A0))
                 }
             }
         }
-        Box(Modifier.fillMaxSize().background(GateFadeV))
-        Box(Modifier.fillMaxSize().background(GateFadeH))
 
-        // Blue → pink glow and the curved line.
-        Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = enter.value }) {
-            val y = arcY.toPx()
-            drawCircle(Brush.radialGradient(listOf(Color(0x8C2896FF), Color.Transparent), Offset(size.width * 0.3f, y + 60.dp.toPx()), size.width * 0.32f),
-                size.width * 0.32f, Offset(size.width * 0.3f, y + 60.dp.toPx()))
-            drawCircle(Brush.radialGradient(listOf(Color(0x80FF2882), Color.Transparent), Offset(size.width * 0.72f, y + 70.dp.toPx()), size.width * 0.32f),
-                size.width * 0.32f, Offset(size.width * 0.72f, y + 70.dp.toPx()))
-            val path = Path().apply { moveTo(-20f, y + 40.dp.toPx()); quadraticBezierTo(size.width / 2f, y, size.width + 20f, y + 40.dp.toPx()) }
-            val line = Brush.horizontalGradient(listOf(Color(0x332AA0FF), Color(0xFF3FB4FF), Color(0xFFFF3B8D), Color(0x33FF2A6A)))
-            val reveal = enter.value
-            clipRect(left = size.width / 2f * (1f - reveal), right = size.width / 2f * (1f + reveal)) {
-                drawPath(path, line, alpha = 0.25f, style = Stroke(10.dp.toPx(), cap = StrokeCap.Round))
-                drawPath(path, line, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
+        val front = stack.getOrNull(stackIdx.coerceIn(0, (stack.size - 1).coerceAtLeast(0)))
+        // TV 0.9.4: the front card's rating, genres and story (Cinemeta, kept in memory — the player then has it too).
+        val frontMeta by produceState<Meta?>(null, front?.key) {
+            val k = front?.key ?: run { value = null; return@produceState }
+            delay(900)   // TV 0.9.6: after the posters (they came late while this loaded)
+            value = runCatching { PluginSources.metaFor(if (Regex(":\\d+:\\d+$").containsMatchIn(k)) "series" else "movie", k) }.getOrNull()
+        }
+        if (front != null && shown != null) {
+            Text("CONTINUE WATCHING · ${shown.name.uppercase()}", Modifier.padding(start = 42.dp, top = 70.dp), fontSize = 10.sp,
+                fontWeight = FontWeight.Bold, letterSpacing = 2.sp, color = Color(0xFFFF6A5C))
+            // TV 0.9.4: a bigger stack in the middle between the label and the ground. Remote: ▲ from the profiles = the
+            // strip of small cards (◀ ▶ change the big card), ▲ again = the big card, ▶ = Resume, ▼ = back down.
+            val n = stack.size
+            Box(Modifier.padding(start = 96.dp, top = 96.dp).size(480.dp, 246.dp).graphicsLayer { alpha = enter.value }) {
+                stack.getOrNull((stackIdx + 1) % n)?.takeIf { n > 1 }?.let { GateCard(it, Modifier.offset(x = 0.dp, y = 16.dp).size(360.dp, 203.dp).graphicsLayer { rotationZ = -6f; alpha = 0.5f }, small = true) }
+                stack.getOrNull((stackIdx + 2) % n)?.takeIf { n > 2 }?.let { GateCard(it, Modifier.offset(x = 120.dp, y = 16.dp).size(360.dp, 203.dp).graphicsLayer { rotationZ = 6f; alpha = 0.5f }, small = true) }
+                key(front.key) {
+                    GateCard(front, Modifier.offset(x = 40.dp, y = 0.dp).size(400.dp, 225.dp)
+                        .focusRequester(stackFr)
+                        .onFocusChanged { stackFocused = it.isFocused }
+                        .onPreviewKeyEvent { e ->
+                            if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            when (e.key) {
+                                Key.DirectionLeft -> { if (n > 1) stackIdx = (stackIdx - 1 + n) % n; true }
+                                Key.DirectionRight -> { resumeFr.tryFocus(); true }
+                                Key.DirectionDown -> { if (n > 1) stripFr.tryFocus() else frs.getOrNull(shownIdx)?.tryFocus(); true }
+                                Key.DirectionUp -> true
+                                else -> false
+                            }
+                        }
+                        .tvCard(12.dp, scale = 1.03f, ring = false) { pick(shown, front) }
+                        .border(if (stackFocused) 3.dp else 2.dp, if (stackFocused) Color.White else Color(0x99FFFFFF), RoundedCornerShape(12.dp)), small = false)
+                }
             }
+            // The small cards: one strip the remote selects as a whole; ◀ ▶ change the big card.
+            if (n > 1) Row(Modifier.padding(start = 136.dp, top = 352.dp).width(400.dp).graphicsLayer { alpha = enter.value }
+                .focusRequester(stripFr)
+                .onFocusChanged { stripFocused = it.isFocused }
+                .onPreviewKeyEvent { e ->
+                    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (e.key) {
+                        Key.DirectionLeft -> { stackIdx = (stackIdx - 1 + n) % n; true }
+                        Key.DirectionRight -> { stackIdx = (stackIdx + 1) % n; true }
+                        Key.DirectionUp -> { stackFr.tryFocus(); true }
+                        Key.DirectionDown -> { frs.getOrNull(shownIdx)?.tryFocus(); true }
+                        else -> false
+                    }
+                }
+                .tvCard(8.dp, scale = 1f, ring = false) { pick(shown, front) }
+                .clip(RoundedCornerShape(8.dp)).background(if (stripFocused) Color(0x1FFFFFFF) else Color.Transparent).padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+                Text("‹", Modifier.padding(end = 2.dp), fontSize = 16.sp, color = if (stripFocused) Color.White else Color(0x80FFFFFF))
+                stack.forEachIndexed { i, it -> GateThumb(it, i == stackIdx) }
+                Text("›", Modifier.padding(start = 2.dp), fontSize = 16.sp, color = if (stripFocused) Color.White else Color(0x80FFFFFF))
+                Text("${stackIdx + 1} / $n", Modifier.padding(start = 6.dp), fontSize = 10.sp, color = if (stripFocused) Color.White else Color(0xFF8A90A0))
+            }
+            Column(Modifier.padding(start = 608.dp, top = 112.dp).width(320.dp)) {
+                Text(front.title.substringBefore("  S").trim(), fontSize = 28.sp, lineHeight = 31.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val fm = frontMeta
+                val facts = listOfNotNull(
+                    fm?.imdbRating?.takeIf { it.isNotBlank() && it != "0" }?.let { "★ $it" },
+                    fm?.releaseInfo?.takeIf { it.isNotBlank() },
+                ) + fm?.genres.orEmpty().take(3)
+                if (facts.isNotEmpty()) Text(facts.joinToString("  •  "), Modifier.padding(top = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFE6E8EE), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val epM = Regex(":(\\d+):(\\d+)$").find(front.key)
+                val epName = epM?.let { m -> fm?.videos?.firstOrNull { it.id == front.key }?.let { it.title ?: it.name } }
+                val ep = epM?.let { "S${it.groupValues[1]} E${it.groupValues[2]}" + (epName?.let { n -> " · $n" } ?: "") + " · " } ?: ""
+                Text(ep + cwTimeLeft(front), Modifier.padding(top = 4.dp), fontSize = 13.sp, color = Color(0xFFC3C7D6), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                fm?.description?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, lineHeight = 17.sp, color = Color(0xFFB9BDC9), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                Row(
+                    Modifier.padding(top = 16.dp)
+                        .focusRequester(resumeFr)
+                        .focusProperties { down = frs.getOrNull(shownIdx) ?: FocusRequester.Default; left = stackFr; up = stackFr }
+                        .tvCard(19.dp, scale = 1.05f) { pick(shown, front) }
+                        .clip(CircleShape).background(Color.White).padding(horizontal = 20.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp), tint = Color.Black)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Resume", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                }
+            }
+        } else {
+            Text(t("whoWatching"), Modifier.fillMaxWidth().padding(top = 150.dp).graphicsLayer { alpha = enter.value },
+                fontSize = 26.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
         }
 
-        Row(Modifier.padding(start = 28.dp, top = 22.dp), verticalAlignment = Alignment.CenterVertically) {
-            Image(painterResource(AppLook.logoRes(AppLook.logo.value)), null, Modifier.size(30.dp))
-            Spacer(Modifier.width(10.dp))
-            Wordmark(t("appName"), 20.sp)
-        }
-        Text(
-            t("whoWatching"),
-            Modifier.fillMaxWidth().padding(top = 78.dp).graphicsLayer { alpha = enter.value; translationY = (1f - enter.value) * 10.dp.toPx() },
-            fontSize = 26.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
-        )
-
-        // Profiles sitting on the line.
+        // Profiles in a line on the ground — the one with focus gets a glowing red ring (it never lifts up).
         Row(
-            Modifier.fillMaxWidth().padding(top = arcY - 62.dp),
-            horizontalArrangement = Arrangement.spacedBy(26.dp, Alignment.CenterHorizontally),
+            Modifier.align(Alignment.BottomCenter).padding(bottom = 22.dp),
+            horizontalArrangement = Arrangement.spacedBy(34.dp),
+            verticalAlignment = Alignment.Top,
         ) {
-            val count = profiles.size + if (profiles.size < 5) 1 else 0
-            for (i in 0 until count) {
-                val p = profiles.getOrNull(i)
-                val pop = remember { Animatable(0f) }
-                LaunchedEffect(active) { if (active) { delay(300L + i * 100L); pop.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 300f)) } }
+            slots.forEachIndexed { i, p ->
                 val focused = focusedIdx == i
                 val isLeaving = p != null && p.id == leaving
-                val sc by animateFloatAsState(if (focused || isLeaving) 1.2f else 1f, spring(dampingRatio = 0.6f, stiffness = 350f), label = "sc")
+                val sel = focused || isLeaving
                 Column(
-                    Modifier.width(110.dp).graphicsLayer {
-                        alpha = pop.value.coerceIn(0f, 1f) * (if (leaving != null && !isLeaving) 1f - leave.value else 1f)
-                        translationY = (1f - pop.value) * 16.dp.toPx()
-                    },
+                    Modifier.width(72.dp).graphicsLayer { alpha = (if (sel) 1f else 0.62f) * enter.value * (if (leaving != null && !isLeaving) 1f - leave.value else 1f) },
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Box(
-                        Modifier.size(104.dp)
+                        Modifier.size(64.dp)
                             .focusRequester(frs[i])
+                            .then(if (front != null) Modifier.focusProperties { up = if (stack.size > 1) stripFr else stackFr } else Modifier)
                             .onFocusChanged { if (it.isFocused) focusedIdx = i else if (focusedIdx == i) focusedIdx = -1 }
-                            .tvCard(52.dp, scale = 1f, ring = false) {
-                                if (p == null) { cancelled = true; adding = true } else pick(p)
-                            }
-                            .graphicsLayer {
-                                val l = if (isLeaving) 1f + leave.value * 0.6f else 1f
-                                scaleX = sc * l; scaleY = sc * l
+                            .tvCard(32.dp, scale = 1f, ring = false) { if (p == null) { cancelled = true; adding = true } else pick(p) }
+                            .drawBehind {
+                                if (!sel) return@drawBehind
+                                val c = Offset(size.width / 2f, size.height / 2f)
+                                drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = 0.45f), Color.Transparent), c, size.width * 0.85f), size.width * 0.85f, c)
+                                drawCircle(accent, size.width / 2f + 2.dp.toPx(), c, style = Stroke(2.5.dp.toPx()))
                             },
                         Alignment.Center,
                     ) {
-                        if (p == null) {
-                            Box(
-                                Modifier.size(80.dp).clip(CircleShape).background(Color(0x2EFFFFFF))
-                                    .then(if (focused) Modifier.border(3.dp, Color.White, CircleShape) else Modifier),
+                        if (p == null) Box(
+                            Modifier.size(56.dp).clip(CircleShape).background(Color(0xFF1C1E26)).border(1.dp, Color(0x59FFFFFF), CircleShape),
+                            Alignment.Center,
+                        ) { Icon(Icons.Default.Add, "Add profile", Modifier.size(26.dp), tint = Color(0xFFCFD2DC)) }
+                        else {
+                            ProfileAvatar(vm, p, 56.dp, animate = false)
+                            if (p.id == "p1") Box(
+                                Modifier.align(Alignment.BottomEnd).size(18.dp).clip(CircleShape).background(accent).border(1.5.dp, Color(0xFF0F1014), CircleShape),
                                 Alignment.Center,
-                            ) { Icon(Icons.Default.Add, "Add profile", Modifier.size(32.dp)) }
-                        } else {
-                            ProfileAvatar(vm, p, 80.dp, if (focused || isLeaving) Modifier.border(3.dp, Color.White, CircleShape) else Modifier, animate = false)
-                            if (i == startIdx && counting) Canvas(Modifier.size(98.dp)) {
-                                val v = countdown.value
-                                if (v <= 0f) return@Canvas
-                                val sw = 3.5.dp.toPx()
-                                drawArc(Color(0x2EFFFFFF), 0f, 360f, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw))
-                                drawArc(BrandRed, -90f, 360f * v, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw, cap = StrokeCap.Round))
-                            }
+                            ) { Icon(Icons.Default.Star, null, Modifier.size(10.dp), tint = Color.White) }
                         }
                     }
-                    Text(
-                        p?.name ?: "Add", Modifier.padding(top = if (focused) 12.dp else 6.dp), fontSize = 14.sp,
-                        fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (focused) Color.White else Color(0xFFC9CDD6), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
-                    )
+                    Text(p?.name ?: "Add", Modifier.padding(top = 6.dp), fontSize = 12.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                        color = if (sel) Color.White else Color(0xFFC9CDD6), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                    Box(Modifier.padding(top = 4.dp).size(17.dp, 2.5.dp).clip(CircleShape).background(if (sel) accent else Color.Transparent))
                 }
             }
         }
-
-        // "Opening Rick in 5"
-        val name = profiles.getOrNull(startIdx)?.name ?: ""
-        Column(
-            Modifier.fillMaxWidth().padding(top = arcY + 120.dp).graphicsLayer { alpha = if ((counting && countdown.value > 0f) || leaving != null) 1f else 0f },
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                buildAnnotatedString {
-                    append("Opening ")
-                    withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) {
-                        append(profiles.firstOrNull { it.id == leaving }?.name ?: name)
-                    }
-                    if (leaving == null) { append(" in "); withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append("$remaining") } }
-                    else append("…")
-                },
-                fontSize = 14.sp, color = Color(0xFFC9CDD6),
-            )
-            if (leaving == null) Text("Press any button to choose", Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Color(0xFF7C8394))
-        }
     }
     if (adding) ProfileEditor(vm, null) { adding = false }
+}
+
+/** Fixed star positions (fractions of the screen, radius in dp). */
+private val GateStars = listOf(
+    Triple(0.08f, 0.12f, 0.9f), Triple(0.22f, 0.30f, 0.6f), Triple(0.40f, 0.08f, 0.9f), Triple(0.63f, 0.22f, 0.6f),
+    Triple(0.78f, 0.10f, 0.9f), Triple(0.92f, 0.28f, 0.6f), Triple(0.52f, 0.40f, 0.5f), Triple(0.14f, 0.46f, 0.5f),
+    Triple(0.86f, 0.44f, 0.5f), Triple(0.33f, 0.52f, 0.4f),
+)
+
+/** A small card of the strip under the stack (no title; the one in front has a white frame). */
+@Composable
+private fun GateThumb(p: Progress, on: Boolean) {
+    val req = tvImage(p.image, 56.dp, 32.dp)
+    Box(Modifier.size(if (on) 56.dp else 48.dp, if (on) 32.dp else 27.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF15161C))
+        .then(if (on) Modifier.border(1.5.dp, Color.White, RoundedCornerShape(5.dp)) else Modifier).graphicsLayer { alpha = if (on) 1f else 0.55f }) {
+        if (req != null) AsyncImage(req, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(p.fraction().coerceIn(0.03f, 1f)).height(2.dp).background(BrandRed))
+    }
+}
+
+/** One landscape card of the profile page stack: picture, a soft shade, the title and the red progress line. */
+@Composable
+private fun GateCard(p: Progress, modifier: Modifier, small: Boolean) {
+    val req = tvImage(p.image, if (small) 240.dp else 390.dp, if (small) 135.dp else 219.dp)   // TV 0.9.6: the dim back cards smaller
+    val shape = RoundedCornerShape(12.dp)
+    Box(modifier.clip(shape).background(Color(0xFF15161C))) {
+        if (req != null) AsyncImage(req, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color(0xBF000000))))
+        val ep = Regex(":(\\d+):(\\d+)$").find(p.key)?.let { "S${it.groupValues[1]} · E${it.groupValues[2]}" }
+        if (!small && ep != null) Text(ep, Modifier.padding(12.dp).clip(RoundedCornerShape(6.dp)).background(Color(0x99000000))
+            .border(1.dp, Color(0x40FFFFFF), RoundedCornerShape(6.dp)).padding(horizontal = 7.dp, vertical = 3.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text(p.title.substringBefore("  S").trim(), Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 12.dp, end = 12.dp),
+            fontSize = if (small) 11.sp else 18.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(p.fraction().coerceIn(0.03f, 1f)).height(3.5.dp).background(BrandRed))
+    }
 }
 
 private val GateFadeV = Brush.verticalGradient(

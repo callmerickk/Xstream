@@ -152,7 +152,7 @@ object SourceTester {
 
     private suspend fun runTest(vm: AppViewModel, ctx: Context, addons: Set<String>) {
         val net = if (isOnWifi(ctx)) "Wi-Fi" else "mobile data"
-        w("Xstream Source Test log")
+        w("${Brand.NAME} Source Test log")
         w("Started: ${SimpleDateFormat("dd MMM yyyy HH:mm", Locale.US).format(Date())}")
         w("App: ${vm.appVersion} · Device: ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT}) · Network: $net")
         w("Addons tested: ${addons.joinToString(", ")}")
@@ -638,7 +638,7 @@ fun SourceTestScreen(vm: AppViewModel, onBack: () -> Unit) {
                             fontSize = 14.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     }
                 }
-                Text("Both use the phone's real player and hardware decoder. Keep Xstream open while it runs (the screen stays on).",
+                Text("Both use the phone's real player and hardware decoder. Keep ${Brand.NAME} open while it runs (the screen stays on).",
                     Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Muted)
                 Spacer(Modifier.height(12.dp))
                 Text(if (running) "Stop test" else "Start test",
@@ -750,7 +750,7 @@ fun SourceTestScreen(vm: AppViewModel, onBack: () -> Unit) {
                     androidx.compose.material3.Switch(autoManage, null)
                 }
                 Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SmallBtn("Upload ranking for everyone") { scope.launch { msg = Ranker.upload() ?: "Uploaded — every Xstream user gets this ranking." } }
+                    SmallBtn("Upload ranking for everyone") { scope.launch { msg = Ranker.upload() ?: "Uploaded — every ${Brand.NAME} user gets this ranking." } }
                     SmallBtn("Reload shared") { scope.launch { msg = if (Ranker.fetchShared()) "Shared ranking checked." else "Couldn't read the shared ranking." } }
                 }
                 Row(Modifier.padding(top = 8.dp)) {

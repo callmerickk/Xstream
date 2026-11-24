@@ -1,7 +1,5 @@
 package com.example.streamnest
 
-import androidx.compose.runtime.collectAsState
-
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -99,29 +97,12 @@ fun StreamItem.languages(): List<String> {
 }
 
 /**
- * Plugin mode (Xstream phones, Settings › Sources: Addons / Plugins): every stream comes from CloudStream / Nuvio plugins
+ * Plugin mode (StreamX phones, Settings › Sources: Addons / Plugins): every stream comes from CloudStream / Nuvio plugins
  * and no addon is asked. Addon mode (default): addons only, plugins are never loaded.
  */
-fun AppViewModel.pluginMode(): Boolean = !BuildConfig.IS_TV && !(BuildConfig.LIVE_ONLY && texts.value["devSources"] != "on") && (texts.value["srcMode"] == "plugins" || (texts.value["srcMode"] == "live" && !BuildConfig.HAS_LIVE))
-/**
- * Home style (Settings › Layout › Home style): "live" (Xstream Live's Home — the curved card with its trailer, red accents,
- * the glass bar, the navy-black page), "classic" (Xstream's own Home) or "streamx" (StreamX's Home). Xstream Live is
- * always "live". Default: live.
- */
-fun homeStyleOf(texts: Map<String, String>?): String = if (BuildConfig.LIVE_ONLY) "live" else if (BuildConfig.IS_TV) "classic"
-    else texts?.get("homeStyle")?.takeIf { it in setOf("live", "classic", "streamx") } ?: "live"
-/** The bottom bar: Orbit (Live) · StreamX glass · Capsule — any bar with any Home style. Not chosen: the style's own bar. */
-fun barKindOf(texts: Map<String, String>?): String = if (BuildConfig.LIVE_ONLY) "orbit"
-    else texts?.get("navBar")?.takeIf { it in setOf("orbit", "streamx", "capsule") } ?: if (homeStyleOf(texts) == "live") "orbit" else "streamx"
-fun liveLook(): Boolean = homeStyleOf(Public.vm?.texts?.value) == "live"
-@androidx.compose.runtime.Composable
-fun liveLookNow(): Boolean = homeStyleOf(Public.vm?.texts?.collectAsState()?.value) == "live"
-
-/** Xstream Live: the Live server is the only source unless Developer's Corner › Plugins and addons is on. */
-object LiveLock { @Volatile var on: Boolean = BuildConfig.LIVE_ONLY }
-fun AppViewModel.liveLocked(): Boolean = BuildConfig.LIVE_ONLY && texts.value["devSources"] != "on"
+fun AppViewModel.pluginMode(): Boolean = texts.value["srcMode"].let { it.isNullOrEmpty() || it == "plugins" || (it == "live" && !BuildConfig.HAS_LIVE) }
 /** Live mode (64-bit app): only the Live server's links. */
-fun AppViewModel.liveMode(): Boolean = !BuildConfig.IS_TV && (texts.value["srcMode"] == "live" || (BuildConfig.LIVE_ONLY && texts.value["devSources"] != "on")) && LiveServer.available(appContext)
+fun AppViewModel.liveMode(): Boolean = !BuildConfig.IS_TV && texts.value["srcMode"] == "live" && LiveServer.available(appContext)
 /** The name a CloudStream provider's links carry (StreamItem.addonName). */
 fun csDisplayName(provider: String) = "CloudStream · $provider"
 /** Quick Start: in plugin mode the picked CloudStream providers (by their link name), else the picked addons. */
@@ -138,7 +119,7 @@ const val MB_ANY = "CloudStream · *moviebox*"
 const val OTT_ANY = "CloudStream · *ott*"
 fun isOttName(n: String) = n.lowercase().let { "netflix" in it || "prime" in it || "hotstar" in it || "mplayer" in it || "m player" in it || "allott" in it || "disney" in it }
 /** CloudStream providers picked for Quick Play (Settings › Quick Start › CloudStream), as "pluginKey#provider". Phones only. */
-fun AppViewModel.qsCs(): Set<String> = if (BuildConfig.IS_TV) emptySet() else qsCsParse(texts.value["qsCs"])
+fun AppViewModel.qsCs(): Set<String> = qsCsParse(texts.value["qsCs"])
 /** Saved one per line (plugin keys contain "|" themselves, so "|" can't separate them). */
 fun qsCsParse(raw: String?): Set<String> = (raw ?: "").split("\n").filter { it.isNotBlank() }.toSet()
 fun csProviderKey(pluginKey: String, provider: String) = "$pluginKey#$provider"
@@ -384,3 +365,10 @@ object AddonSpeed {
     /** addon name → average milliseconds, fastest first. */
     fun all(): List<Pair<String, Long>> = times.mapNotNull { (k, v) -> if (v.isEmpty()) null else k to v.average().toLong() }.sortedBy { it.second }
 }
+
+/** 0.9.72: Home style on phones — "streamx" (StreamX's own cards, the default) or "live" (Xstream's curved card). TV: always StreamX. */
+fun homeStyleOf(texts: Map<String, String>?): String = if (BuildConfig.IS_TV) "streamx"
+    else texts?.get("homeStyle")?.takeIf { it in setOf("live", "streamx", "classic") } ?: "live"
+/** 0.9.75 (from Xstream): the phone's bottom bar — Orbit (Live), Horizon (StreamX's own) or Capsule; any bar with any Home style. */
+fun barKindOf(texts: Map<String, String>?): String =
+    texts?.get("navBar")?.takeIf { it in setOf("orbit", "streamx", "capsule") } ?: if (homeStyleOf(texts) == "live") "orbit" else "streamx"

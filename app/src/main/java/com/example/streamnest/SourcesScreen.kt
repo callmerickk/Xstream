@@ -133,7 +133,7 @@ fun SourcesScreen(
         all = emptyList(); done = false
         vm.streamsFlow(meta.type, target.videoId).collect { (l, d) -> all = l; done = d }
     }
-    // Xstream: plugin mode's links (CloudStream / Nuvio) come in the main list; they get their own chips. Addon mode: none.
+    // StreamX: plugin mode's links (CloudStream / Nuvio) come in the main list; they get their own chips. Addon mode: none.
     fun isPlugin(s: StreamItem) = s.addonName.startsWith("CloudStream · ") || s.addonName.startsWith("Nuvio · ")
     var showAll by remember(target.videoId) { mutableStateOf(false) }
     val rules = remember(texts["tagRules"]) { parseTagRules(v("tagRules")) }

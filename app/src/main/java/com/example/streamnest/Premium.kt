@@ -41,7 +41,7 @@ import androidx.compose.ui.window.DialogWindowProvider
  * Bottom sheets slide up with the same spring.
  */
 
-val GlassCard = Color(0xFF17171B)
+val GlassCard: Color get() = if (Palette.glass) Color(0xE6181A22) else glassy(Color(0xFF17171B))
 private val CardShape24 = RoundedCornerShape(24.dp)
 private val Rim = Brush.linearGradient(listOf(Color(0x33FFFFFF), Color(0x08FFFFFF), Color(0x14FFFFFF)))
 private val noRipple = MutableInteractionSource()
@@ -121,7 +121,7 @@ fun PremiumDialog(
         if (bare) base.clickable(interactionSource = noRipple, indication = null) {} else base
             .shadow(28.dp, CardShape24, ambientColor = Color.Black, spotColor = Color.Black)
             .clip(CardShape24)
-            .background(Brush.verticalGradient(listOf(Color(0xFF1C1C21), GlassCard)))
+            .background(Brush.verticalGradient(listOf(glassy(Color(0xFF1C1C21)), GlassCard)))
             .border(1.dp, Rim, CardShape24)
             .clickable(interactionSource = noRipple, indication = null) {}
             .padding(24.dp),
@@ -180,7 +180,7 @@ fun PremiumSheet(
                 alpha = (v * 1.6f).coerceIn(0f, 1f)
             }
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(Color(0xFF1C1C21), GlassCard)))
+            .background(Brush.verticalGradient(listOf(glassy(Color(0xFF1C1C21)), GlassCard)))
             .border(1.dp, Rim, shape)
             .clickable(interactionSource = noRipple, indication = null) {}
             .navigationBarsPadding()

@@ -52,7 +52,7 @@ private fun seenAt(ctx: Context) = ctx.getSharedPreferences("bell", Context.MODE
 private fun markSeen(ctx: Context) = ctx.getSharedPreferences("bell", Context.MODE_PRIVATE).edit().putLong("seen", System.currentTimeMillis()).apply()
 
 /**
- * Xstream: the notification bell (top right of Home). A small red dot when something new came in; tap it and a bubble
+ * StreamX: the notification bell (top right of Home). A small red dot when something new came in; tap it and a bubble
  * grows out of the bell with everything, newest first.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)

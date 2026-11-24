@@ -124,7 +124,7 @@ private fun ModeCard(
         }
         if (!compact) {
             Spacer(Modifier.weight(1f))
-            Text(if (elite) "Uses more internet data" else "How Xstream has always worked", fontSize = 11.sp, color = Muted)
+            Text(if (elite) "Uses more internet data" else "How ${Brand.NAME} has always worked", fontSize = 11.sp, color = Muted)
         }
     }
 }
@@ -205,7 +205,7 @@ internal fun StreamingModeSection(vm: AppViewModel) {
         RowDivider(20.dp)
         ToggleRow(
             "Elite only on Wi-Fi",
-            if (isOn(texts["eliteWifiStrict"] ?: "no")) "On: Elite features run only on Wi-Fi (Ethernet counts). On mobile data Xstream works like Regular."
+            if (isOn(texts["eliteWifiStrict"] ?: "no")) "On: Elite features run only on Wi-Fi (Ethernet counts). On mobile data ${Brand.NAME} works like Regular."
             else "Off: Elite features run on Wi-Fi and on mobile data.",
             isOn(texts["eliteWifiStrict"] ?: "no"),
         ) { vm.setText("eliteWifiStrict", if (it) "yes" else "no") }

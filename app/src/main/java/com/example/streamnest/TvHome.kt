@@ -9,6 +9,17 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Whatshot
@@ -25,26 +36,23 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.collectAsState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -64,8 +72,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -84,6 +94,7 @@ import coil.compose.AsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
 import kotlinx.coroutines.Job
+import androidx.compose.runtime.produceState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -108,7 +119,7 @@ private data class TvDeckEntry(val meta: Meta, val catalog: String)
 private sealed class TvHomeSec(val key: String) {
     class Cw(val items: List<Progress>) : TvHomeSec("cw")
     class Col(val c: NCollection) : TvHomeSec("col:" + c.id) { val folders = c.folders.distinctBy { it.id } }
-    class Metas(key: String, val title: String, val items: List<Meta>) : TvHomeSec(key)
+    class Metas(key: String, val title: String, val items: List<Meta>, val numbered: Boolean = false) : TvHomeSec(key)
 }
 
 private const val DeckRow = "deck"
@@ -119,6 +130,7 @@ fun TvHomeScreen(
     onOpen: (Meta) -> Unit,
     onPlay: (Screen.Player) -> Unit,
     onPlayMeta: (Meta) -> Unit,
+    onManualMeta: (Meta) -> Unit = onOpen,
     onOpenCollection: (NCollection, NFolder) -> Unit,
     onLeftEdge: (FocusRequester) -> Unit,
     state: TvHomeState = remember { TvHomeState() },
@@ -133,11 +145,45 @@ fun TvHomeScreen(
 
     val rowsOrder = t("rowsOrder")
     val rowsHidden = t("rowsHidden")
-    val shelves = remember(allShelves, rowsOrder, rowsHidden) {
+    // TV 0.8.7, like the phone: films only in cinemas (no web / disc / TV release yet) stay off Home and the sliding cards
+    // (search still finds them); every row is shuffled once per app start; the two Trending rows mix in the newest popular
+    // Hindi titles and show ten.
+    val cinemaHidden by CinemaOnly.hidden.collectAsStateWithLifecycle()
+    val adultIds by CinemaOnly.adult.collectAsStateWithLifecycle()
+    val adultOk = t("adultOn") == "yes"
+    LaunchedEffect(Unit) { runCatching { CinemaOnly.load(vm.appContext) } }
+    LaunchedEffect(allShelves.size, recs.size) {
+        if (allShelves.isEmpty()) return@LaunchedEffect
+        delay(4_000)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CinemaOnly.check(vm, allShelves.flatMap { it.items } + recs) } }
+    }
+    val hindiM by produceState(HindiTrending.cachedOrNull("movie"), Unit) {
+        if (value == null) value = kotlinx.coroutines.withTimeoutOrNull(3_000) { runCatching { HindiTrending.list("movie") }.getOrNull() } ?: emptyList()
+    }
+    val hindiS by produceState(HindiTrending.cachedOrNull("series"), Unit) {
+        if (value == null) value = kotlinx.coroutines.withTimeoutOrNull(3_000) { runCatching { HindiTrending.list("series") }.getOrNull() } ?: emptyList()
+    }
+    LaunchedEffect(hindiM, hindiS) {
+        val h = hindiM.orEmpty() + hindiS.orEmpty()
+        if (h.isNotEmpty()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CinemaOnly.check(vm, h) } }
+    }
+    val shelves = remember(allShelves, rowsOrder, rowsHidden, cinemaHidden, adultIds, adultOk, hindiM, hindiS) {
         val hidden = rowsHidden.split("|").toSet()
-        arrangeShelves(allShelves, rowsOrder).filter { it.title !in hidden && it.items.isNotEmpty() }
+        val hide = HomeFreeze.hidden(cinemaHidden) + (if (adultOk) emptySet() else adultIds)
+        fun ok(m: Meta) = m.id.substringBefore(":") !in hide
+        arrangeShelves(allShelves, rowsOrder).filter { it.title !in hidden && it.items.isNotEmpty() }.mapIndexed { i, sh ->
+            var items = sh.items.distinctBy { it.type + it.id }.filter(::ok).shuffled(java.util.Random(HomeShuffle.seed xor sh.title.hashCode().toLong()))
+            if (i < 2) {
+                val kind = if (items.count { it.type == "series" } > items.size / 2) "series" else "movie"
+                val h = (if (kind == "series") hindiS else hindiM).orEmpty()
+                items = HindiTrending.mix(items, h).filter(::ok).distinctBy { it.type + it.id }.take(10)
+            }
+            sh.copy(items = items)
+        }.filter { it.items.isNotEmpty() }
     }
     val showHero = isOn(t("showHero"))
+    // TV 0.9.0: Home style (Settings › Look): sliding (the card deck) / live / curve.
+    val homeStyle = TvLook.home(LocalTexts.current)
     // Hero cards: the first two rows mixed (e.g. popular movies + popular series), like the phone app.
     val deck = remember(shelves, showHero) {
         if (!showHero) emptyList() else {
@@ -150,24 +196,35 @@ fun TvHomeScreen(
     val cwShow = isOn(t("cwShow"))
     val showRecs = isOn(t("showRecs"))
     val recsFirst = isOn(t("recsAfterCw"))
-    val continueTitle = t("continueWatching").replace("{name}", profile?.name ?: "").trim()
-    val recTitle = t("recommendedFor").replace("{name}", profile?.name ?: "you")
+    val continueTitle = t("continueWatching").let { if (it == "Continue Watching for {name}") "Pick up where you left off" else it }.replace("{name}", profile?.name ?: "").trim()
+    val recTitle = t("recommendedFor").replace("{ai}", aiName()).replace("{name}", profile?.name ?: "you")
     val newOn = t("newOn").replace("{app}", t("appName"))
-    val sections = remember(progress, collections, shelves, recs, cwShow, showRecs, recsFirst, recTitle, newOn) {
+    val recsOut = remember(recs, cinemaHidden) { recs.filter { it.id.substringBefore(":") !in cinemaHidden } }
+    val sections = remember(progress, collections, shelves, recsOut, cwShow, showRecs, recsFirst, recTitle, newOn) {
+        val recs = recsOut
         buildList<TvHomeSec> {
+            // TV 0.8.5, like the phone: Pick up where you left off → the two Trending rows (numbers) → AIDEN's picks →
+            // collections → the rest.
             if (cwShow && progress.isNotEmpty()) add(TvHomeSec.Cw(progress))
-            // "Recommended for you" sits right after Continue Watching (Settings › Layout › Home can move it to the end).
+            fun shelf(i: Int, s: Shelf) {
+                val title = rowName(s.title) ?: if (s.title.startsWith("New")) "$newOn · ${s.title.removePrefix("New ").trim()}" else s.title
+                add(TvHomeSec.Metas("shelf:$i:${s.title}", title, s.items, numbered = i < 2))
+            }
+            shelves.take(2).forEachIndexed { i, s -> shelf(i, s) }
             if (showRecs && recsFirst && recs.isNotEmpty()) add(TvHomeSec.Metas("recs", recTitle, recs))
             collections.filter { it.folders.isNotEmpty() }.distinctBy { it.id }.forEach { add(TvHomeSec.Col(it)) }
-            shelves.forEachIndexed { i, s ->
-                val title = rowName(s.title) ?: if (s.title.startsWith("New")) "$newOn · ${s.title.removePrefix("New ").trim()}" else s.title
-                add(TvHomeSec.Metas("shelf:$i:${s.title}", title, s.items))
-            }
+            shelves.drop(2).forEachIndexed { i, s -> shelf(i + 2, s) }
             if (showRecs && !recsFirst && recs.isNotEmpty()) add(TvHomeSec.Metas("recs", recTitle, recs))
         }
     }
 
     val scope = rememberCoroutineScope()
+    // TV 0.8.5: hold OK on a card for its options (like the phone); the bin next to Pick up where you left off.
+    var cwMenu by remember { mutableStateOf<Progress?>(null) }
+    var metaMenu by remember { mutableStateOf<Meta?>(null) }
+    var cwManage by remember { mutableStateOf(false) }
+    // TV 0.8.7: ▲ from any Pick up card goes to the bin (it sits above the row's right end and was never reached).
+    val binFr = remember { FocusRequester() }
     val density = LocalDensity.current
     val scrollJob = remember { arrayOfNulls<Job>(1) }
     val bgImage = remember { mutableStateOf<String?>(null) }
@@ -175,9 +232,39 @@ fun TvHomeScreen(
     val restoreFr = remember { FocusRequester() }
     val homeFocused = remember { booleanArrayOf(false) }
     val ls = state.list
-    // Trailers that play by themselves (hero card, backdrop) are OFF on TV: they made Fire TV sticks slow and crash.
-    // (The Trailer button on title pages still plays them full screen.)
+    // TV 0.8.5: the first rows' pictures are fetched straight away, so the cards show filled in when you get to them.
+    val preCtx = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(sections) {
+        delay(250)
+        runCatching {
+            val loader = coil.Coil.imageLoader(preCtx)
+            fun px(v: androidx.compose.ui.unit.Dp) = with(density) { v.roundToPx() }
+            fun go(u: String?, w: androidx.compose.ui.unit.Dp, h: androidx.compose.ui.unit.Dp) { if (!u.isNullOrBlank()) loader.enqueue(tvRequest(preCtx, u, px(w), px(h))) }
+            val rows = if (TvWeak.on) 3 else 5
+            val per = if (TvWeak.on) 6 else 9
+            sections.take(rows).forEach { s ->
+                when (s) {
+                    is TvHomeSec.Cw -> s.items.take(4).forEach { go(it.image, 600.dp, 236.dp) }
+                    is TvHomeSec.Metas -> {
+                        val wide = tvLandscapeRow(s.items)
+                        s.items.take(per).forEach { m ->
+                            when {
+                                s.numbered -> launch { runCatching { TmdbPosters.portrait(m)?.let { u -> go(u, 128.dp, 192.dp) } } }
+                                wide -> go(m.poster ?: backdropOf(m), 200.dp, 112.dp)
+                                else -> go(m.poster ?: backdropOf(m), 120.dp, 180.dp)
+                            }
+                        }
+                    }
+                    else -> Unit
+                }
+            }
+        }
+    }
+    // The full-screen backdrop trailer stays off on TV. TV 0.7.4: the big card's own trailer is back (after 5 s on it),
+    // now as real video in our player instead of YouTube's page, which is what made Fire TV sticks slow and crash.
     val elite = false
+    // TV 0.8.4: never on a 1 GB box (Fire TV Stick 3rd gen) — trailers and Home together are too much for it.
+    val tvTrailersOn = isOn(vm.texts.collectAsStateWithLifecycle().value["tvTrailers"] ?: "no") && !TvWeak.on
     val trailerFor = remember { mutableStateOf<Meta?>(null) }
     var trailerId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(trailerFor.value, elite) {
@@ -231,22 +318,36 @@ fun TvHomeScreen(
 
     Box(Modifier.fillMaxSize().onFocusChanged { homeFocused[0] = it.hasFocus; if (!it.hasFocus) trailerFor.value = null }.focusGroup()) {
         val tid = trailerId
-        if (tid != null) TvBackdropTrailer(tid) { trailerId = null }
-        else TvHomeBackdrop(bgImage)
+        // TV 0.7.5: auto trailers off (the backdrop trailer is never started).
+        if (tid != null && elite) TvBackdropTrailer(tid) { trailerId = null } else TvHomeBackdrop(bgImage)
         if (!hasContent) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
                 if (loading) CircularProgressIndicator(color = Accent)
                 else Text(t("emptyMsg"), Modifier.padding(32.dp), fontSize = 13.sp, color = TvSubText)
             }
         } else TvManualScroll {
+            // TV 0.9.14: when focus moves into a row, the next two rows' first posters are loaded at their card size, so
+            // they're there when you get to them (no grey boxes).
+            val pfCtx = LocalContext.current; val pfD = LocalDensity.current
+            val prefetched = remember { HashSet<String>() }
+            fun prefetchAfter(ord: Int) {
+                for (i in ord + 1..ord + 2) {
+                    val s2 = sections.getOrNull(i) as? TvHomeSec.Metas ?: continue
+                    if (s2.numbered || !prefetched.add(s2.key)) continue
+                    val wide2 = tvLandscapeRow(s2.items)
+                    val wPx2 = with(pfD) { (if (wide2) 200.dp else 120.dp).roundToPx() }; val hPx2 = with(pfD) { (if (wide2) 112.dp else 180.dp).roundToPx() }
+                    s2.items.take(8).forEach { m -> (m.poster ?: backdropOf(m))?.let { u -> pfCtx.imageLoader.enqueue(tvRequest(pfCtx, u, wPx2, hPx2)) } }
+                }
+            }
             LazyColumn(Modifier.fillMaxSize(), state = ls, contentPadding = PaddingValues(bottom = 90.dp)) {
                 item(key = DeckRow, contentType = DeckRow) {
                     if (deck.isNotEmpty()) TvHeroDeck(
-                        vm, deck, state.deckPage, deckFr, ls, elite,
+                        vm, deck, state.deckPage, deckFr, ls, tvTrailersOn /* TV 0.8.3: off by default, Settings › Layout turns it on */,
                         onLeftEdge = onLeftEdge,
-                        onFocused = { state.focusRow = DeckRow; state.focusIndex = 0; bgImage.value = null; trailerFor.value = null; scrollToSection(-1) },
+                        onFocused = { state.focusRow = DeckRow; state.focusIndex = 0; bgImage.value = null; trailerFor.value = null; scrollToSection(-1); prefetchAfter(-1) },
                         onPlay = onPlayMeta,
                         onOpen = onOpen,
+                        style = homeStyle,
                     ) else if (loading && showHero) TvDeckPlaceholder() else Spacer(Modifier.height(54.dp))
                 }
                 itemsIndexed(sections, key = { _, s -> s.key }, contentType = { _, s ->
@@ -257,12 +358,13 @@ fun TvHomeScreen(
                     when (s) {
                         is TvHomeSec.Cw -> TvRow(
                             s.items, key = { it.key }, title = continueTitle, state = state.row(s.key), spacing = 16.dp,
+                            titleEnd = { TvBinButton(Modifier.focusRequester(binFr)) { cwManage = true } },
                             restoreIndex = rIdx, restoreRequester = restoreFr, onLeftEdge = onLeftEdge,
-                            onRowFocus = { bgImage.value = null; trailerFor.value = null; scrollToSection(ord) }, onItemFocus = itemFocus,
+                            onRowFocus = { bgImage.value = null; trailerFor.value = null; scrollToSection(ord); prefetchAfter(ord) }, onItemFocus = itemFocus,
                         ) { _, p, mod ->
-                            TvContinueCard(vm, p, mod) {
+                            TvContinueCard(vm, p, mod.focusProperties { up = binFr }.tvLongPress { cwMenu = p }) {
                                 if (p.finished()) onOpen(p.asMeta())
-                                else onPlay(p.toPlayer())
+                                else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs))
                             }
                         }
                         is TvHomeSec.Col -> TvRow(
@@ -277,10 +379,14 @@ fun TvHomeScreen(
                             TvRow(
                                 s.items, key = { it.type + it.id }, title = s.title, state = state.row(s.key),
                                 restoreIndex = rIdx, restoreRequester = restoreFr, onLeftEdge = onLeftEdge,
-                                onRowFocus = { bgImage.value = null; scrollToSection(ord) }, onItemFocus = itemFocus,
-                            ) { _, m, mod ->
-                                if (wide) TvPosterCard(m, mod, 200.dp, 112.dp) { onOpen(m) }
-                                else TvExpandCard(m, mod, onFocus = { f -> if (f) { trailerFor.value = m; bgImage.value = null } }) { onOpen(m) }
+                                onRowFocus = { bgImage.value = null; scrollToSection(ord); prefetchAfter(ord) }, onItemFocus = itemFocus,
+                            ) { idx, m, mod ->
+                                if (s.numbered) Row(verticalAlignment = Alignment.Bottom) {
+                                    Text("${idx + 1}", Modifier.padding(end = 2.dp), fontSize = 84.sp, fontWeight = FontWeight.Black, color = Color(0x33FFFFFF), lineHeight = 84.sp)
+                                    TvTallPosterCard(m, mod.tvLongPress { metaMenu = m }) { onOpen(m) }
+                                }
+                                else if (wide) TvPosterCard(m, mod.tvLongPress { metaMenu = m }, 200.dp, 112.dp) { onOpen(m) }
+                                else TvExpandCard(m, mod.tvLongPress { metaMenu = m }, onFocus = { f -> if (f) { trailerFor.value = m; bgImage.value = null } }) { onOpen(m) }
                             }
                         }
                     }
@@ -288,6 +394,24 @@ fun TvHomeScreen(
             }
         }
     }
+    cwMenu?.let { p ->
+        // TV 0.8.8: the same options as the phone, laid out like it.
+        TvCwOptions(p,
+            onDetails = { onOpen(p.asMeta()) },
+            onManual = { onManualMeta(p.asMeta()) },
+            onFromStart = { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, 0L)) },
+            onRemove = { tvRemoveCw(vm, listOf(p)) },
+        ) { cwMenu = null }
+    }
+    metaMenu?.let { m ->
+        val saved = vm.myList.collectAsStateWithLifecycle().value.any { it.id == m.id }
+        TvOptionsDialog(m.name, listOf(
+            "Play" to { onPlayMeta(m) },
+            "Go to details" to { onOpen(m) },
+            (if (saved) "Remove from My List" else "Add to My List") to { vm.toggleList(m) },
+        )) { metaMenu = null }
+    }
+    if (cwManage) TvCwManageDialog(vm, progress) { cwManage = false }
 }
 
 /** Grey card where the hero deck will be while the first rows load (so Home never starts on Continue Watching). */
@@ -352,7 +476,14 @@ private fun TvHeroDeck(
     onFocused: () -> Unit,
     onPlay: (Meta) -> Unit,
     onOpen: (Meta) -> Unit,
+    style: String = "sliding",
 ) {
+    // TV 0.9.3: Live / Curve are the same big card as Sliding (the whole picture shows), with Xstream Live's curved bottom
+    // and red glow, or the curved-screen edges — no cards peeking behind.
+    val wide = style == "live" || style == "curve"
+    val cardShape: Shape = when (style) { "live" -> LiveHeroShape; "curve" -> CurveHeroShape; else -> DeckShape }
+    val accent = Accent
+    val redRim = remember(accent) { Brush.verticalGradient(0f to accent.copy(alpha = 0.85f), 0.55f to accent.copy(alpha = 0.10f), 1f to accent.copy(alpha = 0.7f)) }
     var page by pageState
     val p = page.coerceIn(0, items.lastIndex)
     var cardFocused by remember { mutableStateOf(false) }
@@ -366,7 +497,9 @@ private fun TvHeroDeck(
     val bg = Bg
 
     BoxWithConstraints(Modifier.fillMaxWidth().padding(start = TvEdge, top = 54.dp, end = 18.dp)) {
-        val deckW = maxWidth - DeckPeek
+        // TV 0.9.4: Live / Curve show the cards before and after peeking on both sides — endless, from the first card.
+        val peekW = if (wide && items.size > 1) WidePeek else 0.dp
+        val deckW = if (wide) maxWidth - peekW * 2 else maxWidth - DeckPeek
         val wPx = with(density) { deckW.roundToPx() }
         val hPx = with(density) { DeckH.roundToPx() }
         val anyFocus = cardFocused || btnFocused
@@ -384,9 +517,21 @@ private fun TvHeroDeck(
         LaunchedEffect(items.size) {
             if (items.size < 2) return@LaunchedEffect
             while (true) {
-                delay(8000)
-                val idle = System.currentTimeMillis() - lastKey[0] > 7500
-                if (idle && trailerId == null && listState.firstVisibleItemIndex == 0) page = (page.coerceIn(0, items.lastIndex) + 1) % items.size
+                // TV 0.9.4: Live / Curve slide on every 4 s (a smooth glide); Sliding keeps 8 s.
+                // TV 0.9.6: Live / Curve every 6.5 s (4 s was too much work for the TV stick).
+                delay(if (wide) 6500 else 8000)
+                val idle = System.currentTimeMillis() - lastKey[0] > (if (wide) 6000 else 7500)
+                if (idle && trailerId == null && listState.firstVisibleItemIndex == 0) {
+                    // TV 0.9.14: the next card's picture is loaded first and the card only slides once it's there (it used to
+                    // slide in empty and the picture popped in afterwards).
+                    val next = (page.coerceIn(0, items.lastIndex) + 1) % items.size
+                    val nm = items[next].meta
+                    val nu = backdropOf(nm) ?: nm.poster
+                    val ok = nu == null || kotlinx.coroutines.withTimeoutOrNull(4_000) {
+                        ctx.imageLoader.execute(tvRequest(ctx, nu, wPx, hPx)) is coil.request.SuccessResult
+                    } == true
+                    if (ok && System.currentTimeMillis() - lastKey[0] > (if (wide) 6000 else 7500)) page = next
+                }
             }
         }
         // Pre-load the neighbours at exactly the card's size, so changing cards is instant (memory-cache hit).
@@ -400,15 +545,28 @@ private fun TvHeroDeck(
 
         val cur = items[p]
         val m = cur.meta
+        // TV 0.9.3: the Glass theme blurs this card's picture behind every page.
+        // TV 0.9.6: Glass's background follows the card you stop on — not every automatic slide (a whole-screen fade
+        // each time made Home lag on the stick).
+        LaunchedEffect(m.id) {
+            if (!Palette.glass) return@LaunchedEffect
+            if (TvGlass.art.value != null) { delay(1200); if (System.currentTimeMillis() - lastKey[0] > 5000) return@LaunchedEffect }
+            TvGlass.art.value = backdropOf(m) ?: m.poster
+        }
         fun next() { if (items.size > 1) page = (p + 1) % items.size }
         Box(Modifier.fillMaxWidth().height(DeckH)) {
             // The deck: the next two cards sit behind the front one and peek out on its RIGHT, a little smaller.
-            if (items.size > 2) TvDeckPeek(items[(p + 2) % items.size].meta, deckW + DeckPeek - deckW * 0.82f, deckW * 0.82f, DeckH * 0.82f, 0.7f, DeckH * 0.09f)
-            if (items.size > 1) TvDeckPeek(items[(p + 1) % items.size].meta, deckW + DeckPeek / 2 - deckW * 0.91f, deckW * 0.91f, DeckH * 0.91f, 0.5f, DeckH * 0.045f)
+            if (wide) androidx.compose.foundation.Canvas(Modifier.offset(x = peekW).size(deckW, DeckH + 22.dp)) { heroGlow(style == "curve", size.width, DeckH.toPx(), 0f, accent) }
+            if (wide && items.size > 1) {
+                TvWidePeek(items[(p - 1 + items.size) % items.size].meta, 0.dp, peekW - 12.dp, DeckH, left = true)
+                TvWidePeek(items[(p + 1) % items.size].meta, peekW + deckW + 12.dp, peekW - 12.dp, DeckH, left = false)
+            }
+            if (!wide && items.size > 2) TvDeckPeek(items[(p + 2) % items.size].meta, deckW + DeckPeek - deckW * 0.82f, deckW * 0.82f, DeckH * 0.82f, 0.7f, DeckH * 0.09f)
+            if (!wide && items.size > 1) TvDeckPeek(items[(p + 1) % items.size].meta, deckW + DeckPeek / 2 - deckW * 0.91f, deckW * 0.91f, DeckH * 0.91f, 0.5f, DeckH * 0.045f)
 
             // The trailer lives UNDER the card (a WebView inside a clipped / layered card would draw black).
             val tid = trailerId
-            if (tid != null) Box(Modifier.size(deckW, DeckH)) {
+            if (tid != null) Box(Modifier.offset(x = peekW).size(deckW, DeckH)) {
                 TrailerVideo(tid, muted = false, modifier = Modifier.fillMaxSize(), onPlaying = { videoOn = true },
                     onEnded = { trailerId = null; videoOn = false }, onError = { trailerId = null; videoOn = false })
                 // Rounded corners: paint the corners in the page colour.
@@ -425,13 +583,14 @@ private fun TvHeroDeck(
 
             val artAlpha by animateFloatAsState(if (videoOn) 0f else 1f, tween(600), label = "deckArt")
             Box(
-                Modifier.size(deckW, DeckH)
+                Modifier.offset(x = peekW).size(deckW, DeckH)
                     .focusRequester(requester)
                     .onPreviewKeyEvent { e ->
                         if (e.type != KeyEventType.KeyDown || !cardFocused) return@onPreviewKeyEvent false
                         lastKey[0] = System.currentTimeMillis()
                         when (e.key) {
-                            Key.DirectionLeft -> { if (p > 0) page = p - 1 else onLeftEdge(requester); true }
+                            // TV 0.9.0: ◀ ▶ on the card only slide the cards (◀ on the first goes round to the last); the side bar opens from Play ◀.
+                            Key.DirectionLeft -> { page = if (p > 0) p - 1 else items.lastIndex; true }
                             Key.DirectionRight -> { next(); true }
                             Key.DirectionDown -> { playFr.tryFocus(); true }
                             else -> false
@@ -444,7 +603,7 @@ private fun TvHeroDeck(
                         ok
                     }
                     .focusable()
-                    .clip(DeckShape)
+                    .clip(cardShape)
                     .background(if (videoOn) Color.Transparent else Color(0xFF05070C)),
             ) {
                 // Changing cards: the front card slides away to the left and the next rises from the deck
@@ -453,7 +612,11 @@ private fun TvHeroDeck(
                     targetState = p,
                     transitionSpec = {
                         val fwd = targetState == (initialState + 1) % items.size.coerceAtLeast(1)
-                        ((androidx.compose.animation.slideInHorizontally(tween(420, easing = FastOutSlowInEasing)) { if (fwd) it / 12 else -it / 12 } +
+                        // TV 0.9.4: Live / Curve glide sideways like a carousel (position and fade only).
+                        if (wide) (androidx.compose.animation.slideInHorizontally(tween(560, easing = FastOutSlowInEasing)) { if (fwd) it else -it } +
+                            androidx.compose.animation.fadeIn(tween(400))) togetherWith (androidx.compose.animation.slideOutHorizontally(tween(560, easing = FastOutSlowInEasing)) { if (fwd) -it else it } +
+                            androidx.compose.animation.fadeOut(tween(400)))
+                        else ((androidx.compose.animation.slideInHorizontally(tween(420, easing = FastOutSlowInEasing)) { if (fwd) it / 12 else -it / 12 } +
                             androidx.compose.animation.scaleIn(tween(420, easing = FastOutSlowInEasing), initialScale = 0.95f) + androidx.compose.animation.fadeIn(tween(260)))
                             togetherWith (androidx.compose.animation.slideOutHorizontally(tween(380, easing = FastOutSlowInEasing)) { if (fwd) -it else it } +
                             androidx.compose.animation.fadeOut(tween(300))))
@@ -461,19 +624,22 @@ private fun TvHeroDeck(
                     label = "deck",
                 ) { pp ->
                     val mm = items[pp.coerceIn(0, items.lastIndex)].meta
-                    Box(Modifier.fillMaxSize().clip(DeckShape)) {
+                    Box(Modifier.fillMaxSize().clip(cardShape)) {
                         val url = backdropOf(mm) ?: mm.poster
                         val art = remember(url, wPx) { url?.let { tvRequest(ctx, it, wPx, hPx) } }
-                        if (art != null) AsyncImage(art, mm.name, Modifier.fillMaxSize().graphicsLayer { alpha = artAlpha }, contentScale = ContentScale.Crop)
+                        // TV 0.9.4: on Live / Curve the picture sits lower (its top shows), so the curved top never cuts faces.
+                        if (art != null) AsyncImage(art, mm.name, Modifier.fillMaxSize().graphicsLayer { alpha = artAlpha }, contentScale = ContentScale.Crop,
+                            alignment = if (wide) androidx.compose.ui.BiasAlignment(0f, -0.75f) else Alignment.Center)
                         Box(Modifier.fillMaxSize().background(DeckShade))
                         Box(Modifier.fillMaxSize().background(DeckShadeBottom))
+                        if (style == "curve") Box(Modifier.fillMaxSize().background(CurveEdgeShade))
                     }
                 }
 
                 val rating = m.imdbRating?.toDoubleOrNull()
                 val badge = if (rating != null && rating >= 7.5) "IMDb ${m.imdbRating}" else "#${p + 1} in ${cur.catalog}"
                 Row(
-                    Modifier.padding(start = 20.dp, top = 18.dp).clip(RoundedCornerShape(8.dp)).background(Color(0x8C000000))
+                    Modifier.padding(start = if (style == "curve") 34.dp else 20.dp, top = if (style == "curve") 46.dp else 18.dp).clip(RoundedCornerShape(8.dp)).background(Color(0x8C000000))
                         .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(8.dp)).padding(horizontal = 9.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -483,7 +649,7 @@ private fun TvHeroDeck(
                     Text(badge, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
 
-                Column(Modifier.align(Alignment.BottomStart).padding(start = 30.dp, bottom = 26.dp).width(440.dp)) {
+                Column(Modifier.align(Alignment.BottomStart).padding(start = 30.dp, bottom = if (wide) 40.dp else 26.dp).width(440.dp)) {
                     var logoFailed by remember(m.id) { mutableStateOf(false) }
                     val logoReq = tvImage(logoOf(m), 320.dp, 96.dp)
                     if (logoReq != null && !logoFailed) {
@@ -496,6 +662,8 @@ private fun TvHeroDeck(
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                     val line = (listOfNotNull(
+                        // TV 0.9.4: the IMDb rating first on Live / Curve.
+                        if (wide) m.imdbRating?.takeIf { it.isNotBlank() && it != "0" }?.let { "★ $it" } else null,
                         m.releaseInfo?.take(4)?.takeIf { it.isNotBlank() },
                         m.runtime?.takeIf { it.isNotBlank() },
                         if (m.type == "series") "Series" else null,
@@ -512,7 +680,8 @@ private fun TvHeroDeck(
                                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                 lastKey[0] = System.currentTimeMillis()
                                 when (e.key) {
-                                    Key.DirectionLeft, Key.DirectionUp -> { requester.tryFocus(); true }
+                                    Key.DirectionLeft -> { onLeftEdge(playFr); true }
+                                    Key.DirectionUp -> { requester.tryFocus(); true }
                                     Key.DirectionRight -> { addFr.tryFocus(); true }
                                     else -> false
                                 }
@@ -538,10 +707,12 @@ private fun TvHeroDeck(
                             },
                             onFocus = { f -> btnFocused = f; if (f) onFocused() },
                             onClick = { vm.toggleList(m) },
+                            circle = wide,
                         ) {
+                            val addShape = if (wide) CircleShape else RoundedCornerShape(16.dp)
                             Box(
-                                Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(Color(0x33FFFFFF))
-                                    .border(1.dp, Color(0x4DFFFFFF), RoundedCornerShape(16.dp)),
+                                Modifier.size(52.dp).clip(addShape).background(Color(0x33FFFFFF))
+                                    .border(1.dp, Color(0x4DFFFFFF), addShape),
                                 Alignment.Center,
                             ) {
                                 Icon(if (saved) Icons.Default.Check else Icons.Default.Add, if (saved) "In My List" else "Add to My List",
@@ -552,9 +723,13 @@ private fun TvHeroDeck(
                 }
             }
             // Rim: white when the card itself has focus, softer while Play / My List have it.
-            Box(Modifier.size(deckW, DeckH).border(
-                if (cardFocused) 3.dp else if (btnFocused) 1.5.dp else 1.dp,
-                if (cardFocused) TvFocusEdge else if (btnFocused) Color(0x99FFFFFF) else DeckRim, DeckShape,
+            // TV 0.9.6: the rim moves with the card (it stayed 64dp to the left of the picture on Live / Curve).
+            Box(Modifier.offset(x = peekW).size(deckW, DeckH).then(
+                if (wide && !cardFocused && !btnFocused) Modifier.border(1.5.dp, redRim, cardShape)
+                else Modifier.border(
+                    if (cardFocused) 3.dp else if (btnFocused) 1.5.dp else 1.dp,
+                    if (cardFocused) TvFocusEdge else if (btnFocused) Color(0x99FFFFFF) else DeckRim, cardShape,
+                ),
             ))
         }
         // Page dots, centred under the card.
@@ -571,6 +746,18 @@ private fun TvHeroDeck(
 }
 
 /** A card under the hero card (the deck), dimmed. [x] is its left edge, [down] how far it shows below. */
+/** TV 0.9.4: the side card of Live / Curve — a dimmed strip of the card before (left) or after (right). */
+@Composable
+private fun TvWidePeek(m: Meta, x: Dp, w: Dp, h: Dp, left: Boolean) {
+    // TV 0.9.6: a small picture (only a dimmed edge shows) — less memory and decoding on every slide.
+    val req = tvImage(backdropOf(m) ?: m.poster, 192.dp, 108.dp)
+    Box(Modifier.offset(x, h * 0.07f).size(w, h * 0.86f).clip(RoundedCornerShape(16.dp)).background(Surface1)) {
+        if (req != null) AsyncImage(req, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = if (left) Alignment.CenterEnd else Alignment.CenterStart)
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)))
+    }
+}
+private val WidePeek = 64.dp
+
 @Composable
 private fun TvDeckPeek(m: Meta, x: Dp, w: Dp, h: Dp, dim: Float, down: Dp) {
     val req = tvImage(backdropOf(m) ?: m.poster, w, h)
@@ -585,7 +772,7 @@ private fun TvDeckPeek(m: Meta, x: Dp, w: Dp, h: Dp, dim: Float, down: Dp) {
  * other button gets a thin white ring. OK on the remote runs [onClick].
  */
 @Composable
-private fun TvPillFocus(modifier: Modifier, onFocus: (Boolean) -> Unit, onClick: () -> Unit, ring: Boolean = true, content: @Composable () -> Unit) {
+private fun TvPillFocus(modifier: Modifier, onFocus: (Boolean) -> Unit, onClick: () -> Unit, ring: Boolean = true, circle: Boolean = false, content: @Composable () -> Unit) {
     var f by remember { mutableStateOf(false) }
     val a by animateFloatAsState(if (f) 1f else 0f, tween(140), label = "pill")
     val focusCb = rememberUpdatedState(onFocus)
@@ -607,7 +794,7 @@ private fun TvPillFocus(modifier: Modifier, onFocus: (Boolean) -> Unit, onClick:
                     val o = 3.dp.toPx()
                     val r = size.height / 2f + o
                     drawRoundRect(Color.White, topLeft = Offset(-o, -o), size = Size(size.width + 2 * o, size.height + 2 * o),
-                        cornerRadius = CornerRadius(if (pill) r else 12.dp.toPx() + o), style = Stroke(2.dp.toPx()), alpha = a)
+                        cornerRadius = CornerRadius(if (pill || circle) r else 12.dp.toPx() + o), style = Stroke(2.dp.toPx()), alpha = a)
                 }
             }
             .onFocusChanged { if (it.isFocused != f) { f = it.isFocused; focusCb.value(it.isFocused) } }
@@ -641,11 +828,23 @@ fun TvContinueCard(vm: AppViewModel, p: Progress, modifier: Modifier = Modifier,
     var info by remember(p.key) { mutableStateOf<Meta?>(null) }
     LaunchedEffect(focused, p.key) { if (focused && info == null) { delay(250); info = runCatching { vm.cwMeta(p) }.getOrNull() } }
     val ep = Regex(":(\\d+):(\\d+)$").find(p.key)?.let { "S${it.groupValues[1]} E${it.groupValues[2]}" }
+    // TV 0.8.5: this title is playing on another of the account's devices right now.
+    val liveMap by Cloud.live.collectAsState()
+    var tick by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) { while (true) { delay(30_000); tick++ } }
+    val playingElsewhere = remember(liveMap, tick, p.key) {
+        liveMap[vm.current.value?.id]?.let { (k, at) -> k.substringBefore(":") == p.key.substringBefore(":") && System.currentTimeMillis() - at < 150_000 } == true
+    }
     Box(modifier.size(w, 236.dp).tvCard(14.dp, scale = 1f, onFocus = { focused = it }, onClick = onClick).clip(shape).background(Surface1)) {
         if (req != null) AsyncImage(req, p.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         Box(Modifier.fillMaxSize().background(if (focused) CwInfoShade else CwShade))
+        if (playingElsewhere && !focused) Row(Modifier.align(Alignment.TopEnd).padding(12.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xE6E50914))
+            .padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(6.dp).clip(CircleShape).background(Color.White))
+            Text("NOW PLAYING", Modifier.padding(start = 5.dp), fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp, color = Color.White)
+        }
         if (!focused) {
-            badge?.let { b -> CwBadgeView(b, Modifier.align(Alignment.TopEnd).padding(12.dp)) }
+            badge?.takeIf { !playingElsewhere }?.let { b -> CwBadgeView(b, Modifier.align(Alignment.TopEnd).padding(12.dp)) }
             Column(Modifier.align(Alignment.BottomStart).padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
                 if (ep != null) Text(ep, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp, color = Color(0xFFD8DBE3))
                 Text(p.title.substringBefore("  S").trim(), fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -738,6 +937,11 @@ fun TvExpandCard(m: Meta, modifier: Modifier = Modifier, onFocus: (Boolean) -> U
     val shape = remember { RoundedCornerShape(10.dp) }
     val posterReq = tvImage(m.poster ?: backdropOf(m), 120.dp, 180.dp)
     val wideReq = tvImage(backdropOf(m) ?: m.poster, 360.dp, 180.dp)
+    // TV 0.8.3: the wide picture is loaded ahead (while the card sits in the row), so opening the card never waits for
+    // it; the words appear once the card has finished opening (nothing heavy is laid out while it grows).
+    val ctx = LocalContext.current
+    LaunchedEffect(wideReq) { if (wideReq != null) { delay(400); runCatching { ctx.imageLoader.enqueue(wideReq) } } }
+    val open = focused && w >= 350.dp
     Box(
         modifier.size(w, 180.dp)
             .tvCard(10.dp, scale = 1f, onFocus = { f -> focused = f; onFocus(f) }, onClick = onClick)
@@ -748,8 +952,8 @@ fun TvExpandCard(m: Meta, modifier: Modifier = Modifier, onFocus: (Boolean) -> U
             else Text(m.name, Modifier.align(Alignment.Center).padding(8.dp), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 3)
         } else {
             if (wideReq != null) AsyncImage(wideReq, m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xE6000000), 0.6f to Color(0x66000000), 1f to Color.Transparent)))
-            Column(Modifier.align(Alignment.BottomStart).padding(14.dp).width(250.dp)) {
+            Box(Modifier.fillMaxSize().background(ExpandShade))
+            if (open) Column(Modifier.align(Alignment.BottomStart).padding(14.dp).width(250.dp)) {
                 val rating = m.imdbRating?.toDoubleOrNull()
                 if (rating != null) Text("IMDb ${m.imdbRating}", Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFF5C518))
                     .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.Black)
@@ -767,6 +971,8 @@ fun TvExpandCard(m: Meta, modifier: Modifier = Modifier, onFocus: (Boolean) -> U
         }
     }
 }
+
+private val ExpandShade = Brush.horizontalGradient(0f to Color(0xE6000000), 0.6f to Color(0x66000000), 1f to Color.Transparent)
 
 private val FolderShade = Brush.verticalGradient(0.4f to Color.Transparent, 1f to Color(0xB3000000))
 
@@ -823,7 +1029,7 @@ fun TvLibraryScreen(vm: AppViewModel, onOpen: (Meta) -> Unit, onPlay: (Screen.Pl
             if (progress.isNotEmpty()) item(key = "cw") {
                 TvRow(progress, key = { it.key }, title = t("continueWatching").replace("{name}", "").trim(), state = cwState,
                     restoreIndex = 0, restoreRequester = first, onLeftEdge = onLeftEdge) { _, p, mod ->
-                    TvContinueCard(vm, p, mod) { if (p.finished()) onOpen(p.asMeta()) else onPlay(p.toPlayer()) }
+                    TvContinueCard(vm, p, mod) { if (p.finished()) onOpen(p.asMeta()) else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs)) }
                 }
             }
             if (myList.isNotEmpty()) item(key = "list") {
@@ -836,3 +1042,168 @@ fun TvLibraryScreen(vm: AppViewModel, onOpen: (Meta) -> Unit, onPlay: (Screen.Pl
         }
     }
 }
+
+
+/** The bin at the right of Pick up where you left off. */
+@Composable
+private fun TvBinButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
+    var f by remember { mutableStateOf(false) }
+    Box(modifier.size(38.dp).tvCard(19.dp, scale = 1.08f, ring = false, onFocus = { f = it }, onClick = onClick).clip(CircleShape)
+        .background(if (f) Color.White else Color(0x14FFFFFF)), Alignment.Center) {
+        Icon(Icons.Default.Delete, "Remove titles", Modifier.size(20.dp), tint = if (f) Color.Black else Color.White)
+    }
+}
+
+/** Removes titles from Pick up where you left off, with what is saved for them (link and video cache). */
+fun tvRemoveCw(vm: AppViewModel, items: List<Progress>) {
+    items.forEach { p ->
+        runCatching { StreamCache.removeUrl(vm.appContext, p.url) }
+        vm.removeProgress(p.key)
+    }
+    ActLog.add("APP", "TV: removed ${items.size} from Pick up where you left off")
+}
+
+/** Hold-OK options for a card (TV 0.8.5). */
+@Composable
+fun TvOptionsDialog(title: String, actions: List<Pair<String, () -> Unit>>, onClose: () -> Unit) {
+    val fr = remember { FocusRequester() }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
+        Column(Modifier.width(420.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF17151C))
+            .border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(18.dp)).padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, Modifier.padding(bottom = 6.dp), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            actions.forEachIndexed { i, (label, go) ->
+                TvPlainRow(if (i == 0) Modifier.focusRequester(fr) else Modifier, onClick = { onClose(); go() }) {
+                    Text(label, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                        color = if (label.startsWith("Remove")) Color(0xFFFF6B6B) else Color.White)
+                }
+            }
+        }
+    }
+    LaunchedEffect(Unit) { repeat(6) { if (runCatching { fr.requestFocus() }.isSuccess) return@LaunchedEffect; delay(60) } }
+}
+
+/** The bin: every title in Pick up where you left off; OK marks one, Delete removes the marked ones (and their cache). */
+@Composable
+fun TvCwManageDialog(vm: AppViewModel, list: List<Progress>, onClose: () -> Unit) {
+    val marked = remember { mutableStateListOf<String>() }
+    val fr = remember { FocusRequester() }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(Modifier.fillMaxWidth(0.86f).fillMaxHeight(0.86f).clip(RoundedCornerShape(20.dp)).background(Color(0xFF131218))
+            .border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(20.dp)).padding(24.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Pick up where you left off", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                    Text("Press OK to mark titles, then Delete.", fontSize = 13.sp, color = Color(0xFFBDB7C3))
+                }
+                TxButton(onClick = { if (marked.size == list.size) marked.clear() else { marked.clear(); marked.addAll(list.map { it.key }) } }) { _ ->
+                    Text(if (marked.size == list.size && list.isNotEmpty()) "Unmark all" else "Mark all", Modifier.padding(horizontal = 8.dp), fontSize = 15.sp, color = Color.White)
+                }
+                Spacer(Modifier.width(10.dp))
+                TxButton(onClick = { if (marked.isNotEmpty()) { tvRemoveCw(vm, list.filter { it.key in marked }); onClose() } }) { _ ->
+                    Text("Delete (${marked.size})", Modifier.padding(horizontal = 8.dp), fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                        color = if (marked.isEmpty()) Color(0xFF8E8A96) else Color(0xFFFF4D57))
+                }
+            }
+            androidx.compose.foundation.lazy.grid.LazyVerticalGrid(androidx.compose.foundation.lazy.grid.GridCells.Fixed(4), Modifier.padding(top = 16.dp).fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp),
+                contentPadding = PaddingValues(6.dp)) {
+                items(list.size, key = { list[it].key }) { i ->
+                    val p = list[i]
+                    val on = p.key in marked
+                    val req = tvImage(p.image, 220.dp, 124.dp)
+                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(if (i == 0) Modifier.focusRequester(fr) else Modifier)
+                        .tvCard(12.dp, scale = 1.04f) { if (on) marked.remove(p.key) else marked.add(p.key) }
+                        .clip(RoundedCornerShape(12.dp)).background(Surface1)
+                        .border(if (on) 3.dp else 0.dp, if (on) Color(0xFFE50914) else Color.Transparent, RoundedCornerShape(12.dp))) {
+                        if (req != null) AsyncImage(req, p.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        Box(Modifier.fillMaxSize().background(if (on) Color(0x88000000) else Color(0x33000000)))
+                        Text(p.title.substringBefore("  S").trim(), Modifier.align(Alignment.BottomStart).padding(10.dp), fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(24.dp).clip(CircleShape)
+                            .background(if (on) Color(0xFFE50914) else Color(0x66000000)).border(1.5.dp, Color.White, CircleShape), Alignment.Center) {
+                            if (on) Text("✓", fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    LaunchedEffect(Unit) { repeat(6) { if (runCatching { fr.requestFocus() }.isSuccess) return@LaunchedEffect; delay(80) } }
+}
+
+
+/**
+ * TV 0.8.7: a Trending card with real portrait art (TMDB's tall poster, like the phone), never a wide picture squeezed
+ * into a tall frame. While the tall poster is being found, the card shows its dark background.
+ */
+@Composable
+fun TvTallPosterCard(m: Meta, modifier: Modifier, onClick: () -> Unit) {
+    val url by produceState(TmdbPosters.cached(m), m.id) {
+        if (value == null) value = kotlinx.coroutines.withTimeoutOrNull(3_500) { runCatching { TmdbPosters.portrait(m) }.getOrNull() } ?: TmdbPosters.fallback(m)
+    }
+    val shape = remember { RoundedCornerShape(12.dp) }
+    Box(modifier.width(128.dp).height(192.dp).tvCard(12.dp, onClick = onClick).clip(shape).background(Surface1)) {
+        val req = tvImage(url, 128.dp, 192.dp)
+        if (req != null) AsyncImage(req, m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+        else Text(m.name, Modifier.align(Alignment.Center).padding(8.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 3)
+    }
+}
+
+
+/**
+ * TV 0.8.8: hold OK on a Pick up card — the phone's options, laid out like the phone: the card's picture with the time left
+ * and its progress, the title and episode, then one list with small icons: Go to details, Play manually, Start from
+ * beginning, Remove. No outline around each row; the selected one is lit softly.
+ */
+@Composable
+fun TvCwOptions(p: Progress, onDetails: () -> Unit, onManual: () -> Unit, onFromStart: () -> Unit, onRemove: () -> Unit, onClose: () -> Unit) {
+    val fr = remember { FocusRequester() }
+    val name = p.title.substringBefore("  S").trim()
+    val ep = Regex(":(\\d+):(\\d+)$").find(p.key)?.let { "S${it.groupValues[1]}E${it.groupValues[2]}" }
+    val leftMin = ((p.durationMs - p.positionMs).coerceAtLeast(0) / 60_000).toInt()
+    val left = if (p.durationMs <= 0) null else if (leftMin >= 60) "${leftMin / 60}h ${leftMin % 60}m left" else "${maxOf(leftMin, 1)}m left"
+    val frac = if (p.durationMs > 0) (p.positionMs.toFloat() / p.durationMs).coerceIn(0f, 1f) else 0f
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(Modifier.fillMaxSize().background(Color(0xB3000000)), Alignment.Center) {
+            Column(Modifier.width(440.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(16.dp)).background(Surface1)) {
+                    val req = tvImage(p.image, 440.dp, 248.dp)
+                    if (req != null) AsyncImage(req, name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0.55f to Color.Transparent, 1f to Color(0xCC000000))))
+                    left?.let {
+                        Text(it, Modifier.align(Alignment.TopEnd).padding(10.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xB3000000))
+                            .padding(horizontal = 10.dp, vertical = 5.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                    Text(name, Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 22.dp), fontSize = 18.sp, fontWeight = FontWeight.ExtraBold,
+                        color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Box(Modifier.align(Alignment.BottomCenter).padding(start = 14.dp, end = 14.dp, bottom = 10.dp).fillMaxWidth().height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)).background(Color(0x55FFFFFF))) {
+                        Box(Modifier.fillMaxHeight().fillMaxWidth(frac).background(Color.White))
+                    }
+                }
+                Text(name, Modifier.padding(top = 14.dp), fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                ep?.let { Text(it, Modifier.padding(top = 4.dp), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF9A97A6)) }
+                Column(Modifier.padding(top = 16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFF1C1B22)).padding(6.dp)) {
+                    val rows = listOf(
+                        Triple("Go to details", Icons.Default.Info, onDetails),
+                        Triple("Play manually", Icons.Default.PlayArrow, onManual),
+                        Triple("Start from beginning", Icons.Default.Replay, onFromStart),
+                        Triple("Remove", Icons.Default.Delete, onRemove),
+                    )
+                    rows.forEachIndexed { i, (label, icon, go) ->
+                        val red = label == "Remove"
+                        TvPlainRow(if (i == 0) Modifier.focusRequester(fr) else Modifier, onClick = { onClose(); go() }) {
+                            Text(label, Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = if (red) Color(0xFFFF6B81) else Color.White)
+                            Icon(icon, null, Modifier.size(20.dp), tint = if (red) Color(0xFFFF6B81) else Color.White)
+                        }
+                        if (i < rows.lastIndex) Box(Modifier.padding(horizontal = 12.dp).fillMaxWidth().height(1.dp).background(Color(0x14FFFFFF)))
+                    }
+                }
+            }
+        }
+    }
+    LaunchedEffect(Unit) { repeat(6) { if (runCatching { fr.requestFocus() }.isSuccess) return@LaunchedEffect; delay(60) } }
+}
+
+private val CurveEdgeShade = Brush.horizontalGradient(0f to Color(0x59000000), 0.22f to Color.Transparent, 0.78f to Color.Transparent, 1f to Color(0x59000000))

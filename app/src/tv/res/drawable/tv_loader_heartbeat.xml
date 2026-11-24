@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TV 0.8.4: the heartbeat line under the loading card, on the drawing thread too. -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector android:width="380dp" android:height="40dp" android:viewportWidth="380" android:viewportHeight="40">
+            <path android:pathData="M0,20 H44 L49,13 L54,27 L59,5 L64,35 L69,20 H120 L125,13 L130,27 L135,5 L140,35 L145,20 H196 L201,13 L206,27 L211,5 L216,35 L221,20 H272 L277,13 L282,27 L287,5 L292,35 L297,20 H348 L353,13 L358,27 L363,5 L368,35 L373,20 H380" android:strokeColor="#24FFFFFF" android:strokeWidth="2" android:strokeLineJoin="round" />
+            <path android:name="beat" android:pathData="M0,20 H44 L49,13 L54,27 L59,5 L64,35 L69,20 H120 L125,13 L130,27 L135,5 L140,35 L145,20 H196 L201,13 L206,27 L211,5 L216,35 L221,20 H272 L277,13 L282,27 L287,5 L292,35 L297,20 H348 L353,13 L358,27 L363,5 L368,35 L373,20 H380" android:strokeColor="#FFE50914" android:strokeWidth="2.5" android:strokeLineCap="round" android:strokeLineJoin="round" android:trimPathEnd="0" />
+        </vector>
+    </aapt:attr>
+    <target android:name="beat"><aapt:attr name="android:animation">
+        <objectAnimator android:propertyName="trimPathEnd" android:valueFrom="0" android:valueTo="0.95" android:duration="16000" android:interpolator="@android:interpolator/decelerate_cubic" />
+    </aapt:attr></target>
+</animated-vector>

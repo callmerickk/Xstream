@@ -12,7 +12,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * Xstream: defaults the developer publishes for everyone from Developer's Corner (shared/devDefaults in the cloud, readable
+ * StreamX: defaults the developer publishes for everyone from Developer's Corner (shared/devDefaults in the cloud, readable
  * by signed-in users only): the API keys (AI, TMDB, MDBList, GIPHY, Trakt), the AI's logo and its voice. Every phone
  * applies them when a profile opens, so nobody has to get their own keys.
  */
@@ -20,6 +20,23 @@ object DevDefaults {
     private fun textKeys(): List<String> = listOf("aiOn", "aiProvider", "aiLogoUrl", "tmdbKey", "mdbKey", "giphyKey", "traktClientId", "codeNames", "homeRows", "tagRules", "rowNames", "rowStyles", "liveVoice_June", "liveVoice_Aiden", "liveModel", "aiName", "aiNameStyle", "appNameStyle", "dns", "autoPlayMode", "autoRegex") +
         AiProviders.flatMap { listOf("aiKey_${it.id}", "aiModel_${it.id}") }
     private val storeKeys = listOf("aiVoice", "aiVoiceEn", "aiVoiceHi", "aiVoiceRate", "aiVoiceOut")
+    /**
+     * Every setting of the app as the developer has it (look, Home, player, subtitles, Quick Play, sources, filters…),
+     * published with "Publish everything" and put on every other account once per publish, replacing what they had.
+     * Not included: personal things (18+, profile memory, likes, AI chats and faces, sign-in and first-run state).
+     */
+    private val settingKeys = listOf(
+        "accent", "accent2", "addonPosters", "addonsOff", "addonsPinned", "amoled", "appName", "askVote", "autoOnlineSubs", "autoProfileSecs",
+        "autoQuality", "autoSkipIntro", "autoSlide", "avLayout", "background", "badgePack", "btnColor", "btnText", "cardCorner", "cardTrailers",
+        "colHidden", "colOrder", "customThemes", "cwShow", "cwStyle", "deckBorder", "deckTint", "detailCast", "detailMore", "detailRatings",
+        "eliteWifiStrict", "extExclude", "extOn", "fastStart", "fusionBadges", "gestMidWidth", "hideDead", "hideLabels", "landscapePosters",
+        "navBar", "navStyle", "nextThreshold", "notifyOn", "parallelDl", "pauseInfo", "picMatch", "picPref", "playerChoice", "playerEngine",
+        "posterCorner", "posterPattern", "posterWidth", "qpUrl", "qsAddons", "qsHideDupes", "qsLangs", "qsOn", "qsPreload", "qsQuality",
+        "qsUpgrade", "recsAfterCw", "reuseLastLink", "rowsHidden", "rowsOrder", "showAddonName", "showAdvisory", "showCollections", "showHero",
+        "showRecs", "shuffleRows", "skipIntro", "slideSeconds", "splash", "srcAutoManage", "srcMode", "startBright", "startBrightLevel",
+        "startBrightMode", "startVol", "startVolLevel", "startVolMode", "subAutoSync", "subBg", "subBold", "subColor", "subFollow", "subLangs",
+        "subNetflix", "subOutline", "subOutlineColor", "subSize", "testedOnly", "theme", "userRegexIn", "userRegexOut",
+    )
 
     /** Publishes what this phone has now (only the owner's account may write). Null = done. */
     suspend fun publish(vm: AppViewModel): String? = withContext(Dispatchers.IO) {
@@ -28,6 +45,7 @@ object DevDefaults {
         val body = buildJsonObject {
             textKeys().forEach { k -> texts[k]?.let { put("t_$k", it) } }
             storeKeys.forEach { k -> vm.store(k)?.let { put("s_$k", it) } }
+            settingKeys.forEach { k -> texts[k]?.let { put("a_$k", it) } }
             put("at", System.currentTimeMillis())
         }
         runCatching {
@@ -42,20 +60,24 @@ object DevDefaults {
     suspend fun sync(vm: AppViewModel) {
         val t = Cloud.token() ?: return
         val o = withContext(Dispatchers.IO) {
-            // Xstream Live: StreamX's published layout (Home rows, row names and styles…) — the same Home as StreamX.
-            val raw = (if (BuildConfig.LIVE_ONLY) runCatching { Api.get("${CloudConfig.DB_URL}/shared/devDefaults.json?auth=$t") }.getOrNull()?.takeIf { it.trim() != "null" } else null)
-                ?: XNs.read("devDefaults", t)
-            runCatching { Api.json.parseToJsonElement(raw!!) as? JsonObject }.getOrNull()
+            runCatching { Api.json.parseToJsonElement(XNs.read("devDefaults", t)!!) as? JsonObject }.getOrNull()
         } ?: return
         val changed = ArrayList<String>()
-        // Xstream: StreamX's published Home rows too, for the "Live" and "StreamX" Home styles.
-        if (!BuildConfig.LIVE_ONLY && !BuildConfig.IS_TV) withContext(Dispatchers.IO) {
-            runCatching {
-                val sx = Api.json.parseToJsonElement(Api.get("${CloudConfig.DB_URL}/shared/devDefaults.json?auth=$t")) as? JsonObject
-                sx?.get("t_homeRows")?.jsonPrimitive?.contentOrNull
-            }.getOrNull()
-        }?.let { rows -> withContext(Dispatchers.Main) { if (vm.texts.value["homeRowsSx"] != rows) { vm.setText("homeRowsSx", rows); changed += "homeRowsSx" } } }
+        // All settings: put on this profile once per publish, replacing its own (the developer's phone is left alone).
+        val at = runCatching { o["at"]?.jsonPrimitive?.contentOrNull?.toLong() }.getOrNull() ?: 0L
+        val allOnce = !Public.dev && o.keys.any { it.startsWith("a_") } && at > (vm.store("devSettingsAt")?.toLongOrNull() ?: 0L)
         withContext(Dispatchers.Main) {
+            if (allOnce) {
+                var n = 0
+                o.forEach { (k, v) ->
+                    if (!k.startsWith("a_")) return@forEach
+                    val key = k.removePrefix("a_"); val value = runCatching { v.jsonPrimitive.contentOrNull }.getOrNull() ?: return@forEach
+                    if (vm.texts.value[key] != value) { vm.setText(key, value); n++ }
+                    vm.storePut("ownKey_$key", null)
+                }
+                vm.storePut("devSettingsAt", at.toString())
+                ActLog.add("APP", "published settings applied: $n changed")
+            }
             o.forEach { (k, v) ->
                 val value = runCatching { v.jsonPrimitive.contentOrNull }.getOrNull() ?: return@forEach
                 when {
@@ -66,6 +88,7 @@ object DevDefaults {
                     k.startsWith("t_") -> { val key = k.removePrefix("t_")
                         val own = vm.store("ownKey_$key") == "1" && !vm.texts.value[key].isNullOrBlank()
                         if (!own && vm.texts.value[key] != value) { vm.setText(key, value); changed += key } }
+                    k.startsWith("a_") -> {}
                     k.startsWith("s_") -> { val key = k.removePrefix("s_"); if (vm.store(key) != value) { vm.storePut(key, value); changed += key } }
                 }
             }

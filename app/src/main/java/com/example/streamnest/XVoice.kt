@@ -53,7 +53,7 @@ fun soundsLikeAsk(said: String): Boolean {
 }
 
 /**
- * Xstream voice search: an in-app glass panel (no system dialog). A glowing orb breathes with your voice, the words
+ * StreamX voice search: an in-app glass panel (no system dialog). A glowing orb breathes with your voice, the words
  * appear as you speak; a title goes straight to search, a request ("something funny for tonight") goes to the AI.
  */
 @Composable

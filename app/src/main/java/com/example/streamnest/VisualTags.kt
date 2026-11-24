@@ -41,7 +41,7 @@ object VisualTags {
     private val fps60 = Regex("60 ?fps|(^|[^0-9])60p")
     private val bit10 = Regex("10 ?bit|10bit")
 
-    /** Exact tags from the Xstream formatter's SX line (v = visual tags, a = audio tags, c = channels), when present. */
+    /** Exact tags from the StreamX formatter's SX line (v = visual tags, a = audio tags, c = channels), when present. */
     private fun sxList(s: StreamItem, k: String) = s.sx()[k]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
 
     /** The main picture tag (the group in Sources). */
@@ -116,7 +116,7 @@ object VisualTags {
  */
 object Public {
     @Volatile var vm: AppViewModel? = null
-    val dev: Boolean get() = BuildConfig.LIVE_ONLY || vm?.let { DevAccess.allowed(it) || isOn(it.texts.value["devEver"] ?: "no") } ?: false
+    val dev: Boolean get() = vm?.let { DevAccess.allowed(it) || isOn(it.texts.value["devEver"] ?: "no") } ?: false
 
     private val quickNames = listOf("pengu", "aiostream", "aio streams", "moviebox", "movie box")
     private val hdNames = listOf("cncverse", "cnc verse", "hdhub", "hd hub")

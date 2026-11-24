@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
@@ -70,8 +71,8 @@ private data class TvSetCat(val key: String, val title: String, val sub: String,
 /** Same order as the phone's Settings page: Account · General · About · Advanced. */
 private val TvSetCats = listOf(
     TvSetCat("account", "Account & Cloud Sync", "Sign in, auto sync, watch history.", Icons.Default.AccountCircle),
-    TvSetCat("layout", "Layout", "Theme, Home rows and posters.", Icons.Default.Palette, "GENERAL"),
-    TvSetCat("content", "Content & Discovery", "Addons, Stream Filters, Quick Start and Collections.", Icons.Default.Extension),
+    TvSetCat("layout", "Layout", "Home style, side bar, colours, rows and posters.", Icons.Default.Palette, "GENERAL"),
+    TvSetCat("content", "Sources & Extensions", "Turbo or Classic, sources, extensions and filters.", Icons.Default.Extension),
     TvSetCat("playback", "Playback", "Streaming mode (Elite / Regular), player, auto-play and subtitles.", Icons.Default.PlayArrow),
     TvSetCat("network", "Network & DNS", "DNS provider for addons and links.", Icons.Default.Dns),
     TvSetCat("integrations", "Integrations", "AI assistant, TMDB, MDBList ratings and Trakt.", Icons.Default.Link),
@@ -82,7 +83,7 @@ private val TvSetCats = listOf(
 )
 
 /**
- * Xstream TV settings: the sections on the left (phone order); OK opens a section on the RIGHT, and focus moves into
+ * StreamX TV settings: the sections on the left (phone order); OK opens a section on the RIGHT, and focus moves into
  * it. BACK inside a section goes back to the list (or to the previous page inside the section).
  */
 @Composable

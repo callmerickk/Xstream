@@ -106,7 +106,7 @@ object CsTester {
     }
 
     private suspend fun run(ctx: Context, vm: AppViewModel, manual: Meta?, playTest: Boolean) {
-        w("Xstream ${BuildConfig.VERSION_NAME} · CloudStream plugin test · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}")
+        w("${Brand.NAME} ${BuildConfig.VERSION_NAME} · CloudStream plugin test · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE}")
         step.value = "Reading repositories…"
         if (CsPlugins.catalog.value.isEmpty()) CsPlugins.refresh()?.let { w("Repositories: $it") }
         val entries = CsPlugins.enabledEntries()
@@ -283,7 +283,7 @@ object CsTester {
 
     private fun writeLog(ctx: Context): File? = runCatching {
         val d = File(ctx.filesDir, "source-tests").apply { mkdirs() }
-        File(d, "xstream-cloudstream-test-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.txt").apply { writeText(synchronized(buf) { buf.toString() }) }
+        File(d, "streamx-cloudstream-test-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.txt").apply { writeText(synchronized(buf) { buf.toString() }) }
     }.getOrNull()
 }
 
@@ -319,7 +319,7 @@ fun CsPluginList(vm: AppViewModel) {
         }
         repos.forEach { r ->
             val list = cat.filter { it.repo == r.url }.filter { showAll || it.key in on }
-            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFF15161C)).border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(16.dp)).padding(12.dp)) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(glassy(Color(0xFF15161C))).border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(16.dp)).padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(r.name.ifBlank { r.url.substringAfter("githubusercontent.com/").substringBefore("/") }, Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     Text("${cat.count { it.repo == r.url }} plugins", fontSize = 11.sp, color = Muted)
@@ -359,14 +359,14 @@ fun CsTestTab(vm: AppViewModel) {
     var manual by remember { mutableStateOf<Meta?>(null) }
     var msg by remember { mutableStateOf<String?>(null) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 120.dp)) {
-        item { Text("CloudStream plugins run on Xstream's own CloudStream library. They're tested here only — Quick Play doesn't use them yet.", Modifier.padding(16.dp), fontSize = 12.5.sp, color = Muted) }
+        item { Text("CloudStream plugins run on ${Brand.NAME}'s own CloudStream library. They're tested here only — Quick Play doesn't use them yet.", Modifier.padding(16.dp), fontSize = 12.5.sp, color = Muted) }
         item { CsPluginList(vm) }
         item {
-            Column(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFF15161C)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(glassy(Color(0xFF15161C))).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Test", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.CenterVertically) { Text("Play the best link of each server", Modifier.weight(1f), fontSize = 13.sp); Switch(play, { play = it }) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text("Keep plugins warm", fontSize = 13.sp); Text("Load them and wake their servers when Xstream opens", fontSize = 11.sp, color = Muted) }
+                    Column(Modifier.weight(1f)) { Text("Keep plugins warm", fontSize = 13.sp); Text("Load them and wake their servers when ${Brand.NAME} opens", fontSize = 11.sp, color = Muted) }
                     Switch(warm, { warm = it; vm.storePut("csWarm", if (it) "yes" else "no") })
                 }
                 Text("One title (optional):", fontSize = 12.sp, color = Muted)
@@ -389,7 +389,7 @@ fun CsTestTab(vm: AppViewModel) {
         if (res.isNotEmpty()) item { Text("Results", Modifier.padding(horizontal = 16.dp), fontSize = 15.sp, fontWeight = FontWeight.Bold) }
         res.forEach { r ->
             item {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF15161C)).padding(12.dp)) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 5.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(glassy(Color(0xFF15161C))).padding(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(if (r.ok) "✓" else "✗", color = if (r.ok) Color(0xFF3DD68C) else Color(0xFFFF8A80), fontWeight = FontWeight.Bold)
                         Text("  ${r.provider} · ${r.title}", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Bold)

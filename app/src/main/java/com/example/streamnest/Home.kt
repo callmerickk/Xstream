@@ -48,7 +48,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +66,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -78,8 +79,6 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.sign
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.ClipOp
@@ -98,16 +97,10 @@ import androidx.compose.ui.unit.Constraints
 import kotlin.math.roundToInt
 
 @Composable
-private fun SectionTitle(text: String) = Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-    // Xstream Live: a small red tick before every row title.
-    if (liveLookNow()) Box(Modifier.padding(end = 9.dp).size(3.dp, 18.dp).clip(RoundedCornerShape(2.dp)).background(BrandRed))
-    Text(text.replace("StreamX", "Xstream"), fontSize = 21.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E9F2),
-        maxLines = 1, overflow = TextOverflow.Ellipsis)
-}
-
-/** Xstream Live: a thin edge on cards, faint white at the top fading into red at the bottom, so frames don't melt into the dark page. */
-private val liveEdgeBrush = Brush.verticalGradient(listOf(Color(0x1FFFFFFF), Color(0x14FFFFFF), Color(0x8CE50914)))
-fun Modifier.liveEdge(shape: androidx.compose.ui.graphics.Shape): Modifier = if (liveLook()) this.border(1.dp, liveEdgeBrush, shape) else this
+private fun SectionTitle(text: String) =
+    Text(text, fontSize = 21.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6E9F2),
+        maxLines = 1, overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 12.dp))
 
 /** The app's logo: the uploaded one from Developer's Corner, or the built-in red mark. */
 @Composable
@@ -167,10 +160,11 @@ fun HomeScreen(
     onAi: () -> Unit,
     onManual: (Meta, String) -> Unit = { _, _ -> },
     onOpenCollection: (NCollection, NFolder) -> Unit = { _, _ -> },
+    onNotes: () -> Unit = {},
+    onTogether: () -> Unit = {},
 ) {
     val liveShelves by vm.shelves.collectAsStateWithLifecycle()
     val profileNow by vm.current.collectAsStateWithLifecycle()
-    val texts by vm.texts.collectAsStateWithLifecycle()
     // 0.8: Home is fixed for the session once you see it (no posters swapping in front of you). A new addon or another
     // profile builds it again; fresh catalogue data is used the next time the app opens.
     val allShelves = remember(liveShelves, profileNow?.id) { HomeFreeze.shelves(liveShelves, profileNow?.id) }
@@ -183,6 +177,7 @@ fun HomeScreen(
     }
     LaunchedEffect(allShelves) { DiscoverPool.ensure(vm, allShelves) }
     val loading by vm.loading.collectAsStateWithLifecycle()
+    var cwAll by remember { mutableStateOf(false) }
     val progress by vm.progress.collectAsStateWithLifecycle()
     // Continue Watching: the first title's links are looked up ahead (home source ready → Resume starts at once).
     val cwKey = progress.firstOrNull()?.key
@@ -196,13 +191,20 @@ fun HomeScreen(
     val liveRecs by vm.recommended.collectAsStateWithLifecycle()
     val recs = remember(liveRecs) { HomeFreeze.recs(liveRecs).filter { it.id.substringBefore(":") !in CinemaOnly.hidden.value } }
     var actionsFor by remember { mutableStateOf<Progress?>(null) }
-    // Xstream: long-press on any poster lifts it out with its trailer.
+    // Long-press on any poster lifts it out with its trailer (as in Xstream).
     var holdFor by remember { mutableStateOf<Pair<Meta, androidx.compose.ui.geometry.Rect>?>(null) }
     var addFor by remember { mutableStateOf<Meta?>(null) }
-    var cwAll by remember { mutableStateOf(false) }
     // Where each Continue Watching card is (the long-press menu lifts it from there).
     val cwRects = remember { mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
     val lifted = actionsFor?.key ?: holdFor?.first?.id
+    // 0.9.79: work only on intent — a poster you hold (lifted out) for 1 s has its links looked up, so its title page
+    // and Play are ready; posters merely scrolled past ask nothing.
+    LaunchedEffect(holdFor?.first?.id) {
+        val m = holdFor?.first ?: return@LaunchedEffect
+        delay(1_000)
+        if (holdFor?.first?.id != m.id || m.type != "movie") return@LaunchedEffect
+        runCatching { if (vm.qsActive()) vm.quickStreams("movie", m.id) else vm.allStreams("movie", m.id) }
+    }
     val homeBlur by androidx.compose.animation.core.animateDpAsState(if (lifted != null && !BuildConfig.IS_TV) 14.dp else 0.dp,
         androidx.compose.animation.core.tween(320), label = "cwBlur")
     val showRecs = isOn(t("showRecs"))
@@ -210,7 +212,6 @@ fun HomeScreen(
     val recsFirst = false
     // Old default names (kept by phones that saved them) give way to the new ones.
     val recTitle = t("recommendedFor").let { if (it == "Recommended for {name}") "{ai} picked for {name}" else it }
-        .let { if (!BuildConfig.HAS_AI) it.replace("{ai} picked", "Picked") else it }
         .replace("{ai}", aiName().lowercase().replaceFirstChar { it.uppercase() }).replace("{name}", profile?.name?.takeIf { it.isNotBlank() && it != "Me" } ?: "you")
     var filter by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -225,7 +226,10 @@ fun HomeScreen(
     LaunchedEffect(Unit) { if (!BuildConfig.IS_TV) CinemaOnly.load(vm.appContext) }
     // Every row Home shows is checked (rows pushed by the developer or from another layout weren't always).
     LaunchedEffect(allShelves) { if (!BuildConfig.IS_TV && allShelves.isNotEmpty()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CinemaOnly.check(vm, allShelves.flatMap { it.items }) } } }
-    val cinemaFrozen = remember(allShelves, cinemaHidden) { HomeFreeze.hidden(cinemaHidden) }
+    // 18+ off (the default): adult-only films are kept off Home too.
+    val adultIds by CinemaOnly.adult.collectAsState()
+    val adultOk = t("adultOn") == "yes"
+    val cinemaFrozen = remember(allShelves, cinemaHidden, adultIds, adultOk) { HomeFreeze.hidden(cinemaHidden) + (if (adultOk) emptySet() else adultIds) }
     val arranged = remember(allShelves, rowsOrder, rowsHidden, shuffleOn, cinemaFrozen) {
         val hidden = rowsHidden.split("|").toSet()
         // Fresh every time the app starts (same order while it stays open): each row is shuffled once per launch.
@@ -272,19 +276,13 @@ fun HomeScreen(
         mixed.take(12)
     }
 
-    val tasteKey = t("tasteLangs") + "|" + t("tasteTypes")
-    var tasteExtras by remember { mutableStateOf<List<Shelf>>(emptyList()) }
-    LaunchedEffect(tasteKey, profile?.id) {
-        if (BuildConfig.IS_TV) return@LaunchedEffect
-        tasteExtras = runCatching { TasteRows.extras(vm) }.getOrDefault(emptyList())
-    }
     val autoSlide = t("autoSlide").trim().lowercase() != "no"
     val slideSecs = t("slideSeconds").trim().toIntOrNull()?.coerceIn(2, 20) ?: 5
     val showBrand = t("showBrand").trim().lowercase() == "yes"
     val appName = t("appName")
     val cwStyle = t("cwStyle")
     val showHero = isOn(t("showHero"))
-    val cardTrailers = isOn(t("cardTrailers"))
+    val cardTrailers = !TrailersPaused.on && isOn(t("cardTrailers"))
     val cwShow = isOn(t("cwShow"))
     val continueTitle = t("continueWatching").let { if (it == "Continue Watching for {name}") "Pick up where you left off" else it }.replace("{name}", profile?.name ?: "")
     val newOn = t("newOn").replace("{app}", appName)
@@ -308,24 +306,7 @@ fun HomeScreen(
     LaunchedEffect(deckIds) {
         if (deckIds.isEmpty() || !vm.liveMode()) return@LaunchedEffect
         delay(6_000)
-        deckIds.forEach { id -> runCatching { LiveServer.streams(vm.appContext, "movie", id, ahead = true) } }
-    }
-    // Xstream (plugins / addons): the same look-ahead — the first cards and the top of Pick up where you left off are
-    // looked up quietly, two at a time, after Home has settled; opening one turns the light green at once.
-    val aheadIds = remember(deck, progress.take(2).map { it.key }) {
-        // 0.8.14: only Continue watching (first 2) — Home posters aren't searched ahead any more (memory + data).
-        progress.take(2).map { p -> (if (p.key.contains(":")) "series" else "movie") to p.key }
-    }
-    LaunchedEffect(aheadIds) {
-        if (aheadIds.isEmpty() || vm.liveMode() || BuildConfig.LIVE_ONLY) return@LaunchedEffect
-        delay(5_000)
-        aheadIds.forEach { (type, id) -> launch { LinkMemory.lookAhead(vm, type, id) } }
-    }
-    // 0.8.18: keep Continue watching's links fresh while the phone sits idle on Wi-Fi.
-    LaunchedEffect(Unit) {
-        if (BuildConfig.LIVE_ONLY) return@LaunchedEffect
-        delay(20_000)
-        while (true) { runCatching { LinkMemory.refreshCw(vm) }; delay(60_000) }
+        deckIds.forEach { id -> runCatching { LiveServer.streams(vm.appContext, "movie", id) } }
     }
     // True while at least half of the top cards are on screen. Recomputed on scroll, but only notifies readers
     // when the answer flips, so it costs nothing per frame. Trailers / auto-slide stop when the deck scrolls away.
@@ -338,21 +319,37 @@ fun HomeScreen(
     }
     val tint = Palette.tint
     val bg = Bg
-    val style = homeStyleOf(texts)
-    val topBrush = remember(tint, bg, style) {
-        // Xstream Live: a dark navy glow at the very top fading into the #0F1014 page.
-        if (style == "live") Brush.verticalGradient(0f to tint, 0.22f to Color(0xFF141B36).copy(alpha = 0.6f), 0.5f to bg, 1f to bg)
-        else Brush.verticalGradient(listOf(tint, bg))
-    }
+    val topBrush = remember(tint, bg) { Brush.verticalGradient(listOf(tint, bg)) }
     val accent = Accent
     val brandRim = remember(accent) { Brush.horizontalGradient(listOf(accent, accent.copy(alpha = 0.25f))) }
     val onFilter: (String) -> Unit = remember(onLive) {
         { type: String -> if (type == "live") onLive() else { filter = if (filter == type) null else type }; Unit }
     }
+    // 0.9.79: pictures ahead only for the next row in the direction you scroll, and only once the list stops (nothing is
+    // fetched ahead during a fling).
+    LaunchedEffect(listState, shelves) {
+        var lastFirst = listState.firstVisibleItemIndex
+        var dir = 1
+        snapshotFlow { listState.isScrollInProgress to listState.firstVisibleItemIndex }.collect { (moving, first) ->
+            if (first != lastFirst) { dir = if (first > lastFirst) 1 else -1; lastFirst = first }
+            if (moving) return@collect
+            val vis = listState.layoutInfo.visibleItemsInfo.mapNotNull { (it.key as? String)?.takeIf { k -> k.startsWith("shelf:") }?.split(':')?.getOrNull(1)?.toIntOrNull() }
+            if (vis.isEmpty()) return@collect
+            val next = shelves.getOrNull(if (dir > 0) vis.max() + 1 else vis.min() - 1) ?: return@collect
+            runCatching { Posters.warm(vm.appContext, next.items.take(12).map { hiResArt(it.poster) } + listOfNotNull(next.items.firstOrNull()?.let { hdPoster(it) })) }
+        }
+    }
     val onTop: () -> Unit = remember(listState, scope) { { scope.launch { listState.animateScrollToItem(0) }; Unit } }
 
     Box(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxWidth().height(600.dp).background(topBrush))
+        // 0.9.75: Glass theme (phones): the top card's picture, small and blurred, behind the whole page (like the TV).
+        if (Palette.glass && deck.isNotEmpty()) {
+            val n = deck.size
+            val glassMeta = deck[((deckPager.settledPage % n) + n) % n].meta
+            // 0.9.76: drawn once behind the whole app (every page follows the Glass theme); Home only sets the picture.
+            val u = glassMeta.background ?: glassMeta.poster
+            LaunchedEffect(u) { GlassBg.url = u }
+        } else Box(Modifier.fillMaxWidth().height(600.dp).background(topBrush))
 
         CompositionLocalProvider(LocalTitleHold provides { m, r -> holdFor = m to r }) {
         LazyColumn(Modifier.fillMaxSize().then(if (homeBlur > 0.dp) Modifier.blur(homeBlur) else Modifier), state = listState) {
@@ -383,8 +380,19 @@ fun HomeScreen(
                         }
                     }
                     Spacer(Modifier.weight(1f))
+                    if (!BuildConfig.IS_TV) {
+                        val notesPending by Social.pending.collectAsStateWithLifecycle()
+                        var notesOpen by remember { mutableStateOf(false) }
                     if (!BuildConfig.IS_TV) { DownloadsButton(onPlay); Spacer(Modifier.width(10.dp)) }
-                    NotificationBell(onTogether = { BellNav.together.value = true }, onOpen = onOpen)
+                        Box {
+                            Box(Modifier.size(42.dp).clip(CircleShape).background(if (notesOpen) Color(0x33FFFFFF) else Color(0x99101420)).border(1.dp, Color(0x22FFFFFF), CircleShape)
+                                .clickable { notesOpen = !notesOpen }, contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Notifications, "Notifications", Modifier.size(22.dp), tint = Color.White)
+                                if (notesPending.isNotEmpty()) Box(Modifier.align(Alignment.TopEnd).padding(9.dp).size(8.dp).clip(CircleShape).background(Color(0xFFE50914)))
+                            }
+                            if (notesOpen) NotesBubble(onClose = { notesOpen = false }, onAll = { notesOpen = false; onNotes() }, onTogether = { notesOpen = false; onTogether() })
+                        }
+                    }
                 }
             }
             // 0.7.2: the cards come right after the logo ("For you", the language buttons and the music chip are gone;
@@ -398,22 +406,25 @@ fun HomeScreen(
                 }
             } else {
                 if (showHero) item(key = DeckKey, contentType = DeckKey) {
+                    // 0.9.72: Home style (Settings › Appearance). StreamX's own cards stay the default; "Live" is Xstream's curved card.
                     Box(Modifier.tourTarget("deck")) {
-                        // Xstream Live: one big card at a time with its trailer inside, the logo, Play and More Info.
-                        when (style) {
+                        when (homeStyleOf(Public.vm?.texts?.value)) {
                             "live" -> LiveHero(vm, deck, deckOnScreen, onOpen)
-                            "streamx" -> SxDeck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { WatchlistAsk.toggle(vm, it) }
-                            else -> Deck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { WatchlistAsk.toggle(vm, it) }
+                            "classic" -> ClassicDeck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { vm.toggleList(it) }
+                            else -> Deck(vm, deck, deckPager, deckOnScreen, myList, autoSlide, slideSecs, cardTrailers, onOpen) { vm.toggleList(it) }
                         }
                     }
                 }
             }
             if (progress.isNotEmpty() && filter == null && cwShow) {
                 item(key = "cwTitle", contentType = "title") {
-                    Row(verticalAlignment = Alignment.Bottom) {
+                    // The bin at the right opens every title you started, with Clear all.
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f)) { SectionTitle(continueTitle) }
-                        Text("See all", Modifier.padding(end = 16.dp, bottom = 14.dp).clip(RoundedCornerShape(50)).clickable { cwAll = true }
-                            .padding(horizontal = 10.dp, vertical = 4.dp), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFB6BDCC))
+                        Box(Modifier.padding(end = 12.dp, top = 14.dp).size(38.dp).clip(CircleShape).border(1.dp, Color(0x33FFFFFF), CircleShape)
+                            .clickable { cwAll = true }, Alignment.Center) {
+                            Icon(Icons.Default.DeleteSweep, "All titles and Clear all", Modifier.size(19.dp), tint = Color(0xFFFF8A80))
+                        }
                     }
                 }
                 item(key = "cwRow", contentType = "cwRow") {
@@ -421,19 +432,14 @@ fun HomeScreen(
                         items(progress.take(30), key = { it.key }, contentType = { "cw" }) { p ->
                             Box(Modifier.animateItem().onGloballyPositioned { cwRects[p.key] = it.boundsInRoot() }
                                 .graphicsLayer { alpha = if (lifted == p.key && !BuildConfig.IS_TV) 0f else 1f }) {
-                                ContinueCard(p, cwStyle, vm = vm, onClick = { if (p.finished()) onOpen(p.toMeta()) else onPlay(p.toPlayer()) }, onRemove = { vm.removeProgress(p.key) },
+                                ContinueCard(p, cwStyle, vm = vm, onClick = { if (p.finished()) onOpen(p.toMeta()) else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs, source = p.source, addon = p.addon)) }, onRemove = { vm.removeProgress(p.key) },
                                     onLongClick = { actionsFor = p })
                             }
                         }
                     }
                 }
             }
-            // "Recommended for you" right after Continue Watching (Settings › Layout › Home can move it after the Trending rows).
-            if (recs.isNotEmpty() && filter == null && showRecs && recsFirst) {
-                item(key = "recTitle", contentType = "title") { SectionTitle(recTitle) }
-                item(key = "recRow", contentType = "row") { AidenRow(recs, onOpen) }
-            }
-            // Order: Pick up where you left off → the two Trending rows (numbers) → Aiden's picks → your languages → collections → the rest.
+            // Order: Pick up where you left off → the two Trending rows (numbers) → Aiden's picks → collections → the rest.
             @Composable fun shelfItem(i: Int, shelf: Shelf) {
                 SectionTitle(rowName(shelf.title) ?: if (shelf.title.startsWith("New")) "$newOn · ${shelf.title.removePrefix("New ").trim()}" else shelf.title)
                 // The first two rows: tall rounded posters with big 1, 2, 3 numbers (Home Layout can change any row's style).
@@ -447,13 +453,9 @@ fun HomeScreen(
             }
             // Keys include the index so two catalogs with the same name can never collide (duplicate keys crash).
             itemsIndexed(shelves.take(2), key = { i, s -> "shelf:$i:${s.title}" }, contentType = { _, _ -> "shelf" }) { i, shelf -> shelfItem(i, shelf) }
-            if (recs.isNotEmpty() && filter == null && showRecs && !recsFirst) {
+            if (recs.isNotEmpty() && filter == null && showRecs) {
                 item(key = "recTitle", contentType = "title") { SectionTitle(recTitle) }
                 item(key = "recRow", contentType = "row") { AidenRow(recs, onOpen) }
-            }
-            // Personal: the newest titles in all your languages, mixed; Anime / K-Drama when you picked them.
-            if (filter == null) itemsIndexed(tasteExtras, key = { i, s -> "taste:$i:${s.title}" }, contentType = { _, _ -> "shelf" }) { _, sh ->
-                SectionTitle(sh.title); PortraitRow(sh.items, onOpen)
             }
             if (filter == null) item(key = "collections", contentType = "collections") { CollectionsRows(vm) { c, f -> onOpenCollection(c, f) } }
             itemsIndexed(shelves.drop(2), key = { i, s -> "shelf:${i + 2}:${s.title}" }, contentType = { _, _ -> "shelf" }) { i, shelf -> shelfItem(i + 2, shelf) }
@@ -461,11 +463,15 @@ fun HomeScreen(
         }
         }
 
-        Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 86.dp)) {
+        // 0.9.76: the AI button sits fully above whichever bottom bar is on (it overlapped the Orbit bar's top edge):
+        // the bar's real height + its bottom margin + a 12 dp gap. Orbit 70+14, Capsule 68+14, Horizon 14+66.
+        val barTexts by vm.texts.collectAsState()
+        val barTop = when (barKindOf(barTexts)) { "orbit" -> 84; "capsule" -> 82; else -> 80 }
+        Box(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = (barTop + 12).dp)) {
             FloatingFilters(
                 vm = vm, hide = capsuleHide,
                 filter = filter,
-                labels = pillLabels,
+                labels = emptyList(),
                 onFilter = onFilter,
                 onTop = onTop,
                 onAi = onAi,
@@ -485,8 +491,10 @@ fun HomeScreen(
         }
     }
     addFor?.let { m -> AddToWatchlistSheet(vm, m) { addFor = null } }
-    if (cwAll) ContinueAllPage(vm, progress, onClose = { cwAll = false },
-        onPlay = { p -> cwAll = false; if (p.finished()) onOpen(p.toMeta()) else onPlay(p.toPlayer()) })
+    if (cwAll) ContinueAllPage(vm, progress, continueTitle, onClose = { cwAll = false }) { p ->
+        cwAll = false
+        if (p.finished()) onOpen(p.toMeta()) else onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, p.positionMs, source = p.source, addon = p.addon))
+    }
     val liftFrom = actionsFor?.let { cwRects[it.key] }
     if (!BuildConfig.IS_TV && actionsFor != null && liftFrom != null) {
         val p = actionsFor!!
@@ -500,7 +508,7 @@ fun HomeScreen(
                 listOf(
                     TitleAction("Go to details", Icons.Default.Info) { onOpen(p.toMeta()) },
                     TitleAction("Play manually", Icons.Default.PlayArrow) { onManual(p.toMeta(), p.key) },
-                    TitleAction("Start from beginning", Icons.Default.Replay) { onPlay(p.toPlayer(0L)) },
+                    TitleAction("Start from beginning", Icons.Default.Replay) { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, 0L)) },
                     TitleAction("Remove", Icons.Default.DeleteOutline, danger = true) { },
                 ),
                 onRemove = { vm.removeProgress(p.key) },
@@ -512,7 +520,7 @@ fun HomeScreen(
             p,
             onDetails = { onOpen(p.toMeta()) },
             onManual = { onManual(p.toMeta(), p.key) },
-            onStartOver = { onPlay(p.toPlayer(0L)) },
+            onStartOver = { onPlay(Screen.Player(p.title, p.url, p.subs, p.key, p.image, 0L)) },
             onRemove = { vm.removeProgress(p.key) },
             onDismiss = { actionsFor = null },
         )
@@ -527,11 +535,7 @@ val PosterCorners = linkedMapOf("Sharp" to 0, "Subtle" to 4, "Classic" to 8, "Ro
 @Composable fun posterCorner(): Dp = (PosterCorners[t("posterCorner")] ?: 12).dp
 
 /** Rows are shuffled once per app start. */
-object HomeShuffle {
-    val seed: Long = System.nanoTime()
-    /** Rows are shuffled once per app start (while a profile is being picked); after they first show, they never move. */
-    val frozen = java.util.concurrent.ConcurrentHashMap<String, List<Meta>>()
-}
+object HomeShuffle { val seed: Long = System.nanoTime() }
 
 /** How each Home row looks: "numbered" (top 10 style), "portrait", "landscape" or "auto"; set in Home Layout by the developer. */
 object RowStyles {
@@ -568,11 +572,9 @@ fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     // Hindi trending titles are checked too: a film not out online never takes a place in the top 10.
     val notOut by CinemaOnly.hidden.collectAsState()
     LaunchedEffect(h) { Public.vm?.let { v -> if (h.isNotEmpty()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CinemaOnly.check(v, h) } } } }
-    val top = remember(items, h, notOut) {
-        val fresh = HindiTrending.mix(items, h).filter { it.id.substringBefore(":") !in notOut }.take(10)
-        // Once shown, the top 10 stays exactly as it is until the app is closed (no reshuffle in front of you).
-        HomeShuffle.frozen[kind]?.takeIf { it.isNotEmpty() } ?: fresh.also { if (it.size >= 10 || (items.isNotEmpty() && it.isNotEmpty())) HomeShuffle.frozen[kind] = it }
-    }
+    val adultIds by CinemaOnly.adult.collectAsState()
+    val adultOk = Public.vm?.texts?.value?.get("adultOn") == "yes"
+    val top = remember(items, h, notOut, adultIds) { HindiTrending.mix(items, h).filter { it.id.substringBefore(":").let { id -> id !in notOut && (adultOk || id !in adultIds) } }.take(10) }
     // All ten posters are asked for at once (one quick TMDB call each, remembered), so the row fills in together.
     LaunchedEffect(top) { top.forEach { m -> launch { runCatching { TmdbPosters.portrait(m) } } } }
     // Same numbers, a little dimmer (soft grey), so the eye goes to the posters first.
@@ -593,7 +595,7 @@ fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
                         shadow = androidx.compose.ui.graphics.Shadow(Color(0xCC000000), androidx.compose.ui.geometry.Offset(0f, 6f), 18f))), softWrap = false)
                 }
                 TallPoster(m, Modifier.align(Alignment.BottomEnd).width(120.dp).aspectRatio(2f / 3f)
-                    .softHalo(corner, spread = 10.dp, strength = 0.8f, dy = 5.dp).clip(shape).liveEdge(shape).titleTap(m) { onOpen(m) })
+                    .softHalo(corner, spread = 10.dp, strength = 0.8f, dy = 5.dp).clip(shape).titleTap(m) { onOpen(m) })
             }
         }
     }
@@ -653,7 +655,7 @@ fun PortraitRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     val shape = remember(corner) { RoundedCornerShape(corner) }
     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items(items, key = { "p" + it.type + it.id }) { m ->
-            AsyncImage(hiResArt(m.poster ?: hdPoster(m)), m.name, Modifier.width(posterWidth()).aspectRatio(2f / 3f).clip(shape).background(Surface1).liveEdge(shape).titleTap(m) { onOpen(m) },
+            AsyncImage(hiResArt(m.poster ?: hdPoster(m)), m.name, Modifier.width(posterWidth()).aspectRatio(2f / 3f).clip(shape).background(Surface1).titleTap(m) { onOpen(m) },
                 contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
         }
     }
@@ -706,9 +708,7 @@ fun ShelfRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     val ratio: Float? = if (!addonDesign) null else when (declared) {
         "landscape" -> detected?.takeIf { it > 1.2f } ?: (16f / 9f)
         "square" -> 1f
-        // Tall posters the addon makes itself (configured rating / provider posters): shown as they are, not swapped
-        // for a wide backdrop card.
-        else -> detected?.takeIf { it > 1.2f || it in 0.9f..1.1f } ?: (2f / 3f).takeIf { items.take(4).any { m -> isDesignedPoster(m.poster) } }
+        else -> detected?.takeIf { it > 1.2f || it in 0.9f..1.1f }
     }
     val corner = posterCorner()
     val posterShape = remember(corner) { RoundedCornerShape(corner) }
@@ -762,8 +762,8 @@ fun LandscapeRow(items: List<Meta>, onOpen: (Meta) -> Unit) =
 fun LandscapeCard(m: Meta, width: Dp = 236.dp, onClick: () -> Unit) {
     var logoFailed by remember(m.id) { mutableStateOf(false) }
     val hideLabels = isOn(t("hideLabels"))
-    Box(Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(posterCorner())).background(Surface1).liveEdge(RoundedCornerShape(posterCorner())).titleTap(m, onClick)) {
-        AsyncImage(hiResArt(backdropOf(m)), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+    Box(Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(posterCorner())).background(Surface1).titleTap(m, onClick)) {
+        AsyncImage(backdropOf(m), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xCC000000), 0.65f to Color.Transparent)))
         val logo = logoOf(m)
         if (!hideLabels) Box(Modifier.align(Alignment.BottomStart).padding(10.dp).fillMaxWidth(0.55f)) {
@@ -790,9 +790,7 @@ private fun Deck(
     LaunchedEffect(n) { if (n > 1 && (pager.currentPage < n * 2 || pager.currentPage > n * (DeckLoops - 2))) pager.scrollToPage(n * (DeckLoops / 2)) }
     // Phones: 83 % of the width. Tablets / landscape: never taller than ~68 % of the screen (cards keep their shape).
     val cfg = LocalConfiguration.current
-    // StreamX's card (same size and shape), centred, with the deck stacked behind it on both sides.
     val cardW = minOf(cfg.screenWidthDp * 0.83f, cfg.screenHeightDp * 0.68f * 0.76f).coerceAtLeast(240f).dp
-    val cardH = cardW / 0.76f
     // Only flips when the deck crosses half-visible, so this read recomposes Deck rarely (never per scroll frame).
     val visible = onScreen.value
     val dragged by pager.interactionSource.collectIsDraggedAsState()
@@ -806,6 +804,9 @@ private fun Deck(
     // Which trailer has really started playing (its first frame is on screen): the card's poster then fades out.
     var videoFor by remember { mutableStateOf<String?>(null) }
     val videoOn = trailerId != null && videoFor == trailerId
+    // Where the settled front card is, inside the deck box: the trailer WebView is laid over exactly that spot.
+    var front by remember { mutableStateOf<Rect?>(null) }
+    val deckBox = remember { DeckCoords() }
     val scope = rememberCoroutineScope()
     // "▶ Trailer" on a card: full-screen trailer (TrailerActivity). "Play the movie" opens the title and presses Play.
     var trailerFor by remember { mutableStateOf<Meta?>(null) }
@@ -872,103 +873,79 @@ private fun Deck(
         }
     }
 
-    LaunchedEffect(Unit) { YtDirect.prefLangs = vm.qsLangs().mapNotNull { YtDirect.langCode(it) } }
-    val tid = trailerId
-    val glowColor = Accent
-    // Settings › Layout › Card border (off by default): white edge + soft glow on the front card.
-    val texts by vm.texts.collectAsStateWithLifecycle()
-    val border = texts["deckBorder"] == "on"
-    Box(Modifier.fillMaxWidth()) {
+    val corner = Palette.corner
+    val tint = Palette.tint
+    val bg = Bg
+    Box(Modifier.fillMaxWidth().onPlaced { deckBox.coords = it }) {
         modeBanner?.let { (on, at) ->
             key(at) { TrailerModeBanner(on, Modifier.align(Alignment.TopCenter).padding(top = 12.dp).zIndex(10f)) { if (modeBanner?.second == at) modeBanner = null } }
         }
-        // ── The stack (pictures only) ──
-        // Drawn here in our own order (farthest first, front card last) so the cards behind never cover the front one;
-        // each card's place, size and shade follow the pager's position every frame (draw phase only).
-        val cur = pager.currentPage
-        val order = remember(cur, n) { (cur - 2..cur + 2).sortedByDescending { abs(it - cur) } }
-        Box(Modifier.fillMaxWidth().height(cardH + 16.dp), Alignment.Center) {
-            for (page in order) key(page) {
-                val d = at(page)
-                val isFront = page == pager.settledPage && page == cur
-                fun off() = page - pager.currentPage - pager.currentPageOffsetFraction
-                DeckArt(
-                    d.meta, trailerId = if (isFront) tid else null, muted = muted, videoOn = isFront && videoOn,
-                    onPlaying = { videoFor = tid }, onEnded = { nextTrailer() },
-                    modifier = Modifier.width(cardW).height(cardH)
-                        .graphicsLayer {
-                            val o = off(); val a = abs(o); val w = size.width
-                            // Pulled in behind the front card: the first card behind peeks ~3.5 % of a card past
-                            // its edge, the second ~6.5 %; both smaller.
-                            // The two cards behind fill the space to the screen edge (no empty strip left or right):
-                            // the second one runs just past the edge.
-                            val target = when {
-                                a <= 1f -> 0.11f * a
-                                a <= 2f -> 0.11f + 0.09f * (a - 1f)
-                                else -> 0.20f + 0.03f * (a - 2f)
-                            } * w
-                            translationX = sign(o) * target
-                            val sc = when {
-                                a <= 1f -> 1f - 0.08f * a
-                                a <= 2f -> 0.92f - 0.08f * (a - 1f)
-                                else -> 0.84f
-                            }
-                            scaleX = sc; scaleY = sc
-                            alpha = if (a <= 2f) 1f else (1f - (a - 2f) * 2f).coerceIn(0f, 1f)
-                        }
-                        .drawBehind {
-                            // Front card: a thin white edge and a soft accent glow, so it never blends into the cards
-                            // behind it or the posters below.
-                            val a = abs(off()).coerceAtMost(1f)
-                            val cr = Palette.corner.dp.toPx()
-                            val k = 1f - a
-                            if (border && k > 0.01f) for (i in 1..3) {
-                                val g = (i * 3).dp.toPx()
-                                drawRoundRect(glowColor.copy(alpha = 0.10f * k / i), topLeft = Offset(-g, -g), size = Size(size.width + 2 * g, size.height + 2 * g),
-                                    cornerRadius = CornerRadius(cr + g, cr + g))
-                            }
-                        }
-                        .drawWithContent {
-                            drawContent()
-                            val a = abs(off()).coerceAtMost(2f)
-                            val cr = Palette.corner.dp.toPx()
-                            if (a > 0.01f) drawRoundRect(Color.Black, alpha = (0.4f * a).coerceAtMost(0.62f), cornerRadius = CornerRadius(cr, cr))
-                            if (border) {
-                                val edge = (0.85f - 0.62f * a.coerceAtMost(1f))
-                                drawRoundRect(Color.White.copy(alpha = edge), cornerRadius = CornerRadius(cr, cr), style = Stroke(width = 1.5.dp.toPx()))
-                            }
-                        },
-                )
+        // ── Card trailer, UNDER the pager ──
+        // The WebView must not sit inside a pager page (graphicsLayer scale, rounded clip, alpha): that draws the video
+        // black while the sound plays. So it lives here, in the plain deck box, exactly where the front card is, and the
+        // front card turns see-through (poster fades out) on top of it. Corners: masks in the page background colour.
+        val tid = trailerId
+        // 0.9.63: the trailer plays INSIDE the front card (exactly like Xstream), so this separate layer is off.
+        val r: Rect? = null
+        if (tid != null && r != null) {
+            val rootY = remember { mutableFloatStateOf(0f) }
+            Box(
+                Modifier
+                    .layout { measurable, _ ->
+                        val w = r.width.roundToInt().coerceAtLeast(1)
+                        val h = r.height.roundToInt().coerceAtLeast(1)
+                        val pl = measurable.measure(Constraints.fixed(w, h))
+                        layout(w, h) { pl.place(r.left.roundToInt(), r.top.roundToInt()) }
+                    }
+                    .onGloballyPositioned { rootY.floatValue = it.positionInRoot().y },
+            ) {
+                val frontMeta = items.getOrNull(pager.settledPage % n)?.meta
+                // Fills the card edge to edge (zoomed in like Xstream), instead of a small 16:9 picture inside the tall card.
+                TrailerVideo(tid, muted, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
+                    backdrop = frontMeta?.let { backdropOf(it) ?: it.poster }, onPlaying = { videoFor = tid },
+                    onEnded = { nextTrailer() }, onError = { nextTrailer() })
+                // Keeps touches away from the video (the pager above gets them anyway).
+                Box(Modifier.fillMaxSize().pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } })
+                // Rounded corners without clipping the WebView: paint the corners in the page's background gradient
+                // (HomeScreen's 600dp tint → bg gradient, which is fixed to the top of the screen).
+                Box(Modifier.fillMaxSize().drawBehind {
+                    val cr = corner.dp.toPx()
+                    val y0 = -rootY.floatValue
+                    val brush = Brush.verticalGradient(listOf(tint, bg), startY = y0, endY = y0 + 600.dp.toPx())
+                    val mask = Path().apply {
+                        fillType = PathFillType.EvenOdd
+                        addRect(Rect(Offset.Zero, size))
+                        addRoundRect(RoundRect(Rect(Offset.Zero, size), CornerRadius(cr, cr)))
+                    }
+                    drawPath(mask, brush)
+                })
             }
         }
 
-        // ── The front card's words and buttons, on the pager (it also takes the swipes) ──
         HorizontalPager(
             state = pager,
             pageSize = PageSize.Fixed(cardW),
-            contentPadding = PaddingValues(horizontal = ((cfg.screenWidthDp.dp - cardW) / 2).coerceAtLeast(8.dp)),
-            pageSpacing = 8.dp,
-            beyondViewportPageCount = 1,
-            // Smooth: one card per swipe, a soft glide that settles without a bounce.
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
+            // 2 is enough for the stacked look (cards 3+ behind are fully transparent) and composes fewer heavy cards.
+            beyondViewportPageCount = 2,
+            // Smooth like Hotstar: one card per swipe, a soft glide that settles without a bounce.
             flingBehavior = androidx.compose.foundation.pager.PagerDefaults.flingBehavior(
                 state = pager,
                 pagerSnapDistance = androidx.compose.foundation.pager.PagerSnapDistance.atMost(1),
-                snapAnimationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.9f, stiffness = 170f),
-                snapPositionalThreshold = 0.25f,
+                snapAnimationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.92f, stiffness = 170f),
+                snapPositionalThreshold = 0.3f,
             ),
             key = { "${at(it).meta.id}#${it / n}" },
-            modifier = Modifier.fillMaxWidth().height(cardH + 16.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) { page ->
             val d = at(page)
             val isFront = page == pager.settledPage
             DeckCard(
                 d.meta, rank = page % n + 1, catalog = d.catalog, saved = myList.any { it.id == d.meta.id },
                 trailerOn = isFront && tid != null, videoOn = isFront && videoOn, muted = muted,
-                settled = isFront && !pager.isScrollInProgress,
                 onMute = { muted = !muted; HeroSound.muted = muted },
-                // A card behind the front one: a tap brings it forward.
-                onOpen = { if (page == pager.currentPage) onOpen(d.meta) else scope.launch { pager.animateScrollToPage(page) } },
-                onToggle = { onToggle(d.meta) },
+                trailerId = if (isFront) tid else null, onTrailerPlaying = { videoFor = tid }, onTrailerEnded = { nextTrailer() },
+                onOpen = { onOpen(d.meta) }, onToggle = { onToggle(d.meta) },
                 onHold = {
                     if (trailers) {
                         if (trailerMode && tid != null) {
@@ -981,41 +958,55 @@ private fun Deck(
                         }
                     }
                 },
-                modifier = Modifier.padding(vertical = 8.dp).graphicsLayer {
-                    // The words fade while the cards move and come back on the card that settles in front.
-                    val a = abs(page - pager.currentPage - pager.currentPageOffsetFraction)
-                    alpha = (1f - 2.4f * a).coerceIn(0f, 1f)
-                },
+                modifier = Modifier
+                    .zIndex(-abs(page - pager.currentPage).toFloat())
+                    .graphicsLayer {
+                        val r = page - pager.currentPage - pager.currentPageOffsetFraction
+                        val s = 1f - 0.06f * minOf(abs(r), 2.5f)
+                        scaleX = s; scaleY = s
+                        if (r > 0f) translationX = -minOf(r, 3f) * size.width * 0.88f
+                        // Only 0 or 1: a partial alpha on these big, busy cards made the GPU render each stacked card
+                        // into an offscreen buffer on every frame (also while the page itself scrolls).
+                        alpha = if (r > 2.6f) 0f else 1f
+                    }
+                    // The cards behind are dimmed with a cheap translucent overlay instead (same look on the dark page).
+                    .drawWithContent {
+                        val r = page - pager.currentPage - pager.currentPageOffsetFraction
+                        val dim = 0.18f * minOf(abs(r), 2f)
+                        val dimCr = Palette.corner.dp.toPx()
+                        if (videoOn && abs(r) > 0.01f) {
+                            // A trailer plays under the (see-through) front card: the cards stacked behind it must not
+                            // cover it. Cut the front card's rounded rectangle out of this card, in this card's own
+                            // (scaled / shifted) coordinates.
+                            val w = size.width; val h = size.height
+                            val s = 1f - 0.06f * minOf(abs(r), 2.5f)
+                            val tx = if (r > 0f) -minOf(r, 3f) * w * 0.88f else 0f
+                            val cx = w / 2f; val cy = h / 2f
+                            val x0 = cx + (-r * w - cx - tx) / s
+                            val x1 = cx + (w - r * w - cx - tx) / s
+                            val y0 = cy - cy / s
+                            val y1 = cy + (h - cy) / s
+                            val cr = Palette.corner.dp.toPx() / s
+                            val hole = Path().apply { addRoundRect(RoundRect(x0, y0, x1, y1, CornerRadius(cr, cr))) }
+                            clipPath(hole, ClipOp.Difference) {
+                                this@drawWithContent.drawContent()
+                                if (dim > 0.005f) drawRoundRect(Color.Black, alpha = dim, cornerRadius = CornerRadius(dimCr, dimCr))
+                            }
+                        } else {
+                            drawContent()
+                            if (dim > 0.005f) drawRoundRect(Color.Black, alpha = dim, cornerRadius = CornerRadius(dimCr, dimCr))
+                        }
+                    }
+                    ,
+                // Where the front CARD is (relative to the deck box) while a trailer is up. Measured on the card itself:
+                // the pager page around it is taller, and the trailer used to fill that taller box (over-zoomed, too high,
+                // frames showing below and beside the card).
+                onPlaced = if (isFront && tid != null) { c ->
+                    val box = deckBox.coords
+                    if (box != null && box.isAttached && c.isAttached) front = box.localBoundingBoxOf(c, false)
+                } else null,
             )
         }
-    }
-}
-
-/** A deck card's picture (poster, or its trailer once it plays inside the card). The stack draws these. */
-@Composable
-private fun DeckArt(
-    m: Meta, trailerId: String?, muted: Boolean, videoOn: Boolean, onPlaying: () -> Unit, onEnded: () -> Unit, modifier: Modifier,
-) {
-    val shape = RoundedCornerShape(Palette.corner.dp)
-    val posterAlpha by animateFloatAsState(if (videoOn) 0f else 1f, tween(420), label = "poster")
-    Box(modifier.clip(shape).background(Color(0xFF05070C))) {
-        // The trailer plays INSIDE the card (our own video surface, cropped to fill it edge to edge, rounded corners).
-        if (trailerId != null) TrailerVideo(trailerId, muted, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
-            backdrop = backdropOf(m) ?: m.poster, onPlaying = onPlaying, onEnded = onEnded, onError = onEnded)
-        var hdFailed by remember(m.id) { mutableStateOf(false) }
-        val own = m.poster?.takeIf { !m.posterShape.equals("landscape", true) && !m.posterShape.equals("square", true) }
-        val tall = (if (!hdFailed) hdPoster(m) else null) ?: own
-        if (tall != null) {
-            AsyncImage(hiResArt(tall), m.name, Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha }, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter,
-                onError = { if (tall != own) hdFailed = true })
-        } else {
-            val wide = hiResArt(backdropOf(m) ?: m.poster)
-            AsyncImage(wide, null, Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha * 0.9f }.blur(28.dp), contentScale = ContentScale.Crop)
-            AsyncImage(wide, m.name, Modifier.fillMaxWidth().aspectRatio(16f / 9f).graphicsLayer { alpha = posterAlpha }, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
-        }
-        // While a trailer plays the shade is lighter (only enough for the text at the bottom): a brighter picture.
-        Box(Modifier.fillMaxSize().background(if (videoOn) Brush.verticalGradient(0.62f to Color.Transparent, 0.86f to Color(0x99000000), 1f to Color(0xD9000000))
-            else Brush.verticalGradient(0.42f to Color.Transparent, 0.82f to Color(0xEE000000), 1f to Color.Black)))
     }
 }
 
@@ -1024,7 +1015,7 @@ private fun DeckArt(
  * it and a light sweep, then floats away after ~3 s.
  */
 @Composable
-internal fun TrailerModeBanner(on: Boolean, modifier: Modifier = Modifier, onDone: () -> Unit) {
+private fun TrailerModeBanner(on: Boolean, modifier: Modifier = Modifier, onDone: () -> Unit) {
     val appear = remember { androidx.compose.animation.core.Animatable(0f) }
     val inf = rememberInfiniteTransition(label = "tmb")
     val glow by inf.animateFloat(0.35f, 0.9f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "glow")
@@ -1073,6 +1064,7 @@ object HeroSound {
 }
 
 /** Layout coordinates of the deck box (not state: only read from layout callbacks). */
+private class DeckCoords { var coords: LayoutCoordinates? = null }
 
 @Composable
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -1081,15 +1073,11 @@ private fun DeckCard(
     /** a trailer is up for this card (drawn by Deck under it) / its video is really playing */
     trailerOn: Boolean, videoOn: Boolean, muted: Boolean, onMute: () -> Unit,
     onOpen: () -> Unit, onToggle: () -> Unit, modifier: Modifier, onHold: () -> Unit = {}, onTrailer: () -> Unit = {},
-    /** the card has settled in front: its title and buttons rise in (hidden at once while the cards move) */
-    settled: Boolean = true,
+    onPlaced: ((androidx.compose.ui.layout.LayoutCoordinates) -> Unit)? = null,
+    /** The trailer to play inside this card (front card only), like Xstream: cropped to fill, centred, clipped to the card. */
+    trailerId: String? = null, onTrailerPlaying: () -> Unit = {}, onTrailerEnded: () -> Unit = {},
 ) {
     val shape = RoundedCornerShape(Palette.corner.dp)
-    // Premium touch: the poster moves alone; ~180 ms after it settles, the title, Watch now and + rise in with a soft spring.
-    var show by remember { mutableStateOf(settled) }
-    LaunchedEffect(settled) { if (settled) { delay(180); show = true } else show = false }
-    val rise by animateFloatAsState(if (show) 1f else 0f,
-        if (show) androidx.compose.animation.core.spring(dampingRatio = 0.72f, stiffness = 260f) else tween(90), label = "deckRise")
     val rating = m.imdbRating?.toDoubleOrNull()
     val rankText = when {
         catalog == "Picked for you" || catalog == AIDEN_PICK -> AIDEN_PICK
@@ -1097,8 +1085,31 @@ private fun DeckCard(
         else -> t("badge").replace("{rank}", rank.toString()).replace("{catalog}", catalog)
     }
     var logoFailed by remember(m.id) { mutableStateOf(false) }
-    // Words and buttons only: the picture (poster or trailer) is drawn by the stack under the pager ([DeckArt]).
-    Box(modifier.fillMaxWidth().aspectRatio(0.76f).clip(shape).combinedClickable(onClick = onOpen, onLongClick = onHold)) {
+    val posterAlpha by animateFloatAsState(if (videoOn) 0f else 1f, tween(600), label = "poster")
+    // While the trailer plays (under this card) the card is see-through: no dark fill, the poster fades away.
+    Box(modifier.fillMaxWidth().aspectRatio(0.76f).then(if (onPlaced != null) Modifier.onGloballyPositioned(onPlaced) else Modifier)
+        .clip(shape).drawBehind { if (!videoOn) drawRect(Color(0xFF05070C)) }
+        .combinedClickable(onClick = onOpen, onLongClick = onHold)) {
+        // The trailer, inside the card and under the poster (the poster fades away once the video really plays).
+        if (trailerId != null) TrailerVideo(trailerId, muted, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
+            backdrop = backdropOf(m) ?: m.poster, onPlaying = onTrailerPlaying, onEnded = onTrailerEnded, onError = onTrailerEnded)
+        // Always a sharp, tall poster (HD copy by IMDb id when there is one), anchored at the top so faces and titles
+        // stay in view. A wide picture is shown whole at the top over a blurred copy of itself, never cut in the middle.
+        var hdFailed by remember(m.id) { mutableStateOf(false) }
+        val own = m.poster?.takeIf { !m.posterShape.equals("landscape", true) && !m.posterShape.equals("square", true) }
+        val tall = (if (!hdFailed) hdPoster(m) else null) ?: own
+        if (tall != null) {
+            AsyncImage(hiResArt(tall), m.name, Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha }, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter,
+                onError = { if (tall != own) hdFailed = true })
+        } else {
+            val wide = hiResArt(backdropOf(m) ?: m.poster)
+            AsyncImage(wide, null, Modifier.fillMaxSize().graphicsLayer { alpha = posterAlpha * 0.9f }.blur(28.dp), contentScale = ContentScale.Crop)
+            AsyncImage(wide, m.name, Modifier.fillMaxWidth().aspectRatio(16f / 9f).padding(top = 0.dp).graphicsLayer { alpha = posterAlpha }, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+        }
+        // While a trailer plays the shade is lighter (only enough for the text at the bottom): a brighter picture.
+        Box(Modifier.fillMaxSize().background(if (videoOn) Brush.verticalGradient(0.62f to Color.Transparent, 0.86f to Color(0x99000000), 1f to Color(0xD9000000))
+            else Brush.verticalGradient(0.42f to Color.Transparent, 0.82f to Color(0xEE000000), 1f to Color.Black)))
+
         // Badge: IMDb score for highly rated titles, otherwise the rank in its row.
         val badgeShape = RoundedCornerShape(14.dp)
         if (catalog == AIDEN_PICK) {
@@ -1136,10 +1147,7 @@ private fun DeckCard(
         }
         // While the trailer plays the title shrinks to the bottom-left corner (animated), out of the picture's way.
         val shrink by animateFloatAsState(if (videoOn) 1f else 0f, tween(650), label = "titleShrink")
-        Column(Modifier.align(Alignment.BottomStart).padding(16.dp).graphicsLayer {
-            alpha = rise.coerceIn(0f, 1f); translationY = (1f - rise) * 28.dp.toPx(); val sc = 0.96f + 0.04f * rise; scaleX = sc; scaleY = sc
-            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)
-        }) {
+        Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
             val logo = logoOf(m)
             if (logo != null && !logoFailed) {
                 AsyncImage(logo, m.name, Modifier.fillMaxWidth(0.85f - 0.35f * shrink).height((84f - 38f * shrink).dp), contentScale = ContentScale.Fit,
@@ -1274,10 +1282,36 @@ private fun FloatingFilters(
     val pill = RoundedCornerShape(50)
     val maxCapsule = (LocalConfiguration.current.screenWidthDp - 2 * (12 + 52 + 8)).dp
     Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-        // Xstream: no TV / Movies / Live capsule — only the AI voice button.
-        if (BuildConfig.HAS_AI) Box(Modifier.align(Alignment.CenterEnd).tourTarget("ai")) { AiOrbButton(vm, 52.dp, hide, onAi) }
+        if (labels.isNotEmpty()) Row(
+            Modifier.align(Alignment.Center).tourTarget("capsule").widthIn(max = maxCapsule)
+                // Scrolling down slides the capsule away (behind the bottom bar); the AI button stays as a small mic.
+                // Before: alpha + Modifier.shadow on this layer forced an offscreen buffer and shadow re-render every
+                // frame. Now the fade uses ModulateAlpha (alpha applied per draw, no offscreen buffer) and is fully
+                // skipped (alpha 0) once hidden. Everything here is read in the draw phase: no recomposition.
+                .graphicsLayer {
+                    val v = hide.value
+                    translationY = v * 150.dp.toPx()
+                    alpha = if (v >= 0.999f) 0f else 1f - v
+                    compositingStrategy = CompositingStrategy.ModulateAlpha
+                }
+                // Static, pre-recorded halo instead of Modifier.shadow (elevation shadows re-render as the pill moves).
+                .softHalo(100.dp, spread = 12.dp, strength = 0.5f, dy = 4.dp)
+                .clip(pill)
+                .background(CapsuleBrush)
+                .border(1.dp, Color(0x33FFFFFF), pill).padding(horizontal = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            labels.forEach { (label, type) ->
+                Text(label, Modifier.clip(pill).clickable { onFilter(type) }.padding(horizontal = 11.dp, vertical = 12.dp),
+                    fontSize = 15.sp, fontWeight = if (filter == type) FontWeight.Bold else FontWeight.Medium, maxLines = 1,
+                    color = if (filter == type) Color.White else Color(0xC8FFFFFF))
+                Box(Modifier.width(1.dp).height(18.dp).background(Color(0x44FFFFFF)))
+            }
+            Icon(Icons.Default.KeyboardArrowUp, "Back to top", Modifier.clip(CircleShape).clickable(onClick = onTop).padding(horizontal = 8.dp, vertical = 10.dp).size(24.dp))
+        }
+        Box(Modifier.align(Alignment.CenterEnd).tourTarget("ai")) { AiOrbButton(vm, 52.dp, hide, onAi) }
         // AIDEN wakes up when the app opens: slides out of the button, says hello, and goes back to sleep.
-        if (BuildConfig.HAS_AI) Box(Modifier.align(Alignment.CenterEnd).padding(end = 56.dp).offset(y = (-58).dp)) { AidenWake(vm, onAi) }
+        Box(Modifier.align(Alignment.CenterEnd).padding(end = 56.dp).offset(y = (-58).dp)) { AidenWake(vm, onAi) }
     }
 }
 
@@ -1315,7 +1349,8 @@ private fun RankedCard(rank: Int, m: Meta, flag: String?, service: Pair<String, 
     val shape = RoundedCornerShape(posterCorner().coerceAtLeast(14.dp))
     Column(Modifier.width(262.dp).clip(RoundedCornerShape(16.dp)).titleTap(m, onClick)) {
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(shape).background(Surface1)) {
-            AsyncImage(backdropOf(m), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            // 0.9.75: the Top 10 picture from the fast picture CDN at card size (the number is drawn here, not by a server).
+            AsyncImage(rankArt(m), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             // Dark fade on the left so the number and info stay readable.
             Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xF0000000), 0.32f to Color(0x99000000), 0.55f to Color.Transparent)))
             if (rank <= 10) Column(Modifier.align(Alignment.CenterStart).padding(start = 10.dp).width(78.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1373,25 +1408,63 @@ fun hiResArt(url: String?): String? = url
     ?.replace(Regex("/poster/(small|medium)/"), "/poster/large/")
     ?.replace(Regex("/background/(small|medium)/"), "/background/large/")
     ?.replace(Regex("/t/p/w(92|154|185|300|342|500)/"), "/t/p/w780/")
-    // IMDb / Amazon images come resized to ~300 px: ask for a 1000 px copy.
-    ?.replace(Regex("""\._V1_[^/]*?\.(jpg|jpeg|png)$"""), "._V1_QL90_UX1000_.$1")
-    ?.replace("assets.fanart.tv/preview/", "assets.fanart.tv/fanart/")
 
-
-/** Xstream: Continue Watching opened up: every title you started, and a button to clear the row. */
+/**
+ * The bell's notifications as a bubble that pops out of the bell (not a page): new episodes and Watch together
+ * invites, with "See all" for the full page. Tap outside to close.
+ */
 @Composable
-private fun ContinueAllPage(vm: AppViewModel, items: List<Progress>, onClose: () -> Unit, onPlay: (Progress) -> Unit) {
+private fun NotesBubble(onClose: () -> Unit, onAll: () -> Unit, onTogether: () -> Unit) {
+    val pop = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(Unit) { pop.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.72f, stiffness = 420f)) }
+    val below = remember {
+        object : androidx.compose.ui.window.PopupPositionProvider {
+            override fun calculatePosition(anchorBounds: androidx.compose.ui.unit.IntRect, windowSize: androidx.compose.ui.unit.IntSize,
+                                           layoutDirection: androidx.compose.ui.unit.LayoutDirection, popupContentSize: androidx.compose.ui.unit.IntSize): androidx.compose.ui.unit.IntOffset {
+                val x = (anchorBounds.right - popupContentSize.width).coerceIn(16, maxOf(16, windowSize.width - popupContentSize.width - 16))
+                return androidx.compose.ui.unit.IntOffset(x, anchorBounds.bottom + 12)
+            }
+        }
+    }
+    androidx.compose.ui.window.Popup(popupPositionProvider = below, onDismissRequest = onClose, properties = androidx.compose.ui.window.PopupProperties(focusable = true)) {
+        val shape = RoundedCornerShape(24.dp)
+        Column(
+            Modifier.width(340.dp).heightIn(max = 460.dp)
+                .graphicsLayer {
+                    val v = pop.value
+                    alpha = v.coerceIn(0f, 1f); scaleX = 0.85f + 0.15f * v; scaleY = scaleX
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.92f, 0f)
+                }
+                .shadow(22.dp, shape).clip(shape).background(Color(0xF71A1820)).border(1.dp, Color(0x26FFFFFF), shape),
+        ) {
+            Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Notifications", Modifier.weight(1f), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("See all", Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onAll).padding(horizontal = 10.dp, vertical = 6.dp),
+                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Accent)
+            }
+            Box(Modifier.fillMaxWidth().heightIn(max = 400.dp)) { NotificationsPage(onBack = onClose, onTogether = onTogether, embedded = true) }
+        }
+    }
+}
+
+
+/** Pick up where you left off, opened up: every title you started (no limit) and Clear all. */
+@Composable
+private fun ContinueAllPage(vm: AppViewModel, items: List<Progress>, title: String, onClose: () -> Unit, onPlay: (Progress) -> Unit) {
     var ask by remember { mutableStateOf(false) }
     androidx.compose.ui.window.Dialog(onClose, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.IconButton(onClose) { Icon(Icons.Default.ArrowBack, "Back") }
-                Text("Continue Watching", Modifier.weight(1f), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                if (items.isNotEmpty()) androidx.compose.material3.IconButton({ ask = true }) { Icon(Icons.Default.DeleteSweep, "Clear Continue Watching", tint = Color(0xFFFF8A80)) }
+                androidx.compose.material3.IconButton(onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                Column(Modifier.weight(1f)) {
+                    Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${items.size} titles · saved in your cloud", fontSize = 12.sp, color = Color(0xFF9AA3B5))
+                }
+                if (items.isNotEmpty()) androidx.compose.material3.IconButton({ ask = true }) { Icon(Icons.Default.DeleteSweep, "Clear all", tint = Color(0xFFFF8A80)) }
             }
             if (items.isEmpty()) Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Nothing here yet", color = Color(0xFF9AA3B5)) }
             else androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                androidx.compose.foundation.lazy.grid.GridCells.Fixed(2), Modifier.fillMaxSize(),
+                androidx.compose.foundation.lazy.grid.GridCells.Adaptive(170.dp), Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 items(items.size, key = { items[it].key }) { i ->
@@ -1402,9 +1475,9 @@ private fun ContinueAllPage(vm: AppViewModel, items: List<Progress>, onClose: ()
         }
         if (ask) PremiumAlert(
             onDismissRequest = { ask = false },
-            title = { Text("Clear Continue Watching?") },
-            text = { Text("All ${items.size} titles leave the row on your phones and TV. What you watched still counts in My Space.") },
-            confirmButton = { androidx.compose.material3.TextButton({ ask = false; vm.clearContinue(); onClose() }) { Text("Clear", color = Color(0xFFFF8A80)) } },
+            title = { Text("Clear all?") },
+            text = { Text("All ${items.size} titles leave this row on your phones and TV.") },
+            confirmButton = { androidx.compose.material3.TextButton({ ask = false; vm.clearContinue(); onClose() }) { Text("Clear all", color = Color(0xFFFF8A80)) } },
             dismissButton = { androidx.compose.material3.TextButton({ ask = false }) { Text("Cancel") } },
         )
     }
@@ -1437,9 +1510,11 @@ object HomeFreeze {
     fun recs(live: List<Meta>): List<Meta> { if (recSnap.isEmpty() && live.isNotEmpty()) recSnap = live; return recSnap }
 }
 
+/** StreamX phone: trailers on Home cards and title pages are off until they are perfect (the ▶ Trailer button still works). */
+object TrailersPaused { val on: Boolean get() = !BuildConfig.IS_TV }
 
 /**
- * Xstream Live home card: one wide rounded picture at a time — its trailer plays inside it (muted; the ring at the top
+ * 0.9.72 (from Xstream): the "Live" Home style card: one wide rounded picture at a time — its trailer plays inside it (muted; the ring at the top
  * right pauses / resumes and shows the trailer's progress) — then the title's logo, "Genre · Year · Series", and
  * Play / More Info. Swipe for the next one; it moves on by itself when a trailer ends (or after 9 s without one).
  */
@@ -1459,7 +1534,7 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
     val ring = remember { androidx.compose.animation.core.Animatable(0f) }
     val scope = rememberCoroutineScope()
     fun next() = scope.launch { if (n > 1) pager.animateScrollToPage(pager.currentPage + 1, animationSpec = tween(700)) }
-    fun stopTrailer() { tid = null; videoOn = false; paused = false; loadingTrailer = false; YtDirect.tapHd = false }
+    fun stopTrailer() { tid = null; videoOn = false; paused = false; loadingTrailer = false }
     fun playTrailer(m: Meta) {
         if (tid != null) { paused = !paused; return }
         loadingTrailer = true
@@ -1467,7 +1542,7 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
             val id = runCatching { vm.trailerId(m) }.getOrNull()
             loadingTrailer = false
             if (id == null) { Snack.show("No trailer for ${m.name}"); return@launch }
-            YtDirect.tapHd = true; muted = false; paused = false; tid = id
+            muted = false; paused = false; tid = id
             ActLog.add("TRAILER", "tapped · ${m.name}")
         }
     }
@@ -1503,16 +1578,16 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
                         c.nativeCanvas.restore()
                     }
                 }
-                .clip(LiveHeroShape).background(Color(0xFF05070C))
+                .clip(PhoneLiveShape).background(Color(0xFF05070C))
                 // Red rim light: bright at the top, faint down the sides, red again along the curve.
-                .border(1.5.dp, Brush.verticalGradient(0f to Color(0xD9E50914), 0.55f to Color(0x1AE50914), 1f to Color(0xA6E50914)), LiveHeroShape)
+                .border(1.5.dp, Brush.verticalGradient(0f to Color(0xD9E50914), 0.55f to Color(0x1AE50914), 1f to Color(0xA6E50914)), PhoneLiveShape)
                 .clickable { onOpen(m) }) {
                 val id = tid
                 // Stops when the card leaves the screen; silent while you swipe to the next card.
-                if (front && id != null && onScreen.value) TrailerVideo(id, muted || paused || pager.isScrollInProgress, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
-                    backdrop = backdropOf(m) ?: m.poster, onPlaying = { videoOn = true }, onEnded = { stopTrailer() }, onError = { stopTrailer(); Snack.show("Trailer couldn't play") },
-                    trimBars = true, paused = paused)
-                val artAlpha by animateFloatAsState(if (front && videoOn) 0f else 1f, tween(450), label = "liveArt")
+                // StreamX's trailer player has no pause: "Pause" stops the trailer and shows the picture again.
+                if (front && id != null && !paused && onScreen.value) TrailerVideo(id, muted || pager.isScrollInProgress, Modifier.fillMaxSize(), fitWhole = false, zoom = 1f,
+                    backdrop = backdropOf(m) ?: m.poster, onPlaying = { videoOn = true }, onEnded = { stopTrailer() }, onError = { stopTrailer(); Snack.show("Trailer couldn't play") })
+                val artAlpha by animateFloatAsState(if (front && videoOn && !paused) 0f else 1f, tween(450), label = "liveArt")
                 AsyncImage(hiResArt(backdropOf(m) ?: m.poster), m.name, Modifier.fillMaxSize().graphicsLayer { alpha = artAlpha },
                     contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.7f to Color.Transparent, 1f to Color(0x80000000))))
@@ -1568,7 +1643,7 @@ private fun LiveHero(vm: AppViewModel, items: List<DeckItem>, onScreen: State<Bo
 }
 
 /** Hero card: rounded top corners and a bottom edge that curves up in the middle. */
-private val LiveHeroShape = object : androidx.compose.ui.graphics.Shape {
+private val PhoneLiveShape = object : androidx.compose.ui.graphics.Shape {
     override fun createOutline(size: androidx.compose.ui.geometry.Size, layoutDirection: androidx.compose.ui.unit.LayoutDirection,
         density: androidx.compose.ui.unit.Density): androidx.compose.ui.graphics.Outline {
         val r = with(density) { 26.dp.toPx() }
@@ -1594,3 +1669,21 @@ private object HeroRatings {
     private val seen = java.util.concurrent.ConcurrentHashMap<String, Double>()
     suspend fun get(vm: AppViewModel, m: Meta): Double? = seen[m.id] ?: runCatching { vm.fullMeta(m)?.imdbRating?.toDoubleOrNull() }.getOrNull()?.also { seen[m.id] = it }
 }
+
+
+/** 0.9.75: Glass theme backdrop — a small copy of the picture, blurred (Android 12+) and dimmed, cross-faded on change. */
+@Composable
+private fun PhoneGlassBackdrop(url: String?) {
+    val small = remember(url) { url?.replace(Regex("/t/p/(original|w1280|w780)/"), "/t/p/w300/")?.replace("/background/large/", "/background/small/")?.replace("/poster/large/", "/poster/small/") }
+    androidx.compose.animation.Crossfade(small, androidx.compose.ui.Modifier.fillMaxSize(), animationSpec = androidx.compose.animation.core.tween(700), label = "glassBg") { u ->
+        Box(Modifier.fillMaxSize()) {
+            if (u != null) AsyncImage(u, null, Modifier.fillMaxSize().graphicsLayer { alpha = 0.55f }
+                .then(if (android.os.Build.VERSION.SDK_INT >= 31) Modifier.blur(36.dp) else Modifier), contentScale = ContentScale.Crop)
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0x66000000), 0.55f to Color(0xB3070810), 1f to Color(0xF2070810))))
+        }
+    }
+}
+
+/** 0.9.75: Top 10 card picture — Metahub's medium background for IMDb titles (fast CDN), else the row's own, smaller. */
+internal fun rankArt(m: Meta): String? = if (m.id.startsWith("tt")) "https://images.metahub.space/background/medium/${m.id.substringBefore(':')}/img"
+    else backdropOf(m)?.replace(Regex("/t/p/(original|w1280)/"), "/t/p/w780/")

@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -67,7 +68,7 @@ import kotlinx.coroutines.launch
 /** Screens pushed on top of the TV sections. */
 sealed interface TvRoute {
     /** [autoPlay]: Play was pressed on Home's hero card — start playing as soon as the page is ready (once). */
-    data class Detail(val meta: Meta, val autoPlay: Boolean = false) : TvRoute { var played = false }
+    data class Detail(val meta: Meta, val autoPlay: Boolean = false, val manual: Boolean = false, val ep: String? = null) : TvRoute { var played = false }
     data class Person(val p: Screen.Person) : TvRoute
     data class Player(val p: Screen.Player) : TvRoute
     data class Collection(val c: NCollection, val f: NFolder) : TvRoute
@@ -81,7 +82,7 @@ internal tailrec fun Context.tvActivity(): Activity? = when (this) {
 }
 
 /**
- * Xstream TV shell: splash, "Who's watching?", then the sections (Home / Search / Library / My Space / Settings) with
+ * StreamX TV shell: splash, "Who's watching?", then the sections (Home / Search / Library / My Space / Settings) with
  * a floating sidebar that is completely hidden until LEFT is pressed on the left-most item (or BACK on Home).
  * BACK: closes pushed screens → goes back to Home → opens the sidebar → (sidebar open on Home) exits the app.
  */
@@ -100,32 +101,76 @@ fun TvApp(vm: AppViewModel = viewModel()) {
         val top = stack.lastOrNull()
         ActLog.screen = if (profile == null) "TV Who's watching" else "TV " + (top?.let { it::class.simpleName } ?: tab.name)
         ActLog.add("SCREEN", ActLog.screen + (top?.let { " · " + it.toString().take(80) } ?: ""))
+        TvSmall.lastScreen = ActLog.screen
     }
     val texts by vm.texts.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    LaunchedEffect(profile?.id) { if (profile != null) { runCatching { BuiltIns.sync(vm) }; runCatching { AppLook.fetch(vm.appContext) } } }
+    LaunchedEffect(profile?.id) {
+        if (profile == null) return@LaunchedEffect
+        Public.vm = vm
+        runCatching { AppLook.fetch(vm.appContext) }; runCatching { BuiltIns.sync(vm) }; runCatching { DevDefaults.sync(vm) }
+        // Turbo on the TV too: the developer's official plugins arrive, and Quick Play's plugins are kept warm.
+        runCatching { Official.apply(vm, vm.appContext) }
+        if (vm.pluginMode()) runCatching { CsPlugins.init(vm.appContext); if (CsPlugins.catalog.value.isEmpty()) CsPlugins.refresh() }
+        while (true) {
+            if (vm.pluginMode()) runCatching { CsPlugins.warmSome(vm.qsAddons() + vm.qs4kNames()) }
+            kotlinx.coroutines.delay(3 * 60_000L)
+        }
+    }
     val ctx = LocalContext.current
+    // TV 0.8.3: reads this box once (memory, decoders, the TV's screen modes, soundbar formats) and sets defaults for it.
+    LaunchedEffect(Unit) {
+        runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { TvBox.info(ctx) } }
+        runCatching { TvBox.setupOnce(ctx, vm) }
+        // TV 0.9.11: memory right after the start too (the log showed 227 of 256 MB 5 s in, on Who's watching).
+        var memAt = 0L
+        for (at in listOf(3_000L, 6_000L, 12_000L, 25_000L)) {
+            kotlinx.coroutines.delay(at - memAt); memAt = at
+            ActLog.add("APP", "memory +${at / 1000} s · ${TvSmall.mem(ctx)}")
+        }
+        // TV 0.8.4: a memory line every minute (and the mark that tells, next start, if Android closed the app on screen).
+        while (true) {
+            kotlinx.coroutines.delay(60_000)
+            TvSmall.beat(ctx)
+            ActLog.add("APP", "memory · ${TvSmall.mem(ctx)}")
+        }
+    }
+    // TV 0.8.7: 4K HDHUB starts in the background 15 s after a profile opens (it often needs 12+ s to load).
+    LaunchedEffect(profile?.id) {
+        if (profile == null) return@LaunchedEffect
+        kotlinx.coroutines.delay(15_000)
+        TvIdle.waitQuiet() // TV 0.9.13: not while you're moving around Home
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CsPlugins.tvPrewarm(ctx) } }
+    }
     val focusManager = LocalFocusManager.current
     val homeState = remember(profile?.id) { TvHomeState() }
     val searchQuery = remember(profile?.id) { mutableStateOf("") }
     val opening = remember { arrayOfNulls<Job>(1) }
     var voteFor by remember { mutableStateOf<Meta?>(null) }
     var showSplash by remember { mutableStateOf(!StartupState.splashShown && isOn(texts["splash"] ?: "yes")) }
+    /** TV 0.9.14: the splash cross-fades into Who's watching (it used to fade to an empty dark screen first). */
+    var splashFading by remember { mutableStateOf(false) }
     var gateOpen by rememberSaveable { mutableStateOf(!Cloud.decided.value) }
 
     val push: (TvRoute) -> Unit = { stack.add(it) }
     val pop: () -> Unit = { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex); Unit }
     // Collection items can have TMDB ids: they are turned into IMDb ids first (normal addon titles return at once).
-    fun openTitle(m: Meta, autoPlay: Boolean) {
+    fun openTitle(m: Meta, autoPlay: Boolean, manual: Boolean = false) {
         if (opening[0]?.isActive != true) opening[0] = scope.launch {
             val r = runCatching { vm.resolveForOpen(m) }.getOrNull()
-            if (r != null) stack.add(TvRoute.Detail(r, autoPlay)) else Snack.show("Couldn't open ${m.name}")
+            if (r != null) stack.add(TvRoute.Detail(r, autoPlay || manual, manual)) else Snack.show("Couldn't open ${m.name}")
         }
     }
     val openMeta: (Meta) -> Unit = { m -> openTitle(m, false) }
     val playMeta: (Meta) -> Unit = { m -> openTitle(m, true) }
+    val manualMeta: (Meta) -> Unit = { m -> openTitle(m, false, manual = true) }
     val settingsIdx = remember { mutableIntStateOf(0) }
-    val play: (Screen.Player) -> Unit = { stack.add(TvRoute.Player(it)) }
+    // TV 0.8.4: a saved link to the app's own relay (127.0.0.1) is dead after an update or restart — the player finds a
+    // fresh one at once (the source it last played comes first), instead of trying the dead one and showing an error.
+    val play: (Screen.Player) -> Unit = { s0 ->
+        val local = s0.url.startsWith("http://127.0.0.1") || s0.url.startsWith("http://localhost")
+        stack.add(TvRoute.Player(if (local && s0.key.isNotEmpty()) s0.copy(url = "", find = true, instant = false) else s0))
+    }
 
     fun openSidebar(from: FocusRequester?) {
         returnFocus[0] = from
@@ -139,16 +184,19 @@ fun TvApp(vm: AppViewModel = viewModel()) {
         if (tab == TvTab.Home) homeState.refocus.intValue++ else contentFr.tryFocus()
     }
 
+    val tvAskExit = remember { mutableStateOf(false) }
+    val tvEmailGate = remember { mutableStateOf(false) }
     BackHandler(enabled = profile != null && !showSplash && !gateOpen) {
         when {
             stack.isNotEmpty() -> pop()
-            sidebar -> if (tab == TvTab.Home) ctx.tvActivity()?.finish() else closeSidebar()
+            sidebar -> if (tab == TvTab.Home) tvAskExit.value = true else closeSidebar()
             tab != TvTab.Home -> tab = TvTab.Home
             else -> openSidebar(null)
         }
     }
 
     CompositionLocalProvider(LocalTexts provides texts) {
+        if (tvAskExit.value) TvExitDialog(onStay = { tvAskExit.value = false })
         LaunchedEffect(profile == null) { if (profile == null) { stack.clear(); sidebar = false } }
         // After switching sections, make sure something on the new screen has focus.
         LaunchedEffect(tab, stack.isEmpty(), profile?.id) {
@@ -156,13 +204,27 @@ fun TvApp(vm: AppViewModel = viewModel()) {
             delay(160)
             if (!sidebar && !contentFocused[0]) contentFr.tryFocus()
         }
-        Box(Modifier.fillMaxSize().background(Bg)) {
-            if (profile == null && gateOpen) CloudGate(onDone = { gateOpen = false })
-            else if (profile == null && texts["streamMode"] == null) ModeChooser(vm) {}
-            else if (profile == null) TvProfileGate(vm, active = !showSplash) { tab = TvTab.Home }
+        // TV 0.9.14: a profile was just picked → Home fades and settles in (it used to sit behind a grey dim for seconds).
+        val prevPid = remember { mutableStateOf(profile?.id) }
+        val homeIn = remember(profile?.id) { androidx.compose.animation.core.Animatable(if (prevPid.value == null && profile != null) 0f else 1f) }
+        SideEffect { prevPid.value = profile?.id }
+        LaunchedEffect(homeIn) { homeIn.animateTo(1f, androidx.compose.animation.core.tween(380, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = homeIn.value; val sc = 0.98f + 0.02f * homeIn.value; scaleX = sc; scaleY = sc }
+            .background(if (Palette.glass) Color(0xFF05060A) else Bg)) {
+            // TV 0.9.3 Glass theme: a soft blur of the poster you are on behind every page (a tiny picture stretched —
+            // blurry by itself, almost free on a stick), the see-through page colour on top.
+            if (Palette.glass) TvGlassBackdrop()
+            if (Palette.glass) Box(Modifier.fillMaxSize().background(Bg))
+            if (profile == null && gateOpen && !tvEmailGate.value) TvLinkGate(onDone = { gateOpen = false }, onEmail = { tvEmailGate.value = true })
+            else if (profile == null && gateOpen) CloudGate(onDone = { gateOpen = false; tvEmailGate.value = false }, onPhone = { tvEmailGate.value = false })
+            // TV 0.8.5: Turbo + Elite from the start (no question); Settings can still change both.
+            else if (profile == null && texts["streamMode"] == null) LaunchedEffect(Unit) { vm.setText("streamMode", "elite"); ActLog.add("APP", "TV: Turbo + Elite on by default") }
+            else if (profile == null) TvProfileGate(vm, active = !showSplash || splashFading, onResume = { r -> tab = TvTab.Home; play(Screen.Player(r.title, r.url, r.subs, r.key, r.image, r.positionMs)) }) { tab = TvTab.Home }
             else when (val top = stack.lastOrNull()) {
                 is TvRoute.Player -> key(top) {
                     val p = top.p
+                    // TV 0.9.10: Play manually from the player's episode menu: the title page's sources list for that episode.
+                    TvEpNav.manual = { m, epId -> if (stack.isNotEmpty()) stack[stack.lastIndex] = TvRoute.Detail(m, autoPlay = true, manual = true, ep = epId) }
                     PlayerScreen(vm, p, onBack = pop, onReplace = { next -> if (stack.isNotEmpty()) stack[stack.lastIndex] = TvRoute.Player(next) }, onProgress = { pos, dur, url, subs ->
                         if (p.key.isNotEmpty() && url.isNotEmpty()) vm.saveProgress(Progress(p.key, p.title, p.image, url, subs, pos, dur, System.currentTimeMillis()))
                         // "How was it?" once you've really watched something (10 min or 30%).
@@ -179,16 +241,19 @@ fun TvApp(vm: AppViewModel = viewModel()) {
                 is TvRoute.Detail -> key(top) {
                     TvDetailScreen(vm, top.meta, onBack = pop, onOpen = openMeta, onPlay = play,
                         onPerson = { c -> push(TvRoute.Person(Screen.Person(c.id, c.name, c.photo))) },
-                        autoPlay = top.autoPlay && !top.played, onAutoPlayed = { top.played = true })
+                        autoPlay = top.autoPlay && !top.played, onAutoPlayed = { top.played = true }, autoManual = top.manual, autoEp = top.ep)
                 }
                 is TvRoute.Person -> key(top) { Box(Modifier.fillMaxSize().background(Bg)) { PersonScreen(vm, top.p, onBack = pop, onOpen = openMeta) } }
                 is TvRoute.Collection -> key(top) { TvCollectionScreen(vm, top.c, top.f, onBack = pop, onOpen = openMeta) }
                 is TvRoute.Settings -> key(top) { TvSettingsPage(vm, top.start, onClose = pop) }
                 null -> {
                     val edge: (FocusRequester) -> Unit = { fr -> openSidebar(fr) }
+                    // TV 0.9.0: side bar style (Settings › Look). Floating / Hidden give the page the whole screen.
+                    val barStyle = TvLook.bar(texts)
+                    val fullPage = TvLook.fullScreen(barStyle)
                     Box(
                         Modifier.fillMaxSize()
-                            .padding(start = TvRailW)
+                            .padding(start = if (fullPage) 0.dp else TvRailW)
                             .onFocusChanged { contentFocused[0] = it.hasFocus }
                             // While the menu is open, keys never go to the page (the search keypad used to keep them):
                             // focus is sent back to the menu.
@@ -199,9 +264,9 @@ fun TvApp(vm: AppViewModel = viewModel()) {
                             }
                             .focusRequester(contentFr),
                     ) {
-                      CompositionLocalProvider(LocalTvEdge provides TvRailEdge) {
+                      CompositionLocalProvider(LocalTvEdge provides when (barStyle) { "floating" -> 74.dp; "orbit" -> 82.dp; "hidden" -> 36.dp; else -> TvRailEdge }) {
                         when (tab) {
-                            TvTab.Home -> TvHomeScreen(vm, onOpen = openMeta, onPlay = play, onPlayMeta = playMeta,
+                            TvTab.Home -> TvHomeScreen(vm, onOpen = openMeta, onPlay = play, onPlayMeta = playMeta, onManualMeta = manualMeta,
                                 onOpenCollection = { c, f -> push(TvRoute.Collection(c, f)) }, onLeftEdge = edge, state = homeState)
                             TvTab.Search -> TvSearchScreen(vm, searchQuery, onOpen = openMeta, onLeftEdge = edge)
                             TvTab.Library -> TvLibraryHub(vm, onOpen = openMeta, onPlay = play, onLeftEdge = edge)
@@ -211,7 +276,7 @@ fun TvApp(vm: AppViewModel = viewModel()) {
                       }
                     }
                     TvRail(
-                        open = sidebar, vm = vm, current = tab, refocus = railTick.intValue,
+                        open = sidebar, vm = vm, current = tab, refocus = railTick.intValue, style = barStyle, openStyle = TvLook.openStyle(texts),
                         onSelect = { t ->
                             if (t == tab) closeSidebar()
                             else { returnFocus[0] = null; sidebar = false; tab = t }
@@ -226,7 +291,14 @@ fun TvApp(vm: AppViewModel = viewModel()) {
             key(m.id) { TvVoteCapsule(m, onVote = { v -> vm.vote(m, v) }, onDismiss = { voteFor = null }) }
         }
         if (profile != null && stack.isEmpty() && texts["guideDone"].isNullOrEmpty()) QuickGuide { vm.setText("guideDone", "1") }
-        if (showSplash) TvStartupSplash { showSplash = false }
+        // TV 0.9.0: new profiles (nothing watched or saved yet) choose their look once, after the quick guide.
+        if (profile != null && stack.isEmpty() && !texts["guideDone"].isNullOrEmpty() && texts[TvLook.ASKED].isNullOrEmpty()) {
+            val prog by vm.progress.collectAsStateWithLifecycle()
+            val saved by vm.myList.collectAsStateWithLifecycle()
+            if (prog.isEmpty() && saved.isEmpty()) TvLookFirstRun(vm) { vm.setText(TvLook.ASKED, "1") }
+            else LaunchedEffect(Unit) { vm.setText(TvLook.ASKED, "1") }
+        }
+        if (showSplash) TvStartupSplash(onFading = { splashFading = true }) { showSplash = false }
         SnackHost()
     }
 }

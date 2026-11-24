@@ -38,7 +38,7 @@ import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 
 /**
- * A place the VPN can go out from. [src] = "sx" (Xstream's own servers, set in Developer's Corner — only the country is
+ * A place the VPN can go out from. [src] = "sx" (StreamX's own servers, set in Developer's Corner — only the country is
  * shown) or the VPN the person connected with their own account ("Proton VPN"…; [conf] = its WireGuard file, kept only
  * on this phone). [mbps] / [ping] = the last speed test (0 = not tested).
  */
@@ -49,12 +49,12 @@ data class VpnServer(
     val mbps: Double = 0.0, val ping: Int = 0, val testedAt: Long = 0,
 )
 
-/** One Xstream server as published in Developer's Corner (no secrets: its address and public key). */
+/** One StreamX server as published in Developer's Corner (no secrets: its address and public key). */
 @Serializable data class SxServer(val id: String, val name: String, val cc: String, val endpoint: String, val pub: String, val dns: String = "1.1.1.1")
 
 /**
- * Xstream VPN: WireGuard (its official open-source library) for Xstream only — other apps keep the normal internet.
- * Smart (default): only hosts that don't answer from here go through it; Everything: all of Xstream.
+ * StreamX VPN: WireGuard (its official open-source library) for StreamX only — other apps keep the normal internet.
+ * Smart (default): only hosts that don't answer from here go through it; Everything: all of StreamX.
  * Auto picks the fastest tested country and skips ones too slow for HD (< 15 Mbps).
  */
 object Vpn {
@@ -68,10 +68,10 @@ object Vpn {
     val servers = MutableStateFlow<List<VpnServer>>(emptyList())
     val current = MutableStateFlow<VpnServer?>(null)
     val testing = MutableStateFlow(false)
-    /** (ip, country code) as sources see Xstream: [direct] without the VPN, [via] through it. */
+    /** (ip, country code) as sources see StreamX: [direct] without the VPN, [via] through it. */
     val direct = MutableStateFlow<Pair<String, String>?>(null)
     val via = MutableStateFlow<Pair<String, String>?>(null)
-    /** Another VPN app (Proton, Nord…) is on and Xstream goes through it. */
+    /** Another VPN app (Proton, Nord…) is on and StreamX goes through it. */
     val otherVpn = MutableStateFlow(false)
     /** Hosts that didn't answer from here: Smart mode sends only these through the VPN. */
     val smartHosts = MutableStateFlow<Set<String>>(emptySet())
@@ -90,7 +90,7 @@ object Vpn {
         override fun getName() = "streamx"
         override fun onStateChange(newState: Tunnel.State) {
             // Switched off outside the app (Android's VPN settings / quick tile, another VPN taking over): it stays off —
-            // it used to come back on by itself the next time Xstream opened, so it looked "connected" all the time.
+            // it used to come back on by itself the next time StreamX opened, so it looked "connected" all the time.
             if (newState == Tunnel.State.DOWN && state.value == St.ON) {
                 state.value = St.OFF; via.value = null; current.value = null; message.value = ""
                 runCatching { prefs().edit().putBoolean("wasOn", false).apply() }
@@ -119,13 +119,13 @@ object Vpn {
     fun setPick(id: String) { auto.value = false; pick.value = id; save { putBoolean("auto", false); putString("pick", id) }; if (state.value == St.ON) io.launch { connect() } }
     fun setGuard(on: Boolean) { guard.value = on; save { putBoolean("guard", on) } }
 
-    // ── Servers: Xstream's (from the cloud) + the person's own (imported files) ──
+    // ── Servers: StreamX's (from the cloud) + the person's own (imported files) ──
 
     private fun own(): List<VpnServer> = runCatching { Api.json.decodeFromString<List<VpnServer>>(prefs().getString("own", "[]") ?: "[]") }.getOrDefault(emptyList())
     private fun saveOwn(l: List<VpnServer>) = save { putString("own", Api.json.encodeToString(l)) }
     private fun tests(): Map<String, VpnServer> = runCatching { Api.json.decodeFromString<List<VpnServer>>(prefs().getString("tests", "[]") ?: "[]") }.getOrDefault(emptyList()).associateBy { it.id }
 
-    /** Xstream servers published in Developer's Corner (AppLook.fetch hands the list over). */
+    /** StreamX servers published in Developer's Corner (AppLook.fetch hands the list over). */
     fun setShared(json: String?) {
         sxList = runCatching { Api.json.decodeFromString<List<SxServer>>(json ?: "[]") }.getOrDefault(emptyList())
         if (app != null) reload()
@@ -172,7 +172,7 @@ object Vpn {
     fun flag(cc: String): String = if (cc.length != 2) "🌐" else cc.uppercase().map { String(Character.toChars(0x1F1E6 + (it - 'A'))) }.joinToString("")
     fun countryName(cc: String): String? = cc.takeIf { it.length == 2 }?.let { java.util.Locale("", it).displayCountry }
 
-    // ── This phone's key for Xstream servers (the private key never leaves the phone) ──
+    // ── This phone's key for StreamX servers (the private key never leaves the phone) ──
 
     private fun deviceKeys(): KeyPair {
         prefs().getString("key", null)?.let { k -> runCatching { return KeyPair(Key.fromBase64(k)) } }
@@ -183,11 +183,11 @@ object Vpn {
     }
     private fun devId() = prefs().getString("dev", null) ?: run { deviceKeys(); prefs().getString("dev", "d") ?: "d" }
 
-    /** Asks the Xstream server for an address (its helper adds this phone, usually in a few seconds). */
+    /** Asks the StreamX server for an address (its helper adds this phone, usually in a few seconds). */
     private suspend fun enroll(s: VpnServer): String? {
         prefs().getString("ip:${s.id}", null)?.let { return it }
-        val uid = Cloud.user.value?.uid ?: throw IOException("Sign in to Xstream first (Settings › Account) to use Xstream servers.")
-        val t = Cloud.token() ?: throw IOException("Sign in again to use Xstream servers.")
+        val uid = Cloud.user.value?.uid ?: throw IOException("Sign in to ${Brand.NAME} first (Settings › Account) to use ${Brand.NAME} servers.")
+        val t = Cloud.token() ?: throw IOException("Sign in again to use ${Brand.NAME} servers.")
         val sid = s.id.removePrefix("sx:")
         val url = "${CloudConfig.DB_URL}/vpnPeers/$uid/${devId()}/$sid.json?auth=$t"
         val body = buildJsonObject { put("pub", deviceKeys().publicKey.toBase64()); put("name", Together.myName.ifBlank { Cloud.user.value?.email?.substringBefore('@') ?: "" }); put("at", System.currentTimeMillis()) }
@@ -249,7 +249,7 @@ object Vpn {
     suspend fun connect(target: VpnServer? = null): Boolean {
         val s = lock.withLock {
             withContext(Dispatchers.IO) {
-                val s = target ?: choose() ?: run { state.value = St.ERROR; message.value = "No country yet: connect your VPN account, or add a Xstream server in Developer's Corner."; return@withContext null }
+                val s = target ?: choose() ?: run { state.value = St.ERROR; message.value = "No country yet: connect your VPN account, or add a ${Brand.NAME} server in Developer's Corner."; return@withContext null }
                 if (direct.value == null && state.value != St.ON) direct.value = trace("1.1.1.1")
                 state.value = St.CONNECTING; message.value = "Connecting to ${s.name}…"
                 runCatching {
@@ -411,7 +411,7 @@ object Vpn {
     }
 }
 
-/** Sites where people sign in to their own VPN account and download WireGuard files (opened inside Xstream). */
+/** Sites where people sign in to their own VPN account and download WireGuard files (opened inside StreamX). */
 data class VpnProvider(val name: String, val color: Long, val letter: String, val tag: String, val note: String, val url: String)
 
 val VpnProviders = listOf(

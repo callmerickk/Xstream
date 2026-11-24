@@ -71,6 +71,37 @@ object Call {
     val talking = MutableStateFlow<Set<String>>(emptySet())
     /** "Frame a friend": whose framing window is open. */
     val framing = MutableStateFlow<String?>(null)
+    /** 0.9.76: the call's state for the room panel ("" = no call with anyone yet). */
+    val status = MutableStateFlow("")
+    /** 0.9.76: why the camera couldn't start (shown in the room panel), null = fine. */
+    val camError = MutableStateFlow<String?>(null)
+
+    /** 0.9.76: relay servers (TURN) from our Cloudflare Worker — mobile networks often can't reach each other directly. */
+    @Volatile private var relayServers: List<PeerConnection.IceServer> = emptyList()
+    @Volatile private var relayUntil = 0L
+    private fun fetchRelay() {
+        if (System.currentTimeMillis() < relayUntil) return
+        runCatching {
+            val req = okhttp3.Request.Builder().url("https://streamx-home.callmerick093.workers.dev/turn").header("x-sx", "sx-home-1").build()
+            Api.http.newCall(req).execute().use { r ->
+                if (!r.isSuccessful) { ActLog.add("ROOM", "call · relay: not available (${r.code}) — direct only"); relayUntil = System.currentTimeMillis() + 10 * 60_000; return }
+                val root = Api.json.parseToJsonElement(r.body?.string().orEmpty())
+                val arr = (root as? JsonObject)?.get("iceServers") ?: root
+                val list = mutableListOf<PeerConnection.IceServer>()
+                fun add(o: JsonObject) {
+                    val urls = when (val u = o["urls"]) { is kotlinx.serialization.json.JsonArray -> u.mapNotNull { it.jsonPrimitive.contentOrNull }; null -> emptyList(); else -> listOfNotNull(u.jsonPrimitive.contentOrNull) }
+                    if (urls.isEmpty()) return
+                    val b = PeerConnection.IceServer.builder(urls)
+                    o["username"]?.jsonPrimitive?.contentOrNull?.let { b.setUsername(it) }
+                    o["credential"]?.jsonPrimitive?.contentOrNull?.let { b.setPassword(it) }
+                    list += b.createIceServer()
+                }
+                when (arr) { is kotlinx.serialization.json.JsonArray -> arr.forEach { (it as? JsonObject)?.let(::add) }; is JsonObject -> add(arr); else -> {} }
+                relayServers = list; relayUntil = System.currentTimeMillis() + 20 * 3600_000
+                ActLog.add("ROOM", "call · relay: ready (${list.size} server set${if (list.size == 1) "" else "s"})")
+            }
+        }.onFailure { ActLog.add("ROOM", "call · relay: couldn't reach (${it.javaClass.simpleName})"); relayUntil = System.currentTimeMillis() + 5 * 60_000 }
+    }
 
     private val exec = Executors.newSingleThreadExecutor()
     private val scope = CoroutineScope(SupervisorJob() + exec.asCoroutineDispatcher())
@@ -110,7 +141,7 @@ object Call {
 
     fun eglContext(): EglBase.Context? = egl?.eglBaseContext
 
-    /** Created on first use (only phones in a room with Xstream 0.9.41+ load WebRTC). */
+    /** Created on first use (only phones in a room with StreamX 0.9.41+ load WebRTC). */
     private fun ensureFactory(): PeerConnectionFactory? {
         factory?.let { return it }
         val ctx = app ?: return null
@@ -128,13 +159,14 @@ object Call {
                 .setVideoEncoderFactory(DefaultVideoEncoderFactory(e.eglBaseContext, true, true))
                 .setVideoDecoderFactory(DefaultVideoDecoderFactory(e.eglBaseContext))
                 .createPeerConnectionFactory().also { factory = it }
-        }.onFailure { android.util.Log.w("Xstream", "call: ${it.message}") }.getOrNull()
+        }.onFailure { android.util.Log.w(Brand.NAME, "call: ${it.message}") }.getOrNull()
     }
 
     private fun iceServers(): List<PeerConnection.IceServer> {
         val l = mutableListOf(PeerConnection.IceServer.builder(listOf("stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302")).createIceServer())
         val (u, n, pw) = AppLook.turn.value
         if (u.isNotBlank()) l += PeerConnection.IceServer.builder(u.split(",").map { it.trim() }.filter { it.isNotEmpty() }).setUsername(n).setPassword(pw).createIceServer()
+        l += relayServers
         return l
     }
 
@@ -146,13 +178,15 @@ object Call {
     fun onRoom(code: String) {
         scope.launch {
             room = code
+            status.value = ""
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { fetchRelay() }
             sigJob?.cancel()
             sigJob = scope.launch { Together.sig.collect { (from, msg) -> runCatching { onSignal(from, msg) } } }
             if (statsJob == null) statsJob = scope.launch { statsLoop() }
         }
     }
 
-    /** Everyone present (Xstream with voice/video): connect to them; people who left: hang up. */
+    /** Everyone present (StreamX with voice/video): connect to them; people who left: hang up. */
     fun onMembers(m: Map<String, RoomMember>) {
         scope.launch {
             if (room == null) return@launch
@@ -189,7 +223,24 @@ object Call {
                     refreshVideos()
                 }
             }
-            override fun onIceConnectionChange(s: PeerConnection.IceConnectionState) { scope.launch { refreshVideos() } }
+            override fun onIceConnectionChange(s: PeerConnection.IceConnectionState) {
+                scope.launch {
+                    refreshVideos()
+                    // 0.9.76: every friend's call state goes to the log and the room panel.
+                    val name = Together.members.value[uid]?.name ?: "friend"
+                    ActLog.add("ROOM", "call · $name: ${s.name.lowercase()}")
+                    when (s) {
+                        PeerConnection.IceConnectionState.CHECKING -> if (status.value != "Connected") status.value = "Connecting call…"
+                        PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> { status.value = "Connected"; logRoute(peer) }
+                        PeerConnection.IceConnectionState.FAILED -> {
+                            status.value = if (relayServers.isEmpty()) "Couldn't connect — trying relay" else "Couldn't connect — retrying"
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { relayUntil = 0; fetchRelay() }
+                        }
+                        PeerConnection.IceConnectionState.DISCONNECTED -> status.value = "Reconnecting call…"
+                        else -> {}
+                    }
+                }
+            }
             override fun onSignalingChange(s: PeerConnection.SignalingState) {}
             override fun onIceConnectionReceivingChange(b: Boolean) {}
             override fun onIceGatheringChange(s: PeerConnection.IceGatheringState) {}
@@ -339,9 +390,11 @@ object Call {
         micOn.value = on
         scope.launch {
             if (on && audioTrack == null) {
-                val f = ensureFactory() ?: return@launch
-                audioSrc = f.createAudioSource(MediaConstraints())
-                audioTrack = f.createAudioTrack("mic", audioSrc)
+                val f = ensureFactory() ?: run { ActLog.add("ROOM", "call · mic couldn't start — calling didn't load"); micOn.value = false; return@launch }
+                runCatching {
+                    audioSrc = f.createAudioSource(MediaConstraints())
+                    audioTrack = f.createAudioTrack("mic", audioSrc)
+                }.onFailure { ActLog.add("ROOM", "call · mic couldn't start — ${it.message}"); micOn.value = false; return@launch }
             }
             audioTrack?.setEnabled(on)
             adm?.setMicrophoneMute(!on)
@@ -362,16 +415,42 @@ object Call {
     private fun startCamera() {
         if (videoTrack != null) return
         val ctx = app ?: return
-        val f = ensureFactory() ?: return
-        val en = if (Camera2Enumerator.isSupported(ctx)) Camera2Enumerator(ctx) else Camera1Enumerator(false)
-        val name = en.deviceNames.firstOrNull { en.isFrontFacing(it) == frontCam.value } ?: en.deviceNames.firstOrNull() ?: return
-        val cap = en.createCapturer(name, null) ?: return
-        val helper = SurfaceTextureHelper.create("cam", egl?.eglBaseContext)
-        val src = f.createVideoSource(false)
-        cap.initialize(helper, ctx, src.capturerObserver)
-        cap.startCapture(640, 480, 24)
-        capturer = cap; texHelper = helper; videoSrc = src
-        videoTrack = f.createVideoTrack("cam", src)
+        fun fail(why: String) { camError.value = why; camOn.value = false; ActLog.add("ROOM", "call · camera couldn't start — $why") }
+        val f = ensureFactory() ?: return fail("video calling couldn't load on this phone")
+        if (androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            return fail("camera permission is off")
+        runCatching {
+            val en = if (Camera2Enumerator.isSupported(ctx)) Camera2Enumerator(ctx) else Camera1Enumerator(false)
+            val name = en.deviceNames.firstOrNull { en.isFrontFacing(it) == frontCam.value } ?: en.deviceNames.firstOrNull() ?: return fail("no camera found")
+            val cap = en.createCapturer(name, object : CameraVideoCapturer.CameraEventsHandler {
+                override fun onCameraError(e: String?) { fail(e ?: "camera error") }
+                override fun onCameraDisconnected() { fail("another app took the camera") }
+                override fun onCameraFreezed(e: String?) {}
+                override fun onCameraOpening(n: String?) {}
+                override fun onFirstFrameAvailable() { camError.value = null; ActLog.add("ROOM", "call · camera on (first picture)") }
+                override fun onCameraClosed() {}
+            }) ?: return fail("the camera couldn't be opened")
+            val helper = SurfaceTextureHelper.create("cam", egl?.eglBaseContext)
+            val src = f.createVideoSource(false)
+            cap.initialize(helper, ctx, src.capturerObserver)
+            // 0.9.76: 480p at 15 fps — less memory and data during a film (a phone was closed at 580 MB with the camera on).
+            cap.startCapture(640, 480, 15)
+            capturer = cap; texHelper = helper; videoSrc = src
+            videoTrack = f.createVideoTrack("cam", src)
+        }.onFailure { fail(it.message ?: it.javaClass.simpleName) }
+    }
+
+    /** 0.9.76: once connected, log whether the call goes straight between the phones or through the relay. */
+    private fun logRoute(p: Peer?) {
+        val pc = p?.pc ?: return
+        runCatching {
+            pc.getStats { rep ->
+                val pair = rep.statsMap.values.firstOrNull { it.type == "candidate-pair" && it.members["state"] == "succeeded" && it.members["nominated"] == true }
+                val local = pair?.members?.get("localCandidateId")?.let { rep.statsMap[it] }
+                val kind = local?.members?.get("candidateType")?.toString() ?: "?"
+                ActLog.add("ROOM", "call · route: ${if (kind == "relay") "through the relay" else "direct ($kind)"}")
+            }
+        }
     }
 
     private fun stopCamera() {
@@ -398,7 +477,7 @@ object Call {
 
     /** Left the room: hang up and turn the mic and camera off. */
     fun stop() {
-        micOn.value = false; camOn.value = false
+        micOn.value = false; camOn.value = false; status.value = ""; camError.value = null
         scope.launch {
             sigJob?.cancel(); sigJob = null
             statsJob?.cancel(); statsJob = null

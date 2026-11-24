@@ -165,7 +165,7 @@ object AvailableNow {
             open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             val pi = PendingIntent.getActivity(ctx, id.hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val n = NotificationCompat.Builder(ctx, CHANNEL).setSmallIcon(R.drawable.ic_stat_signal)
-                .setContentTitle("$name is out now").setContentText("Now available to watch at home — tap to open Xstream")
+                .setContentTitle("$name is out now").setContentText("Now available to watch at home — tap to open ${Brand.NAME}")
                 .setAutoCancel(true).setContentIntent(pi).build()
             NotificationManagerCompat.from(ctx).notify(id.hashCode(), n)
         }

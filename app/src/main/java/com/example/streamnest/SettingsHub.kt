@@ -40,18 +40,18 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 
-private const val REPO_URL = "https://github.com/callmerickk/Xstream"
+private const val REPO_URL = Brand.REPO_URL
 
 // ───────────── Help & Settings: page stack ─────────────
 
 @Composable
 fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) {
     val pages = remember { mutableStateListOf(start) }
-    var devUnlocked by remember { mutableStateOf(BuildConfig.LIVE_ONLY) }
+    var devUnlocked by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") } // kept while you open a result and come back
     val back: () -> Unit = {
         if (pages.size > 1) {
-            if (pages.last() == "dev" && !BuildConfig.LIVE_ONLY) devUnlocked = false
+            if (pages.last() == "dev") devUnlocked = false
             pages.removeAt(pages.lastIndex)
         } else onClose()
     }
@@ -60,7 +60,7 @@ fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) 
 
     when (pages.last()) {
         "profile" -> ProfileScreen(vm, back)
-        // Xstream: tapping your picture in My Space goes straight to editing.
+        // StreamX: tapping your picture in My Space goes straight to editing.
         "profileEdit" -> Box(Modifier.fillMaxSize().background(Bg)) {
             val cur = vm.current.value
             if (cur != null) ProfileEditor(vm, cur) { back() } else LaunchedEffect(Unit) { back() }
@@ -85,7 +85,6 @@ fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) 
         "extensions" -> ExtensionsPage(vm, back)
         "live" -> LiveServerPage(vm, back)
         "health" -> SourceHealthPage(back)
-        "access" -> Page("Access requests", back) { AccessAdmin() }
         "notifications" -> NotificationsPage(vm, back)
         "updates" -> UpdateLogPage(vm, back, open)
         "playback" -> PlaybackPage(vm, back)
@@ -161,10 +160,12 @@ internal data class ThemeOpt(val name: String, val c1: Long, val c2: Long, val e
                               val tint: String? = null, val note: String = "")
 
 internal val Themes = listOf(
-    // Midnight: Xstream Live's colours (navy-black page, dark navy glow at the top, red accent) — usable on any Home style.
+    // 0.9.76: Glass first (NEW) — every page frosted over the blurred picture, red accent (like StreamX TV).
+    ThemeOpt("Glass", 0xFFE50914, 0xFFFF6A5C, bg = "#0B0C12", tint = "#1B2236", note = "frosted, like the TV"),
+    // Midnight: Xstream Live's colours (navy-black page, dark navy glow at the top, red accent) — the "All Live" theme.
     ThemeOpt("Midnight", 0xFFE50914, 0xFFFF6A5C, bg = "#0F1014", tint = "#16204A", note = "Live colours"),
-    // Elegant (the default): Hotstar's deep blue-black background with the red accent and its shine.
-    ThemeOpt("Elegant", 0xFFE50914, 0xFFFF6A5C, bg = "#0F1014", note = "Xstream original"),
+    // Elegant: Hotstar's deep blue-black background with the red accent and its shine.
+    ThemeOpt("Elegant", 0xFFE50914, 0xFFFF6A5C, bg = "#0F1014", note = "${Brand.NAME} original"),
     ThemeOpt("White", 0xFFF2F2F2, 0xFFFFFFFF), ThemeOpt("Crimson", 0xFFE8323C, 0xFFFF6A5C, note = "deep black, crimson"),
     ThemeOpt("Ocean", 0xFF2E86DE, 0xFF5AB0FF), ThemeOpt("Violet", 0xFF9B3FD1, 0xFFC27BFF),
     ThemeOpt("Emerald", 0xFF2EAD5B, 0xFF5CD98A), ThemeOpt("Amber", 0xFFF5A20A, 0xFFFFC857),
@@ -231,17 +232,18 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
     val navNames = linkedMapOf("adaptive" to "Adaptive", "expanded" to "Always Expanded", "compact" to "Always Compact")
 
     Page("Layout", onBack) {
-        // Home style, Bottom bar and Theme: each picked on its own from preview cards (any mix), plus Quick looks.
-        if (!BuildConfig.IS_TV) {
-            SectionLabel("Look")
-            LookSection(vm) { t -> if (t == null) editorNew = true else editor = t }
-        } else {
+        // TV 0.9.3: the TV's Home style, side bar (closed + open) and colours, with a preview, first on this page.
+        if (BuildConfig.IS_TV) { SectionLabel("Look"); TvLookBlock(vm) }
+        // 0.9.74: Home style first on Layout, with pictures (it was hidden under Home Layout).
+        // 0.9.75 (from Xstream): Look — Home style, Bottom bar and Theme, each from preview cards, plus Quick looks.
+        if (!BuildConfig.IS_TV) { SectionLabel("Look"); LookSection(vm) { t -> if (t == null) editorNew = true else editor = t } }
+        if (BuildConfig.IS_TV) {
         SectionLabel("Theme")
         SettingsCard {
             Text("Classic themes", Modifier.padding(start = 20.dp, top = 18.dp, bottom = 4.dp), fontSize = 15.sp, color = Muted, letterSpacing = 1.sp)
             Themes.filter { !it.enhanced }.chunked(3).forEach { row ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    row.forEach { th -> ThemeDot(th.name, Color(th.c1), Color(th.c2), false, false, cur == th.name) { applyTheme(vm, th.name, Color(th.c1), Color(th.c2), th.bg) } }
+                    row.forEach { th -> ThemeDot(th.name, Color(th.c1), Color(th.c2), false, false, cur == th.name) { applyTheme(vm, th.name, Color(th.c1), Color(th.c2), th.bg); th.tint?.let { vm.setText("deckTint", it) } } }
                     repeat(3 - row.size) { Spacer(Modifier.width(96.dp)) }
                 }
             }
@@ -292,7 +294,7 @@ private fun LayoutPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> U
                 RowDivider(20.dp)
                 ToggleRow("Card border", "White edge and glow around the top cards on Home.", texts["deckBorder"] == "on") { vm.setText("deckBorder", if (it) "on" else "off") }
                 RowDivider(20.dp)
-                ToggleRow("Adult content", "Show 18+ titles and collections in search.", texts["adultOn"] != "no") { vm.setText("adultOn", if (it) "yes" else "no") }
+                ToggleRow("Adult content", "Show 18+ titles in search and on Home (off by default).", texts["adultOn"] == "yes") { vm.setText("adultOn", if (it) "yes" else "no") }
             }
         }
         if (!BuildConfig.IS_TV) {
@@ -381,12 +383,33 @@ private fun HomeLayoutPage(vm: AppViewModel, onBack: () -> Unit) {
             Text("$visibleCount of ${rows.size} rows visible • Hero ${if (isOn(v("showHero"))) "on" else "off"}", fontSize = 16.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
             Text("Hide rows you don't need and move your favourites up.", fontSize = 13.sp, color = Muted, modifier = Modifier.padding(top = 6.dp))
         }
+        // 0.9.72 (from Xstream): Home style — StreamX's own cards (default) or Xstream's "Live" curved card.
+        if (!BuildConfig.IS_TV) {
+            SectionLabel("Home style")
+            SettingsCard {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+                    Text("Big cards at the top of Home", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text("${Brand.NAME}: the sliding stack (as always). Live: one wide curved card with a red glow, Play, Trailer and My List.",
+                        fontSize = 13.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
+                    Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val cur = homeStyleOf(texts)
+                        FilterChip(cur == "streamx", { vm.setText("homeStyle", "streamx") }, { Text("${Brand.NAME}") })
+                        FilterChip(cur == "live", { vm.setText("homeStyle", "live") }, { Text("Live") })
+                    }
+                }
+            }
+        }
         SectionLabel("Home layout")
         SettingsCard {
             ToggleRow("Show Hero Section", "Display the sliding cards at the top of Home.", isOn(v("showHero"))) { vm.setText("showHero", if (it) "yes" else "no") }
             RowDivider(20.dp)
-            ToggleRow("Trailers on cards", "When you swipe to a card yourself, its trailer plays muted (tap the speaker for sound).", isOn(v("cardTrailers"))) { vm.setText("cardTrailers", if (it) "yes" else "no") }
-            RowDivider(20.dp)
+            if (BuildConfig.IS_TV) {
+                ToggleRow("Trailers on the big card", "Off by default. On: the big card's trailer plays after 5 s on it, with sound — try it on your TV.", isOn(texts["tvTrailers"] ?: "no")) { vm.setText("tvTrailers", if (it) "yes" else "no") }
+                RowDivider(20.dp)
+            } else if (!TrailersPaused.on) {
+                ToggleRow("Trailers on cards", "When you swipe to a card yourself, its trailer plays muted (tap the speaker for sound).", isOn(v("cardTrailers"))) { vm.setText("cardTrailers", if (it) "yes" else "no") }
+                RowDivider(20.dp)
+            }
             ToggleRow("Auto-slide", "Cards move on their own every few seconds.", v("autoSlide").trim().lowercase() != "no") { vm.setText("autoSlide", if (it) "yes" else "no") }
             Row(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(3, 5, 8, 10).forEach { sec ->
@@ -431,7 +454,7 @@ private fun HomeLayoutPage(vm: AppViewModel, onBack: () -> Unit) {
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE50914), contentColor = Color.White)) { Text("Publish ${push.size} row(s) + row names", fontWeight = FontWeight.Bold) }
                 pubMsg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Muted) }
             }
-            if (!dev && rows.any { it.pinned }) Text("Rows with a lock are set by Xstream for everyone. Hold and drag your own rows to move them.",
+            if (!dev && rows.any { it.pinned }) Text("Rows with a lock are set by ${Brand.NAME} for everyone. Hold and drag your own rows to move them.",
                 Modifier.padding(horizontal = 24.dp, vertical = 4.dp), fontSize = 13.sp, color = Muted)
             SettingsCard {
                 ReorderColumn(rows, key = { it.title }, locked = { it.pinned }, onMove = { f, to ->
@@ -445,10 +468,10 @@ private fun HomeLayoutPage(vm: AppViewModel, onBack: () -> Unit) {
                     Column(Modifier.background(if (dragging) Color(0xFF26262C) else Color.Transparent)) {
                         if (i > 0) RowDivider(20.dp)
                         Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 4.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (shelf.pinned) Icon(Icons.Default.Lock, "Set by Xstream", Modifier.padding(end = 10.dp).size(18.dp), tint = Accent)
+                            if (shelf.pinned) Icon(Icons.Default.Lock, "Set by ${Brand.NAME}", Modifier.padding(end = 10.dp).size(18.dp), tint = Accent)
                             Column(Modifier.weight(1f)) {
                                 Text(rowName(shelf.title) ?: shelf.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(if (dev && rowName(shelf.title) != null) "Was: ${shelf.title}" else "${shelf.items.size} titles · ${if (shelf.pinned) "Set by Xstream" else if (visible) "Visible" else "Hidden"}",
+                                Text(if (dev && rowName(shelf.title) != null) "Was: ${shelf.title}" else "${shelf.items.size} titles · ${if (shelf.pinned) "Set by ${Brand.NAME}" else if (visible) "Visible" else "Hidden"}",
                                     fontSize = 13.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             if (dev) IconButton({ renaming = !renaming }) { Icon(Icons.Default.Edit, "Rename row", tint = if (renaming) Accent else Color.White) }
@@ -705,8 +728,8 @@ private fun AppIconPicker() {
         val name = AppIcons.all.first { it.id == id }.label
         PremiumAlert(
             onDismissRequest = { ask = null },
-            title = { Text("Restart Xstream to apply the new icon?") },
-            text = { Text("$name will replace your current app icon. Restart now, or choose Later and it changes the next time Xstream is fully closed and opened again.") },
+            title = { Text("Restart ${Brand.NAME} to apply the new icon?") },
+            text = { Text("$name will replace your current app icon. Restart now, or choose Later and it changes the next time ${Brand.NAME} is fully closed and opened again.") },
             confirmButton = {
                 Button({ AppIcons.markPicked(ctx); (ctx as? android.app.Activity)?.let { AppIcons.applyAndRestart(it, id) } }, shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = BtnColor, contentColor = OnBtn)) { Text("Restart now", fontWeight = FontWeight.SemiBold) }
@@ -724,18 +747,14 @@ private fun AppIconPicker() {
 private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> Unit) {
     Page("Sources & Extensions", onBack) {
         // 1 · How you watch (Turbo / Classic), 2 · Sources, Extensions and Filters, 3 · Recommendations — each its own card.
-        // Xstream Live: plugins / addons stay hidden unless Developer's Corner turns them on.
-        val liveOnly = BuildConfig.LIVE_ONLY && vm.texts.collectAsStateWithLifecycle().value["devSources"] != "on"
-        if (!BuildConfig.IS_TV && !liveOnly) {
-            SectionLabel("How you watch")
-            WatchModeCard(vm)
-        }
-        SectionLabel(if (liveOnly) "Live server" else "Sources & extensions")
+        SectionLabel("How you watch")
+        WatchModeCard(vm)
+        SectionLabel("Sources & extensions")
         SettingsCard {
-            if (!liveOnly) SettingRow(null, "Sources", "Install, remove, refresh and sort your add-ons.") { open("addons") }
+            SettingRow(null, "Sources", "Install, remove, refresh and sort your add-ons.") { open("addons") }
             if (!BuildConfig.IS_TV) {
-                if (!liveOnly) RowDivider(20.dp)
-                if (!liveOnly) SettingRow(null, "Extensions", "Add Nuvio extension repositories and switch providers on or off.") { open("extensions") }
+                RowDivider(20.dp)
+                SettingRow(null, "Extensions", "Add Nuvio extension repositories and switch providers on or off.") { open("extensions") }
                 if (BuildConfig.HAS_LIVE) {
                     RowDivider(20.dp)
                     val ls by LiveServer.state.collectAsStateWithLifecycle()
@@ -743,7 +762,9 @@ private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> 
                 }
             }
             RowDivider(20.dp)
-            SettingRow(null, "Filters", "Quality, audio language, what to hide — on top of Xstream's own picks.") { open("quickPlay") }
+            SettingRow(null, "Extensions", "Add Nuvio extension repositories and switch providers on or off.") { open("extensions") }
+            RowDivider(20.dp)
+            SettingRow(null, "Filters", "Quality, audio language, what to hide — on top of ${Brand.NAME}'s own picks.") { open("quickPlay") }
         }
         SectionLabel("Recommendations")
         SettingsCard {
@@ -754,8 +775,10 @@ private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> 
             RowDivider(20.dp)
             ToggleRow("Hello out loud", "AIDEN speaks the greeting (never when your phone is on silent).", isOn(rt["aiWakeVoice"] ?: "yes")) { vm.setText("aiWakeVoice", if (it) "yes" else "no") }
             RowDivider(20.dp)
-            ToggleRow("Say \"Hey Aiden\"", "Opens the AI card hands-free whenever Xstream is open (only \"Hey Aiden\" during a movie). Downloads a small offline voice model (36 MB) once; nothing leaves the phone until it hears you.", isOn(rt["wakeOn"] ?: "no")) { vm.setText("wakeOn", if (it) "yes" else "no") }
-            RowDivider(20.dp)
+            if (!WakeWordOff) {
+            ToggleRow("Say \"Hey Aiden\"", "Opens the AI card hands-free whenever ${Brand.NAME} is open (only \"Hey Aiden\" during a movie). Downloads a small offline voice model (36 MB) once; nothing leaves the phone until it hears you.", isOn(rt["wakeOn"] ?: "yes")) { vm.setText("wakeOn", if (it) "yes" else "no") }
+                RowDivider(20.dp)
+            }
             ToggleRow("Ask \"How was it?\"", "After watching, ask Go for it / Skip / Just surfing.", isOn(rt["askVote"] ?: Defaults["askVote"] ?: "yes")) { vm.setText("askVote", if (it) "yes" else "no") }
         }
     }
@@ -791,7 +814,7 @@ internal fun StreamFiltersPage(vm: AppViewModel, onBack: () -> Unit) {
                     val cur = rules[d.id] ?: TagRule.Off
                     Column(Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
                         Text(d.label, fontSize = 17.sp, fontWeight = FontWeight.Medium)
-                        Row(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF222228)).padding(3.dp)) {
+                        Row(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(glassy(Color(0xFF222228))).padding(3.dp)) {
                             TagRule.entries.forEach { r ->
                                 val on = r == cur
                                 val c = when (r) { TagRule.Exclude -> Color(0xFFE5484D); TagRule.Forced -> Accent; TagRule.Include -> Color(0xFF3FB27F); else -> Color(0xFF3A3A42) }
@@ -852,10 +875,10 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
         SectionLabel("Installed addons")
         val devView = Public.dev
         if (devView) PublishBar("Publish these add-ons for everyone") { PublishAll.addons(vm) }
-        // Normal users: the built-in servers are looked after by Xstream (no names, nothing to change).
+        // Normal users: the built-in servers are looked after by StreamX (no names, nothing to change).
         if (!devView && addons.any { Public.isDevChoice(it) }) Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).fillMaxWidth().clip(CardShape).background(CardBg).padding(18.dp)) {
             Text("Built-in servers", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text("The quick server and HD servers are set up and looked after by Xstream.", fontSize = 14.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
+            Text("The quick server and HD servers are set up and looked after by ${Brand.NAME}.", fontSize = 14.sp, color = Muted, modifier = Modifier.padding(top = 4.dp))
         }
         val listed = addons.filter { devView || !Public.isDevChoice(it) }
         ReorderColumn(listed, key = { it.baseUrl }, locked = { it.baseUrl == CINEMETA || it.baseUrl.contains("opensubtitles", true) }, holdWholeRow = false, onMove = { f, to ->
@@ -902,7 +925,7 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
                         runCatching { addonCtx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(vm.configureUrl(a))).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
                             .onFailure { Snack.show("No browser to open the addon's settings") }
                     }) { Icon(Icons.Default.Settings, "Configure") }
-                    // Rename: the name shown everywhere in Xstream (the addon itself doesn't change).
+                    // Rename: the name shown everywhere in StreamX (the addon itself doesn't change).
                     if (renaming) {
                         var nm by remember { mutableStateOf(a.label()) }
                         // Saves the name for THIS addon (by its link) and moves its Quick Start tick to the new name.
@@ -919,7 +942,7 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
                             title = { Text("Rename addon", fontWeight = FontWeight.Bold) },
                             text = {
                                 Column {
-                                    Text("Only this addon. Its name everywhere in Xstream; a name with Pengu makes it a quick server, with HdHub the HD step.", fontSize = 13.sp, color = Muted)
+                                    Text("Only this addon. Its name everywhere in ${Brand.NAME}; a name with Pengu makes it a quick server, with HdHub the HD step.", fontSize = 13.sp, color = Muted)
                                     OutlinedTextField(nm, { nm = it.take(40) }, Modifier.fillMaxWidth().padding(top = 10.dp).tvOkKeyboard(top = 8.dp), singleLine = true, label = { Text("Name") }, keyboardOptions = tvKeyboard())
                                 }
                             },
@@ -992,7 +1015,7 @@ private fun AdvancedPage(vm: AppViewModel, onBack: () -> Unit, open: (String) ->
     Page("Advanced", onBack) {
         SectionLabel("Startup")
         SettingsCard {
-            ToggleRow("Startup animation", "Play the Xstream logo animation when the app opens.", isOn(texts["splash"] ?: "yes")) {
+            ToggleRow("Startup animation", "Play the ${Brand.NAME} logo animation when the app opens.", isOn(texts["splash"] ?: "yes")) {
                 vm.setText("splash", if (it) "yes" else "no")
             }
             RowDivider(20.dp)
@@ -1018,8 +1041,6 @@ private fun AdvancedPage(vm: AppViewModel, onBack: () -> Unit, open: (String) ->
                 SettingRow(Icons.Default.Code, "Developer's Corner", "App name, logo, password and UI editing.") { open("dev") }
                 RowDivider(20.dp)
                 SettingRow(null, "Source health", "Which plugins and addons find and play links, and why they fail.") { open("health") }
-                RowDivider(20.dp)
-                SettingRow(null, "Access requests", "Approve who can use Xstream, and turn approval on or off.") { open("access") }
             }
         }
     }
@@ -1083,12 +1104,12 @@ private fun UpdateLogPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -
             verticalAlignment = Alignment.CenterVertically) {
             androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(AppLook.logoRes(AppLook.logo.value)), null, Modifier.size(44.dp))
             Column(Modifier.padding(start = 14.dp)) {
-                Text("10 October 2026 · Xstream was born ✦", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                Text("10 October 2026 · ${Brand.NAME} was born ✦", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                 Text("Where it all started. Made by Rick.", Modifier.padding(top = 2.dp), fontSize = 12.5.sp, color = Muted)
             }
         }
         // Seven taps on the version: Developer's Corner (password or fingerprint still needed).
-        Text("Xstream ${BuildConfig.VERSION_NAME}", Modifier.fillMaxWidth().clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {
+        Text("${Brand.NAME} ${BuildConfig.VERSION_NAME}", Modifier.fillMaxWidth().clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {
             taps++; if (taps >= 7) { taps = 0; open("dev") }
         }.padding(top = 8.dp), textAlign = TextAlign.Center, fontSize = 12.sp, color = Muted)
         // In-app updates from GitHub Releases.
@@ -1171,6 +1192,11 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
             "player, auto-play, regex, subtitle and start-volume settings")
         SectionLabel("Picture preference")
         SettingsCard {
+            // 0.9.76: HDR switch (phones) — off by default: strictly no HDR copies; on: offered and played without limits.
+            if (!BuildConfig.IS_TV) {
+                ToggleRow("HDR", "Off: no HDR copy is ever offered or played. On: HDR copies are offered and play without any limit.", v("hdrOn") == "on") { vm.setText("hdrOn", if (it) "on" else "off") }
+                RowDivider(20.dp)
+            }
             ToggleRow("Match my screen", "HDR moves up only when this screen can show HDR (HDR on a normal screen looks washed out).", isOn(v("picMatch").ifBlank { "yes" })) { vm.setText("picMatch", yn(it)) }
             RowDivider(20.dp)
             Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
@@ -1178,7 +1204,7 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
                 val order = (v("picPref").split("|").filter { it in PicturePref.ALL } + PicturePref.ALL).distinct()
                 fun save(l: List<String>) = vm.setText("picPref", l.joinToString("|"))
                 ReorderColumn(order, key = { it }, onMove = { f, to -> save(order.toMutableList().apply { add(to, removeAt(f)) }) }) { tag, i, _, handle ->
-                    Row(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF222228)).padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    Row(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(glassy(Color(0xFF222228))).padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Text("${i + 1}", Modifier.width(24.dp), fontWeight = FontWeight.Bold, color = Accent)
                         Text(tag, Modifier.weight(1f), fontSize = 15.sp)
@@ -1359,6 +1385,10 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
 
         SectionLabel("Skip segments")
         SettingsCard {
+            if (BuildConfig.IS_TV) {
+                val fr = texts["tvFps2"] ?: "off"
+                ToggleRow("Match frame rate", "The TV switches to the film's frame rate (24 / 25 fps) while it plays — smoother pans, but the screen goes black for 1–3 s when a video starts and when you leave it.", fr != "off") { vm.setText("tvFps2", if (it) "films" else "off") }
+            }
             ToggleRow("Skip Intro", "Use introdb.app to detect intros and recaps.", isOn(v("skipIntro"))) { vm.setText("skipIntro", yn(it)) }
             if (isOn(v("skipIntro"))) ToggleRow("Auto-skip intros & recaps", "Jump over them by themselves (each once — seek back to watch).", isOn(v("autoSkipIntro"))) { vm.setText("autoSkipIntro", yn(it)) }
             if (!BuildConfig.IS_TV) {
@@ -1414,7 +1444,7 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
 
         SectionLabel("Next episode")
         SettingsCard {
-            ToggleRow("Auto-play Next Episode", "Start the next episode automatically near the end.", isOn(v("autoNext"))) { vm.setText("autoNext", yn(it)) }
+            // Auto-play next episode: removed (the next episode starts when you pick it, or when this one ends).
             RowDivider(20.dp)
             Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
                 val th = v("nextThreshold").toFloatOrNull()?.let { if (it == 95f) 98f else it } ?: 98f
@@ -1437,7 +1467,7 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 modes.forEach { (key, pair) ->
                     val on = v("autoPlayMode") == key
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(if (on) Color(0xFF34343C) else Color(0xFF222228))
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(if (on) Color(0xFF34343C) else glassy(Color(0xFF222228)))
                         .clickable { vm.setText("autoPlayMode", key); vm.storePut("ownKey_autoPlayMode", "1"); modeDialog = false }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(pair.first, fontSize = 17.sp, fontWeight = FontWeight.Medium)
@@ -1532,7 +1562,7 @@ private fun NetworkPage(vm: AppViewModel, onBack: () -> Unit) {
                 Icon(Icons.Default.Refresh, "Check again", tint = Muted)
             }
         }
-        // VPN (Xstream only): on/off, IP check, Smart / Everything, your VPN accounts, countries.
+        // VPN (StreamX only): on/off, IP check, Smart / Everything, your VPN accounts, countries.
         if (!BuildConfig.IS_TV) VpnSection()
         SectionLabel("DNS provider")
         SettingsCard {
@@ -1703,7 +1733,7 @@ private fun NotificationsPage(vm: AppViewModel, onBack: () -> Unit) {
     var note by remember { mutableStateOf<String?>(null) }
     val askPermission = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { granted -> if (!granted) note = "Notifications are blocked for Xstream — alerts still show in the list below." }
+    ) { granted -> if (!granted) note = "Notifications are blocked for ${Brand.NAME} — alerts still show in the list below." }
     fun setOn(v: Boolean) {
         vm.setText("notifyOn", if (v) "yes" else "no")
         EpisodeAlerts.schedule(ctx, v)
@@ -1754,13 +1784,13 @@ private fun NotificationsPage(vm: AppViewModel, onBack: () -> Unit) {
 
 
 /**
- * Xstream phones (testing): where every stream comes from. Addons = as always (plugins are never loaded). Plugins = only
+ * StreamX phones (testing): where every stream comes from. Addons = as always (plugins are never loaded). Plugins = only
  * CloudStream / Nuvio plugins everywhere — Quick Play, Upgrade to 4K, Play manually, the player's sources.
  */
 @Composable
 internal fun SourceModeCard(vm: AppViewModel) {
     val texts by vm.texts.collectAsStateWithLifecycle()
-    val plugins = texts["srcMode"] == "plugins"
+    val plugins = texts["srcMode"].let { it.isNullOrEmpty() || it == "plugins" }
     SettingsCard {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
             Text("Source mode", fontSize = 17.sp, fontWeight = FontWeight.Medium)
@@ -1772,6 +1802,51 @@ internal fun SourceModeCard(vm: AppViewModel) {
                     Text(label, Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(if (sel) Color.White else Color.Transparent)
                         .clickable { vm.setText("srcMode", k); forgetAllStreams() }.padding(vertical = 10.dp),
                         fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (sel) Color.Black else Color.White, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                }
+            }
+        }
+    }
+}
+
+
+/** 0.9.74: Home style picker with drawn previews: StreamX's sliding stack vs the Live curved card. */
+@Composable
+private fun PhoneHomeStylePicker(vm: AppViewModel, cur: String) {
+    SettingsCard {
+        Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            listOf("streamx" to "${Brand.NAME}", "live" to "Live").forEach { (key, name) ->
+                val on = cur == key
+                val sh = RoundedCornerShape(16.dp)
+                Column(Modifier.weight(1f).clip(sh)
+                    .border(if (on) 2.dp else 1.dp, if (on) Color.White else Color(0x22FFFFFF), sh)
+                    .background(Color(0xFF101014))
+                    .clickable { vm.setText("homeStyle", key) }.padding(10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
+                    androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(120.dp)) {
+                        val w = size.width; val h = size.height
+                        val cr = androidx.compose.ui.geometry.CornerRadius(14f, 14f)
+                        if (key == "streamx") {
+                            // Sliding stack: two cards peeking behind the front card.
+                            drawRoundRect(Color(0xFF2A2A33), androidx.compose.ui.geometry.Offset(w * 0.22f, h * 0.06f), androidx.compose.ui.geometry.Size(w * 0.56f, h * 0.62f), cr)
+                            drawRoundRect(Color(0xFF3A3A46), androidx.compose.ui.geometry.Offset(w * 0.14f, h * 0.11f), androidx.compose.ui.geometry.Size(w * 0.72f, h * 0.62f), cr)
+                            drawRoundRect(Brush.verticalGradient(listOf(Color(0xFF8E1B24), Color(0xFF2B0B10))), androidx.compose.ui.geometry.Offset(w * 0.06f, h * 0.17f), androidx.compose.ui.geometry.Size(w * 0.88f, h * 0.62f), cr)
+                        } else {
+                            // Live: one wide card with a curved bottom and a red glow under it.
+                            drawOval(Brush.radialGradient(listOf(Color(0x88E50914), Color.Transparent), center = androidx.compose.ui.geometry.Offset(w / 2, h * 0.82f), radius = w * 0.55f),
+                                androidx.compose.ui.geometry.Offset(0f, h * 0.55f), androidx.compose.ui.geometry.Size(w, h * 0.45f))
+                            val path = androidx.compose.ui.graphics.Path().apply {
+                                moveTo(w * 0.04f, h * 0.06f); lineTo(w * 0.96f, h * 0.06f); lineTo(w * 0.96f, h * 0.70f)
+                                quadraticTo(w / 2, h * 0.86f, w * 0.04f, h * 0.70f); close()
+                            }
+                            drawPath(path, Brush.verticalGradient(listOf(Color(0xFF3B3B4A), Color(0xFF14141A))))
+                            drawRoundRect(Color(0xFFE50914), androidx.compose.ui.geometry.Offset(w * 0.12f, h * 0.48f), androidx.compose.ui.geometry.Size(w * 0.22f, h * 0.1f), androidx.compose.ui.geometry.CornerRadius(20f, 20f))
+                        }
+                        // Rows of posters under the cards.
+                        repeat(4) { i -> drawRoundRect(Color(0xFF26262E), androidx.compose.ui.geometry.Offset(w * (0.04f + i * 0.245f), h * 0.86f), androidx.compose.ui.geometry.Size(w * 0.2f, h * 0.14f), androidx.compose.ui.geometry.CornerRadius(6f, 6f)) }
+                    }
+                    Text(name, Modifier.padding(top = 8.dp), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (key == "streamx") "Sliding card stack" else "Wide curved card", fontSize = 12.sp, color = Muted)
+                    if (on) Text("✓ In use", fontSize = 12.sp, color = Color.White, modifier = Modifier.padding(top = 2.dp))
                 }
             }
         }

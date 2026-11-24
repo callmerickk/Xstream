@@ -38,6 +38,7 @@ fun ActLogScreen(onClose: () -> Unit) {
     var text by remember { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf("ALL") }
     var query by remember { mutableStateOf("") }
+    // 0.9.73 (from Xstream): developer's log browser — every account, organised by app › version › device.
     var browser by remember { mutableStateOf(false) }
     if (browser) LogBrowser { browser = false }
     LaunchedEffect(Unit) {
@@ -56,15 +57,14 @@ fun ActLogScreen(onClose: () -> Unit) {
         Column(Modifier.fillMaxSize().background(Color(0xFF0B0B0F)).systemBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Activity log", Modifier.weight(1f), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                // Developer: every account's logs, organised by app › version › device.
-                if (Public.dev) Text("All accounts", Modifier.padding(end = 8.dp).clip(RoundedCornerShape(50)).background(Color(0xFF23242B)).clickable { browser = true }
+                if (Public.dev && !BuildConfig.IS_TV) Text("All accounts", Modifier.padding(end = 8.dp).clip(RoundedCornerShape(50)).background(glassy(Color(0xFF23242B))).clickable { browser = true }
                     .padding(horizontal = 12.dp, vertical = 7.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 Text("Share", Modifier.clip(RoundedCornerShape(50)).background(Color(0xFFE50914)).clickable {
                     scope.launch {
                         val f = withContext(Dispatchers.IO) {
                             val d = java.io.File(ctx.cacheDir, "logs").apply { mkdirs() }
                             val name = devices.firstOrNull { it.first == dev }?.second?.replace(Regex("[^A-Za-z0-9]+"), "-") ?: "phone"
-                            java.io.File(d, "xstream-log-$name.txt").apply { writeText(text ?: "") }
+                            java.io.File(d, "streamx-log-$name.txt").apply { writeText(text ?: "") }
                         }
                         val uri = androidx.core.content.FileProvider.getUriForFile(ctx, ctx.packageName + ".updates", f)
                         runCatching {
@@ -74,9 +74,9 @@ fun ActLogScreen(onClose: () -> Unit) {
                         }
                     }
                 }.padding(horizontal = 14.dp, vertical = 7.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                Text("Close", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(50)).background(Color(0xFF23242B)).clickable { onClose() }.padding(horizontal = 14.dp, vertical = 7.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text("Close", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(50)).background(glassy(Color(0xFF23242B))).clickable { onClose() }.padding(horizontal = 14.dp, vertical = 7.dp), fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
-            @Composable fun chip(t: String, on: Boolean, act: () -> Unit) = Text(t, Modifier.clip(RoundedCornerShape(50)).background(if (on) Color.White else Color(0xFF23242B))
+            @Composable fun chip(t: String, on: Boolean, act: () -> Unit) = Text(t, Modifier.clip(RoundedCornerShape(50)).background(if (on) Color.White else glassy(Color(0xFF23242B)))
                 .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(50)).clickable { act() }.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (on) Color.Black else Color.White)
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 devices.forEach { (id, n) -> chip(n, dev == id) { dev = id } }

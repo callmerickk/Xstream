@@ -28,7 +28,7 @@ data class RankEntry(
 @Serializable data class FailReport(val key: String, val label: String = "", val count: Int = 0, val reason: String = "", val at: Long = 0, val device: String = "")
 
 /**
- * Which provider groups play fastest and most reliably, from the Source Test (shared with every Xstream user through the
+ * Which provider groups play fastest and most reliably, from the Source Test (shared with every StreamX user through the
  * cloud), plus what this phone learns while you watch: a group that fails twice goes "under observation" (tried last).
  */
 object Ranker {
@@ -156,6 +156,15 @@ object Ranker {
         ActLog.add("RANK", "can't jump inside this file: ${k.take(90)} (labelled, never auto-picked)")
     }
     fun isUnseekableUrl(url: String, name: String? = null) = fileKey(url, name) in unseekableFiles
+    /** 0.9.78 (phone): files whose sound this phone has no hardware decoder for (TrueHD / DTS-HD / DTS:X, decoded in
+     *  software — stutters on many phones). Only for this session; such a file goes after the others. */
+    private val audioWeakFiles: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    fun markAudioWeak(url: String, name: String?, what: String) {
+        val k = fileKey(url, name)
+        if (k.isBlank() || !audioWeakFiles.add(k)) return
+        ActLog.add("RANK", "sound this phone decodes in software ($what): ${k.take(90)} (ranked after the others)")
+    }
+    fun audioWeak(s: StreamItem): Boolean = audioWeakFiles.isNotEmpty() && !s.isPlaylist() && fileKey(s.stream.url.orEmpty(), s.fileName()) in audioWeakFiles
     fun loadUnseekable() {
         // 0.8.2: the old per-server marks are dropped (they hid good files on the same servers).
         prefs?.edit()?.remove("unseekHosts")?.apply()
@@ -339,6 +348,8 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
             { if (it.isEmbedBackup()) 1 else 0 },
             // Recorded in a cinema (CAM / HDTS / HDTC): only when nothing else exists.
             { if (it.isCamCopy()) 1 else 0 },
+            // 0.9.78: sound the phone can only decode in software (found while playing) — after the copies without it.
+            { if (Ranker.audioWeak(it)) 1 else 0 },
             // Plugin mode, Auto: Netflix / Prime Video / Hotstar / MPlayer first, MovieBox (DASH first) as the backup, then the rest.
             { if (plugTiers) it.ottTier() else 0 },
             // Live server: a file bigger than Telegram can deliver per second (4K remuxes) only after the ones that can.
@@ -501,9 +512,7 @@ object HostStats {
     fun startBudgetMs(url: String): Long {
         val k = key(url)
         // Live server (this phone): it fetches the file's start before answering, 3–10 s; 30 s before it counts as stuck.
-        // 0.8.8: only the Live server; Xstream's own plugin links (Hotstar, Prime Video) also come through 127.0.0.1 and
-        // a silent one held a start for 11–24 s before the next link was tried.
-        if (url.startsWith("http://127.0.0.1")) return if (BuildConfig.LIVE_ONLY) 30_000L else 7_000L
+        if (url.startsWith("http://127.0.0.1")) return 30_000L
         if (failing(url)) return 3_500L
         val o = ok[k] ?: 0
         val slow = slowest[k] ?: 0L

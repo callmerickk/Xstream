@@ -26,6 +26,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.blur
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.graphics.Brush
@@ -49,21 +51,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -123,11 +115,11 @@ sealed interface Screen {
 
 @Composable
 fun App(vm: AppViewModel = viewModel()) {
-    // Kept in the ViewModel (from StreamX): if a phone rebuilds the screen (vivo turning to landscape for the player), the
-    // open screen — the player — stays instead of falling back to the page underneath.
+    // Kept in the ViewModel: if a phone rebuilds the screen (vivo turning to landscape for the player), the open
+    // screen — the player — stays instead of falling back to the page underneath.
     val stack = vm.navStack
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    // 0.8.19: not saved across a screen rebuild (it re-opened the AI by itself after rotation / theme change / restore).
+    // 0.9.74: not saved across a screen rebuild (it re-opened the AI by itself after rotation / theme change / app restore).
     var voiceOpen by remember { mutableStateOf(false) }
     val pop = { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex); Unit }
     val profile by vm.current.collectAsStateWithLifecycle()
@@ -135,11 +127,23 @@ fun App(vm: AppViewModel = viewModel()) {
     // Music (Live server): its pages open from the Home chip, the mini bar and the notification.
     // Account-level terms must be accepted before the rest of the app can be used.
     LegalNoticeGate(vm)
+    // 0.9.75: everyone starts on "All Live" (Live Home + Orbit bar + Midnight) once per profile; changeable in Settings › Layout.
+    LaunchedEffect(profile?.id) {
+        if (BuildConfig.IS_TV || profile == null || vm.texts.value["allLive0975"] == "1") return@LaunchedEffect
+        vm.setText("homeStyle", "live"); vm.setText("navBar", "orbit")
+        Themes.firstOrNull { it.name == "Midnight" }?.let { applyThemeOpt(vm, it) }
+        vm.setText("allLive0975", "1")
+        ActLog.add("APP", "look: All Live set (once)")
+    }
     // Activity log: which screen is open.
     LaunchedEffect(stack.lastOrNull(), tab, profile?.id) {
         val top = stack.lastOrNull()
         ActLog.screen = if (profile == null) "Who's watching" else top?.let { it::class.simpleName } ?: listOf("Home", "Search", "My Space", "Profile", "Live").getOrElse(tab) { "Tab $tab" }
         ActLog.add("SCREEN", ActLog.screen + (top?.let { " · " + it.toString().take(80) } ?: ""))
+        // 0.9.77: memory lines for a minute after each screen change (and relief above 75 %).
+        MemWatch.currentId = (top as? Screen.Detail)?.meta?.id ?: (top as? Screen.Player)?.key
+        MemWatch.onScreen(vm.appContext, ActLog.screen)
+        FrameStats.onScreen(ActLog.screen)
     }
 
     // Hotstar-style: scrolling down hides the filter pill and shrinks the bar, scrolling up restores both.
@@ -149,17 +153,6 @@ fun App(vm: AppViewModel = viewModel()) {
     // drive Animatables. So flipping it (each time the scroll direction changes) recomposes nothing — before, it
     // recomposed all of App() (and re-ran animateFloatAsState) right in the middle of a scroll.
     var scrolledDown by remember { mutableStateOf(false) }
-    // Xstream: the dock also hides after 4 s without a touch; any touch brings it back.
-    // (A plain timestamp, not state: touches never recompose anything; only the hide / show flip is observed.)
-    var idleHidden by remember { mutableStateOf(false) }
-    val lastTouch = remember { longArrayOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(250)
-            val idle = System.currentTimeMillis() - lastTouch[0] > 4_000
-            if (idle != idleHidden) idleHidden = idle
-        }
-    }
     val navStyle = texts["navStyle"] ?: "adaptive"
     val capsuleAnimatable = remember { Animatable(0f) }
     val barAnimatable = remember { Animatable(0f) }
@@ -167,7 +160,7 @@ fun App(vm: AppViewModel = viewModel()) {
         launch { capsuleAnimatable.follow { if (navStyle != "expanded" && scrolledDown) 1f else 0f } }
         launch {
             barAnimatable.follow {
-                val compact = when (navStyle) { "expanded" -> false; "compact" -> true; else -> scrolledDown } || idleHidden
+                val compact = when (navStyle) { "expanded" -> false; "compact" -> true; else -> scrolledDown }
                 if (compact) 1f else 0f
             }
         }
@@ -190,7 +183,7 @@ fun App(vm: AppViewModel = viewModel()) {
     val scope = rememberCoroutineScope()
 
     BackHandler(stack.isNotEmpty() || (profile != null && tab != 0)) { if (stack.isNotEmpty()) pop() else tab = 0 }
-    // Phones: Back on Home asks "Exit Xstream?" — Yes clears the temporary video data (saved starts, first frames,
+    // Phones: Back on Home asks "Exit StreamX?" — Yes clears the temporary video data (saved starts, first frames,
     // old logs and downloads) so the phone stays light; posters, settings and sign-ins stay.
     var askExit by remember { mutableStateOf(false) }
     val exitCtx = androidx.compose.ui.platform.LocalContext.current
@@ -200,7 +193,7 @@ fun App(vm: AppViewModel = viewModel()) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { askExit = false },
             containerColor = Color(0xFF1A1720),
-            title = { Text("Exit Xstream?", fontWeight = FontWeight.Bold) },
+            title = { Text("Exit ${Brand.NAME}?", fontWeight = FontWeight.Bold) },
             text = { Text("Leaving also clears temporary video data" + (if (used > 1_000_000) " (${used / 1_000_000} MB)" else "") +
                 " so your phone stays light. Posters, your settings and sign-ins are kept.", color = Color(0xFFBDB7C3)) },
             confirmButton = { androidx.compose.material3.TextButton({
@@ -221,30 +214,23 @@ fun App(vm: AppViewModel = viewModel()) {
     // Startup animation: once per app start (Help & Settings > Advanced > Startup animation).
     var voteFor by remember { mutableStateOf<Meta?>(null) }
     var showSplash by remember { mutableStateOf(!StartupState.splashShown && isOn(texts["splash"] ?: "yes")) }
-    // First start: "Sign in to Xstream" (or Skip) before "Who's watching?".
+    // First start: "Sign in to StreamX" (or Skip) before "Who's watching?".
     var gateOpen by rememberSaveable { mutableStateOf(!Cloud.decided.value) }
-
-    // Xstream: right after signing in, wait for the account (profiles, pictures, addons) before "Who's watching?".
+    // Right after signing in, wait for the account (profiles, pictures, addons) before "Who's watching?".
     val restoringCloud by Cloud.restoring.collectAsState()
     val restoredN by Cloud.restoredProfiles.collectAsState()
     var emptyAccount by remember { mutableStateOf(false) }
     var sawRestore by remember { mutableStateOf(false) }
     LaunchedEffect(restoringCloud, restoredN) {
         if (restoringCloud) sawRestore = true
-        else if (sawRestore) {
-            sawRestore = false
-            // No "this account has no profiles" screen: the first profile simply takes the account's name.
-            if (restoredN == 0) {
-                val nm = Cloud.user.value?.email?.substringBefore("@")?.replace(Regex("[._\\d]+"), " ")?.trim()
-                    ?.split(" ")?.firstOrNull { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
-                vm.profiles.value.firstOrNull { !it.kids && it.name == "Me" }?.let { p -> if (!nm.isNullOrBlank()) vm.renameProfile(p, nm, false) }
-            }
-        }
+        else if (sawRestore) { sawRestore = false; emptyAccount = restoredN == 0 }
     }
+
     CompositionLocalProvider(LocalTexts provides texts) {
         LaunchedEffect(profile == null) { if (profile == null) stack.clear() }
-        val open: (Meta) -> Unit = { stack.add(Screen.Detail(it)) }
-        // VR › Browse picked a title: leave this player, open its page, which starts it (again in VR).
+        // Titles from collections / search groups carry TMDB ids ("tmdb:movie:299536"): they are turned into the IMDb id
+        // first, so the title page loads (they opened with the TMDB id and every source answered "not found").
+        // 0.9.73 (from Xstream): VR › Browse picked a title: leave this player, open its page, which starts it (again in VR).
         val vrPick by VrState.openTitle.collectAsState()
         LaunchedEffect(vrPick) {
             val m = vrPick ?: return@LaunchedEffect
@@ -252,6 +238,14 @@ fun App(vm: AppViewModel = viewModel()) {
             while (stack.lastOrNull() is Screen.Player) stack.removeAt(stack.lastIndex)
             pendingDetailPlay.value = m.id
             stack.add(Screen.Detail(m))
+        }
+        val open: (Meta) -> Unit = { m ->
+            if (!m.id.startsWith("tmdb:")) stack.add(Screen.Detail(m))
+            else scope.launch {
+                val r = runCatching { vm.resolveForOpen(m) }.getOrNull()
+                if (r != null) stack.add(Screen.Detail(r))
+                else Snack.show(if (vm.tmdbKey().isEmpty()) "Add a TMDB key in Integrations to open this title" else "Couldn't open this title")
+            }
         }
         // "Hey Aiden": the offline wake word opens the AI card (anywhere in the app, also during a movie).
         val buddyCtx = androidx.compose.ui.platform.LocalContext.current
@@ -278,17 +272,24 @@ fun App(vm: AppViewModel = viewModel()) {
         LaunchedEffect(profile?.id, aiBusy, callMic, appResumed, texts["wakeOn"], musicLib, musicNow, songOn, micHeld, onPlayer) {
             WakeWord.onName = { if (!voiceOpen) { AiPlayerBus.duck(); voiceOpen = true } }
             // Not during a video either: the listening microphone showed Android's green privacy dot over the film.
-            val on = BuildConfig.HAS_AI && !BuildConfig.IS_TV && profile != null && !onPlayer && !aiBusy && !callMic && appResumed && !musicLib && !musicNow && !songOn && micHeld == 0 && isOn(texts["wakeOn"] ?: "no") && vm.store("aiOff0819") == "1"
+            // "Hey Aiden" is switched off for now (0.9.65): it didn't hear the name reliably and woke when not called.
+            val on = WakeWordOff.not() && !BuildConfig.IS_TV && profile != null && !onPlayer && !aiBusy && !callMic && appResumed && !musicLib && !musicNow && !songOn && micHeld == 0 && isOn(texts["wakeOn"] ?: "yes")
             if (on) { delay(700); WakeWord.start(buddyCtx) } else WakeWord.stop()
         }
         if (profile == null && gateOpen) CloudGate(onDone = { gateOpen = false })
         else if (profile == null && (restoringCloud || emptyAccount)) RestoreScreen(restoringCloud, onDifferent = { Cloud.signOut(); Cloud.restoring.value = false; emptyAccount = false; gateOpen = true }) { Cloud.restoring.value = false; emptyAccount = false }
-        else if (profile == null && texts["streamMode"] == null && BuildConfig.LIVE_ONLY) LaunchedEffect(Unit) { vm.setText("streamMode", "elite") }
         else if (profile == null && texts["streamMode"] == null) ModeChooser(vm) {}
-        else if (profile == null) WhoIsWatchingScreen(vm, active = !showSplash, onPlay = { stack.add(it) }, onOpen = { stack.add(Screen.Detail(it)) }) { tab = 0; scrolledDown = false }
+        // 0.9.74: phones get the Horizon profile page (from Xstream, with "no lift"); TV keeps its own.
+        else if (profile == null && !BuildConfig.IS_TV) HorizonWhoIsWatching(vm, !showSplash, onPicked = { tab = 0; scrolledDown = false },
+            onPlay = { stack.add(it) }, onOpen = open)
+        else if (profile == null) WhoIsWatchingScreen(vm, active = !showSplash) { tab = 0; scrolledDown = false }
         else when (val top = stack.lastOrNull()) {
             is Screen.Player -> key(top) {
-                PlayerScreen(vm, top, onBack = pop, onReplace = { next -> if (stack.isNotEmpty()) stack[stack.lastIndex] = next }, onProgress = { pos, dur, url, subs ->
+                // A saved link to the app's own relay (127.0.0.1:port) is dead after a restart (its port changes): the
+                // title is looked up fresh instead (Continue Watching used to fail first, then recover after 15–20 s).
+                val local = top.url.startsWith("http://127.0.0.1") || top.url.startsWith("http://localhost")
+                val start = if (local && top.key.isNotEmpty()) top.copy(url = "", find = true, instant = false) else top
+                PlayerScreen(vm, start, onBack = pop, onReplace = { next -> if (stack.isNotEmpty()) stack[stack.lastIndex] = next }, onProgress = { pos, dur, url, subs ->
                     if (top.key.isNotEmpty() && url.isNotEmpty()) vm.saveProgress(Progress(top.key, top.title, top.image, url, subs, pos, dur, System.currentTimeMillis(),
                         source = PlayingSrc.source.takeIf { PlayingSrc.url == url }, addon = PlayingSrc.addon.takeIf { PlayingSrc.url == url }))
                     // "How was it?" once you've really watched something (10 min or 30%).
@@ -303,18 +304,8 @@ fun App(vm: AppViewModel = viewModel()) {
                 })
             }
             is Screen.Detail -> key(top) {
-                // 0.8.9: a collection title with a TMDB id becomes its IMDb title before the page starts (its picture and
-                // story show meanwhile), so nothing is looked up or played for the wrong id.
-                var dm by remember { mutableStateOf(top.meta.takeIf { !it.id.startsWith("tmdb:") } ?: colImdbOf(top.meta.id)?.let { id -> top.meta.copy(id = id, type = if (top.meta.id.startsWith("tmdb:tv:")) "series" else "movie") }) }
-                if (dm == null) {
-                    LaunchedEffect(Unit) {
-                        val r = runCatching { vm.resolveForOpen(top.meta) }.getOrNull()
-                        if (r != null) dm = r.copy(poster = top.meta.poster ?: r.poster, background = top.meta.background ?: r.background)
-                        else { Snack.show(if (vm.tmdbKey().isEmpty()) "Add a TMDB key in Integrations to open this title" else "Couldn't open this title"); pop() }
-                    }
-                    TmdbOpening(top.meta)
-                } else PosterZoomIn {
-                    DetailScreen(vm, dm!!, onBack = pop, onOpen = open, sourcesFor = top.sourcesFor, onPlay = { stack.add(it) },
+                PosterZoomIn {
+                    DetailScreen(vm, top.meta, onBack = pop, onOpen = open, sourcesFor = top.sourcesFor, onPlay = { stack.add(it) },
                         onPerson = { c -> stack.add(Screen.Person(c.id, c.name, c.photo)) },
                         onTrailer = { stack.add(it) })
                 }
@@ -338,10 +329,7 @@ fun App(vm: AppViewModel = viewModel()) {
             Screen.Library -> LibraryPage(vm, onBack = pop, onOpen = open, onPlay = { stack.add(it) })
             is Screen.Watchlist -> key(top) { WatchlistPage(vm, onBack = pop, onOpen = open, startCalendar = top.calendar) }
             Screen.Notes -> NotificationsPage(onBack = pop, onTogether = { stack.add(Screen.Together()) }, onOpen = open)
-            null -> Box(Modifier.fillMaxSize().background(Bg).nestedScroll(scrollWatcher).pointerInput(Unit) {
-                // Watches every touch (never consumes it) to wake the dock.
-                awaitPointerEventScope { while (true) { awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial); lastTouch[0] = System.currentTimeMillis(); UserIdle.lastTouch = lastTouch[0]; if (idleHidden) idleHidden = false } }
-            }) {
+            null -> Box(Modifier.fillMaxSize().background(Bg).nestedScroll(scrollWatcher)) {
                 Box(Modifier.fillMaxSize().then(if (voiceOpen) Modifier.blur(10.dp) else Modifier)) {
                 when (tab) {
                     0 -> HomeScreen(
@@ -350,9 +338,11 @@ fun App(vm: AppViewModel = viewModel()) {
                         onAi = { voiceOpen = true },
                         onManual = { m, k -> stack.add(Screen.Detail(m, k)) },
                         onOpenCollection = { c, f -> stack.add(Screen.Collection(c.id, f.id)) },
+                        onNotes = { stack.add(Screen.Notes) },
+                        onTogether = { stack.add(Screen.Together()) },
                     )
                     1 -> SearchScreen(vm, "", open)
-                    3 -> LibraryPage(vm, onBack = null, onOpen = open, onPlay = { stack.add(it) })
+                    2 -> LibraryPage(vm, onBack = { tab = 0 }, onOpen = open, onPlay = { stack.add(it) })
                     else -> MySpaceScreen(
                         vm,
                         onSettings = { stack.add(Screen.Settings()) },
@@ -373,17 +363,12 @@ fun App(vm: AppViewModel = viewModel()) {
                     scrolledDown = false
                     if (it == 0 && tab == 0) { scope.launch { homeList.animateScrollToItem(0) }; vm.refresh() } else tab = it
                 }
-                // Bottom bar: StreamX's bar (default on phones) or the capsule dock. Both get out of the way while scrolling.
-                // Home style "Live" brings its glass Orbit bar; the other styles use the bar chosen in Settings.
-                val barKind = barKindOf(texts)
-                val sxBar = !BuildConfig.IS_TV && barKind == "streamx"
-                if (!(navHidden && tab == 3)) {
-                    if (!BuildConfig.IS_TV && barKind == "orbit") LiveBar(tab, vm, compact = capsuleAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
-                    else if (sxBar) StreamXBar(tab, vm, compact = capsuleAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
-                    else BottomNav(tab, vm, compact = barAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
+                // 0.9.75: Settings › Layout › Bottom bar — Orbit (Live), Horizon (StreamX) or Capsule.
+                if (!(navHidden && tab == 2)) when (barKindOf(texts)) {
+                    "orbit" -> PhoneOrbitBar(tab, vm, compact = capsuleAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
+                    "capsule" -> PhoneCapsuleBar(tab, vm, compact = barAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
+                    else -> BottomNav(tab, vm, compact = barAnim, onTab = onNavTab, modifier = Modifier.align(Alignment.BottomCenter).tourTarget("nav"))
                 }
-                // Music (Live server): the small player sits just above the dock while songs are queued.
-                // 0.8: the music mini player lives only inside Xstream Music (not over the video app).
                 val bellTogether by BellNav.together.collectAsState()
                 LaunchedEffect(bellTogether) { if (bellTogether) { BellNav.together.value = false; stack.add(Screen.Together()) } }
                 // Voice search handed a request to the AI.
@@ -472,7 +457,7 @@ fun App(vm: AppViewModel = viewModel()) {
             val topScreen = stack.lastOrNull()
             when {
                 topScreen == null && tab == 0 -> TourOverlay("home", HomeTour)
-                topScreen == null && tab == 2 -> TourOverlay("myspace", MySpaceTour)
+                topScreen == null && tab == 3 -> TourOverlay("myspace", MySpaceTour)
                 topScreen is Screen.Detail -> TourOverlay("detail", DetailTour)
                 topScreen is Screen.Player -> TourOverlay("player", PlayerTour)
             }
@@ -480,14 +465,11 @@ fun App(vm: AppViewModel = viewModel()) {
         if (profile != null && texts["guideDone"].isNullOrEmpty()) QuickGuide { vm.setText("guideDone", "1") }
         // First start on a profile: Turbo or Classic (each profile chooses once; Settings › Sources & Extensions later).
         if (!BuildConfig.IS_TV && profile != null && texts["srcMode"].isNullOrEmpty()) FirstWatchChooser(vm)
-        // Then once: what do you like to watch, and in which languages (Home is personalised from it).
-        else if (!BuildConfig.IS_TV && profile != null && !texts["guideDone"].isNullOrEmpty() && texts["tasteDone"].isNullOrEmpty() && !showSplash) TasteOnboarding(vm) {}
-        // Then once (new and existing profiles): titles you love — tap posters or search any title.
-        else if (profile != null && !texts["guideDone"].isNullOrEmpty() && tasteTitlesDue(texts, profile) && !showSplash && stack.lastOrNull() !is Screen.Player)
-            androidx.compose.ui.window.Dialog({}, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, decorFitsSystemWindows = false)) { TasteTitlesScreen(vm) {} }
-        // 0.8.7: then once — Choose your look (moving previews; Use this / Back).
-        else if (profile != null && !texts["guideDone"].isNullOrEmpty() && !texts["tasteDone"].isNullOrEmpty() && lookDue(texts, profile) && !showSplash && stack.lastOrNull() !is Screen.Player)
-            androidx.compose.ui.window.Dialog({}, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, decorFitsSystemWindows = false)) { FirstLookScreen(vm) {} }
+        // 0.9.76: "Choose your look" once per profile (new and existing): Home style + theme (Glass first, NEW). Skip = All Live.
+        else if (profile != null && !texts["guideDone"].isNullOrEmpty() && lookDue(texts, profile) && !showSplash && stack.lastOrNull() !is Screen.Player)
+            androidx.compose.ui.window.Dialog({}, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, decorFitsSystemWindows = false)) {
+                FirstLookScreen(vm) {}
+            }
         // Built-in servers (CNCVerse / HdHub links published from Developer's Corner) and the Connect PenguPlay card.
         // The look everyone shares (app logo, AI logo, X's voice) first — it's quick, and it used to wait behind the rest.
         LaunchedEffect(profile?.id) { if (profile != null) { Public.vm = vm; runCatching { AppLook.fetch(vm.appContext) }; runCatching { BuiltIns.sync(vm) }; runCatching { DevDefaults.sync(vm) }; runCatching { Official.apply(vm, vm.appContext) } } }
@@ -508,8 +490,8 @@ fun App(vm: AppViewModel = viewModel()) {
             // starts its own plugins at once, so playing is never slower. Plugins are checked (repaired, updated) and
             // woken on every start whenever any are switched on.
             delay(4_000)
-            // Xstream Live: no plugins are used, so none are loaded or woken (it cost data and battery at every start).
-            if (LiveLock.on) return@LaunchedEffect
+            // 0.9.79: quiet start — not while you are scrolling (at most 15 s more).
+            if (!BuildConfig.IS_TV) TvIdle.waitQuiet(1_500, 15_000)
             runCatching { CsPlugins.init(vm.appContext); CsPlugins.upkeep(); if (CsPlugins.enabled.value.isNotEmpty()) CsPlugins.warmAll() }
             if (!(vm.store("csWarm") == "yes" || vm.pluginMode())) return@LaunchedEffect
             // Plugin mode: the first two Continue Watching titles get their Quick Play links fetched now (kept 10 minutes),
@@ -533,15 +515,12 @@ fun App(vm: AppViewModel = viewModel()) {
                 if (tick % 3 == 0) cwAhead()
             }
         }
-        // Xstream: no "Connect PenguPlay" prompt — servers come from Developer's Corner.
+        // StreamX: no "Connect PenguPlay" prompt — servers come from Developer's Corner.
         val askWl by WatchlistAsk.pending.collectAsState()
         askWl?.let { m -> AddToWatchlistSheet(vm, m) { WatchlistAsk.pending.value = null } }
-        // Support Xstream: published by the developer; asks after an hour with the app open.
-        LaunchedEffect(profile?.id) { if (profile != null && !BuildConfig.IS_TV) { Donate.load(); Donate.timer(buddyCtx) } }
-        val donateAsk by Donate.ask.collectAsState()
-        if (donateAsk && profile != null && stack.lastOrNull() !is Screen.Player) DonateBubble { Donate.ask.value = false }
         val rmWl by WatchlistAsk.removing.collectAsState()
         rmWl?.let { (m, r) -> RemoveFriendPickSheet(vm, m, r) { WatchlistAsk.removing.value = null } }
+        if (profile != null && stack.isEmpty() && !showSplash && !texts["guideDone"].isNullOrEmpty()) PenguConnectPrompt(vm)
         if (showSplash) StartupSplash { showSplash = false }
         if (!BuildConfig.IS_TV) profile?.let { p -> MusicHost(vm, p.id, p.name) }
         SnackHost()
@@ -555,188 +534,149 @@ fun App(vm: AppViewModel = viewModel()) {
 private suspend fun Animatable<Float, AnimationVector1D>.follow(target: () -> Float) {
     var first = true
     snapshotFlow(target).distinctUntilChanged().collectLatest { v ->
-        // Xstream: hiding shrinks away quickly; coming back pops in with a little bounce, like a bubble.
-        if (first) { first = false; snapTo(v) }
-        else if (v < value) animateTo(v, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 360f))
-        else animateTo(v, tween(240, easing = androidx.compose.animation.core.FastOutLinearInEasing))
+        if (first) { first = false; snapTo(v) } else animateTo(v, tween(260))
     }
 }
 
-/**
- * Xstream dock: a floating capsule with a red horizon glow along its top edge. Scrolling down the page it shrinks away
- * like a bubble; scrolling back up it pops in again. Long-press your picture and, without lifting, slide onto another
- * profile (it ripples like water); lift to switch.
- */
+/** Hotstar-style bottom bar: 3 items, dark base with a glowing curved top edge. Shrinks while scrolling down. */
 @Composable
 fun BottomNav(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> Unit, modifier: Modifier = Modifier) {
+    var switcher by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
-    val profiles by vm.profiles.collectAsStateWithLifecycle()
-    val current by vm.current.collectAsStateWithLifecycle()
-    var bubble by remember { mutableStateOf(false) }
-    var hover by remember { mutableIntStateOf(-1) }
-    val slots = remember { mutableStateMapOf<Int, androidx.compose.ui.geometry.Rect>() }
-    val meOrigin = remember { arrayOf(Offset.Zero) }
-    val red = Accent
+    // The compact animation is a pure layer translation (draw phase): the bar's contents are not re-laid-out,
+    // recomposed or redrawn while it moves.
+    Box(modifier.fillMaxWidth().graphicsLayer { translationY = compact.value * 16.dp.toPx() }) {
+        Spacer(Modifier.matchParentSize().drawWithCache {
+            // Paths, brushes and strokes are built once per size / theme colour, not on every draw.
+            // A planet-like horizon: rises from the left, peaks a little right of centre, falls gently on the right.
+            val glow = Accent
+            val glow2 = Palette.accent2
+            val yl = 26.dp.toPx(); val yr = 18.dp.toPx(); val peak = (-6).dp.toPx()
+            val surface = Path().apply {
+                moveTo(0f, yl); quadraticBezierTo(size.width * 0.5f, peak, size.width, yr)
+                lineTo(size.width, size.height); lineTo(0f, size.height); close()
+            }
+            val base = Brush.verticalGradient(listOf(Color(0xFA120E18), Color(0xFF07080C)))
+            val edge = Path().apply { moveTo(0f, yl); quadraticBezierTo(size.width * 0.5f, peak, size.width, yr) }
+            // Light is strongest on the left and fades towards the right, like sunrise on a horizon.
+            val light = Brush.horizontalGradient(listOf(glow2, glow, glow.copy(alpha = 0.35f), glow.copy(alpha = 0.08f)))
+            val wide = Stroke(width = 14.dp.toPx())
+            val mid = Stroke(width = 7.dp.toPx())
+            val thin = Stroke(width = 2.2.dp.toPx())
+            onDrawBehind {
+                drawPath(surface, base)
+                drawPath(edge, light, style = wide, alpha = 0.10f)
+                drawPath(edge, light, style = mid, alpha = 0.22f)
+                drawPath(edge, light, style = thin)
+            }
+        })
+        Row(
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(top = 14.dp).height(66.dp),
+            horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically,
+        ) {
+            NavItem(tab == 0, t("navHome"), compact, { onTab(0) }) { c -> Icon(Icons.Default.Home, t("navHome"), Modifier.size(26.dp), tint = c) }
+            NavItem(tab == 1, t("navSearch"), compact, { onTab(1) }) { c -> Icon(Icons.Default.Search, t("navSearch"), Modifier.size(26.dp), tint = c) }
+            NavItem(tab == 2, "Library", compact, { onTab(2) }) { c -> Icon(Icons.Default.VideoLibrary, "Library", Modifier.size(26.dp), tint = c) }
+            Box {
+                val profiles by vm.profiles.collectAsStateWithLifecycle()
+                var hover by remember { mutableIntStateOf(-1) }
+                var adding by remember { mutableStateOf(false) }
+                val density = LocalDensity.current
+                val itemPx = with(density) { 72.dp.toPx() }
+                val gapPx = with(density) { 34.dp.toPx() }
+                val sel = tab == 3
+                val accent = BtnColor
+                val glow = remember(accent) { Brush.radialGradient(listOf(accent.copy(alpha = 0.42f), accent.copy(alpha = 0.10f), Color.Transparent)) }
+                Box(
+                    Modifier.width(96.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp))
+                        .pointerInput(profiles.size) {
+                            // Tap = Profile tab. Hold = the profiles capsule opens above; slide up and let go on a profile to switch.
+                            awaitEachGesture {
+                                val down = awaitFirstDown()
+                                val held = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                    while (true) { val e = awaitPointerEvent(); if (e.changes.all { !it.pressed }) return@withTimeoutOrNull false }
+                                    @Suppress("UNREACHABLE_CODE") false
+                                } == null
+                                if (!held) { onTab(3); return@awaitEachGesture }
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress); switcher = true; hover = -1
+                                while (true) {
+                                    val e = awaitPointerEvent()
+                                    val c = e.changes.firstOrNull() ?: break
+                                    if (!c.pressed) break
+                                    c.consume()
+                                    // Slots from the top: "+ Add profile", then the profiles; the finger is measured from the bar.
+                                    val up = -(c.position.y) - gapPx
+                                    val total = profiles.size + 1
+                                    val fromBottom = if (up < 0f) -1 else (up / itemPx).toInt()
+                                    val idx = if (fromBottom in 0 until total) { val top = total - 1 - fromBottom; if (top == 0) profiles.size else top - 1 } else -1
+                                    if (idx != hover) { hover = idx; if (idx >= 0) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+                                }
+                                val wantsAdd = hover == profiles.size
+                                val pick = profiles.getOrNull(hover)
+                                hover = -1
+                                if (wantsAdd) { switcher = false; adding = true }
+                                if (pick != null) {
+                                    switcher = false
+                                    if (pick.id == vm.current.value?.id) onTab(3) else ProfileLock.ask(pick) { vm.selectProfile(pick); onTab(3) }
+                                }
+                            }
+                        }
+                        .then(if (sel) Modifier.background(glow) else Modifier),
+                    Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Avatar(vm, 30.dp, if (sel) Modifier.border(2.dp, Color.White, CircleShape) else Modifier)
+                        if (sel) Text("Profile", Modifier.graphicsLayer { alpha = 1f - compact.value; compositingStrategy = CompositingStrategy.ModulateAlpha },
+                            fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1)
+                    }
+                }
+                if (switcher) ProfileSwitcher(vm, hover, onDismiss = { switcher = false }, onPicked = { switcher = false; onTab(3) }, onAdd = { switcher = false; adding = true })
+                if (adding) ProfileEditor(vm, null) { adding = false }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NavItem(
+    selected: Boolean, label: String, compact: State<Float>, onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null, icon: @Composable (Color) -> Unit,
+) {
+    val c = if (selected) Color.White else Color(0xFF8A94A8)
+    val click by rememberUpdatedState(onClick)
+    val longClick by rememberUpdatedState(onLongClick)
+    val hasLong = onLongClick != null
+    val accent = BtnColor
+    val selectedGlow = remember(accent) { Brush.radialGradient(listOf(accent.copy(alpha = 0.42f), accent.copy(alpha = 0.10f), Color.Transparent)) }
     Box(
-        modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 14.dp).graphicsLayer {
-            val v = compact.value
-            translationY = v * 96.dp.toPx(); val sc = 1f - 0.6f * v.coerceIn(0f, 1f); scaleX = sc; scaleY = sc
-            alpha = (1f - v * 1.3f).coerceIn(0f, 1f)
-            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
-        },
+        Modifier.width(96.dp).fillMaxHeight().clip(RoundedCornerShape(22.dp))
+            .pointerInput(hasLong) {
+                detectTapGestures(onTap = { click() }, onLongPress = if (hasLong) { _: Offset -> longClick?.invoke() } else null)
+            }
+            .then(if (selected) Modifier.background(selectedGlow) else Modifier),
         Alignment.Center,
     ) {
-        val shape = RoundedCornerShape(50)
-        // Holding any dock button: every icon wobbles as if under water.
-        var water by remember { mutableStateOf(false) }
-        Row(
-            Modifier.width(312.dp).height(68.dp).shadow(22.dp, shape)
-                .drawBehind {
-                    drawOval(Brush.radialGradient(listOf(red.copy(alpha = 0.45f), Color.Transparent), center = Offset(size.width * 0.3f, 0f), radius = size.width * 0.45f),
-                        topLeft = Offset(-size.width * 0.1f, -size.height * 0.55f), size = androidx.compose.ui.geometry.Size(size.width * 0.85f, size.height * 1.1f))
-                }
-                .clip(shape).background(Brush.verticalGradient(listOf(Color(0xF71A1A22), Color(0xFA0D0E13))))
-                .border(1.5.dp, Brush.horizontalGradient(listOf(Color(0xFFFF6A3D), red, red.copy(alpha = 0.35f), Color(0x26FFFFFF))), shape)
-                .padding(horizontal = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
-        ) {
-            DockItem(0, water, tab == 0, t("navHome"), { onTab(0) }, { water = it }) { c -> Icon(Icons.Default.Home, t("navHome"), Modifier.size(23.dp), tint = c) }
-            DockItem(1, water, tab == 1, t("navSearch"), { onTab(1) }, { water = it }) { c -> Icon(Icons.Default.Search, t("navSearch"), Modifier.size(23.dp), tint = c) }
-            DockItem(2, water, tab == 3, "Library", { onTab(3) }, { water = it }) { c -> Icon(Icons.Default.VideoLibrary, "Library", Modifier.size(23.dp), tint = c) }
-            val meLabel = t("navMySpace")
-            val bob = rememberFloat(3, water)
-            Box(
-                Modifier.size(50.dp).graphicsLayer { translationY = bob.value.first * 3.dp.toPx(); rotationZ = bob.value.second }
-                    .onGloballyPositioned { meOrigin[0] = it.boundsInRoot().topLeft }
-                    .pointerInput(profiles) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            val long = awaitLongPressOrCancellation(down.id)
-                            if (long == null) { onTab(2); return@awaitEachGesture }
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            bubble = true; hover = -1
-                            var moved = false
-                            while (true) {
-                                val ev = awaitPointerEvent()
-                                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
-                                val at = meOrigin[0] + ch.position
-                                if ((ch.position - down.position).getDistance() > 24f) moved = true
-                                val h = slots.entries.firstOrNull { (_, r) -> r.inflate(18f).contains(at) }?.key ?: -1
-                                if (h != hover) { hover = h; if (h >= 0) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
-                                ch.consume()
-                                if (!ch.pressed) break
-                            }
-                            val pick = profiles.getOrNull(hover)
-                            hover = -1
-                            // Released on a profile: switch. Released without sliding: the bubble stays open to tap.
-                            if (pick != null) { bubble = false; if (pick.id != current?.id) ProfileLock.ask(pick) { vm.selectProfile(pick); onTab(2) } }
-                            else if (moved) bubble = false
-                        }
-                    }
-                    .semantics { contentDescription = meLabel },
-                Alignment.Center,
-            ) {
-                // Your picture with a red ring (white inside it while My Space is open).
-                Box(Modifier.size(40.dp).border(2.dp, if (tab == 2) Color.White else red, CircleShape).padding(3.dp).clip(CircleShape), Alignment.Center) { Avatar(vm, 34.dp) }
-                Box(Modifier.size(46.dp).drawBehind { drawCircle(red.copy(alpha = 0.28f), radius = size.minDimension / 2f, style = androidx.compose.ui.graphics.drawscope.Stroke(5.dp.toPx())) })
-            }
-        }
-        if (bubble) Box(Modifier.matchParentSize().pointerInput(Unit) { detectTapGestures { bubble = false } })
-        if (bubble) Column(
-            Modifier.align(Alignment.BottomEnd).padding(end = 12.dp).offset(y = (-84).dp)
-                .shadow(18.dp, RoundedCornerShape(40.dp)).clip(RoundedCornerShape(40.dp)).background(Color(0xF216181F))
-                .border(1.dp, Brush.verticalGradient(listOf(red.copy(alpha = 0.7f), red.copy(alpha = 0.2f))), RoundedCornerShape(40.dp)).padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.End,
-        ) {
-            profiles.forEachIndexed { i, pr ->
-                val on = hover == i
-                val grow by animateFloatAsState(if (on) 1.18f else 1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 500f), label = "grow")
-                Row(Modifier.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { bubble = false; if (pr.id != current?.id) ProfileLock.ask(pr) { vm.selectProfile(pr); onTab(2) } },
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(pr.name + if (pr.id == current?.id) " · you" else "", fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                        color = if (on) Color.White else Color(0xFFB6BDCC))
-                    Box(Modifier.size(52.dp).onGloballyPositioned { slots[i] = it.boundsInRoot() }, Alignment.Center) {
-                        if (on) WaterRipple(Modifier.matchParentSize())
-                        // Hovered: a round ring that hugs the avatar (not a square highlight).
-                        ProfileAvatar(vm, pr, 46.dp, Modifier.graphicsLayer { scaleX = grow; scaleY = grow }
-                            .then(if (on) Modifier.border(2.dp, Color.White, CircleShape) else Modifier), animate = false)
-                    }
-                }
-            }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            icon(c)
+            // Fade in the draw phase; ModulateAlpha avoids an offscreen buffer for the label on every frame.
+            if (selected) Text(label, Modifier.graphicsLayer {
+                alpha = 1f - compact.value
+                compositingStrategy = CompositingStrategy.ModulateAlpha
+            }, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = c, maxLines = 1)
         }
     }
 }
 
-/** Three soft rings spreading out like water, under a hovered profile. */
+/** Quick profile switcher: a vertical capsule of avatars above the Profile button (slide a finger to pick, or tap). */
 @Composable
-private fun WaterRipple(modifier: Modifier) {
-    val inf = rememberInfiniteTransition(label = "water")
-    val t by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing)), label = "w")
-    Spacer(modifier.drawBehind {
-        for (k in 0..2) {
-            val p = (t + k / 3f) % 1f
-            drawCircle(Color(0xFF9FD8FF), radius = size.minDimension / 2f * (0.8f + 0.7f * p), alpha = 0.7f * (1f - p), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
-        }
-    })
-}
-
-/** One floating dock icon: it bobs gently all the time (as if on water) and wears a red glowing ring. */
-@Composable
-private fun DockItem(i: Int, water: Boolean, selected: Boolean, label: String, onClick: () -> Unit, onHold: (Boolean) -> Unit, icon: @Composable (Color) -> Unit) {
-    val click by rememberUpdatedState(onClick)
-    val hold by rememberUpdatedState(onHold)
-    val bob = rememberFloat(i, water)
-    val fill by androidx.compose.animation.animateColorAsState(if (selected) Color(0x24FFFFFF) else Color.Transparent, label = "dock")
-    val red = BtnColor
-    Box(
-        Modifier.size(50.dp).graphicsLayer {
-            val (y, r) = bob.value
-            translationY = y * (if (water) 5.dp else 3.dp).toPx(); rotationZ = r
-            val sc = if (water) 1f + 0.04f * y else 1f; scaleX = sc; scaleY = sc
-        }
-            .drawBehind {
-                // Glow, then the ring.
-                drawCircle(Brush.radialGradient(listOf(red.copy(alpha = if (selected) 0.32f else 0.22f), Color.Transparent), radius = size.minDimension * 0.62f), radius = size.minDimension * 0.62f)
-                drawCircle(red.copy(alpha = if (selected) 0.95f else 0.6f), radius = size.minDimension / 2f - 1.dp.toPx(), style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
-            }
-            .clip(CircleShape).background(fill)
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { click() },
-                    onPress = { tryAwaitRelease(); hold(false) },
-                    onLongPress = { hold(true) },
-                )
-            }
-            .semantics { contentDescription = label },
-        Alignment.Center,
-    ) { icon(if (selected) Color.White else Color(0xFF9AA0B0)) }
-}
-
-/** A slow float for dock icon [i] (each a little out of step): (up/down -1..1, tilt in degrees). Faster and wilder in [water]. */
-@Composable
-private fun rememberFloat(i: Int, water: Boolean): State<Pair<Float, Float>> {
-    val inf = rememberInfiniteTransition(label = "float$i")
-    val t by inf.animateFloat(0f, (2 * Math.PI).toFloat(), infiniteRepeatable(tween(3200, easing = LinearEasing)), label = "t$i")
-    return remember(water) {
-        derivedStateOf {
-            val ph = t * (if (water) 2.6f else 1f) + i * 1.6f
-            val y = kotlin.math.sin(ph)
-            val r = (if (water) 4f else 1.6f) * kotlin.math.sin(ph * 0.7f + 0.8f)
-            y to r
-        }
-    }
-}
-
-/** Instagram-style quick profile switcher: a small capsule of avatars above the My Space button. */
-@Composable
-private fun ProfileSwitcher(vm: AppViewModel, onDismiss: () -> Unit, onPicked: () -> Unit) {
+private fun ProfileSwitcher(vm: AppViewModel, hover: Int, onDismiss: () -> Unit, onPicked: () -> Unit, onAdd: () -> Unit) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val current by vm.current.collectAsStateWithLifecycle()
     val above = remember {
         object : PopupPositionProvider {
             override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
-                val x = (anchorBounds.right - popupContentSize.width).coerceIn(16, maxOf(16, windowSize.width - popupContentSize.width - 16))
-                val y = (anchorBounds.top - popupContentSize.height - 24).coerceAtLeast(0)
+                val x = (anchorBounds.left + (anchorBounds.width - popupContentSize.width) / 2).coerceIn(16, maxOf(16, windowSize.width - popupContentSize.width - 16))
+                val y = (anchorBounds.top - popupContentSize.height - 8).coerceAtLeast(0)
                 return IntOffset(x, y)
             }
         }
@@ -745,22 +685,47 @@ private fun ProfileSwitcher(vm: AppViewModel, onDismiss: () -> Unit, onPicked: (
         val shape = RoundedCornerShape(40.dp)
         val pop = remember { androidx.compose.animation.core.Animatable(0f) }
         LaunchedEffect(Unit) { pop.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.72f, stiffness = 420f)) }
-        Row(
+        Column(
             Modifier.graphicsLayer {
                 val v = pop.value
                 alpha = v.coerceIn(0f, 1f); scaleX = 0.88f + 0.12f * v; scaleY = scaleX
-                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.9f, 1f)
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
             }.shadow(18.dp, shape).clip(shape).background(Color(0xF21A1820)).border(1.dp, Color(0x26FFFFFF), shape)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+                .padding(horizontal = 8.dp, vertical = 13.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            profiles.forEach { pr ->
-                val on = pr.id == current?.id
+            // "+ Add profile" at the top of the capsule.
+            run {
+                val hot = hover == profiles.size
+                val grow by androidx.compose.animation.core.animateFloatAsState(if (hot) 1.18f else 1f, label = "hovAdd")
                 Column(
-                    Modifier.width(62.dp).clip(RoundedCornerShape(16.dp)).clickable { if (!on) ProfileLock.ask(pr) { vm.selectProfile(pr); onPicked() } else onPicked() },
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                    Modifier.width(66.dp).height(72.dp).graphicsLayer { scaleX = grow; scaleY = grow }
+                        .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, onClick = onAdd),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
                 ) {
-                    ProfileAvatar(vm, pr, 48.dp, if (on) Modifier.border(2.dp, Accent, CircleShape) else Modifier, animate = false)
+                    Box(Modifier.size(52.dp), Alignment.Center) {
+                        if (hot) WaterRipple(Modifier.matchParentSize())
+                        Box(Modifier.size(44.dp).clip(CircleShape).background(Color(0x22FFFFFF)).border(2.dp, if (hot) Color.White else Color(0x44FFFFFF), CircleShape), Alignment.Center) {
+                            Icon(Icons.Default.Add, "Add profile", Modifier.size(24.dp), tint = Color.White)
+                        }
+                    }
+                    Text("Add", Modifier.padding(top = 2.dp), fontSize = 11.sp, color = Color(0xFFB6BDCC), maxLines = 1)
+                }
+            }
+            profiles.forEachIndexed { i, pr ->
+                val on = pr.id == current?.id
+                val hot = i == hover
+                val grow by androidx.compose.animation.core.animateFloatAsState(if (hot) 1.18f else 1f, label = "hov")
+                Column(
+                    Modifier.width(66.dp).height(72.dp).graphicsLayer { scaleX = grow; scaleY = grow }
+                        .clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { if (!on) ProfileLock.ask(pr) { vm.selectProfile(pr); onPicked() } else onPicked() },
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                ) {
+                    // A round ring that hugs the avatar (red = this profile, white = under your finger), with water rings spreading.
+                    Box(Modifier.size(52.dp), Alignment.Center) {
+                        if (hot) WaterRipple(Modifier.matchParentSize())
+                        ProfileAvatar(vm, pr, 44.dp, if (hot) Modifier.border(2.dp, Color.White, CircleShape) else if (on) Modifier.border(2.dp, Accent, CircleShape) else Modifier, animate = false)
+                    }
                     Text(pr.name, Modifier.padding(top = 4.dp), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         fontWeight = if (on) FontWeight.Bold else FontWeight.Normal, color = if (on) Color.White else Color(0xFFB6BDCC))
                 }
@@ -783,8 +748,7 @@ fun SearchScreen(vm: AppViewModel, initial: String, onOpen: (Meta) -> Unit) {
     PremiumSearch(vm, initial, onOpen)
 }
 
-
-/** Xstream: "Bringing everything over from your account" after signing in, and a clear note if the account is empty. */
+/** StreamX: "Bringing everything over from your account" after signing in, and a clear note if the account is empty. */
 @Composable
 private fun RestoreScreen(busy: Boolean, onDifferent: () -> Unit, onContinue: () -> Unit) {
     val status by Cloud.status.collectAsState()
@@ -795,7 +759,7 @@ private fun RestoreScreen(busy: Boolean, onDifferent: () -> Unit, onContinue: ()
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(AppLook.logoRes(AppLook.logo.value)), null, Modifier.size(40.dp))
-                Spacer(Modifier.width(10.dp)); Wordmark("Xstream", 26.sp)
+                Spacer(Modifier.width(10.dp)); Wordmark("${Brand.NAME}", 26.sp)
             }
             if (busy) {
                 Text("Bringing your profiles, pictures and settings from your account", fontSize = 18.sp, fontWeight = FontWeight.Bold,
@@ -810,7 +774,7 @@ private fun RestoreScreen(busy: Boolean, onDifferent: () -> Unit, onContinue: ()
                 }
             } else {
                 Text("This account has no profiles saved yet", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                Text("You're signed in as ${user?.email.orEmpty()}. If StreamX uses a different email, sign in with that one to bring your profiles over.",
+                Text("You're signed in as ${user?.email.orEmpty()}. If ${Brand.NAME} uses a different email, sign in with that one to bring your profiles over.",
                     fontSize = 13.sp, color = Color(0xFF9AA3B5), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                 androidx.compose.material3.TextButton(onDifferent) { Text("Use a different account") }
                 androidx.compose.material3.TextButton(onContinue) { Text("Continue with this account") }
@@ -820,17 +784,18 @@ private fun RestoreScreen(busy: Boolean, onDifferent: () -> Unit, onContinue: ()
 }
 
 
-/** 0.8.9: shown for the moment a collection title's IMDb id is looked up — its own picture, name and story. */
+/** Soft rings spreading out like water under the profile your finger is on. */
 @Composable
-private fun TmdbOpening(m: Meta) {
-    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().background(Bg)) {
-        coil.compose.AsyncImage(m.background ?: m.poster, m.name, androidx.compose.ui.Modifier.fillMaxWidth().aspectRatio(16f / 10f),
-            contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-        androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.fillMaxWidth().padding(top = 240.dp).padding(horizontal = 18.dp)) {
-            androidx.compose.material3.Text(m.name, fontSize = 26.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-            m.releaseInfo?.let { androidx.compose.material3.Text(it, fontSize = 13.sp, color = Muted) }
-            m.description?.let { androidx.compose.material3.Text(it, androidx.compose.ui.Modifier.padding(top = 10.dp), fontSize = 14.sp, color = Color(0xFFC9CCD6), maxLines = 6) }
-            androidx.compose.material3.CircularProgressIndicator(androidx.compose.ui.Modifier.padding(top = 20.dp).size(26.dp), color = BrandRed, strokeWidth = 2.5.dp)
+private fun WaterRipple(modifier: Modifier) {
+    val inf = androidx.compose.animation.core.rememberInfiniteTransition(label = "water")
+    val t by inf.animateFloat(0f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1200, easing = androidx.compose.animation.core.LinearEasing)), label = "w")
+    Spacer(modifier.drawBehind {
+        for (k in 0..2) {
+            val p = (t + k / 3f) % 1f
+            drawCircle(Color(0xFF9FD8FF), radius = size.minDimension / 2f * (0.8f + 0.7f * p), alpha = 0.7f * (1f - p), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
         }
-    }
+    })
 }
+
+/** "Hey Aiden" hands-free wake word: off in this version (the setting is hidden). */
+const val WakeWordOff = true

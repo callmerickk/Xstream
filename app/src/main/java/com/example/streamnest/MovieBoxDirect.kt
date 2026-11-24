@@ -36,7 +36,8 @@ object MovieBoxDirect {
     private fun prefs() = CsPlugins.prefsOrNull()
 
     /** false = the direct way failed recently while the plugins worked: plugins first (until a day has passed). */
-    fun preferred(): Boolean = System.currentTimeMillis() - (prefs()?.getLong("mbDirectBadAt", 0L) ?: 0L) > 24 * 3600_000L
+    // 0.9.61: off — the MovieBox plugins' streams played smoothly while the direct DASH links kept stalling.
+    @Suppress("UNUSED_EXPRESSION") fun preferred(): Boolean = false
     fun noteBroken(why: String) { prefs()?.edit()?.putLong("mbDirectBadAt", System.currentTimeMillis())?.apply(); ActLog.add("MBDIRECT", "direct MovieBox looks broken ($why) — plugins first for a day") }
     fun noteOk() { prefs()?.edit()?.remove("mbDirectBadAt")?.apply() }
 
@@ -81,7 +82,7 @@ object MovieBoxDirect {
                 if (norm(m.groupValues[1]) != norm(name)) return@mapNotNull null
                 val y = o.s("releaseDate")?.take(4)?.toIntOrNull()
                 // Strict year (±1) for films and series: "The Office" (2005) never takes the 2024 show.
-                if (year != null && (y == null || kotlin.math.abs(y - year) > 1)) return@mapNotNull null
+                if (year != null && (y == null || !PluginSources.yearFits(name, year, y, series))) return@mapNotNull null
                 Triple(id, m.groupValues[2].ifBlank { "Original" }, o.s("detailPath").orEmpty())
             }.distinctBy { it.first }.take(4)
             if (found.isNotEmpty()) pages[key] = found

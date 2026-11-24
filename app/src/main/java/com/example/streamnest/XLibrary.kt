@@ -112,7 +112,7 @@ object Recs {
     }
 }
 
-/** Xstream: adding to the watchlist anywhere asks "my library or a friend's room?" (shown by the app's root). */
+/** StreamX: adding to the watchlist anywhere asks "my library or a friend's room?" (shown by the app's root). */
 object WatchlistAsk {
     val pending = MutableStateFlow<Meta?>(null)
     /** Removing a title a friend put in your watchlist: tell them, or remove quietly. */
@@ -245,7 +245,7 @@ private fun RoomShelf(title: String, recs: List<Rec>, onOpen: (Meta) -> Unit) {
 }
 
 /**
- * Xstream Library: Watchlist (my room and one room per friend), Calendar, Notifications and Watch together, picked
+ * StreamX Library: Watchlist (my room and one room per friend), Calendar, Notifications and Watch together, picked
  * from a row of tabs you can slide.
  */
 @Composable
@@ -318,17 +318,16 @@ private fun LibraryHome(vm: AppViewModel, friends: List<Person>, onOpen: (Meta) 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 150.dp)) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (!BuildConfig.IS_TV && BuildConfig.HAS_MUSIC) LibTile("Xstream Music", "Songs, albums, videos", Icons.Default.MusicNote, true, Modifier.weight(1f)) { MusicPlayer.openLibrary.value = true }
-                if (!BuildConfig.HAS_MUSIC) LibTile("Watched", "Films you finished", Icons.Default.Check, true, Modifier.weight(1f)) { onTile("watched") }
-                if (BuildConfig.HAS_SOCIAL) LibTile("Watch Together", "${friends.size} friend${if (friends.size == 1) "" else "s"} · ${shared.size} shared", Icons.Default.Groups, false, Modifier.weight(1f)) { onTile("together") }
+                if (BuildConfig.HAS_MUSIC) LibTile("Music", "Songs, albums, videos", Icons.Default.MusicNote, true, Modifier.weight(1f)) { MusicPlayer.openLibrary.value = true }
+                LibTile("Watch Together", "${friends.size} friend${if (friends.size == 1) "" else "s"} · ${shared.size} shared", Icons.Default.Groups, false, Modifier.weight(1f)) { onTile("together") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LibTile("Watchlist", "${list.size} title${if (list.size == 1) "" else "s"} · Calendar", Icons.Default.Favorite, false, Modifier.weight(1f)) { onTile("watchlist") }
                 if (!BuildConfig.IS_TV) LibTile("Downloads", "Watch without internet", Icons.Default.Download, false, Modifier.weight(1f)) { onTile("downloads") }
             }
-            // Xstream (with Music and Watch Together): Watched gets its own row.
-            if (BuildConfig.HAS_MUSIC && !BuildConfig.IS_TV) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                LibTile("Watched", "Films you finished", Icons.Default.Check, false, Modifier.weight(1f)) { onTile("watched") }
+            // 0.9.72 (from Xstream): Watched — films and finished shows leave Continue watching and land here.
+            if (!BuildConfig.IS_TV) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                LibTile("Watched", "Films and shows you finished", Icons.Default.Check, false, Modifier.weight(1f)) { onTile("watched") }
             }
         }
         if (shared.isNotEmpty()) {
@@ -469,8 +468,10 @@ fun TitleSearchBox(vm: AppViewModel, onPick: (Meta) -> Unit) {
 private fun WatchTogetherCard(friends: List<Person>, onOpen: () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
     val red = Accent
-    val inf = androidx.compose.animation.core.rememberInfiniteTransition(label = "wt")
-    val glow by inf.animateFloat(0.35f, 0.7f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1800), androidx.compose.animation.core.RepeatMode.Reverse), label = "g")
+    // 0.9.79: animations only on change — the glow breathes three times when the card appears, then stays still.
+    val glowA = remember { androidx.compose.animation.core.Animatable(0.35f) }
+    LaunchedEffect(Unit) { repeat(3) { glowA.animateTo(0.7f, androidx.compose.animation.core.tween(1800)); glowA.animateTo(0.35f, androidx.compose.animation.core.tween(1800)) }; glowA.animateTo(0.5f, androidx.compose.animation.core.tween(600)) }
+    val glow = glowA.value
     Row(
         Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth()
             .drawBehind { drawRoundRect(red.copy(alpha = glow * 0.5f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(24.dp.toPx()), size = size.copy(height = size.height + 6.dp.toPx())) }
@@ -497,15 +498,16 @@ private fun WatchTogetherCard(friends: List<Person>, onOpen: () -> Unit) {
 /** Pages that need the whole screen (chat, calendar) hide the bottom bar while they show. */
 object NavHide { val on = kotlinx.coroutines.flow.MutableStateFlow(false) }
 
-/** Library › Watched: films you finished (they leave Pick up where you left off). Tap = details · Rewatch · Remove. */
+/** Library › Watched (0.9.72, from Xstream): films and finished shows. Tap = details · Rewatch · Remove. */
 @Composable
 private fun WatchedPage(vm: AppViewModel, onOpen: (Meta) -> Unit) {
     LaunchedEffect(Unit) { vm.loadWatched() }
     val list by vm.watched.collectAsStateWithLifecycle()
-    if (list.isEmpty()) { Text("Films you finish show up here.", Modifier.padding(20.dp), color = LMuted); return }
+    if (list.isEmpty()) { Text("Films and shows you finish show up here.", Modifier.padding(20.dp), color = LMuted); return }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 150.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(list, key = { it.key }) { w ->
-            val m = Meta(id = w.key, type = "movie", name = w.title, poster = w.image)
+            val series = w.key.contains(":")
+            val m = Meta(id = w.key.substringBefore(":"), type = if (series) "series" else "movie", name = w.title, poster = w.image)
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(LCard).clickable { onOpen(m) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 AsyncImage(w.image, w.title, Modifier.width(64.dp).height(92.dp).clip(RoundedCornerShape(10.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
@@ -513,7 +515,7 @@ private fun WatchedPage(vm: AppViewModel, onOpen: (Meta) -> Unit) {
                     Text(java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(w.updated)).let { "Watched $it" },
                         Modifier.padding(top = 3.dp), fontSize = 12.sp, color = LMuted)
                     Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Rewatch", Modifier.clip(RoundedCornerShape(50)).background(Color(0xFFF2F4F8)).clickable { pendingDetailPlay.value = m.id; onOpen(m) }
+                        if (!series) Text("Rewatch", Modifier.clip(RoundedCornerShape(50)).background(Color(0xFFF2F4F8)).clickable { pendingDetailPlay.value = m.id; onOpen(m) }
                             .padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0E1014))
                         Text("Remove", Modifier.clip(RoundedCornerShape(50)).border(1.dp, LLine, RoundedCornerShape(50)).clickable { vm.removeWatched(w.key) }
                             .padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = LMuted)

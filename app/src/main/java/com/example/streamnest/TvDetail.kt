@@ -72,7 +72,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /*
- * Xstream TV title page (mockups s5 "title page" and s6 "episodes"; 960×540dp canvas).
+ * StreamX TV title page (mockups s5 "title page" and s6 "episodes"; 960×540dp canvas).
  *
  * Two states sharing one tab row:
  *  - hero: full backdrop, title info and the actions row (Play · Trailer · Library · More), tabs at the bottom;
@@ -190,7 +190,7 @@ private fun tdLanguage(code: String?): String? {
 fun TvDetailScreen(
     vm: AppViewModel, meta: Meta, onBack: () -> Unit, onOpen: (Meta) -> Unit,
     onPlay: (Screen.Player) -> Unit, onPerson: (TmCast) -> Unit,
-    autoPlay: Boolean = false, onAutoPlayed: () -> Unit = {},
+    autoPlay: Boolean = false, onAutoPlayed: () -> Unit = {}, autoManual: Boolean = false, autoEp: String? = null,
 ) {
     var cur by remember(meta.id) { mutableStateOf(meta) }
     var metaLoaded by remember(meta.id) { mutableStateOf(false) }
@@ -230,8 +230,10 @@ fun TvDetailScreen(
     val autoMode = t("autoPlayMode")
     val external = t("playerChoice") == "external"
     val quick = vm.qsActive()
-    fun resumeFor(vid: String): Long = progress.firstOrNull { it.key == vid }
-        ?.takeIf { it.durationMs <= 0 || it.positionMs < it.durationMs * 0.95 }?.positionMs ?: 0L
+    // TV 0.9.12: an episode's spot in its first minute isn't a resume.
+    fun resumeFor(vid: String): Long = (progress.firstOrNull { it.key == vid }
+        ?.takeIf { it.durationMs <= 0 || it.positionMs < it.durationMs * 0.95 }?.positionMs ?: 0L)
+        .let { if (vid.contains(":") && it < 60_000L) 0L else it }
     fun target(ep: Video) = SourceTarget(ep.id, "${cur.name}  S${ep.season}E${ep.episode}", "S${ep.season} E${ep.episode}", ep.title ?: ep.name, ep.thumbnail)
 
     val playTarget = remember(cur, progress, done, episodes) {
@@ -297,6 +299,12 @@ fun TvDetailScreen(
     fun start(t: SourceTarget, forceSources: Boolean = false, fromStart: Boolean = false) {
         val image = t.image ?: cur.background ?: cur.poster
         if (fromStart) Preloader.release(t.videoId) // prepared at the resume point: drop it
+        // TV 0.9.10: downloaded (episode menu › Download): play the file, no internet needed.
+        (if (!forceSources) { Downloads.init(ctx); Downloads.readyFile(ctx, t.videoId) } else null)?.let { f ->
+            onPlay(Screen.Player(t.title, android.net.Uri.fromFile(f).toString(), emptyList(), key = t.videoId, image = image,
+                resumeMs = if (fromStart) 0L else resumeFor(t.videoId), type = cur.type, meta = cur, source = "Downloaded", addon = "Downloads"))
+            return
+        }
         if (fromStart && !forceSources) {
             onPlay(Screen.Player(t.title, "", emptyList(), key = t.videoId, image = image, resumeMs = 0L, type = cur.type, meta = cur, find = true, quick = quick))
             return
@@ -318,7 +326,8 @@ fun TvDetailScreen(
 
     // Play pressed on Home's hero card: start as soon as the full title (episodes) is known — only once.
     LaunchedEffect(metaLoaded) {
-        if (autoPlay && metaLoaded) { onAutoPlayed(); start(playTarget.target) }
+        // TV 0.8.8: "Play manually" from a Pick up card opens this page straight on its sources list.
+        if (autoPlay && metaLoaded) { onAutoPlayed(); start(autoEp?.let { id -> episodes.firstOrNull { it.id == id } }?.let { target(it) } ?: playTarget.target, forceSources = autoManual) }
     }
 
     fun play(s: StreamItem, all: List<StreamItem>, resume: Long) {
@@ -362,6 +371,15 @@ fun TvDetailScreen(
     }
 
     // ── Page state ──
+    var epMenu by remember { mutableStateOf<Video?>(null) }
+    epMenu?.let { ep ->
+        val pr = progress.firstOrNull { it.key == ep.id } ?: vm.epProgress.value[ep.id]
+        val f = pr?.let { if (it.durationMs > 0) it.positionMs.toFloat() / it.durationMs else 0f } ?: 0f
+        TvEpisodeMenu(ep, cur.name, watched = ep.id in done || f >= 0.95f, started = f > 0.01f, onDismiss = { epMenu = null },
+            onPlay = { start(target(ep)) }, onManual = { start(target(ep), forceSources = true) },
+            onDownload = { tvDownloadEp(vm, ctx, scope, cur, ep) },
+            onMark = { on -> vm.setEpWatched(ep.id, on); Snack.show(if (on) "Marked watched" else "Marked unwatched") })
+    }
     val tabs = remember(seasons) { if (seasons.isNotEmpty()) TdTab.entries.toList() else TdTab.entries.filter { it != TdTab.Episodes } }
     var tab by remember(tabs) { mutableStateOf(tabs.first()) }
     var content by remember { mutableStateOf(false) }
@@ -420,7 +438,7 @@ fun TvDetailScreen(
             Box(Modifier.fillMaxSize().padding(top = 92.dp)) {
                 when (tab) {
                     TdTab.Episodes -> TdEpisodes(seasons, season, { season = it }, shown, progress, done, tm?.runtime, playTarget.target.videoId,
-                        onPlay = { ep -> start(target(ep)) }, onSources = { ep -> start(target(ep), forceSources = true) })
+                        onPlay = { ep -> start(target(ep)) }, onSources = { ep -> start(target(ep), forceSources = true) }, onMenu = { epMenu = it })
                     TdTab.More -> TdMoreLikeThis(cur, picks, more,
                         onPick = { r ->
                             scope.launch {
@@ -621,12 +639,22 @@ private fun TdClapper(dp: Dp) = Canvas(Modifier.size(dp)) {
 
 // ───────────── Episodes (s6) ─────────────
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun TdEpisodes(
     seasons: List<Int>, season: Int, onSeason: (Int) -> Unit, shown: List<Video>, progress: List<Progress>, done: Set<String>,
-    runtime: String?, nextId: String, onPlay: (Video) -> Unit, onSources: (Video) -> Unit,
+    runtime: String?, nextId: String, onPlay: (Video) -> Unit, onSources: (Video) -> Unit, onMenu: (Video) -> Unit = {},
 ) {
-    Row(Modifier.fillMaxSize()) {
+    // TV 0.9.10: ▼ into Episodes lands on the episode Play/Resume would start (its season is already the one shown).
+    val epList = androidx.compose.foundation.lazy.rememberLazyListState()
+    val epReq = remember { FocusRequester() }
+    LaunchedEffect(shown) {
+        val i = shown.indexOfFirst { it.id == nextId }
+        if (i > 0) epList.scrollToItem((i - 1).coerceAtLeast(0))
+    }
+    Row(Modifier.fillMaxSize()
+        .focusProperties { enter = { if (epList.layoutInfo.visibleItemsInfo.any { it.key == nextId }) epReq else FocusRequester.Default } }
+        .focusGroup()) {
         // Seasons (focus = select)
         LazyColumn(Modifier.padding(start = 70.dp).width(124.dp).fillMaxHeight(), contentPadding = PaddingValues(top = 22.dp, bottom = 40.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -643,7 +671,7 @@ private fun TdEpisodes(
             }
         }
         // Episodes
-        LazyColumn(Modifier.padding(start = 26.dp).weight(1f).fillMaxHeight(), contentPadding = PaddingValues(top = 18.dp, bottom = 40.dp, end = 40.dp),
+        LazyColumn(Modifier.padding(start = 26.dp).weight(1f).fillMaxHeight(), state = epList, contentPadding = PaddingValues(top = 18.dp, bottom = 40.dp, end = 40.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(shown, key = { it.id }) { ep ->
                 val p = progress.firstOrNull { it.key == ep.id }
@@ -652,7 +680,8 @@ private fun TdEpisodes(
                 val resuming = frac > 0f && !watched && (p?.durationMs ?: 0L) > 0L && frac < 0.95f
                 Row(
                     Modifier.fillMaxWidth()
-                        .tdFocus(10.dp, scale = 1.0f, onKey = { k -> if (k == Key.Menu) { onSources(ep); true } else false }, onClick = { onPlay(ep) })
+                        .tdFocus(10.dp, scale = 1.0f, requester = if (ep.id == nextId) epReq else null,
+                            onKey = { k -> if (k == Key.Menu) { onSources(ep); true } else false }, onLong = { onMenu(ep) }, onClick = { onPlay(ep) })
                         .clip(RoundedCornerShape(10.dp)).padding(7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -672,7 +701,7 @@ private fun TdEpisodes(
                             val info = listOfNotNull(tdDate(ep.released), runtime).joinToString(" · ")
                             if (info.isNotEmpty()) Text(info, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = TdMuted, maxLines = 1)
                             val badge = when {
-                                resuming -> "Resume${p?.let { timeLeft(it) }?.let { " $it" } ?: ""}"
+                                resuming -> "Resume${p?.let { timeLeft(it) }?.let { " · $it" } ?: ""}"
                                 ep.id == nextId && !watched -> "Up next"
                                 watched -> "Watched"
                                 else -> null

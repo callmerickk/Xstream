@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -98,9 +99,7 @@ private suspend fun googleIdToken(activity: Activity): String {
     } catch (e: GetCredentialCancellationException) {
         throw Cloud.CloudError("Cancelled")
     } catch (e: GetCredentialException) {
-        ActLog.add("CLOUD", "Google sign-in failed: ${e.type} · ${e.message}")
-        throw Cloud.CloudError(if (BuildConfig.LIVE_ONLY) "Google sign-in isn't ready for Xstream Live yet — please sign in with email and password for now."
-            else "Google sign-in isn't available: ${e.message ?: e.type}")
+        throw Cloud.CloudError("Google sign-in isn't available: ${e.message ?: e.type}")
     }
     val c = res.credential
     if (c is CustomCredential && c.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
@@ -112,11 +111,11 @@ private suspend fun googleIdToken(activity: Activity): String {
 // ───────────── Sign-in gateway (first start, and from Account) ─────────────
 
 /**
- * Full-screen "Sign in to Xstream". Sign in / Create account (email + password, verified email required for sync),
+ * Full-screen "Sign in to StreamX". Sign in / Create account (email + password, verified email required for sync),
  * Continue with Google (phone), Forgot password, and Skip for now. Works with touch and with the TV remote.
  */
 @Composable
-fun CloudGate(onDone: () -> Unit, allowSkip: Boolean = true) {
+fun CloudGate(onDone: () -> Unit, allowSkip: Boolean = true, onPhone: (() -> Unit)? = null) {
     val user by Cloud.user.collectAsStateWithLifecycle()
     var mode by remember { mutableStateOf(if (user != null && user?.verified == false) "verify" else "signin") }
     var email by remember { mutableStateOf(user?.email ?: "") }
@@ -161,7 +160,7 @@ fun CloudGate(onDone: () -> Unit, allowSkip: Boolean = true) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Image(painterResource(AppLook.logoRes(AppLook.logo.value)), null, Modifier.size(40.dp))
                 Spacer(Modifier.width(10.dp))
-                Wordmark("Xstream", 28.sp)
+                Wordmark("${Brand.NAME}", 28.sp)
             }
             Column(Modifier.widthIn(max = 420.dp).fillMaxWidth().padding(top = 22.dp)) {
                 val title = when (mode) {
@@ -232,8 +231,13 @@ fun CloudGate(onDone: () -> Unit, allowSkip: Boolean = true) {
                         Spacer(Modifier.height(6.dp))
                         if (signup) GateLink("Already have an account? Sign in") { mode = "signin"; error = null }
                         else {
-                            GateLink("New to Xstream? Create an account") { mode = "signup"; error = null }
+                            GateLink("New to ${Brand.NAME}? Create an account") { mode = "signup"; error = null }
                             GateLink("Forgot password?") { mode = "reset"; error = null }
+                        }
+                        // TV 0.9.3: back to the QR / 6-digit code page (the QR page already links here).
+                        if (BuildConfig.IS_TV && onPhone != null && !signup) {
+                            Spacer(Modifier.height(10.dp))
+                            GateButton("Sign in with your phone (QR code or code)") { onPhone() }
                         }
                         if (BuildConfig.IS_TV) Text(
                             "Signed up with Google on your phone? Set a password there first: Settings › Account › Set a password for TV.",
@@ -245,7 +249,7 @@ fun CloudGate(onDone: () -> Unit, allowSkip: Boolean = true) {
                 note?.let { Text(it, Modifier.padding(top = 14.dp), color = Color(0xFF7BD88F), fontSize = 14.sp) }
                 if (allowSkip && mode != "verify") {
                     Spacer(Modifier.height(18.dp))
-                    GateLink("Skip for now — use Xstream without an account", center = true) { Cloud.skip(); onDone() }
+                    GateLink("Skip for now — use ${Brand.NAME} without an account", center = true) { Cloud.skip(); onDone() }
                 }
             }
         }
@@ -264,7 +268,14 @@ private fun GateField(
     // TV: the field is a button until OK is pressed on it — only then does the keyboard open.
     var active by remember { mutableStateOf(!tv) }
     val tfFr = remember { FocusRequester() }
-    LaunchedEffect(active) { if (tv && active) { withFrameNanos { }; repeat(4) { if (tfFr.tryFocus()) return@LaunchedEffect; delay(50) } } }
+    val kb = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    // TV 0.8.8: one OK opens the TV's keyboard (it used to take two: the first only moved into the box).
+    LaunchedEffect(active) {
+        if (tv && active) {
+            withFrameNanos { }
+            repeat(6) { if (tfFr.tryFocus()) { delay(60); kb?.show(); return@LaunchedEffect }; delay(50) }
+        }
+    }
     val shape = RoundedCornerShape(14.dp)
     val lit = focused || rowFocused
     Row(
@@ -282,12 +293,15 @@ private fun GateField(
                 value, onChange,
                 Modifier.fillMaxWidth().focusRequester(tfFr)
                     .focusProperties { canFocus = active }
-                    .onFocusChanged { focused = it.isFocused; if (tv && !it.isFocused && active) active = false }.tvOkKeyboard(),
+                    .onFocusChanged { focused = it.isFocused; if (tv && !it.isFocused && active) active = false },
                 singleLine = true,
                 textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
                 cursorBrush = SolidColor(BrandRed),
                 visualTransformation = if (password && !show) PasswordVisualTransformation() else VisualTransformation.None,
-                keyboardOptions = tvKeyboard(KeyboardOptions(keyboardType = type, imeAction = ime)),
+                // TV: the email box is a plain text box, so the Fire TV keyboard offers voice (Alexa) on it; Fire TV never
+                // offers voice on a password box.
+                keyboardOptions = tvKeyboard(KeyboardOptions(keyboardType = if (tv && type == KeyboardType.Email) KeyboardType.Text else type,
+                    imeAction = ime)),
                 keyboardActions = KeyboardActions(onNext = { onIme() }, onDone = { onIme() }),
             )
         }
@@ -355,6 +369,7 @@ internal fun CloudAccountSection() {
     val auto by Cloud.autoSync.collectAsStateWithLifecycle()
     var gate by remember { mutableStateOf(false) }
     var pwDialog by remember { mutableStateOf(false) }
+    var linkTv by remember { mutableStateOf(false) }
     var confirmOut by remember { mutableStateOf(false) }
 
     SectionLabel("Cloud sync")
@@ -394,10 +409,15 @@ internal fun CloudAccountSection() {
                 RowDivider(20.dp)
                 SettingRow(Icons.Default.Password, "Set a password for TV", "Fire TV can't use Google sign-in: sign in there with your email and this password.") { pwDialog = true }
             }
+            if (!BuildConfig.IS_TV && u.verified) {
+                RowDivider(20.dp)
+                SettingRow(Icons.Default.Devices, "Link a TV", "Scan the QR code on your TV (or type its code) and approve — the TV signs in to this account.") { linkTv = true }
+            }
             RowDivider(20.dp)
             SettingRow(Icons.Default.Logout, "Sign out", "Your data stays on this device. To sign out every device, change your password.") { confirmOut = true }
         }
     }
+    if (linkTv) LinkTvDialog(onClose = { linkTv = false })
     Text(
         "Each profile syncs its own addons, settings, collections, My List and progress. Some settings (quality, stream filters, player) can be kept separate for phone and TV.",
         Modifier.padding(horizontal = 24.dp, vertical = 10.dp), fontSize = 13.sp, color = Muted,
@@ -411,7 +431,10 @@ internal fun CloudAccountSection() {
         ) { CloudGate(onDone = { gate = false }, allowSkip = false) }
     }
     if (pwDialog) PasswordDialog { pwDialog = false }
-    if (confirmOut) PremiumAlert(
+    // TV 0.9.3: a real dialog window with TV buttons — the remote couldn't reach the old one's buttons.
+    if (confirmOut && BuildConfig.IS_TV) TvConfirmWindow("Sign out?", "Sync stops on this TV. Everything already here stays.", "Sign out",
+        onConfirm = { Cloud.signOut(); confirmOut = false }, onDismiss = { confirmOut = false })
+    else if (confirmOut) PremiumAlert(
         onDismissRequest = { confirmOut = false },
         containerColor = Surface1,
         title = { Text("Sign out?") },
@@ -480,4 +503,27 @@ internal fun DeviceScopeCard(vm: AppViewModel, keys: List<String>, what: String)
         }
     }
     Spacer(Modifier.height(8.dp))
+}
+
+
+/** TV 0.9.3: a yes / no question the remote can always reach (its own window; the safe answer has focus first). */
+@Composable
+fun TvConfirmWindow(title: String, text: String, yes: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val noFr = remember { FocusRequester() }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        LaunchedEffect(Unit) { withFrameNanos { }; repeat(6) { if (noFr.tryFocus()) return@LaunchedEffect; delay(60) } }
+        Column(Modifier.width(380.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF1A1B22)).border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(20.dp)).padding(24.dp)) {
+            Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Text(text, Modifier.padding(top = 8.dp), fontSize = 14.sp, lineHeight = 20.sp, color = Color(0xFFC3C7D6))
+            Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.weight(1f).focusRequester(noFr).tvCard(20.dp, scale = 1.04f) { onDismiss() }.height(42.dp).clip(CircleShape).background(Color(0x1FFFFFFF)), Alignment.Center) {
+                    Text("Cancel", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                }
+                Box(Modifier.weight(1f).tvCard(20.dp, scale = 1.04f) { onConfirm() }.height(42.dp).clip(CircleShape).background(BrandRed), Alignment.Center) {
+                    Text(yes, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            }
+            Text("◀ ▶ choose · OK confirm · Back cancel", Modifier.fillMaxWidth().padding(top = 12.dp), fontSize = 11.sp, color = Color(0xFF8A90A0), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
+    }
 }

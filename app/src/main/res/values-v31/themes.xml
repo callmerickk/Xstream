@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Android 12+ always shows a launch screen. Make it a plain black frame with no icon,
-         identical to the first frame of the Xstream intro, so the animation appears to start at once. -->
-    <style name="Theme.Xstream" parent="Theme.MaterialComponents.NoActionBar">
+         identical to the first frame of the StreamX intro, so the animation appears to start at once. -->
+    <style name="Theme.StreamX" parent="Theme.MaterialComponents.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:windowBackground">@android:color/black</item>

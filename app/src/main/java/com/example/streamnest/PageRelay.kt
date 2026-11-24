@@ -8,10 +8,10 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 
 /**
- * 0.8.17 (from StreamX TV 0.9.14): some internet providers in India cut the connection to the file sites behind VegaMovies / RogMovies /
+ * TV 0.9.14: some internet providers in India cut the connection to the file sites behind VegaMovies / RogMovies /
  * UHDMovies / HDHub (vcloud, hubcloud…) — "Connection reset" during the secure handshake. Only for those sites, a page
  * request that fails that way is asked again through StreamX's Cloudflare Worker (`/p`), which fetches the page for us.
- * Only small pages go through it — never the video itself.
+ * Only small pages go through it — never the video itself. Phone 0.9.78: the phone's plugins use it too.
  */
 object PageRelay : Interceptor {
     private const val RELAY = "https://streamx-home.callmerick093.workers.dev/p"

@@ -68,7 +68,7 @@ fun PermissionIntro() {
                 Modifier.padding(top = 6.dp), fontSize = 13.sp, color = Color(0xFF9AA3B5), textAlign = TextAlign.Center)
             Spacer(Modifier.height(18.dp))
             @Composable fun item(icon: String, title: String, sub: String) =
-                Row(Modifier.fillMaxWidth().padding(vertical = 5.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF15161C))
+                Row(Modifier.fillMaxWidth().padding(vertical = 5.dp).clip(RoundedCornerShape(14.dp)).background(glassy(Color(0xFF15161C)))
                     .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(14.dp)).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(36.dp).clip(CircleShape).background(Color(0x24E50914)).border(1.dp, Color(0x80E50914), CircleShape), Alignment.Center) { Text(icon, fontSize = 15.sp) }
                     Column(Modifier.padding(start = 12.dp)) {

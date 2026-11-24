@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentHashMap
 /** One line of an online subtitle file. */
 data class ExtCue(val start: Long, val end: Long, val text: String)
 
-/** An online subtitle shown by Xstream itself (no reload of the video; its timing can be moved). */
+/** An online subtitle shown by StreamX itself (no reload of the video; its timing can be moved). */
 data class ExtActive(val sub: Subtitle, val cues: List<ExtCue>)
 
 /**

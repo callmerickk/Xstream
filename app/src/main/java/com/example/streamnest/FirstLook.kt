@@ -26,11 +26,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * 0.8.7 — "Choose your look", once per profile (new and existing; skippable). Step 1 Home style, step 2 colours. Tapping a
+ * StreamX 0.9.76 (from Xstream 0.8.7) — "Choose your look", once per profile (new and existing; skippable). Step 1 Home style, step 2 colours. Tapping a
  * choice shows it moving, full screen; "Use this" keeps it, Back returns to the choices. Skipped = Live + Midnight.
  */
 fun lookDue(texts: Map<String, String>, p: Profile?): Boolean =
-    !BuildConfig.IS_TV && !BuildConfig.LIVE_ONLY && p != null && texts["lookChosen"].isNullOrBlank()
+    !BuildConfig.IS_TV && p != null && texts["look0976"].isNullOrBlank()
 
 private data class LookOpt(val key: String, val name: String, val desc: String)
 
@@ -39,18 +39,19 @@ fun FirstLookScreen(vm: AppViewModel, onDone: () -> Unit) {
     val texts by vm.texts.collectAsState()
     var step by remember { mutableIntStateOf(0) }
     var style by remember { mutableStateOf(homeStyleOf(texts)) }
-    var theme by remember { mutableStateOf(currentThemeName(texts).takeIf { n -> Themes.any { it.name == n } } ?: "Midnight") }
+    var theme by remember { mutableStateOf("Glass") }
     var preview by remember { mutableStateOf<String?>(null) }
     val styles = listOf(LookOpt("live", "Live", "Curved card, trailer on tap, red glow"), LookOpt("streamx", "Stack", "A big card with the next ones stacked behind"),
         LookOpt("classic", "Classic", "Centre card with a glowing rim"))
-    val themes = listOf("Midnight", "Crimson", "Ocean", "Violet").mapNotNull { n -> Themes.firstOrNull { it.name == n } }
+    // 0.9.76: Glass first (NEW).
+    val themes = listOf("Glass", "Midnight", "Crimson", "Ocean", "Violet").mapNotNull { n -> Themes.firstOrNull { it.name == n } }
     fun barFor(s: String) = when (s) { "live" -> "orbit"; "streamx" -> "streamx"; else -> "capsule" }
     fun lookOf(name: String) = lookOfTheme(Themes.firstOrNull { it.name == name } ?: Themes.first())
     fun finish(skip: Boolean) {
         val s = if (skip) "live" else style; val th = if (skip) "Midnight" else theme
         vm.setText("homeStyle", s); vm.setText("navBar", barFor(s))
         Themes.firstOrNull { it.name == th }?.let { applyThemeOpt(vm, it) }
-        vm.setText("lookChosen", "1")
+        vm.setText("look0976", "1")
         ActLog.add("APP", "look chosen: $s · $th" + if (skip) " (skipped)" else "")
         vm.refresh(); onDone()
     }
@@ -80,7 +81,7 @@ fun FirstLookScreen(vm: AppViewModel, onDone: () -> Unit) {
                 }
             } else Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp).verticalScroll(rememberScrollState())) {
                 Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Wordmark("Xstream", 20.sp)
+                    Wordmark(t("appName"), 20.sp)
                     Spacer(Modifier.weight(1f))
                     Text("Skip", Modifier.clip(RoundedCornerShape(14.dp)).clickable { finish(true) }.padding(10.dp), color = Color(0xFFB8BED3), fontSize = 14.sp)
                 }
@@ -97,6 +98,7 @@ fun FirstLookScreen(vm: AppViewModel, onDone: () -> Unit) {
                         val th = if (step == 0) theme else o.key
                         MiniHome(st, barFor(st), lookOf(th), Modifier.size(96.dp, 170.dp), animate = true)
                         Column(Modifier.padding(start = 14.dp)) {
+                            if (step == 1 && o.key == "Glass") NewBadge(Modifier.padding(bottom = 4.dp))
                             Text(o.name, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                             Text(o.desc, fontSize = 12.5.sp, color = Color(0xFFB8BED3))
                         }

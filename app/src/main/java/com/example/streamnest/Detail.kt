@@ -19,11 +19,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -47,6 +42,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -59,6 +55,11 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInRoot
@@ -90,9 +91,11 @@ private data class PlayTarget(val target: SourceTarget, val label: String, val r
  */
 val pendingDetailPlay = mutableStateOf<String?>(null)
 
-private val TitleCardBg = Color(0xFF0E0F14)
+// 0.9.78: with Glass (phones) the title card is a light frost on the same backdrop as the page (it was a second, darker
+// block, so the card and the page beside it showed two different colours).
+private val TitleCardBg: Color get() = if (Palette.glass && !BuildConfig.IS_TV) Color(0x1AFFFFFF) else glassy(Color(0xFF0E0F14))
 private val CardRim = Color(0xFF1D1E25)
-private val RoundBg = Color(0xFF15161C)
+private val RoundBg: Color get() = glassy(Color(0xFF15161C))
 private val TitleMuted = Color(0xFF8A94A8)
 private val LinkRed = Color(0xFFFF3B45)
 
@@ -116,7 +119,9 @@ fun DetailScreen(
     /** Unused now (trailers open TrailerActivity directly); kept so existing callers compile. */
     @Suppress("UNUSED_PARAMETER") onTrailer: (Screen.Trailer) -> Unit = {},
 ) {
-    // 0.8.12: a show's episode list saved on the phone shows at once (also offline), then is refreshed.
+    // 0.9.76: Glass theme — this title's picture behind the page.
+    if (Palette.glass) LaunchedEffect(meta0.id) { GlassBg.url = meta0.background ?: meta0.poster }
+    // 0.9.71 (from Xstream 0.8.12): a show's episode list saved on the phone shows at once (also offline), then is refreshed.
     var meta by remember { mutableStateOf(if (meta0.type == "series") vm.savedShow(meta0.id)?.takeIf { !it.videos.isNullOrEmpty() }
         ?.copy(poster = meta0.poster ?: vm.savedShow(meta0.id)?.poster) ?: meta0 else meta0) }
     // The audio language you last chose for this title goes first when its links are ranked here too.
@@ -127,7 +132,7 @@ fun DetailScreen(
     val ctx = LocalContext.current
     val progress0 by vm.progress.collectAsStateWithLifecycle()
     val epProg by vm.epProgress.collectAsStateWithLifecycle()
-    // Xstream: Continue Watching's entries plus every episode's own saved place.
+    // StreamX: Continue Watching's entries plus every episode's own saved place.
     val progress = remember(progress0, epProg) { progress0 + epProg.values.filter { e -> progress0.none { it.key == e.key } } }
     val done by vm.doneKeys.collectAsStateWithLifecycle()
     val myList by vm.myList.collectAsStateWithLifecycle()
@@ -165,6 +170,7 @@ fun DetailScreen(
 
     var pick by remember { mutableStateOf<SourceTarget?>(null) }
     var notOutAsk by remember { mutableStateOf(false) }
+    // 0.9.70 (from Xstream): "In cinemas only" — Remind me · Play cinema copy · Close.
     var pendingCinema by remember { mutableStateOf<SourceTarget?>(null) }
     var playCinema by remember { mutableStateOf<SourceTarget?>(null) }
     if (notOutAsk) {
@@ -215,9 +221,7 @@ fun DetailScreen(
                 if (p != null && p.durationMs > 0) (p.positionMs.toFloat() / p.durationMs).coerceIn(0f, 1f) else 0f)
         } else {
             val mine = progress.filter { it.key.startsWith(meta.id + ":") }.maxByOrNull { it.updated }
-            // 0.8.12: the last one you watched is finished → the one after it (S3E23 done → S4E1, it replayed S3E23).
-            val mineEp = mine?.let { m -> episodes.firstOrNull { it.id == m.key } }
-            val ep = (if (mineEp != null && mine?.let { it.durationMs > 0 && it.positionMs >= it.durationMs * 0.90 } == true) episodes.getOrNull(episodes.indexOf(mineEp) + 1) ?: mineEp else mineEp)
+            val ep = mine?.let { m -> episodes.firstOrNull { it.id == m.key } }
                 ?: episodes.lastOrNull { it.id in done }?.let { last -> episodes.getOrNull(episodes.indexOf(last) + 1) }
                 ?: episodes.firstOrNull { (it.season ?: 0) > 0 } ?: episodes.first()
             val r = resumeFor(ep.id)
@@ -236,26 +240,16 @@ fun DetailScreen(
     val level = vm.playerPref("quality").ifEmpty { texts["qsQuality"] ?: "auto" }
     val instantOn = !external && (quick || autoMode != "manual")
     LaunchedEffect(playTarget.target.videoId, quick, level) {
-        // 0.8.16: a show whose episode list hasn't come yet starts with your Continue episode (or S1E1) at once; when
-        // the list comes, the real next episode replaces it if it differs.
-        if (meta.type == "series" && !playTarget.target.videoId.contains(":")) {
-            val mine = progress.filter { it.key.startsWith(meta.id + ":") }.maxByOrNull { it.updated }
-            val guess = mine?.takeIf { !(it.durationMs > 0 && it.positionMs >= it.durationMs * 0.90) }?.key ?: if (mine == null) "${meta.id}:1:1" else return@LaunchedEffect
-            PluginSources.noteMeta(meta)
-            DetailTiming.begin(meta.name, guess)
-            Prepare.start(vm, ctx, meta.type, guess, mine?.positionMs ?: 0L, null, quick, level, meta)
-            return@LaunchedEffect
-        }
-        // 0.8.16: the plugins get this title's name + year at once (they asked Cinemeta first: ~1.4 s before Netflix /
-        // Prime / Hotstar even started searching).
-        PluginSources.noteMeta(meta)
-        DetailTiming.begin(meta.name, playTarget.target.videoId)
         // CNCVerse (Vegamovies…) is asked from the moment the page opens, alongside MovieBox: its server needs time to
         // collect the links, so they are there for the HD upgrade once the video plays.
         SlowAddons.watch(vm, meta.type, playTarget.target.videoId)
+        // 0.9.71 (from Xstream 0.8.16): the plugins get this title's name + year at once (they asked Cinemeta first).
+        PluginSources.noteMeta(meta)
         if (!instantOn) { runCatching { if (quick) vm.quickStreams(meta.type, playTarget.target.videoId) else vm.allStreams(meta.type, playTarget.target.videoId) }; return@LaunchedEffect }
         Prepare.start(vm, ctx, meta.type, playTarget.target.videoId, playTarget.resumeMs, runtimeMs(meta.runtime), quick, level, meta)
     }
+    // 0.9.77: searches still running for titles you already left are stopped (memory: browsing fast stacked them up).
+    LaunchedEffect(playTarget.target.videoId) { PluginSources.focus(playTarget.target.videoId) }
     // Plugin mode: the Upgrade to 4K plugins are asked as soon as the page opens (their answers are kept), so the player
     // can ready the 4K file the moment the first picture of Quick Play is on.
     LaunchedEffect(playTarget.target.videoId) {
@@ -265,7 +259,6 @@ fun DetailScreen(
         if (names.isNotEmpty()) runCatching { vm.streamsFlow(meta.type, playTarget.target.videoId, only = names).collect { } }
     }
     val prep by Prepare.state.collectAsStateWithLifecycle()
-    LaunchedEffect(prep) { DetailTiming.on(prep) }
     // Play pressed while it is still saving: stay here; start as soon as enough is saved (or fall back).
     var waitingFor by remember { mutableStateOf<SourceTarget?>(null) }
     var waitingResume by remember { mutableLongStateOf(0L) }
@@ -279,10 +272,8 @@ fun DetailScreen(
 
     /** Play button / episode tap: Quick Start or auto modes go straight to the player, manual opens the sources page. */
     fun start(t: SourceTarget, forceSources: Boolean = false, fromStart: Boolean = false, cinemaOk: Boolean = false) {
-        // 0.8.12: a show never starts without a season and episode (it played the bare show id → S1E1 from another source).
-        if (meta.type == "series" && !t.videoId.contains(":")) { Snack.show("Loading the episodes…"); scope.launch { vm.fullMeta(meta0)?.let { meta = it } }; return }
         // Not out online yet (only in cinemas, or not released): no searching for links that would be the wrong film.
-        // From StreamX's plan: a clean copy (web / Blu-ray) already found on this page just plays; only without one comes
+        // 0.9.70 (from Xstream): a clean copy (web / Blu-ray) already found on this page just plays; only without one comes
         // "In cinemas only", with Remind me · Play cinema copy · Close.
         if (meta.type == "movie" && !forceSources && !cinemaOk && meta.id.substringBefore(":") in CinemaOnly.hidden.value) {
             val st = Prepare.state.value
@@ -452,21 +443,17 @@ fun DetailScreen(
         TrailerActivity.nextLangs = list.map { it.lang.orEmpty() }
         launchTrailer(list.map { it.key }, list.map { it.name }, start, meta.name)
     }
-    // Xstream Live: trailers play inside the title card (nothing plays on its own; the Trailer button starts it).
+    // 0.9.78 (from Xstream): trailers play inside the title card (nothing plays on its own; the Trailer button starts it).
     var cardTrailer by remember(meta.id) { mutableStateOf<TmVideo?>(null) }
     var cardMuted by remember { mutableStateOf(false) }
     var cardPlaying by remember(meta.id) { mutableStateOf(false) }
     var trailerTip by remember(meta.id) { mutableStateOf<String?>(null) }
-    val tipPrefs = remember { ctx.getSharedPreferences("tips", android.content.Context.MODE_PRIVATE) }
-    fun tipOnce(key: String, text: String, times: Int = 5) {
-        // Every time (the limit made it vanish after a few title pages).
-        trailerTip = null; trailerTip = text
-    }
+    fun tipOnce(text: String) { trailerTip = null; trailerTip = text }
     fun trailerChain(): List<TmVideo> = (videos.filter { it.type == "Trailer" }.sortedBy { langOrder(it) } + videos.filter { it.type == "Teaser" }.sortedBy { langOrder(it) }).ifEmpty { videos }
     fun playInCard(v: TmVideo) {
         showVideos = false
         cardTrailer = v; cardPlaying = false
-        if (videos.size > 1) tipOnce("tipMoreTrailers", "Hold for more trailers")
+        if (videos.size > 1) tipOnce("Hold for more trailers")
     }
     /** Trailer button tap: the newest official trailer in your language (then the other trailers and teasers). */
     fun playTrailer() {
@@ -504,10 +491,13 @@ fun DetailScreen(
     val backdrop = art?.backdrop ?: meta.poster ?: backdropOf(meta)
     val artwork = meta.poster ?: backdrop
 
-    Box(Modifier.fillMaxSize().background(Bg)) {
+    // 0.9.77: Glass (phones) — the page itself is see-through, like Home, so the blurred backdrop shows (it was a second
+    // dark layer on top of the app's own, and looked plain black). Every other theme: exactly as before.
+    Box(Modifier.fillMaxSize().background(if (Palette.glass && !BuildConfig.IS_TV) Color.Transparent else Bg)) {
         Column(Modifier.fillMaxSize()) {
             // ── Top bar (stays put while the page scrolls) ──
-            Box(Modifier.fillMaxWidth().background(Bg).statusBarsPadding().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 14.dp)) {
+            val glassPage = Palette.glass && !BuildConfig.IS_TV
+            Box(Modifier.fillMaxWidth().background(if (glassPage) Color.Transparent else Bg).statusBarsPadding().padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 14.dp)) {
                 TopRound(Modifier.align(Alignment.CenterStart), onBack) {
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Back", Modifier.size(26.dp), tint = Color.White)
                 }
@@ -521,7 +511,13 @@ fun DetailScreen(
                 }
             }
 
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 40.dp)) {
+            // 0.9.78: Glass — the page softly fades out as it scrolls under the top bar (no hard "folding" edge).
+            LazyColumn(Modifier.fillMaxSize().then(if (glassPage) Modifier.graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    drawRect(Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black, startY = 0f, endY = 36.dp.toPx()),
+                        size = androidx.compose.ui.geometry.Size(size.width, 36.dp.toPx()), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+                } else Modifier), contentPadding = PaddingValues(bottom = 40.dp)) {
                 // ── Poster card: artwork, title, description, year · runtime · rating, scores ──
                 item {
                     val shape = RoundedCornerShape(28.dp)
@@ -540,7 +536,7 @@ fun DetailScreen(
                     Box(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(shape).background(TitleCardBg).border(1.dp, CardRim, shape)) {
                         AsyncImage(artwork, meta.name, Modifier.fillMaxWidth().height((300f + extra).dp).background(Surface1).graphicsLayer { alpha = 1f - grow },
                             alignment = BiasAlignment(0f, -0.4f), contentScale = ContentScale.Crop)
-                        if (heroId != null && tArm && !tStop && !TrailerInCard && isOn(texts["cardTrailers"] ?: "yes")) {
+                        if (!TrailersPaused.on && heroId != null && tArm && !tStop && !TrailerInCard && isOn(texts["cardTrailers"] ?: "yes")) {
                             TrailerVideo(heroId, tMuted, Modifier.fillMaxWidth().height((300f + extra).dp), fitWhole = false, backdrop = backdrop,
                                 onPlaying = { tPlay = true; HeroSound.played += meta.id }, onEnded = { tStop = true; tPlay = false }, onError = { tStop = true; tPlay = false })
                         }
@@ -552,7 +548,7 @@ fun DetailScreen(
                         }
                         Box(Modifier.padding(top = (150f + extra).dp).fillMaxWidth().height(160.dp).background(Brush.verticalGradient(listOf(Color.Transparent, TitleCardBg))))
                         if (TrailerInCard && ct != null) {
-                            // Sound, full screen and stop on the card; which trailer is playing; a thin red progress line.
+                            // Sound, full screen and stop on the card; which trailer is playing.
                             Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Box(Modifier.size(38.dp).clip(CircleShape).background(Color(0x88000000)).clickable { cardMuted = !cardMuted }, Alignment.Center) {
                                     Icon(if (cardMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp, if (cardMuted) "Sound on" else "Sound off", Modifier.size(20.dp), tint = Color.White)
@@ -570,7 +566,7 @@ fun DetailScreen(
                                 Modifier.padding(start = 14.dp, top = (252f + extra).dp).clip(RoundedCornerShape(10.dp)).background(Color(0x77000000)).padding(horizontal = 8.dp, vertical = 3.dp),
                                 fontSize = 11.sp, color = Color(0xFFE6E9F2), maxLines = 1)
                         }
-                        if (tStop && heroId != null && !TrailerInCard && isOn(texts["cardTrailers"] ?: "yes")) Row(
+                        if (!TrailersPaused.on && !TrailerInCard && tStop && heroId != null && isOn(texts["cardTrailers"] ?: "yes")) Row(
                             Modifier.align(Alignment.TopEnd).padding(12.dp).clip(RoundedCornerShape(50)).background(Color(0x88000000))
                                 .clickable { tStop = false; tPlay = false; tArm = true }.padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -658,8 +654,8 @@ fun DetailScreen(
                             }
                         }
                         if (TrailerInCard) Box {
-                            // Tap = trailer in the card · hold = every trailer. A small bubble explains it the first few times.
-                            LaunchedEffect(hasTrailer) { if (hasTrailer) { delay(700); tipOnce("tipTapTrailer", "Tap to watch the trailer") } }
+                            // 0.9.78 (from Xstream): tap = trailer in the card · hold = every trailer; a small bubble explains it.
+                            LaunchedEffect(hasTrailer) { if (hasTrailer) { delay(700); tipOnce(if (videos.size > 1) "Play trailer · hold for more" else "Play trailer") } }
                             val on = cardTrailer != null
                             LabeledRound("Trailer", Modifier.tourTarget("trailer").alpha(if (hasTrailer) 1f else 0.45f).tapHold(onTap = { trailerTip = null; playTrailer() }, onHold = { trailerTip = null; holdTrailer() }),
                                 rim = if (on) BrandRed else Color(0x8CE50914)) { ClapperGlyph(22.dp) }
@@ -721,6 +717,7 @@ fun DetailScreen(
                             }
                         }
                     }
+                    // 0.9.70 (from Xstream): Pilot / Season Finale / Series Finale tags in red.
                     val lastInSeason = shown.filter { (it.season ?: 0) > 0 }.maxByOrNull { it.episode ?: 0 }?.id
                     val ended = Regex("\\d{4}\\s*[–-]\\s*\\d{4}").containsMatchIn(meta.releaseInfo ?: "")
                     val lastSeason = seasons.maxOrNull()
@@ -803,7 +800,7 @@ fun DetailScreen(
                     add(TitleAction("Plan a watch", Icons.Default.Event) { planWatch = true })
                 }
             }
-          // Xstream phone: the Play button lifts out like a poster — trailer playing in the card, ratings, then every action.
+          // StreamX phone: the Play button lifts out like a poster — trailer playing in the card, ratings, then every action.
           if (!BuildConfig.IS_TV) androidx.compose.ui.window.Dialog({ actions = false }, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
               TitleLiftMenu(vm, meta, playRect.value, onDetails = {}, onManual = {}, onWatchlist = {}, onClose = { actions = false },
                   actions = actionList, subtitle = playTarget.target.epLabel)
@@ -817,7 +814,7 @@ fun DetailScreen(
         if (shareFriends) ShareWithFriends(meta, Social.friends.collectAsState().value) { shareFriends = false }
         if (planWatch) PlanFlow(meta, null, Social.friends.collectAsState().value, null, onDone = { planWatch = false })
 
-        if (showVideos) VideosSheet(meta.name, videos, anyOfficial, onDismiss = { showVideos = false }) { list, i -> if (TrailerInCard) playInCard(list[i]) else openTrailers(list, i) }
+        if (showVideos) VideosSheet(meta.name, videos, anyOfficial, onDismiss = { showVideos = false }) { list, i -> openTrailers(list, i) }
 
         // Full-screen sources page slides up over the details.
         val tgt = pick
@@ -1056,8 +1053,6 @@ private fun EpisodeRow(ep: Video, watched: Boolean, frac: Float, isNext: Boolean
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("E${ep.episode}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF9AA3B5))
-                // Pilot / Season Finale / Series Finale (a pilot is never called "Up next").
-                // Red accent tags: Pilot · Season Finale · Series Finale.
                 if (tag != null && !(isNext && frac > 0f)) Text(tag, Modifier.padding(start = 8.dp).clip(RoundedCornerShape(5.dp)).background(Color(0x33E50914))
                     .border(1.dp, Color(0x99E50914), RoundedCornerShape(5.dp))
                     .padding(horizontal = 5.dp, vertical = 1.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF5A62), letterSpacing = 0.5.sp)
@@ -1120,8 +1115,13 @@ fun airsIn(released: String?): String? {
     }
 }
 
+/** 0.9.70 (from Xstream): a cinema recording, by its name (CAM, HDCAM, TS, HDTS, TC, HDTC, PreDVD). */
+private val cinemaRx = Regex("(?i)(^|[^a-z0-9])(cam|camrip|hdcam|hd-cam|ts|hdts|hd-ts|telesync|tc|hdtc|telecine|pre-?dvd|predvdrip)([^a-z0-9]|$)")
+internal fun isCinemaCopy(s: StreamItem): Boolean = listOfNotNull(s.stream.name, s.stream.title, s.stream.description, s.stream.behaviorHints?.filename)
+    .any { cinemaRx.containsMatchIn(it) }
+
 /**
- * Xstream Live: a small bubble that pops out of the Trailer button for ~3 s, then shrinks back into it (with one soft
+ * 0.9.78 (from Xstream): a small bubble that pops out of the Trailer button for ~3 s, then shrinks back into it (with one soft
  * red pulse ring round the button).
  */
 @Composable
@@ -1170,7 +1170,3 @@ private fun TrailerTip(text: String?, modifier: Modifier, onGone: () -> Unit) {
 /** Trailers play inside the title card when you tap Trailer (phones; Xstream and Xstream Live). */
 private val TrailerInCard: Boolean get() = !BuildConfig.IS_TV
 
-/** A cinema recording, by its name (CAM, HDCAM, TS, HDTS, TC, HDTC, PreDVD). */
-private val cinemaRx = Regex("(?i)(^|[^a-z0-9])(cam|camrip|hdcam|hd-cam|ts|hdts|hd-ts|telesync|tc|hdtc|telecine|pre-?dvd|predvdrip)([^a-z0-9]|$)")
-internal fun isCinemaCopy(s: StreamItem): Boolean = listOfNotNull(s.stream.name, s.stream.title, s.stream.description, s.stream.behaviorHints?.filename)
-    .any { cinemaRx.containsMatchIn(it) }

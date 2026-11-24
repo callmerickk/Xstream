@@ -53,12 +53,12 @@ val AiProviders = listOf(
 /** A vote from the "How was it?" capsule: 1 = Go for it, -1 = Skip, 0 = Just surfing. */
 @Serializable data class Vote(val id: String, val type: String, val name: String, val poster: String? = null, val genres: List<String> = emptyList(), val v: Int, val at: Long)
 
-private fun aiHttp() = Api.http.newBuilder().readTimeout(45, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build()
+private fun aiHttp() = Api.http.newBuilder().readTimeout(25, TimeUnit.SECONDS).callTimeout(35, TimeUnit.SECONDS).build()
 
 fun AppViewModel.aiProvider(): AiProvider = AiProviders.firstOrNull { it.id == (texts.value["aiProvider"] ?: "groq") } ?: AiProviders[0]
 fun AppViewModel.aiKey(p: AiProvider = aiProvider()): String = (texts.value["aiKey_${p.id}"] ?: "").trim()
 fun AppViewModel.aiModel(p: AiProvider = aiProvider()): String = (texts.value["aiModel_${p.id}"] ?: "").trim().ifEmpty { p.model }
-fun AppViewModel.aiReady(): Boolean = BuildConfig.HAS_AI && aiKey().isNotEmpty() && isOn(texts.value["aiOn"] ?: "yes")
+fun AppViewModel.aiReady(): Boolean = aiKey().isNotEmpty() && isOn(texts.value["aiOn"] ?: "yes")
 
 private class AiHttpError(val code: Int, val msg: String) : Exception(msg)
 
@@ -98,8 +98,6 @@ private suspend fun AppViewModel.rawChat(
     p: AiProvider, key: String, model: String, json: Boolean, system: String, history: List<Pair<String, String>>, user: String,
     maxTokens: Int? = null, lowEffort: Boolean = false,
 ): String {
-    // Xstream Live has no AI: nothing is ever sent (it was still asked on title pages and failed / hung for 45 s).
-    if (!BuildConfig.HAS_AI) throw java.io.IOException("AI is off in this app")
     val body = buildJsonObject {
         put("model", model)
         put("temperature", 0.7)
@@ -118,7 +116,7 @@ private suspend fun AppViewModel.rawChat(
     val req = Request.Builder().url(p.url)
         .header("Authorization", "Bearer $key")
         .header("Content-Type", "application/json")
-        .apply { if (p.id == "openrouter") { header("X-Title", "Xstream"); header("HTTP-Referer", "https://github.com/callmerickk/xstream") } }
+        .apply { if (p.id == "openrouter") { header("X-Title", Brand.NAME); header("HTTP-Referer", Brand.REPO_URL) } }
         .post(body.toString().toRequestBody("application/json".toMediaType()))
         .build()
     return aiHttp().newCall(req).execute().use { r ->
@@ -223,10 +221,6 @@ internal fun AppViewModel.tasteSummary(): String {
         if (skipped.isNotEmpty()) append("Did not like: $skipped.\n")
         if (watching.isNotEmpty()) append("Recently watching: $watching.\n")
         if (saved.isNotEmpty()) append("Watchlist: $saved.\n")
-        // Picked on the taste screen (sign-up / new profile).
-        tasteLangs().takeIf { it.isNotEmpty() }?.let { l -> append("Favourite languages: ${l.joinToString { c -> TasteLangs.firstOrNull { it.code == c }?.name ?: c }}.\n") }
-        texts.value["tasteGenres"]?.takeIf { it.isNotBlank() }?.let { append("Favourite genres: $it.\n") }
-        texts.value["tasteSearched"]?.takeIf { it.isNotBlank() }?.let { append("Titles they searched for and love: $it.\n") }
     }.ifEmpty { "No history yet.\n" }
 }
 
@@ -234,7 +228,7 @@ private fun AppViewModel.systemPrompt(): String {
     val p = current.value
     val today = SimpleDateFormat("d MMMM yyyy", Locale.ENGLISH).format(Date())
     return """
-You are ${aiName()}, the friendly movie buddy inside Xstream, a movie and TV streaming app. Today is $today.
+You are ${aiName()}, the friendly movie buddy inside ${Brand.NAME}, a movie and TV streaming app. Today is $today.
 You are talking to ${p?.name ?: "the viewer"}.${if (p?.kids == true) " This is a KIDS profile: only suggest titles suitable for children (G / PG / U)." else ""}
 What you know about their taste:
 ${tasteSummary()}

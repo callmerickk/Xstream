@@ -40,7 +40,7 @@ import org.mozilla.javascript.ContextFactory
 import org.mozilla.javascript.Scriptable
 import org.mozilla.javascript.ScriptableObject
 
-/** An installed Xstream plugin (a JavaScript file, see PLUGINS.md). */
+/** An installed StreamX plugin (a JavaScript file, see PLUGINS.md). */
 @Serializable
 data class PluginInfo(
     val id: String, val name: String, val version: String = "1.0.0", val description: String = "", val author: String = "",
@@ -48,7 +48,7 @@ data class PluginInfo(
 )
 
 /**
- * Xstream plugins: small JavaScript files that find streams for a title, run inside the app (Rhino engine, no Java
+ * StreamX plugins: small JavaScript files that find streams for a title, run inside the app (Rhino engine, no Java
  * access — only the helpers given here: http.get / http.post, log, atob / btoa). Each enabled plugin is asked
  * alongside your addons; its results appear in Sources like an addon's and go through the same ranking and filters.
  * The format is described in PLUGINS.md (API version 1).
@@ -68,7 +68,7 @@ object Plugins {
 
     private fun save(l: List<PluginInfo>) { list.value = l; prefs?.edit()?.putString("all", Api.json.encodeToString(l))?.apply() }
 
-    fun enabled(): List<PluginInfo> = if (LiveLock.on) emptyList() else list.value.filter { it.enabled }
+    fun enabled(): List<PluginInfo> = list.value.filter { it.enabled }
 
     fun setEnabled(id: String, on: Boolean) = save(list.value.map { if (it.id == id) it.copy(enabled = on) else it })
     fun remove(id: String) = save(list.value.filter { it.id != id })
@@ -87,7 +87,7 @@ object Plugins {
         val id = str("id")?.takeIf { it.isNotBlank() } ?: return@withContext "`plugin.id` is missing."
         val name = str("name")?.takeIf { it.isNotBlank() } ?: return@withContext "`plugin.name` is missing."
         val api = str("api")?.toIntOrNull() ?: 1
-        if (api > API) return@withContext "This plugin needs a newer Xstream (plugin API $api, this app has $API)."
+        if (api > API) return@withContext "This plugin needs a newer ${Brand.NAME} (plugin API $api, this app has $API)."
         val types = runCatching { o["types"]!!.jsonArray.mapNotNull { it.jsonPrimitive.contentOrNull } }.getOrNull()?.ifEmpty { null } ?: listOf("movie", "series")
         if (!code.contains("getStreams")) return@withContext "The plugin has no getStreams(request) function."
         val p = PluginInfo(id, name, str("version") ?: "1.0.0", str("description").orEmpty(), str("author").orEmpty(), types, source, true, code)

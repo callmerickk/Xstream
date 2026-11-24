@@ -103,22 +103,30 @@ object Downloads {
     }
 
     /** Bytes used by finished downloads. */
-    /** Movies/Xstream (visible to the gallery and file manager), else the app's own Movies folder. */
-    fun publicDir(ctx: Context): File {
-        val pub = runCatching { File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "Xstream").apply { mkdirs() } }.getOrNull()
-        if (pub != null && runCatching { File(pub, ".xstream-probe.mp4").let { f -> f.writeText("x"); f.delete() } }.getOrDefault(false)) return pub
-        return ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: ctx.filesDir
-    }
-
     fun usedBytes(): Long = list.value.sumOf { runCatching { File(it.file).length() }.getOrDefault(0L) }
 
     /**
      * Finds the best downloadable file of [target] and starts the download. Returns a message for the user.
      * HLS / DASH playlists can't be downloaded as one file, so only plain video files are picked.
      */
+    /** Movies/StreamX (visible to the gallery and file manager), else the app's own Movies folder. */
+    fun publicDir(ctx: Context): File {
+        if (BuildConfig.IS_TV) return ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: ctx.filesDir
+        val pub = runCatching { File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "${Brand.NAME}").apply { mkdirs() } }.getOrNull()
+        if (pub != null && runCatching { File(pub, ".streamx-probe.mp4").let { f -> f.writeText("x"); f.delete() } }.getOrDefault(false)) return pub
+        return ctx.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: ctx.filesDir
+    }
+
+    /** 0.9.77: titles whose download is being set up — a second tap waits for the first (it used to start a whole new
+     *  search of every source each time: three taps = three searches at once). */
+    private val starting = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     suspend fun start(vm: AppViewModel, ctx: Context, meta: Meta, target: SourceTarget): String {
         init(ctx)
         if (has(target.videoId)) return "Already in your downloads"
+        if (!starting.add(target.videoId)) return "Already getting this download ready…"
+        try { return startOnce(vm, ctx, meta, target) } finally { starting.remove(target.videoId) }
+    }
+    private suspend fun startOnce(vm: AppViewModel, ctx: Context, meta: Meta, target: SourceTarget): String {
         val all = runCatching { vm.allStreams(meta.type, target.videoId) }.getOrDefault(emptyList())
         if (all.isEmpty()) return "No streams found to download"
         val level = vm.playerPref("quality").ifEmpty { vm.texts.value["qsQuality"] ?: "auto" }
@@ -135,8 +143,8 @@ object Downloads {
                 .ifBlank { "video" } + "-" + System.currentTimeMillis() % 100000 + "." + ext
             // The app downloads it itself (pause / resume / speed); the old system downloads keep working as before.
             StreamHeaders.remember(s)
-            // 0.8.16: saved in the phone's Movies/Xstream folder (shows in the gallery and file manager); the app's own
-            // folder only if that one can't be written.
+            // 0.9.73 (from Xstream): phones save to Movies/StreamX (shows in the gallery and file manager); the app's own
+            // folder only if that can't be written. TV keeps the app's folder.
             val file = File(publicDir(ctx), name).absolutePath
             val d = Dl(-System.currentTimeMillis(), target.videoId, target.title, target.epLabel, target.image ?: meta.poster, meta.type, meta.id, file,
                 Prepare.qualityName(s.resolution()), System.currentTimeMillis(), url = url)
@@ -166,7 +174,7 @@ fun DownloadsSection(onPlay: (Screen.Player) -> Unit) {
         items.asReversed().forEach { d ->
             val st = remember(d.dmId, tick, liveNow[d.dmId]) { Downloads.status(ctx, d) }
             var details by remember(d.dmId) { mutableStateOf(false) }
-            Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF15161C))) {
+            Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(14.dp)).background(glassy(Color(0xFF15161C)))) {
             Row(
                 Modifier.fillMaxWidth()
                     .clickable {

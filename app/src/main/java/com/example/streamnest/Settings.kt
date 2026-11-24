@@ -64,8 +64,7 @@ import kotlin.math.roundToInt
 
 internal val CardShape = RoundedCornerShape(24.dp)
 internal val Muted = Color(0xFF9AA3B5)
-internal val CardBg = Color(0xFF17171B)
-
+internal val CardBg: Color get() = glassy(Color(0xFF17171B))
 // ───────────── Shared building blocks ─────────────
 
 @Composable
@@ -74,7 +73,7 @@ internal fun PageHeader(title: String, onBack: (() -> Unit)?) {
         Modifier.fillMaxWidth().statusBarsPadding().padding(start = if (onBack == null) 20.dp else 8.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Back: a glass circle with the Xstream red edge (same as the player's panels).
+        // Back: a glass circle with the StreamX red edge (same as the player's panels).
         if (onBack != null) Box(
             Modifier.padding(start = 8.dp).size(42.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(0x9E14141A))
                 .border(1.dp, Color(0x8CE50914), androidx.compose.foundation.shape.CircleShape).clickable { onBack() },
@@ -424,7 +423,6 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             "quickStart" -> QuickStartPage(vm) { subPage = null }
             "codeNames" -> CodeNamesPage(vm) { subPage = null }
             "assistant" -> DevAssistantPage(vm) { subPage = null }
-            "donate" -> DonatePage(vm) { subPage = null }
             else -> StreamFiltersPage(vm) { subPage = null }
         }
         return
@@ -433,7 +431,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         item { PageHeader("Developer's Corner", onBack) }
 
         item {
-            // Everything in Developer's Corner, for every account (Xstream and StreamX, phone and TV) in one tap.
+            // Everything in Developer's Corner, for every account (StreamX and StreamX, phone and TV) in one tap.
             val scope = rememberCoroutineScope()
             var res by remember { mutableStateOf<List<Pair<String, String?>>>(emptyList()) }
             var busy by remember { mutableStateOf(false) }
@@ -452,7 +450,6 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             }
         }
         item { DevFold("AI assistant", "Analyse logs, tune auto-play, design the AI's name — with the app's AI or by copy & paste", false) { subPage = "assistant" } }
-        if (!BuildConfig.NO_PUBLISH) item { DevFold("Payments & donations", "UPI ID, PayPal / Ko-fi, monthly goal — the Support Xstream bubble for everyone", false) { subPage = "donate" } }
         if (!BuildConfig.IS_TV) item {
             // Gemini Live (developer only): the AI card talks in real time with Google's live voice (your Gemini key).
             val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -468,19 +465,10 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         if (devOpen == "src") {
         item {
             SettingsCard {
-                if (!BuildConfig.NO_PUBLISH) SettingRow(Icons.Default.Public, "Official set for everyone", "The add-ons and plugins every account gets. Anything else stays a test.") { subPage = "official" }
+                SettingRow(Icons.Default.Public, "Official set for everyone", "The add-ons and plugins every account gets. Anything else stays a test.") { subPage = "official" }
                 SettingRow(Icons.Default.Extension, "CloudStream plugins", "Repositories and plugins (developer only).") { subPage = "plugins" }
                 SettingRow(Icons.Default.Speed, "Quick Start servers", "Quick Play add-ons / plugins and their speed.") { subPage = "quickStart" }
                 SettingRow(Icons.Default.FilterList, "Stream filters (all)", "Include, exclude or force every tag — the defaults users build on.") { subPage = "streamFilters" }
-            }
-        }
-        if (BuildConfig.LIVE_ONLY) {
-            item { SectionLabel("Xstream Live") }
-            item {
-                SettingsCard {
-                    ToggleRow("Plugins and addons", "Off: the Live server is the only source and Sources & Extensions stay hidden.",
-                        texts["devSources"] == "on") { vm.setText("devSources", if (it) "on" else "off") }
-                }
             }
         }
         item { SectionLabel("Built-in servers for everyone") }
@@ -523,7 +511,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                 TmdbKeyStatus(vm)
                 SettingRow(Icons.Default.Restore, "Auto-play logic", "CNCVerse refresh schedule and upgrade servers. Undo last change, restore any saved logic, classic switch.") { autoPlay = true }
                 SettingRow(Icons.Default.Timer, "Refresh Lab", "Measure when CNCVerse links appear and play, for the Refresh Lab Analyzer page.") { refreshLab = true }
-                if (!BuildConfig.NO_PUBLISH) SettingRow(Icons.Default.Key, "Defaults for everyone", "API keys, the AI's logo and voice — publish them so users need no setup.") { defaultsPage = true }
+                SettingRow(Icons.Default.Key, "Defaults for everyone", "API keys, the AI's logo and voice — publish them so users need no setup.") { defaultsPage = true }
             }
         }
 
@@ -564,7 +552,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             var msg by remember { mutableStateOf<String?>(null) }
             SettingsCard {
                 Column(Modifier.padding(16.dp)) {
-                    Text("The app's logo and the Home logo animation for everyone. Phones pick it up the next time Xstream opens; the app icon changes on the next fresh start (unless someone chose their own icon in Settings).",
+                    Text("The app's logo and the Home logo animation for everyone. Phones pick it up the next time ${Brand.NAME} opens; the app icon changes on the next fresh start (unless someone chose their own icon in Settings).",
                         fontSize = 13.sp, color = Color(0xFF9AA3B5))
                     Row(Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         AppIcons.all.forEach { o ->
@@ -586,10 +574,10 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
                     if (anim != "hanging" && anim != "none" && logo != "signal") Text("The Broadcast, Tune in and Living signal animations draw the Signal X logo; with another logo the logo stays still and only the name slides in.",
                         Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Color(0xFF8A94A8))
                     Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        androidx.compose.material3.OutlinedButton({ AppLook.set(ctx, logo, anim); msg = "On this phone now (restart Xstream to see the animation)" }) { Text("Use on this phone") }
-                        if (!BuildConfig.NO_PUBLISH) androidx.compose.material3.Button({
+                        androidx.compose.material3.OutlinedButton({ AppLook.set(ctx, logo, anim); msg = "On this phone now (restart ${Brand.NAME} to see the animation)" }) { Text("Use on this phone") }
+                        androidx.compose.material3.Button({
                             msg = "Publishing…"
-                            scope.launch { msg = AppLook.publish(logo, anim) ?: run { AppLook.set(ctx, logo, anim); "Published ✓ — every phone switches when Xstream opens next" } }
+                            scope.launch { msg = AppLook.publish(logo, anim) ?: run { AppLook.set(ctx, logo, anim); "Published ✓ — every phone switches when ${Brand.NAME} opens next" } }
                         }) { Text("Publish for everyone") }
                     }
                     msg?.let { Text(it, Modifier.padding(top = 8.dp), fontSize = 12.sp, color = Color(0xFF9AA3B5)) }
@@ -633,12 +621,20 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             var open by remember { mutableStateOf(false) }
             SettingsCard {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Everything Xstream did in the last 3 days on this phone and on your TV: every tap and remote key, screens, network, playback, Watch together, sync, VPN and errors. Older days are deleted automatically. Typed text is never recorded.",
+                    Text("Everything ${Brand.NAME} did in the last 3 days on this phone and on your TV: every tap and remote key, screens, network, playback, Watch together, sync, VPN and errors. Older days are deleted automatically. Typed text is never recorded.",
                         fontSize = 13.sp, color = Color(0xFF9AA3B5))
                     androidx.compose.material3.Button({ open = true }, Modifier.padding(top = 10.dp)) { Text("Open activity log") }
                 }
             }
             if (open) ActLogScreen { open = false }
+        }
+        // 0.9.79: light logging unless you switch this on (the app does less work while you use it).
+        if (!BuildConfig.IS_TV) item {
+            var det by remember { mutableStateOf(ActLog.detailed) }
+            SettingsCard {
+                ToggleRow("Detailed logs", if (det) "On: every plugin's timing, memory every 5 s, ranking notes and the button under each tap are written."
+                    else "Off: errors, playback, switches, sync and rooms only (lighter).", det) { det = it; ActLog.turnDetailed(it) }
+            }
         }
         item { SectionLabel("Play timing log") }
         item {

@@ -6,7 +6,11 @@ import androidx.media3.common.MimeTypes
 
 /** "No HDR" in your picture filters is kept everywhere: first pick, swaps, upgrades and the Quality menu. */
 object HdrRule {
+    /** 0.9.76 (phones): the HDR switch (quality menu / Settings › Playback). Off (default) = strictly no HDR anywhere;
+     *  on = HDR copies are offered and played without any restriction. TV keeps the picture-filter rule. */
+    fun on(vm: AppViewModel): Boolean = vm.texts.value["hdrOn"] == "on"
     fun banned(vm: AppViewModel): Boolean {
+        if (!BuildConfig.IS_TV) return !on(vm)
         val r = effectiveRules(vm.texts.value["devTagRules"], vm.texts.value["tagRules"])
         return r["hdr"] == TagRule.Exclude || r["dv"] == TagRule.Exclude || r["sdr"] == TagRule.Forced
     }

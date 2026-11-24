@@ -13,6 +13,9 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.9.0", "24 Nov 2026", "Xstream now runs on StreamX's code", listOf(
+        "Xstream now runs on StreamX's code — same look and speed as StreamX; beta features come back step by step",
+    )),
     Release("0.8.20", "24 Nov 2026", "Green light sooner, fewer crashes", listOf(
         "The green light comes sooner: the app no longer asks every source twice for the same title",
         "A good video is no longer thrown away just because its host refuses a few extra connections",
@@ -584,6 +587,13 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.9.0", "24 Nov 2026", "Shared base: StreamX 0.9.79 code + Xstream brand layer", listOf(
+        "app/src/main, phone, tv = StreamX 0.9.79 / TV 0.9.15 source, unchanged except branding (tools/sync-shared.sh copies it)",
+        "Brand.kt: name, update repo (callmerickk/Xstream, no download relay), APK names, cloud shelf xshared/, invite xstream://join + workers.dev/xjoin — all from app/build.gradle.kts",
+        "Feature.kt: named switches, on in the beta (IS_BETA), off in StreamX unless approved",
+        "Xstream-only extras (CloudFind, Access gate, LinkMemory, Music, Taste, Horizon profile page, LiveBar, Donate …) are not in this build yet: see docs/MERGE-INVENTORY.md",
+        "Flavors: phone + tv (universal and the src/full voice set dropped; Vosk and face detection are in every build, as in StreamX)",
+    )),
     Release("0.8.20", "24 Nov 2026", "Addon mode: no double asking, faster green, plugin memory guard", listOf(
         "CsPlugins.PluginGuard (outermost on the plugin client): video/audio, octet-stream big or unknown size, anything > 16 MB → empty body + X-SX-Cut: 1 (URL kept); text/JSON with no length capped at 12 MB; ranged reads and HEAD pass",
         "addonStreamsFlow: cloud finder first, 1500 ms head start; an addon the cloud answered with ≥1 usable link skips its direct call (Quick Play addons, CNCVerse and CloudFind.directOnly always asked directly); NET summary line per title",

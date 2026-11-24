@@ -150,7 +150,7 @@ suspend fun AppViewModel.tmdbInfo(imdb: String, type: String): TmdbInfo? {
     }.getOrNull()
 }
 
-/** IMDb id for a TMDB recommendation, so it can open in Xstream. */
+/** IMDb id for a TMDB recommendation, so it can open in StreamX. */
 private val imdbOfTmdb = java.util.concurrent.ConcurrentHashMap<String, String>()
 suspend fun AppViewModel.tmdbToImdb(r: TmRec): String? = imdbOfTmdb[r.kind + r.tmdbId] ?: runCatching {
     val o = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/${r.kind}/${r.tmdbId}/external_ids?api_key=${tmdbKey()}")).jsonObject
@@ -220,24 +220,14 @@ object TmdbPosters {
     private val running = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
 
-    // 0.8.9: remembered on the phone, so the Top 10 posters are there at once on the next start.
-    @Volatile private var loaded = false
-    private fun prefs() = Public.vm?.appContext?.getSharedPreferences("tmdbPosters", android.content.Context.MODE_PRIVATE)
-    private fun load() {
-        if (loaded) return
-        val p = prefs() ?: return
-        loaded = true
-        runCatching { p.all.forEach { (k, v) -> (v as? String)?.let { cache.putIfAbsent(k, it) } } }
-    }
-    private fun save(id: String, url: String) { runCatching { prefs()?.edit()?.apply { if ((prefs()?.all?.size ?: 0) > 4000) clear() }?.putString(id, url)?.apply() } }
-    fun cached(m: Meta): String? { load(); return cache[m.id] }
-    fun remember(m: Meta, url: String) { cache[m.id] = url; save(m.id, url) }
+    fun cached(m: Meta): String? = cache[m.id]
+    fun remember(m: Meta, url: String) { cache[m.id] = url }
 
     /** A tall poster that never needs TMDB: Cinemeta's large poster by IMDb id, or the title's own when it is tall. */
     fun fallback(m: Meta): String? = hdPoster(m) ?: m.poster?.takeIf { !m.posterShape.equals("landscape", true) && !m.posterShape.equals("square", true) }?.let { hiResArt(it) }
 
     suspend fun portrait(m: Meta): String? {
-        cached(m)?.let { return it }
+        cache[m.id]?.let { return it }
         if (m.id in none) return null
         val vm = Public.vm ?: return null
         val key = vm.tmdbKey()
@@ -245,7 +235,7 @@ object TmdbPosters {
         val d = running.getOrPut(m.id) { scope.async { runCatching { look(m, key) }.getOrNull() } }
         val r = d.await()
         running.remove(m.id)
-        if (r != null) { cache[m.id] = r; save(m.id, r) } else none += m.id
+        if (r != null) cache[m.id] = r else none += m.id
         return r
     }
 
@@ -382,6 +372,8 @@ object HindiTrending {
  */
 object CinemaOnly {
     val hidden = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
+    /** Adult-only films (TMDB's adult flag, or rated NC-17 / X in the US): kept off Home unless 18+ is switched on. */
+    val adult = kotlinx.coroutines.flow.MutableStateFlow<Set<String>>(emptySet())
     private var prefs: android.content.SharedPreferences? = null
     private val running = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -408,6 +400,20 @@ object CinemaOnly {
         } finally { running.set(false) }
     }
     private suspend fun checkNow(vm: AppViewModel, key: String, metas: List<Meta>) {
+        // Adult check (once per film, kept for good): every film on Home, at most 80 new ones per run.
+        runCatching {
+            val pr = p(vm.appContext)
+            adult.value = adult.value + pr.all.filter { (k, v) -> k.startsWith("ad_") && v == true }.keys.map { it.removePrefix("ad_") }
+            val todo = metas.asSequence().filter { it.type == "movie" && it.id.startsWith("tt") }.map { it.id.substringBefore(":") }.distinct()
+                .filter { !pr.contains("ad_$it") }.take(80).toList()
+            val sem = kotlinx.coroutines.sync.Semaphore(4)
+            kotlinx.coroutines.coroutineScope {
+                todo.forEach { id -> launch(kotlinx.coroutines.Dispatchers.IO) { sem.acquire(); try {
+                    val a = runCatching { isAdult(key, id) }.getOrNull()
+                    if (a != null) { pr.edit().putBoolean("ad_$id", a).apply(); if (a) adult.value = adult.value + id }
+                } finally { sem.release() } } }
+            }
+        }
         run {
             val pr = p(vm.appContext)
             val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
@@ -434,6 +440,16 @@ object CinemaOnly {
                 } finally { sem.release() } } }
             }
         }
+    }
+
+    private suspend fun isAdult(key: String, imdb: String): Boolean? {
+        val f = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/find/$imdb?api_key=$key&external_source=imdb_id")).jsonObject
+        val m = f.arr("movie_results").firstOrNull() ?: return false
+        if ((m["adult"] as? JsonPrimitive)?.booleanOrNull == true) return true
+        val id = m.str("id") ?: return false
+        val rd = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/movie/$id/release_dates?api_key=$key")).jsonObject
+        return rd.arr("results").filter { it.str("iso_3166_1") == "US" }.flatMap { it.arr("release_dates") }
+            .any { (it.str("certification") ?: "").uppercase() in setOf("NC-17", "X") }
     }
 
     /** For "Available now": is this film out for people at home yet? null = can't tell. */
@@ -466,18 +482,8 @@ object CinemaOnly {
     }
 }
 
-/** Popular titles in a language and genres (the taste screen). kind = "movie" or "tv". */
-suspend fun AppViewModel.tmdbDiscover(kind: String, lang: String?, genreIds: List<Int>): List<TmRec> {
-    val key = tmdbKey(); if (key.isEmpty()) return emptyList()
-    val g = if (genreIds.isNotEmpty()) "&with_genres=" + java.net.URLEncoder.encode(genreIds.joinToString("|"), "UTF-8") else ""
-    val l = lang?.let { "&with_original_language=$it" } ?: ""
-    return runCatching {
-        Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/discover/$kind?api_key=$key&sort_by=popularity.desc&vote_count.gte=40$l$g&page=1"))
-            .jsonObject.arr("results").take(20).mapNotNull { parseRec(it, kind) }
-    }.getOrDefault(emptyList())
-}
 
-/** 0.8.7: TMDB's "scene during / after the credits" keywords for a movie: "during", "after" or null. Asked once per title. */
+/** TV 0.9.2 (from Xstream 0.8.7): TMDB's "scene during / after the credits" keywords for a movie: "during", "after" or null. */
 private val stingerCache = java.util.concurrent.ConcurrentHashMap<String, String>()
 suspend fun AppViewModel.stingerOf(imdb: String): String? {
     stingerCache[imdb]?.let { return it.ifEmpty { null } }

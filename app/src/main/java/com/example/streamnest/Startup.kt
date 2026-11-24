@@ -17,13 +17,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.draw.shadow
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -96,8 +92,8 @@ fun ZoomX(fontSp: Float, appear: () -> Float, zoom: () -> Float, alpha: () -> Fl
 }
 
 /**
- * Black → red/purple glow, the logo pops, the red X pops, "stream" slides out from behind it.
- * Then the logo and "stream" fade, the red X zooms towards you while fading, and the glow fades out.
+ * Black → red/purple glow, the logo pops, "Stream" slides in, the red X pops.
+ * Then the logo and "Stream" fade, the red X zooms towards you while fading, and the glow fades out.
  */
 @Composable
 fun StartupSplash(onDone: () -> Unit) {
@@ -106,20 +102,17 @@ fun StartupSplash(onDone: () -> Unit) {
     val word = remember { Animatable(0f) }
     val x = remember { Animatable(0f) }
     val zoom = remember { Animatable(1f) }
-    val out = remember { Animatable(1f) }      // logo + "stream" fade
+    val out = remember { Animatable(1f) }      // logo + "Stream" fade
     val xAlpha = remember { Animatable(1f) }
-    val live = remember { Animatable(0f) }      // Xstream Live: the "● LIVE" badge under "am"
     val done by rememberUpdatedState(onDone)
 
     LaunchedEffect(Unit) {
         launch { bg.animateTo(1f, tween(600)) }
         launch { delay(260); mark.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 260f)) }
-        delay(720)
-        launch { x.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 300f)) }
-        delay(240)
-        word.animateTo(1f, tween(480, easing = FastOutSlowInEasing))
-        if (BuildConfig.LIVE_ONLY) { delay(80); live.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 380f)) }
-        delay(520)
+        launch { delay(780); word.animateTo(1f, tween(480, easing = FastOutSlowInEasing)) }
+        delay(980)
+        x.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 300f))
+        delay(650)
         launch { out.animateTo(0f, tween(320)) }
         launch { delay(250); bg.animateTo(0f, tween(800)) }
         launch { delay(260); xAlpha.animateTo(0f, tween(700)) }
@@ -145,29 +138,14 @@ fun StartupSplash(onDone: () -> Unit) {
             if (lookLogo == "signal") Box(markMod) { SignalMark(76.dp, "broadcast", standalone = true) }
             else Image(painterResource(AppLook.logoRes(lookLogo)), null, Modifier.size(76.dp).then(markMod))
             Spacer(Modifier.width(14.dp))
-            ZoomX(44f, { x.value }, { zoom.value }, { xAlpha.value })
-            Box {
-                Text(
-                    "stream",
-                    Modifier.graphicsLayer { alpha = word.value * out.value; translationX = (1f - word.value) * -18.dp.toPx() },
-                    fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 44.sp, letterSpacing = (-1).sp, color = Color.White,
-                )
-                // Xstream Live: a small red "● LIVE" pops up under the end of the word (under "am").
-                if (BuildConfig.LIVE_ONLY) Row(
-                    Modifier.align(Alignment.BottomEnd).offset(x = 2.dp, y = 30.dp).graphicsLayer {
-                        val v = live.value
-                        alpha = v.coerceIn(0f, 1f) * out.value
-                        scaleX = 0.3f + 0.7f * v; scaleY = scaleX
-                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)
-                    }.shadow(14.dp, RoundedCornerShape(50), ambientColor = BrandRed, spotColor = BrandRed)
-                        .clip(RoundedCornerShape(50)).background(BrandRed).padding(start = 9.dp, end = 10.dp, top = 3.dp, bottom = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(Modifier.size(6.dp).clip(CircleShape).background(Color.White))
-                    Text("LIVE", Modifier.padding(start = 6.dp), fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 12.sp,
-                        letterSpacing = 3.sp, color = Color.White)
-                }
-            }
+            // Brand: StreamX = "Stream" + red X, Xstream = red X + "stream".
+            if (Brand.X_FIRST) ZoomX(44f, { x.value }, { zoom.value }, { xAlpha.value })
+            Text(
+                if (Brand.X_FIRST) Brand.NAME.drop(1) else Brand.NAME.dropLast(1),
+                Modifier.graphicsLayer { alpha = word.value * out.value; translationX = (1f - word.value) * -18.dp.toPx() },
+                fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 44.sp, letterSpacing = (-1).sp, color = Color.White,
+            )
+            if (!Brand.X_FIRST) ZoomX(44f, { x.value }, { zoom.value }, { xAlpha.value })
         }
     }
 }
@@ -175,9 +153,7 @@ fun StartupSplash(onDone: () -> Unit) {
 // ───────────── "Who's watching?" (Hotstar TV style) ─────────────
 
 @Composable
-fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPlay: (Screen.Player) -> Unit = {}, onOpen: (Meta) -> Unit = {}, onPicked: () -> Unit) {
-    // Xstream phones: the Horizon profile page (Continue watching / Picked for you above the glowing ground).
-    if (!BuildConfig.IS_TV && !BuildConfig.LIVE_ONLY) { HorizonWhoIsWatching(vm, active, onPicked, onPlay, onOpen); return }
+fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPicked: () -> Unit) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val texts by vm.texts.collectAsStateWithLifecycle()
     val posters by vm.wallPosters.collectAsStateWithLifecycle()
@@ -206,7 +182,7 @@ fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPlay: (Scree
     }
     LaunchedEffect(leaving) {
         val id = leaving ?: return@LaunchedEffect
-        leave.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
+        leave.animateTo(1f, tween(520))
         profiles.firstOrNull { it.id == id }?.let { vm.selectProfile(it) }
         onPicked()
     }
@@ -226,199 +202,146 @@ fun WhoIsWatchingScreen(vm: AppViewModel, active: Boolean = true, onPlay: (Scree
     val h = LocalConfiguration.current.screenHeightDp.dp
     val arcY = h * 0.62f
 
-    // Xstream Live: a calm, premium picker — round avatars on the navy-black page, a soft glow ring on the last one
-    // (with the auto-open countdown), the picked one grows while the rest fade away.
-    if (BuildConfig.LIVE_ONLY) {
-        Box(
-            Modifier.fillMaxSize().background(Color(0xFF0F1014))
-                .background(Brush.radialGradient(listOf(Color(0x5523306E), Color.Transparent), center = Offset(540f, -120f), radius = 1500f))
-                .graphicsLayer { alpha = 1f - (leave.value - 0.6f).coerceAtLeast(0f) * 2.5f }
-                .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); if (countdown.value > 0f) cancelled = true } },
-        ) {
-            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 18.dp, end = 10.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Spacer(Modifier.weight(1f))
-                Text(if (editMode) "Done" else "Manage", Modifier.clip(RoundedCornerShape(14.dp)).clickable { editMode = !editMode; cancelled = true }
-                    .padding(horizontal = 12.dp, vertical = 8.dp), color = Color(0xFFB8BED3), fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            }
-            Column(Modifier.fillMaxSize().statusBarsPadding().padding(top = 70.dp).graphicsLayer { alpha = enter.value; translationY = (1f - enter.value) * 16.dp.toPx() },
-                horizontalAlignment = Alignment.CenterHorizontally) {
-                Wordmark("Xstream", 30.sp)
-                Text(if (editMode) "Tap a profile to edit" else "Who's watching?", Modifier.padding(top = 26.dp), fontSize = 24.sp,
-                    fontWeight = FontWeight.SemiBold, color = Color.White)
-                // Two big circles per row; the main profile always sits on the right (easiest to reach with the thumb),
-                // "Add" on its own row, centred, below.
-                val canAdd = profiles.size < 5
-                val main = profiles.firstOrNull()
-                val others = profiles.drop(1)
-                val rowsOf: List<List<Profile?>> = buildList {
-                    if (main != null) add(listOfNotNull(others.firstOrNull(), main))
-                    others.drop(1).chunked(2).forEach { add(it) }
-                    if (canAdd) add(listOf(null))
-                }
-                val cells: List<Profile?> = rowsOf.flatten()
-                val big = profiles.size <= 2
-                val avD = if (big) 132.dp else 116.dp
-                Column(Modifier.padding(top = 40.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(if (big) 30.dp else 22.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally) {
-                    rowsOf.forEach { rowCells ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(40.dp)) {
-                            rowCells.forEach { p ->
-                                val i = cells.indexOf(p)
-                                val pop = remember { Animatable(0f) }
-                                LaunchedEffect(active) { if (active) { delay(200L + i * 90L); pop.animateTo(1f, spring(dampingRatio = 0.7f, stiffness = 240f)) } }
-                                val focused = p != null && p.id == focusId && !editMode && leaving == null
-                                val isLeaving = p != null && p.id == leaving
-                                Column(
-                                    Modifier.width(avD + 16.dp).graphicsLayer {
-                                        val v = pop.value
-                                        alpha = v.coerceIn(0f, 1f) * (if (leaving != null && !isLeaving) 1f - leave.value else 1f)
-                                        translationY = (1f - v) * 24.dp.toPx()
-                                        val k = if (isLeaving) 1f + 0.18f * leave.value else 1f
-                                        scaleX = k; scaleY = k
-                                    }.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {
-                                        when { p == null -> { cancelled = true; adding = true }; editMode -> editing = p; else -> pick(p) }
-                                    },
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                ) {
-                                    Box(Modifier.size(avD + 16.dp), contentAlignment = Alignment.Center) {
-                                        if (p == null) {
-                                            Box(Modifier.size(avD * 0.78f).clip(CircleShape).background(Color(0x0FFFFFFF)).border(1.5.dp, Color(0x33FFFFFF), CircleShape), Alignment.Center) {
-                                                Icon(Icons.Default.Add, "Add profile", Modifier.size(30.dp), tint = Color(0xFFB8BED3))
-                                            }
-                                        } else {
-                                            if (focused || isLeaving) Canvas(Modifier.fillMaxSize()) {
-                                                drawCircle(Brush.radialGradient(listOf(Color(0x664B4FD8), Color.Transparent)), radius = size.minDimension / 2f)
-                                            }
-                                            ProfileAvatar(vm, p, avD, Modifier.border(2.5.dp,
-                                                if (focused || isLeaving) Brush.linearGradient(listOf(Color(0xFF6A6FF0), BrandRed)) else Brush.linearGradient(listOf(Color(0x22FFFFFF), Color(0x22FFFFFF))), CircleShape))
-                                            if (editMode) Box(Modifier.size(avD).clip(CircleShape).background(Color(0x88000000)), Alignment.Center) { Icon(Icons.Default.Edit, "Edit ${p.name}", Modifier.size(22.dp)) }
-                                            if (focused && countdown.value > 0f && !cancelled) Canvas(Modifier.size(avD + 16.dp)) {
-                                                val sw = 2.5.dp.toPx()
-                                                drawArc(Color.White, -90f, 360f * countdown.value, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw, cap = StrokeCap.Round))
-                                            }
-                                        }
-                                    }
-                                    Text(p?.name ?: "Add", Modifier.padding(top = 12.dp), fontSize = 17.sp, fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal,
-                                        color = if (p == null) Color(0xFF8A90A6) else if (focused) Color.White else Color(0xFFB8BED3), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (p?.kids == true) Text("KIDS", fontSize = 9.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF7DA2FF))
-                                }
-                            }
+    Box(
+        Modifier.fillMaxSize().background(Color(0xFF0B0B10))
+            .graphicsLayer { alpha = (1f - leave.value * 0.9f) }
+            // Touching the screen anywhere stops the auto-open timer.
+            .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); if (countdown.value > 0f) cancelled = true } },
+    ) {
+        // Poster wall drifting slowly behind everything.
+        if (posters.isNotEmpty()) {
+            Column(
+                Modifier.fillMaxWidth().requiredWidth(LocalConfiguration.current.screenWidthDp.dp + 40.dp).padding(top = 24.dp)
+                    .graphicsLayer { alpha = 0.8f * enter.value; translationY = -wallY * 70.dp.toPx() },
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                posters.chunked(5).take(6).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        row.forEach { url ->
+                            AsyncImage(url, null, Modifier.weight(1f).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF1A1A22)), contentScale = ContentScale.Crop)
                         }
                     }
                 }
             }
-            val focusName = profiles.firstOrNull { it.id == focusId }?.name ?: ""
-            if (countdown.value > 0f && !cancelled && !editMode && leaving == null) Text(buildAnnotatedString {
-                append("Opening "); withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append(focusName) }
-                append(" in "); withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append("$remaining") }
-            }, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 44.dp), fontSize = 14.sp, color = Color(0xFF8A90A6))
         }
-        editing?.let { p -> ProfileEditor(vm, p) { editing = null } }
-        if (adding) ProfileEditor(vm, null) { adding = false }
-        return
-    }
+        // Dim + fade the wall into the background (darker at the top and towards the profiles).
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+            0f to Color(0xB30B0B10), 0.3f to Color(0x330B0B10), 0.55f to Color(0xBF0B0B10), 0.7f to Color(0xFF0B0B10), 1f to Color(0xFF0B0B10))))
+        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0x990B0B10), 0.25f to Color.Transparent, 0.75f to Color.Transparent, 1f to Color(0x990B0B10))))
 
-    // Xstream "Box office": every profile is a cinema ticket. Tap yours: the stub tears off along the perforation and
-    // drops away, "Admit one" lights up and you're in. The last profile keeps the auto-open ring on its stub.
-    val cream = Color(0xFFF4E6C8); val ink = Color(0xFF1A1208); val gold = Color(0xFFF2B544)
-    Box(
-        Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0xFF2A1D10), Color(0xFF0B0806)), center = Offset(500f, 0f), radius = 1600f))
-            .graphicsLayer { alpha = 1f - (leave.value - 0.7f).coerceAtLeast(0f) * 2f }
-            .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false); if (countdown.value > 0f) cancelled = true } },
-    ) {
+        // Blue → pink glow and the curved line the profiles sit on.
+        Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = enter.value }) {
+            val y = arcY.toPx()
+            drawCircle(Brush.radialGradient(listOf(Color(0x8C2896FF), Color.Transparent), Offset(size.width * 0.28f, y + 50.dp.toPx()), size.width * 0.5f),
+                size.width * 0.5f, Offset(size.width * 0.28f, y + 50.dp.toPx()))
+            drawCircle(Brush.radialGradient(listOf(Color(0x80FF2882), Color.Transparent), Offset(size.width * 0.74f, y + 60.dp.toPx()), size.width * 0.5f),
+                size.width * 0.5f, Offset(size.width * 0.74f, y + 60.dp.toPx()))
+            val path = Path().apply {
+                moveTo(-20f, y + 32.dp.toPx()); quadraticBezierTo(size.width / 2f, y, size.width + 20f, y + 32.dp.toPx())
+            }
+            val line = Brush.horizontalGradient(listOf(Color(0x332AA0FF), Color(0xFF3FB4FF), Color(0xFFFF3B8D), Color(0x33FF2A6A)))
+            val reveal = enter.value
+            clipRect(left = size.width / 2f * (1f - reveal), right = size.width / 2f * (1f + reveal)) {
+                drawPath(path, line, alpha = 0.25f, style = Stroke(10.dp.toPx(), cap = StrokeCap.Round))
+                drawPath(path, line, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
+            }
+        }
+
+        // Top bar: small logo, Edit.
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 18.dp, end = 10.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Image(painterResource(AppLook.logoRes(AppLook.logo.value)), null, Modifier.size(30.dp))
             Spacer(Modifier.weight(1f))
-            Row(Modifier.clip(RoundedCornerShape(12.dp)).clickable { editMode = !editMode; cancelled = true }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (editMode) Icons.Default.Check else Icons.Default.Edit, null, Modifier.size(18.dp), tint = Color(0xFFD9C39A))
+            Row(
+                Modifier.clip(RoundedCornerShape(12.dp)).clickable { editMode = !editMode; cancelled = true }.padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(if (editMode) Icons.Default.Check else Icons.Default.Edit, null, Modifier.size(18.dp), tint = Color(0xFFB6BDCC))
                 Spacer(Modifier.width(6.dp))
-                Text(if (editMode) "Done" else "Edit", color = Color(0xFFD9C39A), fontSize = 16.sp)
+                Text(if (editMode) "Done" else "Edit", color = Color(0xFFB6BDCC), fontSize = 16.sp)
             }
         }
-        Column(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 60.dp).graphicsLayer { alpha = enter.value }, horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("BOX OFFICE", fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 28.sp, letterSpacing = 4.sp, color = gold)
-            Text(if (editMode) "TAP A TICKET TO EDIT" else "PICK YOUR TICKET", Modifier.padding(top = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.5.sp, color = Color(0x99D9C39A))
-        }
+        Text(
+            t("whoWatching"),
+            Modifier.fillMaxWidth().statusBarsPadding().padding(top = 64.dp).graphicsLayer { alpha = enter.value; translationY = (1f - enter.value) * 10.dp.toPx() },
+            fontSize = 26.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+        )
+
+        // Profiles on the line.
         val cells: List<Profile?> = profiles + (if (profiles.size < 5) listOf(null) else emptyList())
-        Column(
-            Modifier.fillMaxSize().statusBarsPadding().padding(top = 140.dp, bottom = 24.dp).verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp),
+        LazyRow(
+            Modifier.fillMaxWidth().padding(top = arcY - 4.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
         ) {
-            cells.forEachIndexed { i, p ->
+            items(cells.size) { i ->
+                val p = cells[i]
                 val pop = remember { Animatable(0f) }
-                LaunchedEffect(active) { if (active) { delay(250L + i * 110L); pop.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 260f)) } }
+                LaunchedEffect(active) { if (active) { delay(350L + i * 110L); pop.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 300f)) } }
                 val focused = p != null && p.id == focusId && !editMode && leaving == null
                 val isLeaving = p != null && p.id == leaving
-                val tilt = listOf(-2f, 1.5f, -1f, 2f, -1.5f, 1f)[i % 6]
-                Row(
-                    Modifier.width(290.dp).height(96.dp).graphicsLayer {
-                        val v = pop.value
-                        alpha = v.coerceIn(0f, 1f) * (if (leaving != null && !isLeaving) 1f - leave.value else 1f)
-                        translationY = (1f - v) * 30.dp.toPx() + (if (leaving != null && !isLeaving) leave.value * 60.dp.toPx() else 0f)
-                        rotationZ = if (isLeaving) tilt - 3f * leave.value else tilt
-                        val k = if (isLeaving) 1f + 0.12f * leave.value else if (focused) 1.04f else 1f
-                        scaleX = k; scaleY = k
+                val sc by androidx.compose.animation.core.animateFloatAsState(if (focused || isLeaving) 1.22f else 1f, spring(dampingRatio = 0.6f, stiffness = 350f), label = "sc")
+                Column(
+                    Modifier.width(92.dp).graphicsLayer {
+                        alpha = pop.value.coerceIn(0f, 1f) * (if (leaving != null && !isLeaving) 1f - leave.value else 1f)
+                        translationY = (1f - pop.value) * 16.dp.toPx()
                     }.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {
-                        when { p == null -> { cancelled = true; adding = true }; editMode -> editing = p; else -> pick(p) }
+                        when {
+                            p == null -> { cancelled = true; adding = true }
+                            editMode -> editing = p
+                            else -> pick(p)
+                        }
                     },
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    // Main part of the ticket.
-                    Row(
-                        Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp))
-                            .background(if (p == null) Color(0x14F4E6C8) else cream)
-                            .then(if (p == null) Modifier.border(1.5.dp, Color(0x66F4E6C8), RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp)) else Modifier)
-                            .padding(horizontal = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    Box(
+                        Modifier.size(96.dp).graphicsLayer {
+                            val l = if (isLeaving) 1f + leave.value * 0.8f else 1f
+                            scaleX = sc * l; scaleY = sc * l
+                            alpha = if (isLeaving) 1f - leave.value * 0.7f else 1f
+                        },
+                        Alignment.Center,
                     ) {
                         if (p == null) {
-                            Icon(Icons.Default.Add, "Add profile", Modifier.size(30.dp), tint = cream)
-                            Text("ADD A PROFILE", Modifier.padding(start = 12.dp), fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 17.sp, letterSpacing = 1.sp, color = cream)
+                            Box(Modifier.size(74.dp).clip(CircleShape).background(Color(0x2EFFFFFF)), Alignment.Center) {
+                                Icon(Icons.Default.Add, "Add profile", Modifier.size(32.dp))
+                            }
                         } else {
-                            Box(contentAlignment = Alignment.Center) {
-                                ProfileAvatar(vm, p, 54.dp, Modifier.border(2.dp, ink, CircleShape))
-                                if (editMode) Box(Modifier.size(54.dp).clip(CircleShape).background(Color(0x88000000)), Alignment.Center) { Icon(Icons.Default.Edit, "Edit ${p.name}", Modifier.size(22.dp)) }
+                            ProfileAvatar(vm, p, 74.dp, if (focused || isLeaving) Modifier.border(3.dp, Color.White, CircleShape) else Modifier)
+                            if (editMode) Box(Modifier.size(74.dp).clip(CircleShape).background(Color(0x88000000)), Alignment.Center) {
+                                Icon(Icons.Default.Edit, "Edit ${p.name}", Modifier.size(26.dp))
                             }
-                            Column(Modifier.padding(start = 12.dp)) {
-                                Text(p.name.uppercase(), fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 22.sp, letterSpacing = 1.sp, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(if (p.kids) "KIDS · FAMILY SHOWS" else "ADMIT ONE · ALL SHOWS", fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, color = Color(0xAA1A1208))
-                            }
-                        }
-                    }
-                    // Perforation, then the stub (it tears off and drops when you pick this ticket).
-                    Canvas(Modifier.width(2.dp).fillMaxHeight().background(if (p == null) Color.Transparent else cream)) {
-                        var y = 4.dp.toPx()
-                        while (y < size.height) { drawLine(ink.copy(alpha = 0.5f), Offset(1f, y), Offset(1f, y + 4.dp.toPx()), 2f); y += 8.dp.toPx() }
-                    }
-                    Column(
-                        Modifier.width(64.dp).fillMaxHeight().graphicsLayer {
-                            if (isLeaving) { val v = leave.value; translationX = v * 30.dp.toPx(); translationY = v * 140.dp.toPx(); rotationZ = v * 28f; alpha = 1f - v }
-                        }.clip(RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp)).background(if (p == null) Color(0x14F4E6C8) else cream),
-                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-                    ) {
-                        if (p != null) {
-                            Text("SEAT", fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = Color(0xAA1A1208))
-                            Box(contentAlignment = Alignment.Center) {
-                                Text("${"AKGDMR"[i % 6]}${i + 1}", fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = ink)
-                                if (focused && countdown.value > 0f && !cancelled) Canvas(Modifier.size(42.dp)) {
-                                    val sw = 3.dp.toPx()
-                                    drawArc(Color(0x22000000), 0f, 360f, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw))
-                                    drawArc(BrandRed, -90f, 360f * countdown.value, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw, cap = StrokeCap.Round))
-                                }
+                            if (focused && countdown.value > 0f && !cancelled) Canvas(Modifier.size(90.dp)) {
+                                val sw = 3.5.dp.toPx()
+                                drawArc(Color(0x2EFFFFFF), 0f, 360f, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw))
+                                drawArc(BrandRed, -90f, 360f * countdown.value, false, Offset(sw / 2, sw / 2), Size(size.width - sw, size.height - sw), style = Stroke(sw, cap = StrokeCap.Round))
                             }
                         }
                     }
+                    Text(
+                        p?.name ?: "Add", Modifier.padding(top = if (focused) 10.dp else 4.dp), fontSize = 13.sp,
+                        fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal, color = if (focused) Color.White else Color(0xFFC9CDD6),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+                    )
                 }
             }
         }
-        // "Admit one" as the ticket is torn; "Opening Rick in 5" while the auto-open ring runs.
+
+        // "Opening Rick in 5"
         val focusName = profiles.firstOrNull { it.id == focusId }?.name ?: ""
-        val showCount = countdown.value > 0f && !cancelled && !editMode && leaving == null
-        Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (leaving != null) Text("ADMIT ONE", Modifier.graphicsLayer { alpha = (leave.value * 2f).coerceAtMost(1f) }, fontFamily = BrandFont, fontWeight = FontWeight.Bold, fontSize = 34.sp, letterSpacing = 4.sp, color = cream)
-            else if (showCount) Text(buildAnnotatedString {
-                append("Opening "); withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append(focusName) }
-                append(" in "); withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append("$remaining") }
-            }, fontSize = 14.sp, color = Color(0xFFD9C39A))
+        val showCount = countdown.value > 0f && !cancelled && !editMode
+        Column(
+            Modifier.fillMaxWidth().padding(top = arcY + 150.dp).graphicsLayer { alpha = if (showCount || leaving != null) 1f else 0f },
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                buildAnnotatedString {
+                    append("Opening ")
+                    withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append(focusName) }
+                    if (leaving == null) { append(" in "); withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.SemiBold)) { append("$remaining") } } else append("…")
+                },
+                fontSize = 14.sp, color = Color(0xFFC9CDD6),
+            )
+            if (leaving == null) Text("Tap another profile to switch", Modifier.padding(top = 4.dp), fontSize = 12.sp, color = Color(0xFF7C8394))
         }
     }
     editing?.let { p -> ProfileEditor(vm, p) { editing = null } }

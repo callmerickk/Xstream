@@ -11,7 +11,7 @@ import android.os.Build
 import android.os.IBinder
 
 /**
- * Keeps Xstream alive while an update downloads in the background (Android would otherwise stop the app a little
+ * Keeps StreamX alive while an update downloads in the background (Android would otherwise stop the app a little
  * after it's minimised), with the progress in a notification.
  */
 class UpdateService : Service() {
@@ -37,7 +37,7 @@ class UpdateService : Service() {
                 mgr.createNotificationChannel(NotificationChannel(CH, "App updates", NotificationManager.IMPORTANCE_LOW))
             val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(ctx, CH) else @Suppress("DEPRECATION") Notification.Builder(ctx)
             return b.setSmallIcon(android.R.drawable.stat_sys_download)
-                .setContentTitle("Downloading Xstream ${nm.ifBlank { name }}")
+                .setContentTitle("Downloading ${Brand.NAME} ${nm.ifBlank { name }}")
                 .setContentText(if (p < 0) "Starting…" else "${(p * 100).toInt()}%")
                 .setOngoing(true).setOnlyAlertOnce(true)
                 .setProgress(100, if (p < 0) 0 else (p * 100).toInt(), p < 0)

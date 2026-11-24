@@ -31,7 +31,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 
 /*
- * Xstream 0.5.1 — "Sources & Extensions" (was Content & Discovery):
+ * StreamX 0.5.1 — "Sources & Extensions" (was Content & Discovery):
  *   Watch mode: Turbo (plugins) / Classic (addons), per profile, asked once on a first start.
  *   Sources = addons, Extensions = Nuvio plugins (anyone can add them; they're a last backup unless picked by hand),
  *   Filters = Quick Play & filters. CloudStream plugins live in Developer's Corner only.
@@ -73,14 +73,19 @@ fun FirstWatchChooser(vm: AppViewModel) {
     var pick by remember { mutableStateOf("plugins") }
     Box(Modifier.fillMaxSize().background(Color(0xFF0B0A0E)).statusBarsPadding().navigationBarsPadding()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            Row { Text("X", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Red); Text("stream", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold) }
+            Row {
+                // Brand: StreamX = "Stream" + red X, Xstream = red X + "stream".
+                if (Brand.X_FIRST) Text("X", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Red)
+                Text(if (Brand.X_FIRST) Brand.NAME.drop(1) else Brand.NAME.dropLast(1), fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+                if (!Brand.X_FIRST) Text("X", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Red)
+            }
             Column {
                 Text("How do you want to watch?", fontSize = 26.sp, fontWeight = FontWeight.Bold, lineHeight = 32.sp)
                 Text("Pick one. You can switch any time in Settings › Sources & Extensions, and each profile keeps its own choice.",
                     fontSize = 14.sp, color = Color(0xFFA9A4B0), modifier = Modifier.padding(top = 8.dp))
             }
             ModeChoice(Icons.Default.Bolt, "Turbo", "Streams straight from big streaming catalogues. Starts almost instantly, HD and 4K ready.", pick == "plugins", recommended = true) { pick = "plugins" }
-            ModeChoice(Icons.Default.GridView, "Classic", "Uses your Sources and Quick Play servers, exactly as Xstream worked before.", pick == "addons", recommended = false) { pick = "addons" }
+            ModeChoice(Icons.Default.GridView, "Classic", "Uses your Sources and Quick Play servers, exactly as ${Brand.NAME} worked before.", pick == "addons", recommended = false) { pick = "addons" }
             if (LiveServer.available(androidx.compose.ui.platform.LocalContext.current))
                 ModeChoice(Icons.Default.Bolt, "Live", "Only the Live server on this phone: movies, episodes and music, prepared before you press Play.", pick == "live", recommended = false) { pick = "live" }
             Spacer(Modifier.height(8.dp))
@@ -159,8 +164,8 @@ fun ExtensionsPage(vm: AppViewModel, onBack: () -> Unit) {
                             Text(it, Modifier.clip(chip).background(Color(0x14FFFFFF)).padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFD5D0DA))
                         }
                     }
-                    if (texts["srcMode"] != "plugins") Text("Extensions play in Turbo mode. Switch in Sources & Extensions › How you watch.", fontSize = 13.sp, color = Color(0xFFFF8A9A))
-                    Text("Extensions are a backup: Xstream uses them when nothing else plays, or when you pick one of their streams yourself.", fontSize = 13.sp, color = Muted)
+                    if (texts["srcMode"].let { !it.isNullOrEmpty() && it != "plugins" }) Text("Extensions play in Turbo mode. Switch in Sources & Extensions › How you watch.", fontSize = 13.sp, color = Color(0xFFFF8A9A))
+                    Text("Extensions are a backup: ${Brand.NAME} uses them when nothing else plays, or when you pick one of their streams yourself.", fontSize = 13.sp, color = Muted)
                 }
                 RowDivider(20.dp)
                 ToggleRow("Use extensions", "Ask your switched-on extensions while finding streams.", on) { vm.setText("extOn", if (it) "yes" else "no") }

@@ -69,7 +69,7 @@ object AppIcons {
     }
 
     /**
-     * Only one Xstream icon on the home screen. (Updating from 0.9.37 could leave the old icon switched on next to the
+     * Only one StreamX icon on the home screen. (Updating from 0.9.37 could leave the old icon switched on next to the
      * new Signal X: two icons for the same app.) Keeps the icon the person picked, else Signal X.
      */
     fun keepOne(ctx: Context) {
@@ -88,7 +88,7 @@ object AppIcons {
         setPending(ctx, null)
     }
 
-    /** "Restart now": switch the icon and relaunch Xstream through the new icon. */
+    /** "Restart now": switch the icon and relaunch StreamX through the new icon. */
     fun applyAndRestart(activity: Activity, id: String) {
         setPending(activity, null)
         switchTo(activity, id)

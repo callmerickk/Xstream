@@ -63,7 +63,7 @@ object CustomThemes {
     }
 
     fun apply(vm: AppViewModel, t: CustomTheme) {
-        vm.setText("themePicked", "1"); vm.setText("theme", "custom:" + t.name)
+        vm.setText("theme", "custom:" + t.name)
         vm.setText("accent", t.accent); vm.setText("accent2", t.accent2)
         vm.setText("background", t.background); vm.setText("deckTint", t.tint)
         vm.setText("btnColor", t.button); vm.setText("btnText", t.buttonText)
