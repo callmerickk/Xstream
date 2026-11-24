@@ -777,7 +777,7 @@ private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> 
             RowDivider(20.dp)
             ToggleRow("Hello out loud", "AIDEN speaks the greeting (never when your phone is on silent).", isOn(rt["aiWakeVoice"] ?: "yes")) { vm.setText("aiWakeVoice", if (it) "yes" else "no") }
             RowDivider(20.dp)
-            if (!WakeWordOff) {
+            if (!WakeWordOff && WakeWord.supported(androidx.compose.ui.platform.LocalContext.current)) {  // 0.9.6: supported
             ToggleRow("Say \"Hey Aiden\"", "Opens the AI card hands-free whenever ${Brand.NAME} is open (only \"Hey Aiden\" during a movie). Downloads a small offline voice model (36 MB) once; nothing leaves the phone until it hears you.", isOn(rt["wakeOn"] ?: "yes")) { vm.setText("wakeOn", if (it) "yes" else "no") }
                 RowDivider(20.dp)
             }
@@ -1360,6 +1360,8 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
             }
         }
 
+        // 0.9.6 (noVlc): no engine to choose in the slim build (the stored value is ignored, never rewritten).
+        if (!Feature.noVlc) {
         SectionLabel("Player engine")
         SettingsCard {
             Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
@@ -1369,6 +1371,7 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
                 val engines = linkedMapOf("exo" to "Auto (ExoPlayer first)", "vlc" to "VLC first")
                 ChipGrid(engines.values.toList(), if (v("playerEngine") == "vlc") "VLC first" else "Auto (ExoPlayer first)") { label -> vm.setText("playerEngine", engines.entries.first { it.value == label }.key); vm.setText("engineMigrated", "1") }
             }
+        }
         }
 
         SectionLabel("Stream start")

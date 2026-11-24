@@ -4,7 +4,13 @@
      adds: Music (launcher entry, background playback, widget) and the 0.8.x invite links. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- 0.9.6: lets the app see whether the VLC app is installed (the slim build's last-resort hand-off, VlcApp.kt). -->
+    <queries>
+        <package android:name="org.videolan.vlc" />
+    </queries>
     <application>
+        <!-- 0.9.6: Google Play services downloads the face model ("Follow the speaker") when the app is installed. -->
+        <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="face" />
         <activity android:name="com.example.streamnest.MainActivity">
             <!-- "Open" after installing / updating opens the main app (not Music): Android asks for this category first. -->
             <intent-filter>

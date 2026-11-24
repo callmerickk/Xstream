@@ -667,7 +667,9 @@ private fun TogetherRoomControls(c: String, mem: Map<String, RoomMember>) {
     // 0.9.76: the voice / video call's own state, and why the camera couldn't start.
     val callState by Call.status.collectAsState()
     val camErr by Call.camError.collectAsState()
-    val callLine = camErr?.let { "Camera couldn't start — $it" } ?: callState.takeIf { it.isNotEmpty() && (mic || cam || mem.size > 1) }
+    // 0.9.6 (webrtcOnDemand): while Watch together's part downloads (first call only), the same line shows its progress.
+    val rtcDl by WebRtcLib.progress.collectAsState()
+    val callLine = rtcDl?.let { "Getting Watch together ready… $it %" } ?: camErr?.let { "Camera couldn't start — $it" } ?: callState.takeIf { it.isNotEmpty() && (mic || cam || mem.size > 1) }
     if (callLine != null) {
         val good = camErr == null && callState == "Connected"
         Text(callLine, Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(10.dp)).background(glassy(Color(0xFF191A20))).padding(horizontal = 12.dp, vertical = 8.dp),

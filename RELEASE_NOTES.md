@@ -1,3 +1,11 @@
+Xstream 0.9.6
+
+A much smaller app:
+• Much smaller app: quicker to download and install, and it takes less space on your phone.
+• Plays more audio and video formats on its own.
+• Watch together downloads its part the first time you use it (a few seconds, once).
+• Older 32-bit phones get their own small version automatically.
+
 Xstream 0.9.5
 
 Big screens get the TV look:

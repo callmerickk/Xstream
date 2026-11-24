@@ -33,15 +33,34 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
+          mkdir -p out
+          # 0.9.6: the 64-bit APK (Xstream's default) ...
           gradle assemblePhoneDebug --no-daemon 2>&1 | tee build.log
-          ls -la app/build/outputs/apk/*/debug/*.apk
+          cp app/build/outputs/apk/phone/debug/*.apk out/Xstream-phone.apk
+          # ... then the same code with the 32-bit ABI only (same key, same versionCode).
+          gradle assemblePhoneDebug -PphoneAbi=arm32 --no-daemon 2>&1 | tee -a build.log
+          cp app/build/outputs/apk/phone/debug/*.apk out/Xstream-phone-arm32.apk
+          ls -la out/
       - name: Check the APKs
         run: |
-          for a in app/build/outputs/apk/phone/debug/*.apk; do
+          for a in out/*.apk; do
             n=$(basename "$a"); sz=$(du -m "$a" | cut -f1)
                         libs=$(unzip -l "$a" | grep "lib/" | awk '{print $1, $4}' | sort -rn | head -8 | awk '{printf "%s %.1fMB; ", $2, $1/1048576}')
             echo "::notice title=$n ($sz MB)::$libs"
+            # 0.9.6: the slimmed-out libraries must really be gone (a Feature switch must never meet a missing .so).
+            if unzip -l "$a" | grep -E "lib/.*(libvlc|libvosk|libjnidispatch|libjingle)"; then
+              echo "::error title=$n::a slimmed-out native library is still in the APK"; exit 1
+            fi
+            b=$(stat -c%s "$a")
+            if [ "$b" -gt $((45*1024*1024)) ]; then echo "::warning title=$n::bigger than 45 MB ($((b/1048576)) MB)"; fi
           done
+          # 0.9.6: one ABI per APK.
+          if unzip -l out/Xstream-phone.apk | grep -q "lib/armeabi-v7a/"; then echo "::error::the arm64 APK holds 32-bit libraries"; exit 1; fi
+          if unzip -l out/Xstream-phone-arm32.apk | grep -q "lib/arm64-v8a/"; then echo "::error::the arm32 APK holds 64-bit libraries"; exit 1; fi
+      - name: WebRTC library for Watch together (assets branch + checksum)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tools/webrtc-assets.sh "${{ github.repository }}" ${{ inputs.publish && 'strict' || '' }}
       - name: Report errors
         if: failure()
         run: |
@@ -68,18 +87,19 @@ jobs:
             curl -sL -o "$(basename "$u" | sed 's/%20/_/g')" "$u"
           done
           cd ..
-          python3 tools/cs_compat.py app/build/outputs/apk/phone/debug/*.apk cscheck/*.cs3 | tee cscheck.txt
+          python3 tools/cs_compat.py out/Xstream-phone.apk cscheck/*.cs3 | tee cscheck.txt
           msg=$(head -40 cscheck.txt | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
           echo "::warning title=CloudStream compatibility::$msg"
       - uses: actions/upload-artifact@v4
         with:
           name: Xstream-phone-apk
-          path: app/build/outputs/apk/phone/debug/*.apk
+          path: out/*.apk
       - name: Prepare release files
         if: ${{ inputs.publish }}
         run: |
           mkdir -p release
-          cp app/build/outputs/apk/phone/debug/*.apk release/Xstream-phone.apk
+          cp out/Xstream-phone.apk release/Xstream-phone.apk
+          cp out/Xstream-phone-arm32.apk release/Xstream-phone-arm32.apk
           G=app/build.gradle.kts
           CODE=$(grep 'versionCode = ' $G | sed -n 1p | grep -o '[0-9]\+')
           NAME=$(grep 'versionName = ' $G | sed -n 1p | sed 's/.*"\(.*\)".*/\1/')
@@ -98,5 +118,6 @@ jobs:
           make_latest: true
           files: |
             release/Xstream-phone.apk
+            release/Xstream-phone-arm32.apk
             release/versions.json
             release/notes.md

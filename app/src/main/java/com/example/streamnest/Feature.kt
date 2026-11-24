@@ -74,4 +74,21 @@ object Feature {
      *  mouse and touch at once; laptops / emulators with memory to spare get the top device tier (bigger video buffer).
      *  Off = the phone layout everywhere, buffers as before. */
     val bigScreen: Boolean = on("bigScreen")
+
+    // 0.9.6: the slim build. These four are NOT named switches: they follow BuildConfig.SLIM_LIBS (Xstream phone only),
+    // the same value that leaves the native libraries out of the APK (app/build.gradle.kts), so a switch can never be on
+    // in an APK that still needs the library, or off in one that lacks it. StreamX: SLIM_LIBS false in its brand file.
+    /** 0.9.6: no VLC engine: ExoPlayer (phone decoders, then FFmpeg software video), then the next link; the VLC app
+     *  (if installed) only as the very last resort. */
+    val noVlc: Boolean get() = BuildConfig.SLIM_LIBS
+    /** 0.9.6: "Hey Aiden" uses Android's on-device speech recogniser instead of Vosk (WakeWordSr.kt). */
+    val noVosk: Boolean get() = BuildConfig.SLIM_LIBS
+    /** 0.9.6: the face model comes from Google Play services ("Follow the speaker" hidden without them, FaceModelGms.kt). */
+    val mlkitUnbundled: Boolean get() = BuildConfig.SLIM_LIBS
+    /** 0.9.6: Watch together's native library is downloaded the first time a call starts (WebRtcLib.kt). */
+    val webrtcOnDemand: Boolean get() = BuildConfig.SLIM_LIBS
+
+    /** 0.9.6: the engine setting as the player sees it. A stored "vlc" is ignored with noVlc (never rewritten, so cloud
+     *  sync is untouched). */
+    fun engine(raw: String): String = if (noVlc) "exo" else raw
 }

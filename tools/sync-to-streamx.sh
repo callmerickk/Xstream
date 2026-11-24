@@ -33,6 +33,9 @@ G="$DST/app/build.gradle.kts"
 grep -q '"BRAND_NAME" to "StreamX"' "$G" || { echo "stop: $G has no StreamX brand map (\"BRAND_NAME\" to \"StreamX\")"; exit 1; }
 grep -q 'val brandBeta = false' "$G" || { echo "stop: $G must say val brandBeta = false (StreamX is the stable app)"; exit 1; }
 grep -q 'applicationId = "com.example.streamnest"' "$G" || { echo "stop: $G is not StreamX's (applicationId)"; exit 1; }
+# 0.9.6: the shared code reads BuildConfig.SLIM_LIBS and APK_PHONE_ARM32 (StreamX: false / "").
+grep -q '"SLIM_LIBS"' "$G" || { echo "stop: $G has no SLIM_LIBS buildConfigField (add buildConfigField(\"boolean\", \"SLIM_LIBS\", \"false\") to both flavors)"; exit 1; }
+grep -q '"APK_PHONE_ARM32"' "$G" || { echo "stop: $G has no \"APK_PHONE_ARM32\" to \"\" in its brand map"; exit 1; }
 
 KEEP="$(mktemp -d)"
 trap 'rm -rf "$KEEP"' EXIT

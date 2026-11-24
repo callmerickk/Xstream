@@ -154,7 +154,11 @@ object Updater {
         val name = versions.s(if (tv) "tvName" else "phoneName") ?: ""
         // The APK of exactly this release (its tag), so the version shown is the version installed.
         val tag = versions.s("tag")
-        val apkName = if (tv) Brand.APK_TV else Brand.APK_PHONE
+        // 0.9.6: a phone with no 64-bit ABI at all gets the 32-bit APK (same versionCode, so versions.json is unchanged).
+        // StreamX: APK_PHONE_ARM32 is "" -> the 0.9.5 line.
+        val arm32 = !tv && Brand.APK_PHONE_ARM32.isNotEmpty() && android.os.Build.SUPPORTED_64_BIT_ABIS.isEmpty()
+        val apkName = if (tv) Brand.APK_TV else if (arm32) Brand.APK_PHONE_ARM32 else Brand.APK_PHONE
+        if (arm32) ActLog.add("UPDATE", "32-bit phone: using $apkName")
         val gh = (if (tag != null) "https://github.com/$REPO/releases/download/$tag" else base) + "/$apkName"
         val url = if (CDN.isEmpty()) gh else (if (tag != null) "$CDN/$tag" else CDN) + "/$apkName"
         val info = if (code > installedCode(ctx)) {

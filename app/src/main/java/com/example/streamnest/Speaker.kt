@@ -32,6 +32,21 @@ object SpeakerTracker {
 
     fun reset() { mouths.clear(); lastSeen.clear() }
 
+    /** 0.9.6 (mlkitUnbundled): the Play-services glue, only compiled into Xstream's phone app
+     *  (app/src/brand/phone/java/…/FaceModelGms.kt). Every other build has none: the bundled model needs nothing. */
+    private val gms: FaceModelHook? by lazy {
+        if (!Feature.mlkitUnbundled) null
+        else runCatching { Class.forName("com.example.streamnest.FaceModelGms").getDeclaredConstructor().newInstance() as FaceModelHook }.getOrNull()
+    }
+
+    /** 0.9.6: true when "Follow the speaker" can work here. Bundled model (StreamX, TV): always. Play-services model:
+     *  only with Google Play services (Fire TV and some Huawei phones have none → the option is hidden). */
+    fun supported(ctx: android.content.Context): Boolean = !Feature.mlkitUnbundled || gms?.supported(ctx) == true
+
+    /** 0.9.6: asks Play services for the face model now (in case the install-time download hasn't finished). Until it is
+     *  there, process() fails and the line simply stays centred (the existing failure path). */
+    fun prepare(ctx: android.content.Context) { if (Feature.mlkitUnbundled) runCatching { gms?.prepare(ctx, detector) } }
+
     /** Where the speaker is across the picture (0 = left edge, 1 = right edge), or null = keep the line centred. */
     suspend fun speakerX(frame: Bitmap): Float? {
         val small = if (frame.width > 400) Bitmap.createScaledBitmap(frame, 400, (400f * frame.height / frame.width).toInt().coerceAtLeast(1), true) else frame
@@ -69,4 +84,10 @@ object SpeakerTracker {
         val second = moving[1].second
         return if (bs > 0.008f && bs > second * 1.4f) bx.coerceIn(0f, 1f) else null
     }
+}
+
+/** 0.9.6: what the Play-services face model needs from Google Play services (implemented only in Xstream's phone build). */
+interface FaceModelHook {
+    fun supported(ctx: android.content.Context): Boolean
+    fun prepare(ctx: android.content.Context, detector: Any)
 }

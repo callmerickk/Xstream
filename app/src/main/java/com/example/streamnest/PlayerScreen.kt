@@ -241,7 +241,7 @@ object PlayerHttp {
     }
 }
 
-fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, cache: Boolean = !BuildConfig.IS_TV, meter: Boolean = !BuildConfig.IS_TV, hold: HeaderHold? = null, hidden: Boolean = false): ExoPlayer {
+fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, cache: Boolean = !BuildConfig.IS_TV, meter: Boolean = !BuildConfig.IS_TV, hold: HeaderHold? = null, hidden: Boolean = false, softVideo: Boolean = false): ExoPlayer {
     // Smooth like Nuvio: start after ~1.5 s of video, then keep up to a minute ready (capped at ~200 MB so
     // big 4K files can't run the device out of memory), plus 20 s behind you so short rewinds don't reload.
     // TV sticks (Fire TV: 1 GB RAM) get a smaller budget: 64 MB, up to 40 s ahead and 10 s behind.
@@ -310,7 +310,9 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
                 .build()
     }
         .setMediaCodecSelector(dvFallback)
-        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        // 0.9.6: ON = the phone's decoders first, FFmpeg only for what the phone lacks (audio and video); PREFER = FFmpeg
+        // first, only for the "ExoPlayer + FFmpeg video" retry of the slim build (Feature.noVlc).
+        .setExtensionRendererMode(if (Feature.noVlc && softVideo) DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER else DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
         .setEnableDecoderFallback(true)
         // Asynchronous decoder feeding is left off on phones where it made the video decoder refuse files (vivo / iQOO,
         // and any phone after its decoder once failed): the normal feeding plays everything there.
@@ -323,7 +325,7 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     return ExoPlayer.Builder(ctx, renderers).setLoadControl(load).setTrackSelector(selector).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
         // Seeking may land up to 0.3 s off the exact spot: much faster jumps on big files (as CloudStream does).
         .setSeekParameters(androidx.media3.exoplayer.SeekParameters(300_000L, 0L))
-        .build().also { PlayerCount.add(it); if (hold0 != null) HiddenCap.track(it, hold0) }.apply {
+        .build().also { PlayerCount.add(it); if (hold0 != null) HiddenCap.track(it, hold0); if (Feature.noVlc) logDecoders(it) }.apply {
         val aLang = vm.playerPref("audio")
         val sLang = vm.playerPref("subs")
         trackSelectionParameters = trackSelectionParameters.buildUpon().apply {
@@ -347,6 +349,30 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
             }
         }.build()
     }
+}
+
+/** 0.9.6 (noVlc): which decoder really runs (phone or FFmpeg), in the activity log — VLC is no longer behind it. */
+private fun logDecoders(p: ExoPlayer) = p.addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+    override fun onAudioDecoderInitialized(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
+        ActLog.add("PLAY", "audio decoder · $decoderName" + (if (decoderName.contains("ffmpeg", true)) " (FFmpeg)" else ""))
+    }
+    override fun onVideoDecoderInitialized(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
+        ActLog.add("PLAY", "video decoder · $decoderName" + (if (decoderName.contains("ffmpeg", true)) " (FFmpeg)" else ""))
+    }
+})
+
+/** 0.9.6: whether FFmpeg (nextlib, phone) can decode [mime]. Reflection on purpose: a missing class or method is simply
+ *  "no", never a crash (the TV build has no nextlib). */
+object FfmpegSupport {
+    private val cls: Class<*>? = listOf("io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegLibrary", "androidx.media3.decoder.ffmpeg.FfmpegLibrary")
+        .firstNotNullOfOrNull { runCatching { Class.forName(it) }.getOrNull() }
+    private fun call(name: String, vararg a: Any): Any? = runCatching {
+        val c = cls ?: return null
+        val m = c.declaredMethods.first { it.name == name && it.parameterTypes.size == a.size }
+        m.isAccessible = true
+        m.invoke(if (java.lang.reflect.Modifier.isStatic(m.modifiers)) null else runCatching { c.getField("INSTANCE").get(null) }.getOrNull(), *a)
+    }.getOrNull()
+    fun supports(mime: String?): Boolean = mime != null && call("isAvailable") == true && call("supportsFormat", mime) == true
 }
 
 /** 0.9.76 (Xstream 0.8.17): sources send 36–171 subtitle files and the player loaded them all (out-of-memory crashes).
@@ -420,7 +446,8 @@ object Preloader {
 
 /** One way of playing a link. */
 data class Way(val vlc: Boolean, val hw: Boolean, val relay: Boolean) {
-    fun label() = if (!vlc) "ExoPlayer" else "VLC " + (if (hw) "HW" else "SW") + (if (relay) " + relay" else "")
+    // 0.9.6: an ExoPlayer way with hw = false (only made with Feature.noVlc) = FFmpeg software video first.
+    fun label() = if (!vlc) "ExoPlayer" + (if (!hw) " + FFmpeg video" else "") else "VLC " + (if (hw) "HW" else "SW") + (if (relay) " + relay" else "")
 }
 
 /**
@@ -434,6 +461,9 @@ fun waysFor(url: String, engine: String, big: Boolean = false, manifest: Boolean
     // A plugin's playlist (Netflix / Prime Video / Hotstar / MovieBox): ExoPlayer only — when it times out the link has
     // expired, and the next link is tried at once (VLC can't revive it, and closing it froze the app).
     if (manifest && plugin) return listOf(Way(false, true, false))
+    // 0.9.6 (noVlc): ExoPlayer with the phone's decoders → ExoPlayer with FFmpeg video first → the next link. No relay
+    // needed: ExoPlayer sends every header on every request.
+    if (Feature.noVlc) return listOf(Way(false, true, false), Way(false, false, false))
     // DASH / HLS: ExoPlayer first whatever the engine setting (it plays manifests best), and never through the relay
     // (a manifest's relative segment links can't be followed through it).
     if (manifest) return listOf(Way(false, true, false), Way(true, true, false), Way(true, false, false))
@@ -892,6 +922,8 @@ fun PlayerScreen(
     // A var: plugin mode's quiet swap (MovieBox → Netflix-type link) hands the screen over to a second player.
     remember(p.key) { vm.titleScope = p.key.substringBefore(':').takeIf { it.isNotBlank() }; 0 }
     var player by remember { mutableStateOf(pre?.player ?: buildPlayer(ctx, vm, isOn(texts["fastStart"] ?: Defaults["fastStart"] ?: "yes"))) }
+    /** 0.9.6 (noVlc): the current player was made with FFmpeg video first (the software way). */
+    var playerIsSoft by remember { mutableStateOf(false) }
 
     // ───── Sound (Audio boost / Night mode), Sleep timer, Picture-in-picture ─────
     var boost by remember { mutableStateOf(vm.playerPref("boost") == "yes") }
@@ -915,7 +947,7 @@ fun PlayerScreen(
     //   VLC hardware decoding → VLC software decoding → VLC through the header relay → ExoPlayer
     // ("exo" setting: ExoPlayer first). Only then the next source is tried.
     // Instant play (saved video) needs ExoPlayer: only it reads the saved part.
-    val engine = if (p.instant) "exo" else opt("playerEngine").let { if (it == "exo") "exo" else "vlc" }
+    val engine = if (p.instant) "exo" else Feature.engine(opt("playerEngine")).let { if (it == "exo") "exo" else "vlc" }  // 0.9.6: Feature.engine
     val openedAt = remember { SystemClock.elapsedRealtime() }
     var vlc by remember { mutableStateOf<VlcEngine?>(null) }
     var usingVlc by remember { mutableStateOf(false) }
@@ -1043,6 +1075,14 @@ fun PlayerScreen(
     DisposableEffect(Unit) { PlayingSrc.open++; onDispose { PlayingSrc.open-- } }
 
     fun startVlc(n: Now, startMs: Long, w: Way) {
+        // 0.9.6 (noVlc): this build has no VLC engine. Nothing may touch LibVLC; if a VLC way still gets here, it fails the
+        // way VLC's own error does (VlcListener.onError → onEngineError("VLC_ERROR")): the next way, else the next link.
+        if (Feature.noVlc) {
+            ActLog.add("PLAY", "VLC engine not in this build · next way")
+            now = n
+            scope.launch { onEngineError("VLC_ERROR") }
+            return
+        }
         runCatching { player.stop() }
         usingVlc = true
         firstFrame = false; failure = null; status = "Buffering…"; linkSaved = false
@@ -1063,8 +1103,21 @@ fun PlayerScreen(
         now = n
     }
 
-    fun startExo(n: Now, startMs: Long) {
+    fun startExo(n: Now, startMs: Long, soft: Boolean = false) {
         if (usingVlc) { vlc?.stop(); usingVlc = false }
+        // 0.9.6 (noVlc): the renderer mode can't change on a built player: switching between the normal way and "FFmpeg
+        // video first" makes a new player, attached like the swap's new player (main view; the listeners, media session
+        // and the rest follow `player` by themselves). Off: soft is always false and playerIsSoft stays false.
+        if (soft != playerIsSoft) {
+            val old = player
+            runCatching { old.stop() }
+            val np = buildPlayer(ctx, vm, isOn(opt("fastStart")), softVideo = soft)
+            playerIsSoft = soft
+            player = np
+            mainPv[0]?.let { pv -> pv.player = np; videoView = pv }
+            runCatching { old.release() }
+            ActLog.add("PLAY", if (soft) "new player · FFmpeg video first" else "new player · phone decoders first")
+        }
         val subs = subtitleConfigs(n.subs)
         firstFrame = false; failure = null; status = "Buffering…"; linkSaved = false
         // Tell ExoPlayer what the link is (DASH / HLS / file) when the link itself doesn't say.
@@ -1096,10 +1149,10 @@ fun PlayerScreen(
         if (!BuildConfig.IS_TV && firstFrame && !switching) { switching = true; videoView?.let { vv -> captureFrame(vv, full = true) { bmp -> if (switching) frozen = bmp } } }
         loadTick++
         loadStartedAt = SystemClock.elapsedRealtime()
-        val w = ways.getOrNull(wayIdx) ?: Way(vlc = engine == "vlc", hw = true, relay = false)
+        val w = ways.getOrNull(wayIdx) ?: Way(vlc = engine == "vlc" && !Feature.noVlc, hw = true, relay = false)  // 0.9.6: && !noVlc
         PlayTiming.mark("opening link with ${w.label()} · ${runCatching { Uri.parse(n.url).host }.getOrNull() ?: "?"}" +
             (itemFor(n.url)?.let { " · ${Prepare.qualityName(it.resolution())}" } ?: "") + (if (startMs > 0) " · from ${fmtTime(startMs)}" else ""))
-        if (w.vlc) startVlc(n, startMs, w) else startExo(n, startMs)
+        if (w.vlc) startVlc(n, startMs, w) else startExo(n, startMs, soft = Feature.noVlc && !w.hw)  // 0.9.6: soft
     }
 
     fun load(n: Now, startMs: Long, label: String? = null) {
@@ -1133,7 +1186,9 @@ fun PlayerScreen(
 
     nameOf = { u -> itemFor(u)?.fileName() }
     vlcJump = { ms ->
-        now?.let { n ->
+        // 0.9.6 (noVlc): no VLC to reopen in: the player stays where it is (the copy is already marked "can't jump").
+        if (Feature.noVlc) PlayTiming.late("jump to ${fmtTime(ms)}: no VLC in this build — staying on this copy")
+        else now?.let { n ->
             ways = listOf(Way(true, true, StreamHeaders.forUrl(n.url).keys.any { !it.equals("User-Agent", true) && !it.equals("Referer", true) }), Way(true, false, false))
             wayIdx = 0
             if (firstFrame) { switching = true; videoView?.let { vv -> captureFrame(vv, full = true) { bmp -> if (switching) frozen = bmp } } }
@@ -1413,7 +1468,14 @@ fun PlayerScreen(
                 status = "Finding stream source"
                 findRequest = if (findRequest < 1) 2 else findRequest + 1
             }
-            else -> { forgetStreams(p.key); switching = false; frozen = null; failure = "Couldn't play this right now. Try again, or pick a source." ; PlayTiming.mark("nothing played ($code)") }
+            else -> { forgetStreams(p.key); switching = false; frozen = null; failure = "Couldn't play this right now. Try again, or pick a source." ; PlayTiming.mark("nothing played ($code)")
+                // 0.9.6 (noVlc): the very last resort — the VLC app, if installed, gets the best header-free link (never our
+                // 127.0.0.1 relay). The "couldn't play" screen stays behind it.
+                if (Feature.noVlc) {
+                    val urls = (listOfNotNull(n?.url) + vm.rankedCandidates(known, quality, quickOnly = false).mapNotNull { it.stream.url }).distinct()
+                    VlcApp.handOffFirst(ctx, urls, p.title, start)
+                }
+            }
         }
     }
     var retryRound by remember { mutableIntStateOf(0) }
@@ -1449,8 +1511,13 @@ fun PlayerScreen(
 
     /** Same link another way (software decoding, header relay, other engine) — quietly; then the next source. */
     fun tryOtherWays(n: Now?, start: Long, code: String) {
-        if (n != null && wayIdx + 1 < ways.size) {
-            wayIdx++
+        // 0.9.6 (noVlc): a network failure (IO_*: HTTP error, timeout, dead host) can't be fixed by decoding differently:
+        // the "FFmpeg video" way is skipped (it would only repeat the slow failure).
+        var skip = 0
+        if (Feature.noVlc && code.startsWith("IO_")) while (ways.getOrNull(wayIdx + 1 + skip)?.let { !it.vlc && !it.hw } == true) skip++
+        if (skip > 0) PlayTiming.mark("network error ($code) — FFmpeg video way skipped")
+        if (n != null && wayIdx + 1 + skip < ways.size) {
+            wayIdx += 1 + skip
             if (wayIdx == 1 && firstFrame) Snack.show("Trying another way to play this file…")
             resumeAt = start
             startWay(n, start)
@@ -2990,7 +3057,7 @@ fun PlayerScreen(
     }
     // Follow the speaker (beta): while a line is on screen, a small copy of the picture is checked ~3 times a second.
     LaunchedEffect(isOn(opt("subFollow")), usingVlc) {
-        if (!isOn(opt("subFollow")) || usingVlc || BuildConfig.IS_TV) { speakerAt = 0.5f; return@LaunchedEffect }
+        if (!isOn(opt("subFollow")) || usingVlc || BuildConfig.IS_TV || !SpeakerTracker.supported(ctx)) { speakerAt = 0.5f; return@LaunchedEffect }  // 0.9.6: supported
         SpeakerTracker.reset()
         var away = 0
         // Each subtitle line picks its place once (from its first few looks) and keeps it: no jumping mid-line.
@@ -4530,7 +4597,7 @@ fun PlayerScreen(
             Box(Modifier.fillMaxSize()) {
                 if (usingVlc) {
                     val v = vlc
-                    if (v != null) AndroidView(
+                    if (v != null && !Feature.noVlc) AndroidView(  // 0.9.6: never a VLC view in the slim build
                         factory = { c -> org.videolan.libvlc.util.VLCVideoLayout(c).apply { keepScreenOn = true; videoView = this } },
                         update = { layout -> v.attach(layout); v.setAspect(aspectIdx) },
                         modifier = Modifier.fillMaxSize(),
@@ -7165,7 +7232,9 @@ private fun SubStyleColumn(
         SubSection("Look")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SubChip("Netflix style", isOn(v("subNetflix"))) { vm.setText("subNetflix", if (isOn(v("subNetflix"))) "no" else "yes") }
-            if (!BuildConfig.IS_TV) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
+            // 0.9.6 (mlkitUnbundled): hidden without Google Play services; turning it on asks Play services for the model.
+            val fsCtx = androidx.compose.ui.platform.LocalContext.current
+            if (!BuildConfig.IS_TV && SpeakerTracker.supported(fsCtx)) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { if (!isOn(v("subFollow"))) SpeakerTracker.prepare(fsCtx); vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
         }
         if (isOn(v("subNetflix"))) Text("Netflix style sets the font, colour and shadow; turn it off to choose your own below.", fontSize = 11.5.sp, color = Color(0xFF8A94A8))
         SubSection("Text colour")
@@ -7265,7 +7334,9 @@ private fun SubsPanel(
         SubSection("Look")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SubChip("Netflix style", isOn(v("subNetflix"))) { vm.setText("subNetflix", if (isOn(v("subNetflix"))) "no" else "yes") }
-            if (!BuildConfig.IS_TV) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
+            // 0.9.6 (mlkitUnbundled): hidden without Google Play services; turning it on asks Play services for the model.
+            val fsCtx = androidx.compose.ui.platform.LocalContext.current
+            if (!BuildConfig.IS_TV && SpeakerTracker.supported(fsCtx)) SubChip("Follow the speaker · beta", isOn(v("subFollow"))) { if (!isOn(v("subFollow"))) SpeakerTracker.prepare(fsCtx); vm.setText("subFollow", if (isOn(v("subFollow"))) "no" else "yes") }
         }
         if (isOn(v("subNetflix"))) Text("Netflix style sets the font, colour and shadow; turn it off to choose your own below.", fontSize = 11.5.sp, color = Color(0xFF8A94A8))
         SubSection("Text colour")

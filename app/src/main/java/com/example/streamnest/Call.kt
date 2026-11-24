@@ -145,8 +145,15 @@ object Call {
     private fun ensureFactory(): PeerConnectionFactory? {
         factory?.let { return it }
         val ctx = app ?: return null
+        // 0.9.6 (webrtcOnDemand): the native library is downloaded (once, checked) before the first call; none → null →
+        // the call's existing "couldn't load" path. Off: lib is null and the 0.9.5 lines below run unchanged.
+        val lib: java.io.File? = if (Feature.webrtcOnDemand) (WebRtcLib.fetch(ctx, userStarted = true)
+            ?: run { status.value = "Couldn't get Watch together ready — check your internet and try again"; return null }) else null
         return runCatching {
-            PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(ctx).createInitializationOptions())
+            val init = PeerConnectionFactory.InitializationOptions.builder(ctx)
+            // 0.9.6: load OUR checked file instead of System.loadLibrary("jingle_peerconnection_so").
+            if (lib != null) init.setNativeLibraryLoader { _ -> System.load(lib.path); true }
+            PeerConnectionFactory.initialize(init.createInitializationOptions())
             val e = EglBase.create(); egl = e
             val adm0 = JavaAudioDeviceModule.builder(ctx)
                 .setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(true)

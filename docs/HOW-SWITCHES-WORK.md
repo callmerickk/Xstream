@@ -85,3 +85,31 @@ On in Xstream, off in StreamX. Off = the 0.9.4 phone layout everywhere and the 0
   hover highlight and clicks, rows scroll with Shift + wheel or a mouse drag. `DeviceTier` (same file) logs the device
   tier once; "top" (laptop / PC emulator such as MuMu, or a big tablet) gets up to 400 MB / 120 s of video buffer.
   Everything added inside the TV files is under `!BuildConfig.IS_TV`, so the TV app is unchanged.
+
+## The slim build (0.9.6, step 7)
+
+Not named switches: `Feature.noVlc`, `noVosk`, `mlkitUnbundled` and `webrtcOnDemand` all follow
+`BuildConfig.SLIM_LIBS`. That is `brandBeta && phone flavor` (Xstream phone only; the TV flavor and StreamX set it to
+`false`). The same value leaves the native libraries out of the APK (`androidComponents { onVariants(phone) }` in
+`app/build.gradle.kts`), so a switch can never be on in an APK that still needs its library, or off in one that lacks it.
+They are **not** in `Feature.STABLE` and must never be: **to promote the slim build to StreamX, flip `SLIM_LIBS` (and
+the `androidComponents` excludes, the face-detection dependency, `APK_PHONE_ARM32`, the brand manifest's `<queries>` /
+ML Kit meta-data and `src/brand/phone/java/FaceModelGms.kt`) in StreamX's brand file `app/build.gradle.kts`**, not
+`Feature.STABLE`. StreamX's brand file must define `SLIM_LIBS` (false) and `APK_PHONE_ARM32` ("") or the shared code
+won't compile; `tools/sync-to-streamx.sh` checks this.
+
+Off (StreamX, TV) = the 0.9.5 code path word for word. On (Xstream phone):
+
+- `noVlc` — ExoPlayer with the phone's decoders → ExoPlayer with FFmpeg video first (a new player,
+  `EXTENSION_RENDERER_MODE_PREFER`) → the next link; the VLC app (if installed) only after "nothing played", only
+  header-free links, never 127.0.0.1. Settings › Player engine hidden; a stored "vlc" is ignored, never rewritten.
+- `noVosk` — "Hey Aiden" uses Android's on-device recogniser (WakeWordSr.kt; the row itself is still off by `WakeWordOff`).
+- `mlkitUnbundled` — face model from Google Play services (play-services-mlkit-face-detection). Play-services classes are
+  named only in `app/src/brand/phone/java/…/FaceModelGms.kt` (Xstream phone source folder, never synced).
+- `webrtcOnDemand` — `libjingle_peerconnection_so.so` downloaded on the first call from the `assets` branch
+  (`webrtc/<abi>/`), SHA-256 checked against `WebRtcLib.SHA`. The workflow (`tools/webrtc-assets.sh`) extracts the files
+  from the AAR, pushes them to `assets` when missing and fails when `WebRtcLib.SHA` differs. Bump `LIB_VERSION` + SHA
+  together with the `stream-webrtc-android` version.
+
+Two phone APKs with one versionCode: `Xstream-phone.apk` (arm64-v8a) and `Xstream-phone-arm32.apk` (armeabi-v7a,
+`gradle assemblePhoneDebug -PphoneAbi=arm32`); the updater picks the 32-bit one when the phone has no 64-bit ABI.

@@ -27,7 +27,7 @@ object WakeWord {
     private val running = AtomicBoolean(false)
     private val downloading = AtomicBoolean(false)
     @Volatile private var thread: Thread? = null
-    @Volatile private var lastHit = 0L
+    @Volatile internal var lastHit = 0L  // 0.9.6: internal (WakeWordSr)
     @Volatile private var gen = 0
     var onName: () -> Unit = {}
     /** Something is playing: only the full "Hey Aiden", said clearly. */
@@ -35,8 +35,9 @@ object WakeWord {
     /** No wake-ups until then (e.g. right after a chat closes). */
     @Volatile var quietUntil = 0L
 
-    private val names = setOf("aiden", "aidan", "eden", "aidin")
-    private val heys = setOf("hey", "hi", "okay", "ok")
+    // 0.9.6: internal, shared with WakeWordSr (the on-device recogniser of the slim build).
+    internal val names = setOf("aiden", "aidan", "eden", "aidin")
+    internal val heys = setOf("hey", "hi", "okay", "ok")
 
     /** Reads one final Vosk result: true when "Hey Aiden" (or just "Aiden" when nothing plays) was said clearly. */
     private fun pick(json: String, rms: Double): Boolean {
@@ -62,11 +63,14 @@ object WakeWord {
     }
 
     private fun modelDir(ctx: Context) = File(ctx.filesDir, "vosk/$MODEL_DIR")
-    fun hasModel(ctx: Context) = File(modelDir(ctx), "am").exists() || File(modelDir(ctx), "conf").exists()
+    fun hasModel(ctx: Context) = Feature.noVosk || File(modelDir(ctx), "am").exists() || File(modelDir(ctx), "conf").exists()
+    /** 0.9.6: false = hide the "Hey Aiden" option (slim build on a phone without an on-device recogniser). */
+    fun supported(ctx: Context): Boolean = !Feature.noVosk || WakeWordSr.available(ctx)
 
     /** Start listening (downloads the model first if needed). Safe to call repeatedly. */
     fun start(ctx: Context) {
         val app = ctx.applicationContext
+        if (Feature.noVosk) { WakeWordSr.start(app); return }   // 0.9.6: Android's on-device recogniser, no Vosk
         if (ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) { status.value = "off"; return }
         if (!hasModel(app)) { download(app); return }
         if (running.getAndSet(true)) return
@@ -77,6 +81,7 @@ object WakeWord {
     }
 
     fun stop() {
+        if (Feature.noVosk) WakeWordSr.stop()   // 0.9.6 (the lines below then do nothing harmful)
         running.set(false)
         gen++
         thread = null
@@ -84,6 +89,7 @@ object WakeWord {
     }
 
     private fun download(ctx: Context) {
+        if (Feature.noVosk) return   // 0.9.6: never fetch the Vosk model in the slim build
         // The voice model (36 MB) downloads on Wi-Fi only, never on mobile data.
         val unmetered = runCatching {
             val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager

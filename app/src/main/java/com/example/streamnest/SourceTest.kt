@@ -456,7 +456,9 @@ object SourceTester {
                         val kind = if (g.type == C.TRACK_TYPE_VIDEO) "video" else "audio"
                         val dims = if (f.width > 0) " ${f.width}x${f.height}" else ""
                         val ch = if (f.channelCount > 0) " ${f.channelCount}ch" else ""
-                        "$kind ${f.sampleMimeType ?: f.codecs ?: "?"}$dims$ch ${if (g.isTrackSupported(i)) "ok" else "NOT SUPPORTED"}"
+                        // 0.9.6 (noVlc): no VLC behind ExoPlayer any more, so FFmpeg (nextlib) counts as a decoder of its own.
+                        val sup = if (g.isTrackSupported(i)) "ok" else if (Feature.noVlc && FfmpegSupport.supports(f.sampleMimeType)) "ok (FFmpeg)" else "NOT SUPPORTED"
+                        "$kind ${f.sampleMimeType ?: f.codecs ?: "?"}$dims$ch $sup"
                     }
                 }
             }

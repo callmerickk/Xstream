@@ -17,6 +17,8 @@ object Brand {
     /** Release file names the updater downloads. */
     const val APK_PHONE = BuildConfig.APK_PHONE
     const val APK_TV = BuildConfig.APK_TV
+    /** 0.9.6: the 32-bit phone APK ("" = none: one APK for both ABIs, as StreamX). */
+    const val APK_PHONE_ARM32 = BuildConfig.APK_PHONE_ARM32
     /** The developer's cloud shelf (Firebase): "shared" for StreamX, "xshared" for Xstream. */
     const val SHARED_ROOT = BuildConfig.SHARED_ROOT
     /** Watch together invites: <scheme>://join/CODE and https://<host><path>/CODE (also in the manifest). */

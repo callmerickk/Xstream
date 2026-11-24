@@ -16,6 +16,8 @@ val brand = mapOf(
     // Xstream has no download relay: updates come straight from GitHub.
     "UPDATE_CDN" to "",
     "APK_PHONE" to "Xstream-phone.apk",
+    // 0.9.6: the small 32-bit phone APK (StreamX's brand file: "" = none, the updater then never asks for it).
+    "APK_PHONE_ARM32" to "Xstream-phone-arm32.apk",
     "APK_TV" to "Xstream-TV.apk",
     // Xstream's own cloud shelf (falls back to shared/ for reading).
     "SHARED_ROOT" to "xshared",
@@ -33,8 +35,9 @@ android {
         applicationId = "com.example.xstream"
         minSdk = 24
         targetSdk = 34
-        versionCode = 65
-        versionName = "0.9.5"
+        // 0.9.6: one code for both phone APKs (arm64 and arm32): a phone only ever installs the one for its own ABI.
+        versionCode = 66
+        versionName = "0.9.6"
         brand.forEach { (k, v) -> buildConfigField("String", k, "\"$v\"") }
         buildConfigField("boolean", "IS_BETA", brandBeta.toString())
         manifestPlaceholders["brandName"] = brand.getValue("BRAND_NAME")
@@ -56,9 +59,20 @@ android {
             buildConfigField("boolean", "HAS_MUSIC", "true")
             // Testing app: no "Publish for everyone" buttons (as Xstream always had).
             buildConfigField("boolean", "NO_PUBLISH", "true")
+            // 0.9.6: ONE value drives (1) the Feature switches noVlc / noVosk / mlkitUnbundled / webrtcOnDemand and
+            // (2) which native libraries are packed (androidComponents below), so they can never disagree.
+            // StreamX's brand file sets it to false (promoting the slim build to StreamX = flipping it there).
+            buildConfigField("boolean", "SLIM_LIBS", brandBeta.toString())
             resValue("string", "app_name", brand.getValue("BRAND_NAME"))
-            // Every phone: 64-bit and 32-bit ARM, so the app installs and runs everywhere.
-            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            // 0.9.6: Xstream: the 64-bit APK by default, the 32-bit one with -PphoneAbi=arm32 (CI builds both: same key,
+            // same versionCode). Before 0.9.6 one APK held both ABIs.
+            ndk {
+                abiFilters += when {
+                    project.findProperty("phoneAbi") == "arm32" -> listOf("armeabi-v7a")
+                    brandBeta -> listOf("arm64-v8a")
+                    else -> listOf("arm64-v8a", "armeabi-v7a")
+                }
+            }
             resourceConfigurations += listOf("en")
         }
         create("tv") {
@@ -70,6 +84,8 @@ android {
             buildConfigField("boolean", "HAS_LIVE", "false")
             buildConfigField("boolean", "HAS_MUSIC", "false")
             buildConfigField("boolean", "NO_PUBLISH", "false")
+            // 0.9.6: the TV app keeps every library (VLC, bundled face model, WebRTC in the APK).
+            buildConfigField("boolean", "SLIM_LIBS", "false")
             resValue("string", "app_name", brand.getValue("BRAND_NAME") + " TV")
             // Fire TV Sticks run 32-bit Android; 32-bit ARM also runs on every 64-bit TV box.
             ndk { abiFilters += listOf("armeabi-v7a") + (if (project.hasProperty("smokeX86")) listOf("x86_64") else emptyList()) }
@@ -119,12 +135,28 @@ android {
         // 0.9.1: Xstream's phone manifest (Music entries, 0.8.x invite links), merged over src/main's. The shared code has
         // no src/phone manifest; if it ever gets one, merge it into this file.
         getByName("phone").manifest.srcFile("src/brand/phone/AndroidManifest.xml")
+        // 0.9.6: Xstream phone only: the Play-services face model glue (FaceModelGms.kt; StreamX / TV never compile it).
+        getByName("phone").java.srcDir("src/brand/phone/java")
     }
     packaging {
         // Keep one copy of the C++ runtime, and store native libraries compressed (much smaller APK).
         jniLibs {
             pickFirsts += listOf("**/libc++_shared.so")
             useLegacyPackaging = true
+        }
+    }
+}
+
+// 0.9.6: Xstream PHONE only (SLIM_LIBS): the big native libraries stay out of the APK. Their Java/Kotlin classes stay (small)
+// so the shared code compiles; Feature.noVlc / noVosk / webrtcOnDemand make sure nothing ever loads the missing .so files.
+androidComponents {
+    onVariants(selector().withFlavor("device" to "phone")) { v ->
+        if (brandBeta) {
+            v.packaging.jniLibs.excludes.addAll(listOf(
+                "**/libvlc.so", "**/libvlcjni.so",               // LibVLC
+                "**/libvosk.so", "**/libjnidispatch.so",         // Vosk + JNA ("Hey Aiden" uses Android's recogniser)
+                "**/libjingle_peerconnection_so.so",             // WebRTC: downloaded on first use (WebRtcLib.kt)
+            ))
         }
     }
 }
@@ -160,6 +192,7 @@ dependencies {
     "tvImplementation"(files("libs/ffmpeg-audio-lgpl.aar"))
     "tvImplementation"("androidx.media3:media3-decoder:1.7.1")
     // VLC engine: backup for the rare files ExoPlayer can't open (ExoPlayer plays first, like Nuvio).
+    // 0.9.6: kept for StreamX / TV; in Xstream's phone APK only the classes remain (the .so files are excluded above).
     implementation("org.videolan.android:libvlc-all:3.6.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.2")
     // "Hey Aiden": offline wake word, Vosk (Apache 2.0) + JNA.
@@ -191,7 +224,14 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.2")
     implementation("com.google.code.gson:gson:2.11.0")
     // Subtitles › Follow the speaker (beta): on-device face + lip contours (Apache-licensed ML Kit client, no network).
-    implementation("com.google.mlkit:face-detection:16.1.6")
+    // 0.9.6: Xstream phone: the face model comes from Google Play services (no native model in the APK). Same API package
+    // (com.google.mlkit.vision.face), so Speaker.kt is unchanged; the two artifacts can't share one build (duplicate classes).
+    if (brandBeta) {
+        "phoneImplementation"("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
+        "tvImplementation"("com.google.mlkit:face-detection:16.1.6")
+    } else {
+        implementation("com.google.mlkit:face-detection:16.1.6")
+    }
     implementation("io.ktor:ktor-http:2.3.12")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")

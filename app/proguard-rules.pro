@@ -59,3 +59,8 @@
 -keep class org.vosk.** { *; }
 -dontwarn java.awt.**
 -dontwarn com.sun.jna.**
+
+# 0.9.6: loaded by name (SpeakerTracker → FaceModelGms, Xstream phone only) and by reflection (FfmpegSupport).
+-keep class com.example.streamnest.FaceModelGms { *; }
+-keep class io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegLibrary { *; }
+-dontwarn com.example.streamnest.FaceModelGms

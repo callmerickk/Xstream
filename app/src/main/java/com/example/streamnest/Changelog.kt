@@ -13,6 +13,12 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.9.6", "24 Nov 2026", "A much smaller app", listOf(
+        "Much smaller app: quicker to download and install, and it takes less space on your phone",
+        "Plays more audio and video formats on its own",
+        "Watch together downloads its part the first time you use it (a few seconds, once)",
+        "Older 32-bit phones get their own small version automatically",
+    )),
     Release("0.9.5", "24 Nov 2026", "Big screens get the TV look", listOf(
         "Tablets turned sideways, laptops and PC players such as MuMu now show the TV-style Home, the side menu and the TV settings",
         "Use the arrow keys, Enter and Esc like a TV remote, or the mouse and touch — all at the same time",
@@ -628,6 +634,17 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.9.6", "24 Nov 2026", "Slim build (SLIM_LIBS): no LibVLC / Vosk / bundled face model / WebRTC .so in the phone APK; arm64 + arm32 APKs", listOf(
+        "BuildConfig.SLIM_LIBS (= brandBeta && phone flavor; TV and StreamX false) drives Feature.noVlc / noVosk / mlkitUnbundled / webrtcOnDemand AND androidComponents.onVariants(phone) packaging.jniLibs.excludes (libvlc, libvlcjni, libvosk, libjnidispatch, libjingle_peerconnection_so) — one value, so a switch never meets a missing .so",
+        "Two phone APKs, one versionCode (66): Xstream-phone.apk = arm64-v8a, Xstream-phone-arm32.apk = armeabi-v7a (gradle -PphoneAbi=arm32); Updates.check picks APK_PHONE_ARM32 when Build.SUPPORTED_64_BIT_ABIS is empty; versions.json unchanged",
+        "noVlc: waysFor → ExoPlayer HW, then ExoPlayer + FFmpeg video (Way(vlc=false, hw=false): a new player from buildPlayer(softVideo = true) = EXTENSION_RENDERER_MODE_PREFER, switched back on the next link), then the next link; IO_* errors skip the software way; startVlc guard → onEngineError(\"VLC_ERROR\"); no VLCVideoLayout; vlcJump only logs; AnalyticsListener logs audio / video decoder names (FFmpeg marked)",
+        "noVlc last resort: at \"nothing played\" VlcApp.handOffFirst opens the best header-free http(s) link (never 127.0.0.1) in the VLC app (org.videolan.vlc, <queries> in the brand manifest) when it is installed, once per link per run, with title + position extras",
+        "Settings › Player engine hidden with noVlc (a stored \"vlc\" is ignored by Feature.engine, never rewritten); Source Test marks a track the phone can't decode but FFmpeg can as \"ok (FFmpeg)\" (FfmpegSupport, reflection on nextlib's FfmpegLibrary)",
+        "noVosk: WakeWord.start → WakeWordSr (SpeechRecognizer.createOnDeviceSpeechRecognizer, API 31+, short listening windows, same whole-phrase rule); the Vosk model is never downloaded; \"Hey Aiden\" row hidden without an on-device recogniser (the row is still off by WakeWordOff)",
+        "mlkitUnbundled: phone uses com.google.android.gms:play-services-mlkit-face-detection:17.1.0 (meta-data com.google.mlkit.vision.DEPENDENCIES = face in the brand manifest); Play-services calls only in src/brand/phone/java FaceModelGms (FaceModelHook, loaded by name); \"Follow the speaker\" hidden without Play services, turning it on asks ModuleInstall for the model",
+        "webrtcOnDemand: WebRtcLib downloads libjingle_peerconnection_so.so (stream-webrtc-android 1.3.9) from the assets branch (webrtc/<abi>/), checks SHA-256 against WebRtcLib.SHA, keeps it read-only in filesDir/native and Call.ensureFactory loads it via InitializationOptions.setNativeLibraryLoader; progress in the room's call line; the workflow (tools/webrtc-assets.sh) extracts the .so from the AAR, pushes it to the assets branch when missing and fails on a SHA mismatch",
+        "build.yml: both APKs built, size notices, slimmed-out-library and one-ABI checks; release adds Xstream-phone-arm32.apk",
+    )),
     Release("0.9.5", "24 Nov 2026", "bigScreen: TV interface in the phone app on big screens; DeviceTier top", listOf(
         "bigScreen (Feature, beta on / stable off): BigScreen.detect — landscape && smallestScreenWidthDp ≥ 600, or no touch (FEATURE_TOUCHSCREEN false or Configuration.touchscreen NOTOUCH) with a hardware keyboard (KEYBOARD_QWERTY, not hidden) or a mouse / touchpad InputDevice, or screenWidthDp ≥ 840 && screenHeightDp ≥ 480 (height guard: phones in landscape stay on the phone layout). Worked out in MainActivity.onCreate before setContent and on every onConfigurationChanged; while PipState.playerOpen or in PiP the result waits (pending) and is applied 400 ms after the player closes, if no player opened again. One APP line \"big screen on/off (why)\"",
         "MainActivity: BigScreen.tvUi (= IS_TV || on) picks TvApp() instead of App(); phone GlassBackdrop not drawn in big-screen mode (TvApp draws its own); Esc → KEYCODE_BACK in big-screen mode",
