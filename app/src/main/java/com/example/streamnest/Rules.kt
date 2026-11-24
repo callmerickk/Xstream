@@ -222,9 +222,13 @@ object Rules {
     private fun applyOrder() {
         val order = list(ADDON_ORDER)
         if (order.isEmpty() || order == lastOrder) return
-        lastOrder = order
         val vm = Public.vm ?: return
-        android.os.Handler(android.os.Looper.getMainLooper()).post { runCatching { if (vm.reorderAddonsByNames(order)) ActLog.add("RULES", "addon order from the rules: ${order.joinToString(" → ")}") } }
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            // Addons not loaded yet (very first moment of the start): tried again at the next change / refresh.
+            if (vm.addons.value.isEmpty()) return@postDelayed
+            lastOrder = order
+            runCatching { if (vm.reorderAddonsByNames(order)) ActLog.add("RULES", "addon order from the rules: ${order.joinToString(" → ")}") }
+        }, 1_500)
     }
 
     // ───── Quick Play / backup helpers ─────
@@ -286,7 +290,7 @@ object Rules {
             runCatching { if (p.version == 0 && p.values.isEmpty()) pubFile?.delete() else pubFile?.writeText(Api.json.encodeToString(PublishedRules.serializer(), p)) }
             recompute()
             ActLog.add("RULES", if (p.values.isEmpty()) "no published rules (defaults)" else "published rules v${p.version} in use: ${p.values.keys.joinToString()}")
-        }
+        } else applyOrder()
         true
     }
 
