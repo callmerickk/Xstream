@@ -30,12 +30,14 @@ private fun TabRow3(tabs: List<String>, sel: Int, onSel: (Int) -> Unit) {
 @Composable
 fun SourceTestHub(vm: AppViewModel, onBack: () -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
-    if (tab == 0) { Column(Modifier.fillMaxSize().background(Bg)) { Box(Modifier.statusBarsPadding()) { TabRow3(listOf("Addons", "CloudStream", "Nuvio"), tab) { tab = it } }; Box(Modifier.weight(1f)) { SourceTestScreen(vm, onBack) } }; return }
+    // 0.9.3 (comboTest): a fourth tab, Combined (every addon, CloudStream and Nuvio plugin at once).
+    val tabs = listOf("Addons", "CloudStream", "Nuvio") + (if (Feature.comboTest) listOf("Combined") else emptyList())
+    if (tab == 0) { Column(Modifier.fillMaxSize().background(Bg)) { Box(Modifier.statusBarsPadding()) { TabRow3(tabs, tab) { tab = it } }; Box(Modifier.weight(1f)) { SourceTestScreen(vm, onBack) } }; return }
     BackHandler { tab = 0 }
     Column(Modifier.fillMaxSize().background(Bg)) {
         PageHeader("Source Test", onBack)
-        TabRow3(listOf("Addons", "CloudStream", "Nuvio"), tab) { tab = it }
-        Box(Modifier.weight(1f)) { if (tab == 1) CsTestTab(vm) else NuvioTestTab(vm) }
+        TabRow3(tabs, tab) { tab = it }
+        Box(Modifier.weight(1f)) { if (tab == 3) ComboTestTab(vm) else if (tab == 1) CsTestTab(vm) else NuvioTestTab(vm) }
     }
 }
 

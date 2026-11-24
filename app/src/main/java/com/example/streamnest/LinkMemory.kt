@@ -18,7 +18,8 @@ object LinkMemory {
     @Serializable private data class Saved(val at: Long, val items: List<Item>)
     @Serializable private data class Item(val addon: String, val stream: StreamInfo)
 
-    private const val TTL = 4 * 3600_000L
+    /** 0.9.3: the age is a rule (default 4 hours, as before). */
+    private val TTL: Long get() = (Rules.num(Rules.LINKMEM_HOURS) * 3600_000L).toLong()
     private val mem = ConcurrentHashMap<String, Pair<Long, List<StreamItem>>>()
     private fun file(ctx: Context, id: String) = File(ctx.cacheDir, "linkmem/" + id.hashCode().toUInt().toString(16) + ".json")
 

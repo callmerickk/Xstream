@@ -172,7 +172,10 @@ object Prepare {
                 put(Prepared(id, why))
                 wide = launch {
                     launch { SlowAddons.links.collect { m -> if (m[id].orEmpty().isNotEmpty()) publish() } }
-                    runCatching { vm.progressiveStreams(type, id, false).collect { (l, d) -> wideL = (wideL + l).distinctBy { it.stream.url }; wideDone = d; publish() } }
+                    // 0.9.3 (devRules): a backup rule asks only its sources (not remembered as "every source"); none = as before.
+                    val bOnly = Rules.backupOnly()
+                    if (bOnly != null) runCatching { vm.streamsFlow(type, id, only = bOnly).collect { (l0, d) -> val l = vm.filtered(l0).list; wideL = (wideL + l).distinctBy { it.stream.url }; wideDone = d; publish() } }
+                    else runCatching { vm.progressiveStreams(type, id, false).collect { (l, d) -> wideL = (wideL + l).distinctBy { it.stream.url }; wideDone = d; publish() } }
                     wideDone = true; publish()
                 }
             }
@@ -189,7 +192,8 @@ object Prepare {
                 // Instant plays never reach this (MovieBox answers in well under a second).
                 val plug = vm.pluginMode()
                 // Plugin mode: the picked plugins get 20 s (they search the sites by name), then every plugin is asked.
-                val timer = launch { delay(if (plug) 20_000 else 6_000); if (if (plug) quickL.isEmpty() else quickL.none { it.startsFast() }) goWide("Quick play is slow — preparing a backup server…") }
+                // 0.9.3: the waits come from the rules (defaults 20 s / 6 s, as before).
+                val timer = launch { delay(Rules.ms(if (plug) Rules.QUICK_WAIT_PLUGINS else Rules.QUICK_WAIT_ADDONS)); if (if (plug) quickL.isEmpty() else quickL.none { it.startsFast() }) goWide("Quick play is slow — preparing a backup server…") }
                 runCatching { vm.progressiveStreams(type, id, true).collect { (l, d) -> quickL = l; quickDone = d; if (l.isNotEmpty() || wideOn) publish() } }
                 quickDone = true
                 // Quick play's addons had nothing (MovieBox empty / busy): straight on with every addon.

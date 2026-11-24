@@ -106,7 +106,8 @@ fun AppViewModel.liveMode(): Boolean = !BuildConfig.IS_TV && texts.value["srcMod
 /** The name a CloudStream provider's links carry (StreamItem.addonName). */
 fun csDisplayName(provider: String) = "CloudStream · $provider"
 /** Quick Start: in plugin mode the picked CloudStream providers (by their link name), else the picked addons. */
-fun AppViewModel.qsAddons(): Set<String> = if (pluginMode()) qsCs().map { csDisplayName(it.substringAfter('#')) }.toSet() + MB_ANY + OTT_ANY + VEGA_ANY
+fun AppViewModel.qsAddons(): Set<String> = Rules.quickSources().takeIf { it.isNotEmpty() }?.toSet()  // 0.9.3: a Quick Play rule names its sources
+    ?: if (pluginMode()) qsCs().map { csDisplayName(it.substringAfter('#')) }.toSet() + MB_ANY + OTT_ANY + VEGA_ANY
     else (texts.value["qsAddons"] ?: "").split("|").filter { it.isNotBlank() }.toSet()
 /** Plugin mode: providers whose 4K links "Upgrade to 4K" may use ("pluginKey#provider", one per line). */
 fun AppViewModel.qs4k(): Set<String> = if (!pluginMode()) emptySet() else qsCsParse(texts.value["qs4k"])
@@ -127,7 +128,13 @@ fun AppViewModel.qsActive(): Boolean = isOn(texts.value["qsOn"] ?: "yes") && (qs
 fun AppViewModel.qsLangs(): List<String> = (texts.value["qsLangs"] ?: "hindi,english,original").split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
 /** Does this stream come from a Quick Start addon? */
-fun AppViewModel.isQuick(s: StreamItem) = s.addonName == LiveServer.NAME || (pluginMode() && (s.isMovieBox() || s.isOtt() || s.isVega())) || s.addonName in qsAddons() &&
+fun AppViewModel.isQuick(s: StreamItem): Boolean {
+    // 0.9.3: a Quick Play rule names its sources: only those count as quick.
+    val rule = Rules.quickSources()
+    if (rule.isNotEmpty()) return s.addonName == LiveServer.NAME || rule.any { Rules.matches(s.addonName, it) }
+    return isQuickBuiltIn(s)
+}
+internal fun AppViewModel.isQuickBuiltIn(s: StreamItem) = s.addonName == LiveServer.NAME || (pluginMode() && (s.isMovieBox() || s.isOtt() || s.isVega())) || s.addonName in qsAddons() &&
     // An all-in-one addon (AIOStreams) in Quick Start: only its MovieBox links count for quick play (its other servers
     // mostly answer nothing in time); everything else of it stays in All sources.
     (!(s.addonName.contains("aio", ignoreCase = true) || addons.value.firstOrNull { it.label() == s.addonName }?.baseUrl?.contains("aiostreams", true) == true) || s.isMovieBox())
@@ -188,8 +195,9 @@ fun AppViewModel.pickQuick(list: List<StreamItem>, level: String): StreamItem? {
         // Auto: MovieBox's instant playlist first (when it has your best language); else best language, then the highest
         // quality up to Full HD (fast to start), then the most reliable provider.
         movieBoxFirst(quick.filter { Ranker.score(it) > -1000.0 }).firstOrNull()?.takeIf { it.isMovieBox() && it.isPlaylist() }?.let { return it }
+        // 0.9.3: the Quick Play rule's order breaks ties (0 for every link when no rule is set: unchanged).
         return quick.sortedWith(observedLast.thenBy { langRank(it) }
-            .thenBy { r -> val res = r.resolution(); if (res in 1..1080) -res else 10_000 - res }.thenBy { if (it.isHeavy()) 1 else 0 }.thenByDescending { Ranker.score(it) }).first()
+            .thenBy { r -> val res = r.resolution(); if (res in 1..1080) -res else 10_000 - res }.thenBy { if (it.isHeavy()) 1 else 0 }.thenBy { Rules.quickRank(it.addonName) }.thenByDescending { Ranker.score(it) }).first()
     }
     return rankedCandidates(quick, level, quickOnly = false).firstOrNull()
 }

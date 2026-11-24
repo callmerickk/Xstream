@@ -1,3 +1,9 @@
+Xstream 0.9.3
+
+Smarter starts, tuned for you:
+• How the app picks the first video to play can now be fine-tuned from our side and improved for everyone, without an update.
+• Nothing to set up: everything still works on its own, exactly as before.
+
 Xstream 0.9.2
 
 Glass stays glass, smoother screens:

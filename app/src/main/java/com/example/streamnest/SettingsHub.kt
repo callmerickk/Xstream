@@ -1201,7 +1201,7 @@ private fun PlaybackPage(vm: AppViewModel, onBack: () -> Unit) {
         SettingsCard {
             // 0.9.76: HDR switch (phones) — off by default: strictly no HDR copies; on: offered and played without limits.
             if (!BuildConfig.IS_TV) {
-                ToggleRow("HDR", "Off: no HDR copy is ever offered or played. On: HDR copies are offered and play without any limit.", v("hdrOn") == "on") { vm.setText("hdrOn", if (it) "on" else "off") }
+                ToggleRow("HDR", "Off: no HDR copy is ever offered or played. On: HDR copies are offered and play without any limit.", (texts["hdrOn"]?.let { it == "on" } ?: Rules.bool(Rules.HDR_DEFAULT))) { vm.setText("hdrOn", if (it) "on" else "off") }
                 RowDivider(20.dp)
             }
             ToggleRow("Match my screen", "HDR moves up only when this screen can show HDR (HDR on a normal screen looks washed out).", isOn(v("picMatch").ifBlank { "yes" })) { vm.setText("picMatch", yn(it)) }

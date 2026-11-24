@@ -211,3 +211,11 @@ Not switched (wording for all apps, 0.9.1): "saved video" / "start saved" → "c
 | pixeldrain 403 = busy | Fix, both apps | none | StreamCache.probe (LinkProbe.busy), Prepare.kt, PlayerScreen.tryNextSource |
 | Source Test: seek re-check, ready time, wrong film, pixeldrain pacing | Fix, both apps | none | SourceTest.kt |
 | Firebase Crashlytics + Performance | Both apps, phone + TV | none | top build.gradle.kts (synced), app/google-services.json (synced), CrashReports.kt |
+
+### Step 4 (Xstream 0.9.3)
+
+| Item | Status | Switch | Notes |
+|------|--------|--------|-------|
+| Rules in one place (defaults = 0.9.2 behaviour), Developer's Corner › Rules: try on this phone / reset / publish to everyone / reset for everyone / history with Undo | Beta only | `devRules` | Rules.kt, RulesUi.kt; published at Firebase `xshared/devconfig/rules` (+ `rulesHistory`), kept in `filesDir/rules-published.json`, fetched in the background 4 s after start. Read by Quick.kt, AppViewModel.mixedStreamsFlow, Prepare, PlayerScreen, Ranker, SourceTest, LinkMemory, HdrRule. Off = every rule is its default, nothing read or written |
+| "Ask about this" boxes (AI with the section's logic book, values, last 150 log lines) + "What if?" replay | Beta only | `devAsk` | DevAsk.kt; Worker `POST /ai` (Firebase ID token checked, `GEMINI_KEY`, `DEV_UIDS`), 503 → the app's Gemini key |
+| Source Test › Combined: every addon + CloudStream + Nuvio plugin at once, strategies replayed, Quick Play suggested per title type | Beta only | `comboTest` | ComboTest.kt; reports in `filesDir/combo-tests` |

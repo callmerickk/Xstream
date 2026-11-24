@@ -13,6 +13,10 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.9.3", "24 Nov 2026", "Smarter starts, tuned for you", listOf(
+        "How the app picks the first video to play can now be fine-tuned from our side and improved for everyone, without an update",
+        "Nothing to set up: everything still works on its own, exactly as before",
+    )),
     Release("0.9.2", "24 Nov 2026", "Glass stays glass, smoother screens", listOf(
         "Glass theme: the page no longer turns plain black — the last picture stays until the next one is ready, also after a restart",
         "Glass title page: the poster shows at full brightness (no dark shade over its top) and the text below sits on a clean frosted panel",
@@ -611,6 +615,15 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.9.3", "24 Nov 2026", "Rules in one place, Ask AI, combined plugin + addon test", listOf(
+        "devRules (Feature, beta on / stable off): Rules.kt = one table of every rule that decides play, defaults in code = 0.9.2 behaviour: quickSources, quickWaitAddonsSec 6, quickWaitPluginsSec 20, backupSources, backupRaceAfterMs 1200, backupQuickHeadStartMs 3000, addonOrder, rankPlayedWeight 100, rankPerSecond 4, rankMaxSeconds 20, rankUnseekablePenalty 60, rankLanguageFirst, checkLength + film 0.75–1.35 / episode 0.6–1.4, checkFakeUnderMb 20, checkSwapLengthMs 1500 / asked 10000, autoSwitchPhone on / autoSwitchTv off, autoSwitchWaitBestSec 25, autoSwitchTries 3, weak* (2 stalls / 5 s / up after 90 s with 45 s ahead / 8 Mbps / 180 s / 8 ticks), linkMemoryHours 4, hdrDefault off, testQuick* (0.7 / 2000 ms / 0.3 / 3 links)",
+        "Rules layers: default < published (Firebase xshared/devconfig/rules {version, at, values}, kept in filesDir/rules-published.json, fetched 4 s after start in the background) < test on this phone (rules-local.json). History: xshared/devconfig/rulesHistory (last 20) + this phone's automatic Source Test changes (noteAuto), each with Undo",
+        "Code reads the rules: Quick.kt qsAddons/isQuick/pickQuick (rule order as a tie-break), AppViewModel.mixedStreamsFlow (a rule naming addons and plugins asks both kinds; Nuvio plugins asked when named), Prepare wait + goWide backup list, PlayerScreen rescue timings + backup pool, fake size, length check, swap length, ladder gate (Rules.autoSwitchHere) and thresholds, auto quality thresholds, Ranker.scoreOf weights + rescore, rankedCandidates language-first + backup order, SourceTest manageAddons thresholds (never over a set rule), LinkMemory TTL, HdrRule default",
+        "Developer's Corner › Rules (RulesUi.kt): a card per group with value / default / who set it, lists picked from installed addons, CloudStream providers and Nuvio plugins with ↑ ↓ ✕; Try on this phone / Reset / Publish to everyone per card and for all; Reset for everyone; history with Undo",
+        "devAsk: DevAsk.kt — LogicBook (plain-English entry per section), DevAskBox in every Rules card, every Developer's Corner section, Source Test and Combined, plus a master box; context = entry + values + last 150 matching log lines of this phone (emails removed); conversation kept per section for the session; POST streamx-home /ai (x-sx + Firebase ID token), fallback on 503 to the app's Gemini key, then the app's AI; WhatIf replays the combined recording (first source, time to first playable) and re-ranks the ranking's top 5 under new weights",
+        "comboTest: ComboTest.kt — Source Test › Combined: 10 titles (3 Hindi movies, 3 Hollywood, 2 English series, 2 Hindi TV; old 1995–2012 / new 2018+), addonStreamsFlow + PluginSources.modeStreams at once, per source first link / first playable (probe of the first 3 links) / first picture (SourceTester.firstPicture, 6 fastest) / links / unique files (size ±1 % + name Jaccard); replay: as set now, all at once, fastest 2–3 first + rest after 3/6 s, by title type, cloud first; suggested Quick Play per type with \"Use as my Quick Play (try on this phone)\"; report in filesDir/combo-tests (Save / Share) and COMBO log lines",
+        "SourceTester.pickOne(lang, years) for the combined test (random as before when not given)",
+    )),
     Release("0.9.2", "24 Nov 2026", "Shared fixes: Glass, frames, Continue page, file-name check, pixeldrain busy, Source Test, Firebase", listOf(
         "Glass: GlassBg keeps the shown blurred backdrop + tint in the object (survives recomposition, theme flicker, activity rebuild), saves it to cacheDir/glass_last.png and loads it on a cold start; a failed small picture retries the full URL; no picture yet = radial glow in Palette.tint/accent (never flat black); APP 'look · Glass on/off' line in applyPalette",
         "Glass title page: list top fade (DstIn 36 dp) only once scrolled; top bar has its own small shade; card = frost gradient 0x1F→0x12 white + 1 dp highlight border; poster full alpha to 70 % then DstIn fade into the panel; title shade 0x59 black only around the title (190–320 dp); non-Glass unchanged",

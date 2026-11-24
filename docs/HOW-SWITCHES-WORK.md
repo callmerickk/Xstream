@@ -39,3 +39,15 @@ release commit must add exactly one new zip.
 
 Music is a special case: besides `"music"` in `STABLE`, StreamX would also need `HAS_MUSIC = true` and the Music
 manifest entries in its own brand manifest.
+
+## Switches (0.9.3)
+
+All on in Xstream, off in StreamX (`Feature.STABLE` = `updatePill` only):
+`cloudFind`, `pluginGuard`, `smartParts`, `detailTiming`, `accessGate`, `linkMemory`, `music`, `tasteRows`, `tastePick`,
+`hostDown`, `roomRejoin`, `inviteBoth`, `fileNameCheck` (0.9.2), and new in 0.9.3:
+
+- `devRules` — Developer's Corner › Rules (Rules.kt). Off: every rule is its built-in default (the 0.9.2 behaviour) and
+  the published copy (`xshared/devconfig/rules`) is not read. Promoting it to StreamX makes StreamX read the published
+  rules at start too (both apps use the same path).
+- `devAsk` — "Ask about this" boxes in Developer's Corner (DevAsk.kt, Worker `/ai`).
+- `comboTest` — Source Test › Combined (ComboTest.kt).

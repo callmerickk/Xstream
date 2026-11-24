@@ -423,12 +423,16 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
             "quickStart" -> QuickStartPage(vm) { subPage = null }
             "codeNames" -> CodeNamesPage(vm) { subPage = null }
             "assistant" -> DevAssistantPage(vm) { subPage = null }
+            "rules" -> RulesPage(vm) { subPage = null }  // 0.9.3 (devRules)
             else -> StreamFiltersPage(vm) { subPage = null }
         }
         return
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 130.dp)) {
         item { PageHeader("Developer's Corner", onBack) }
+        // 0.9.3 (devAsk): one box that knows every section; (devRules) every rule that decides play.
+        if (Feature.devAsk) item { DevAskBox(vm, "master", "Ask about anything in Developer's Corner") }
+        if (Feature.devRules) item { DevFold("Rules", "Quick Play, backup, ranking, checks, auto-switch — try, publish, undo", false) { subPage = "rules" } }
 
         item {
             // Everything in Developer's Corner, for every account (StreamX and StreamX, phone and TV) in one tap.
@@ -463,6 +467,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         item { DevFold("Code names", "Hotstar → Helios, MovieBox → Mercury Swift / Prime… see and edit every name", false) { subPage = "codeNames" } }
         item { DevFold("Sources & plugins", "Official set for everyone, CloudStream plugins, Quick Start, filters, built-in servers", devOpen == "src") { devOpen = if (devOpen == "src") null else "src" } }
         if (devOpen == "src") {
+        if (Feature.devAsk) item { DevAskBox(vm, "src") }
         item {
             SettingsCard {
                 SettingRow(Icons.Default.Public, "Official set for everyone", "The add-ons and plugins every account gets. Anything else stays a test.") { subPage = "official" }
@@ -504,6 +509,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         }
         item { DevFold("Playback & tests", "Source Test, auto-play logic, Refresh Lab, defaults for everyone", devOpen == "play") { devOpen = if (devOpen == "play") null else "play" } }
         if (devOpen == "play") {
+        if (Feature.devAsk) item { DevAskBox(vm, "play") }
         item { SectionLabel("Streaming") }
         item {
             SettingsCard {
@@ -518,6 +524,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         }
         if (!BuildConfig.NO_PUBLISH) item { DevFold("Publish for everyone", "Watch together call relay", devOpen == "pub") { devOpen = if (devOpen == "pub") null else "pub" } }
         if (devOpen == "pub") {
+        if (Feature.devAsk) item { DevAskBox(vm, "pub") }
         item { SectionLabel("Watch together call relay (everyone)") }
         item {
             val scope = rememberCoroutineScope()
@@ -541,6 +548,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         }
         item { DevFold("Look, logo & AI", "App logo, start animation, app identity", devOpen == "look") { devOpen = if (devOpen == "look") null else "look" } }
         if (devOpen == "look") {
+        if (Feature.devAsk) item { DevAskBox(vm, "look") }
         item { SectionLabel("Logo & animation (everyone)") }
         item {
             val scope = rememberCoroutineScope()
@@ -615,6 +623,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         }
         item { DevFold("Tests & logs", "Activity log, play timing, playback log, developer changelog", devOpen == "logs") { devOpen = if (devOpen == "logs") null else "logs" } }
         if (devOpen == "logs") {
+        if (Feature.devAsk) item { DevAskBox(vm, "logs") }
         // Play timing log: every Play, step by step (tap → player → link → tracks → first picture).
         item { SectionLabel("Activity log") }
         item {
@@ -700,6 +709,7 @@ internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
         }
         item { DevFold("Access & security", "Dev access, fingerprint, password, customize UI", devOpen == "sec") { devOpen = if (devOpen == "sec") null else "sec" } }
         if (devOpen == "sec") {
+        if (Feature.devAsk) item { DevAskBox(vm, "sec") }
         // Who sees "Dev sources" in the player (› More): every source with its server and provider names, as before.
         item { SectionLabel("Dev access") }
         item {

@@ -45,4 +45,14 @@ object Feature {
     /** 0.9.2: a film link whose real file name (in its web address, or the addon's file-name hint) shows another film —
      *  another year (±1 allowed) or clearly another title — is dropped ("wrong title (file name)" in the log). */
     val fileNameCheck: Boolean = on("fileNameCheck")
+    /** 0.9.3: every rule that decides play in one place (Rules.kt) — Developer's Corner › Rules: try on this phone,
+     *  publish to everyone (xshared/devconfig/rules, read at start), history with Undo. Off = built-in defaults only,
+     *  nothing read or written. */
+    val devRules: Boolean = on("devRules")
+    /** 0.9.3: "Ask about this" boxes in Developer's Corner (DevAsk.kt): the AI gets the section's logic book entry, its
+     *  values and this phone's recent log lines; "What if?" re-ranks the recorded test results. */
+    val devAsk: Boolean = on("devAsk")
+    /** 0.9.3: Source Test › Combined: every addon, CloudStream and Nuvio plugin asked at once for ~10 titles, then
+     *  Quick Play strategies replayed from the recording (ComboTest.kt). */
+    val comboTest: Boolean = on("comboTest")
 }

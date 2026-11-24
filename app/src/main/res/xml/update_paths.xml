@@ -8,4 +8,6 @@
     <files-path name="tests" path="source-tests/" />
     <!-- Refresh Lab logs (Developer's Corner › Refresh Lab › Share) -->
     <files-path name="lab" path="refresh-lab/" />
+    <!-- 0.9.3: Combined source test reports (Developer's Corner › Source Test › Combined) -->
+    <files-path name="combo" path="combo-tests/" />
 </paths>

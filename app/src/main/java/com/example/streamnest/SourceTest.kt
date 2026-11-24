@@ -268,11 +268,12 @@ object SourceTester {
     // ───── Picking titles (TMDB discover: Hindi or English, random year) ─────
 
     /** One random popular title (Hindi or English, any year since 1995); series get a random aired episode. */
-    internal suspend fun pickOne(vm: AppViewModel, tv: Boolean, exclude: Set<String>): TestTitle? {
+    /** 0.9.3: [lang] ("hi" / "en") and [years] pick a kind of title for the combined test; null = random, as before. */
+    internal suspend fun pickOne(vm: AppViewModel, tv: Boolean, exclude: Set<String>, lang: String? = null, years: IntRange? = null): TestTitle? {
         val key = vm.tmdbKey()
         // TMDB first (a few tries: a random year can come back empty); when TMDB doesn't answer (no key, refused key,
         // no network to it) the tests still run, with titles from the Home rows / Cinemeta's popular list.
-        if (key.isNotEmpty()) repeat(3) { runCatching { pickTmdb(vm, key, tv, exclude) }.getOrNull()?.let { return it } }
+        if (key.isNotEmpty()) repeat(3) { runCatching { pickTmdb(vm, key, tv, exclude, lang, years) }.getOrNull()?.let { return it } }
         return pickLocal(vm, tv, exclude)
     }
 
@@ -291,11 +292,11 @@ object SourceTester {
         return TestTitle(imdb, "series", m.name, m.releaseInfo, ep.id, "${m.name} S${ep.season} E${ep.episode} · series · ${ep.id} (from Home)")
     }
 
-    private suspend fun pickTmdb(vm: AppViewModel, key: String, tv: Boolean, exclude: Set<String>): TestTitle? {
+    private suspend fun pickTmdb(vm: AppViewModel, key: String, tv: Boolean, exclude: Set<String>, lang0: String? = null, years: IntRange? = null): TestTitle? {
         val rnd = java.util.Random()
         val nowYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
-        val lang = if (rnd.nextBoolean()) "hi" else "en"
-        val year = 1995 + rnd.nextInt((nowYear - 1995).coerceAtLeast(1))
+        val lang = lang0 ?: if (rnd.nextBoolean()) "hi" else "en"
+        val year = if (years != null) years.first + rnd.nextInt((years.last - years.first + 1).coerceAtLeast(1)) else 1995 + rnd.nextInt((nowYear - 1995).coerceAtLeast(1))
         val kind = if (tv) "tv" else "movie"
         val yearParam = if (tv) "first_air_date_year" else "primary_release_year"
         // Popular titles only (addons rarely have obscure ones).
@@ -505,25 +506,33 @@ object SourceTester {
         val order = score.entries.sortedByDescending { it.value }.map { it.key }
         w("")
         w("== Addons arranged by the test (switch: Developer's Corner › Source Test) ==")
-        if (vm.reorderAddonsByNames(order)) w("Addon order: ${order.joinToString(" → ")}") else w("Addon order: unchanged")
+        // 0.9.3: a published / tested addon-order rule is never overridden by the test; a change it makes is noted in the rules' history.
+        val orderBefore = vm.addons.value.map { it.label() }
+        if (Rules.isSet(Rules.ADDON_ORDER)) w("Addon order: kept (set in Developer's Corner › Rules)")
+        else if (vm.reorderAddonsByNames(order)) { w("Addon order: ${order.joinToString(" → ")}"); Rules.noteAuto(Rules.ADDON_ORDER, orderBefore.joinToString("\n"), vm.addons.value.map { it.label() }.joinToString("\n"), "Source Test arranged the addons") }
+        else w("Addon order: unchanged")
         val qs = vm.qsAddons().toMutableSet()
         val before = qs.toSet()
         val judged = byAddon.keys.associateWith { name -> thisRun[name]?.takeIf { it.tests >= 3 } ?: byAddon.getValue(name) }
         judged.forEach { (name, v) ->
-            if (v.tests < 3) { w("  $name: too few links tested (${v.tests}) to decide Quick Start"); return@forEach }
+            if (v.tests < Rules.int(Rules.TEST_MIN_LINKS)) { w("  $name: too few links tested (${v.tests}) to decide Quick Start"); return@forEach }
             val rate = v.ok.toDouble() / v.tests
             when {
                 // Quick Start is for links that start at once (MovieBox ~0.6 s): slower addons stay in All sources.
-                rate >= 0.7 && v.median <= 2_000 -> qs += name
-                rate >= 0.7 && name !in qs -> w("  $name: plays well but takes ${"%.1f".format(v.median / 1000f)} s to start — kept out of Quick Start (needs ≤ 2 s)")
-                rate < 0.3 -> qs -= name
-                else -> w("  $name: Quick Start unchanged — played ${(rate * 100).toInt()}% (needs 70%), median ${"%.1f".format(v.median / 1000f)} s (needs ≤ 2 s)")
+                // 0.9.3: the thresholds are rules (defaults 70 %, 2 s, 30 %, 3 links — as before).
+                rate >= Rules.num(Rules.TEST_QS_PLAYED) && v.median <= Rules.int(Rules.TEST_QS_MEDIAN) -> qs += name
+                rate >= Rules.num(Rules.TEST_QS_PLAYED) && name !in qs -> w("  $name: plays well but takes ${"%.1f".format(v.median / 1000f)} s to start — kept out of Quick Start (needs ≤ ${"%.0f".format(Rules.int(Rules.TEST_QS_MEDIAN) / 1000f)} s)")
+                rate < Rules.num(Rules.TEST_QS_REMOVE) -> qs -= name
+                else -> w("  $name: Quick Start unchanged — played ${(rate * 100).toInt()}% (needs ${(Rules.num(Rules.TEST_QS_PLAYED) * 100).toInt()}%), median ${"%.1f".format(v.median / 1000f)} s (needs ≤ ${"%.0f".format(Rules.int(Rules.TEST_QS_MEDIAN) / 1000f)} s)")
             }
         }
         val added = qs - before
         val removed = before - qs
-        if (added.isNotEmpty() || removed.isNotEmpty()) {
+        if ((added.isNotEmpty() || removed.isNotEmpty()) && Rules.isSet(Rules.QUICK_SOURCES)) {
+            w("Quick Start: the test would ${if (added.isNotEmpty()) "add ${added.joinToString(", ")} " else ""}${if (removed.isNotEmpty()) "remove ${removed.joinToString(", ")}" else ""} — kept (Quick Play is set in Developer's Corner › Rules)")
+        } else if (added.isNotEmpty() || removed.isNotEmpty()) {
             vm.setText("qsAddons", qs.joinToString("|"))
+            Rules.noteAuto(Rules.QUICK_SOURCES, before.joinToString("\n"), qs.joinToString("\n"), "Source Test: Quick Start addons")
             if (added.isNotEmpty()) w("Quick Start: added ${added.joinToString(", ")}")
             if (removed.isNotEmpty()) w("Quick Start: removed ${removed.joinToString(", ")} (still in All sources)")
         } else w("Quick Start: unchanged (${qs.joinToString(", ")})")
@@ -821,6 +830,8 @@ fun SourceTestScreen(vm: AppViewModel, onBack: () -> Unit) {
                 }
             }
         }
+        // 0.9.3 (devAsk)
+        if (Feature.devAsk) DevAskBox(vm, "sourceTest")
     }
 }
 

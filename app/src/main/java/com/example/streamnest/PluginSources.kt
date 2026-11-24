@@ -576,7 +576,8 @@ object PluginSources {
             // Each plugin is asked the moment it has loaded (it used to wait until every plugin had loaded: a slow
             // site held up the first link by 20 s or more).
             val entries = CsPlugins.enabledEntries()
-            val nuvio = if (only != null) emptyList() else runCatching { NuvioPlugins.init(ctx); NuvioPlugins.enabledScrapers() }.getOrDefault(emptyList())
+            // 0.9.3: a rule that names Nuvio plugins ("Nuvio · …") asks those too.
+            val nuvio = if (only != null && only.none { it.startsWith("Nuvio · ") }) emptyList() else runCatching { NuvioPlugins.init(ctx); NuvioPlugins.enabledScrapers() }.getOrDefault(emptyList())
                 .filter { s -> wanted("Nuvio · ${s.name}") && (s.types.isEmpty() || (if (series) ("tv" in s.types || "series" in s.types) else "movie" in s.types)) }
             // MovieBox asked directly first (one search, every language at once); the MovieBox plugins wait for it and only
             // run when it found nothing (they're the backup).

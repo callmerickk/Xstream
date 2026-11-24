@@ -1640,9 +1640,11 @@ fun PlayerScreen(
                 StreamType.mimeFor(n.url, itemFor(n.url)?.fileName()) != androidx.media3.common.MimeTypes.APPLICATION_M3U8) {
                 val size = withTimeoutOrNull(4_000) { runCatching { StreamCache.probe(n.url).size }.getOrNull() } ?: -1L
                 if (now?.url != n.url) return@LaunchedEffect
-                if (size in 1 until 20L * 1024 * 1024) { rejectFake("file only ${size / 1024} KB"); return@LaunchedEffect }
+                if (size in 1 until Rules.int(Rules.CHECK_FAKE_MB) * 1024L * 1024) { rejectFake("file only ${size / 1024} KB"); return@LaunchedEffect }
             }
         }
+        // 0.9.3: the length check can be switched off in the rules (on by default).
+        if (!Rules.bool(Rules.CHECK_LENGTH)) return@LaunchedEffect
         val savedMs = if (BuildConfig.IS_TV) 0L else (vm.epProgress.value[p.key] ?: vm.progress.value.firstOrNull { it.key == p.key })?.durationMs ?: 0L
         val expMin0 = (if (savedMs > 5 * 60_000) (savedMs / 60_000).toInt() else null)
             ?: runtimeMinutes(p.meta?.runtime)
@@ -1668,7 +1670,7 @@ fun PlayerScreen(
         val expMin = expMin0
         if (type == "movie" && expMin < 40) return@LaunchedEffect
         if (type == "series" && expMin < 10) return@LaunchedEffect
-        val (lo, hi) = if (type == "movie") 0.75 to 1.35 else 0.6 to 1.4
+        val (lo, hi) = if (type == "movie") Rules.num(Rules.CHECK_MOVIE_MIN) to Rules.num(Rules.CHECK_MOVIE_MAX) else Rules.num(Rules.CHECK_SERIES_MIN) to Rules.num(Rules.CHECK_SERIES_MAX)
         val addon0 = itemFor(n.url)?.addonName ?: n.addon.orEmpty()
         trustedLen.value?.let { t -> if (kotlin.math.abs(got - t) <= 3.0) return@LaunchedEffect }
         if (got < expMin * lo || got > expMin * hi) {
@@ -2125,20 +2127,22 @@ fun PlayerScreen(
                 fun add(l: List<StreamItem>) { if (l.isNotEmpty()) pool.value = (pool.value + l).distinctBy { it.stream.url } }
                 val feeds = listOf(
                     launch { SlowAddons.links.collect { m -> add(m[p.key].orEmpty()) } },
-                    launch { runCatching { vm.streamsFlow(type, p.key).collect { (l, d) -> add(l); if (d) allDone = true } }; allDone = true },
+                    // 0.9.3: a backup rule asks only its sources (Rules.backupOnly() is null without one: every source).
+                    launch { runCatching { vm.streamsFlow(type, p.key, only = Rules.backupOnly()).collect { (l, d) -> add(l); if (d) allDone = true } }; allDone = true },
                 )
                 val rescue = launch {
                     // TV: the backup links (CNCVerse / HdHub…) race after 1.5 s if they're there — waiting 6 s made a
                     // Fire TV start take 18 s even though 26 links had come back in under half a second.
                     // Phones too: a playable backup link starts as soon as it is there (Sumo Didi waited 6 s with MovieBox's
                     // link already in hand). A Netflix-type playlist that answers meanwhile still takes over at once.
-                    delay(1_200)
+                    // 0.9.3: both waits come from the rules (defaults 1.2 s and 3 s, as before).
+                    delay(Rules.int(Rules.BACKUP_RACE_MS).toLong())
                     withTimeoutOrNull(4_800) {
                         while (true) {
                             val have = vm.filtered(pool.value).list.filter { s -> s.stream.url !in tried }
                             // Quick play (Netflix, Prime, Hotstar…) gets up to 3 s to answer with an instant playlist first.
                             val waited = SystemClock.elapsedRealtime() - findT0
-                            if ((quickDone || waited >= 3_000) && (have.any { s -> !s.slowMp4() } || (quickDone && (have.isNotEmpty() || last.isNotEmpty())))) break
+                            if ((quickDone || waited >= Rules.int(Rules.BACKUP_HEAD_MS)) && (have.any { s -> !s.slowMp4() } || (quickDone && (have.isNotEmpty() || last.isNotEmpty())))) break
                             delay(250)
                         }
                     }
@@ -3451,7 +3455,7 @@ fun PlayerScreen(
         val dMain = curDur(); val dSh = sp.duration
         // Same length (the 0.8.1 fade): within 1.5 s for the automatic steps; when you tapped Upgrade, within 10 s (4K
         // copies are often a few seconds longer or shorter at the credits — they used to reload with "Resuming at").
-        if (dMain <= 0 || dSh <= 0 || kotlin.math.abs(dMain - dSh) > (if (asked) 10_000 else 1_500)) {
+        if (dMain <= 0 || dSh <= 0 || kotlin.math.abs(dMain - dSh) > (if (asked) Rules.int(Rules.CHECK_SWAP_ASKED_MS) else Rules.int(Rules.CHECK_SWAP_MS))) {
             swapFail = if (dMain > 0 && dSh > 0 && kotlin.math.abs(dMain - dSh) < dMain * 0.08) "cut (${kotlin.math.abs(dMain - dSh) / 1000} s longer/shorter)" else "length"
             if (!asked && why.startsWith("ladder")) { swLog(true, "$why — not faded", url, "lengths differ (${fmtTime(dMain)} vs ${fmtTime(dSh)})"); drop(); return false }
             PlayTiming.late("swap: lengths differ (${fmtTime(dMain)} vs ${fmtTime(dSh)})" + if (asked) " — switching the usual way" else " — Upgrade quality offered instead")
@@ -3586,7 +3590,8 @@ fun PlayerScreen(
         return if (top in 1..720) 0 else 2
     }
     LaunchedEffect(firstFrame) {
-        if (!firstFrame || BuildConfig.IS_TV || usingVlc || !vm.pluginMode() || ottSwapStarted || byHand) return@LaunchedEffect
+        // 0.9.3: auto-switch per device type from the rules (phone on, TV off by default — as before).
+        if (!firstFrame || !Rules.autoSwitchHere() || usingVlc || !vm.pluginMode() || ottSwapStarted || byHand) return@LaunchedEffect
         val start = now?.url?.let { itemFor(it) } ?: return@LaunchedEffect
         if (rung(start) < 0 || rung(start) >= 3) return@LaunchedEffect
         ottSwapStarted = true
@@ -3614,12 +3619,12 @@ fun PlayerScreen(
                     val tNow = SystemClock.elapsedRealtime()
                     if (buffering && firstFrame) stallTicks.addLast(tNow)
                     while (stallTicks.isNotEmpty() && tNow - stallTicks.first() > 60_000) stallTicks.removeFirst()
-                    val struggling = stallTicks.size >= 8
+                    val struggling = stallTicks.size >= Rules.int(Rules.WEAK_STRUGGLE)
                     if (!struggling && (buffering || curBuffered() - curPos() < 30_000)) { delay(1_000); continue }
                     // 0.9.75 (from Xstream 0.8.11): no heavy upgrades on weak internet (they took the speed the film needed),
                     // 3 tries per title. Phones; TV has its own rules.
-                    if (!BuildConfig.IS_TV && (hlsCap > 0 || (lastSlowAt > 0 && SystemClock.uptimeMillis() - lastSlowAt < 180_000) || tried.size >= 3 ||
-                        (bwNow[0] in 1 until 8_000_000))) { delay(2_000); continue }
+                    if (!BuildConfig.IS_TV && (hlsCap > 0 || (lastSlowAt > 0 && SystemClock.uptimeMillis() - lastSlowAt < Rules.ms(Rules.WEAK_COOLDOWN)) || tried.size >= Rules.int(Rules.SWITCH_TRIES) ||
+                        (bwNow[0] in 1 until (Rules.num(Rules.WEAK_MIN_BW) * 1_000_000).toLong()))) { delay(2_000); continue }
                     val hdrOff = HdrRule.banned(vm)
                     // The language you're hearing: a copy that names its languages and doesn't have it is skipped
                     // before opening (Heart of Stone: 7 Hindi-only MovieBox files tried for an English film).
@@ -3632,7 +3637,7 @@ fun PlayerScreen(
                             // Never one streaming service for another (Netflix ↔ Prime: different cuts, different shows).
                             !(cur.isOtt() && it.isOtt())
                     }
-                    val waited = SystemClock.elapsedRealtime() - t0 >= 25_000 || struggling
+                    val waited = SystemClock.elapsedRealtime() - t0 >= Rules.ms(Rules.SWITCH_VEGA_WAIT) || struggling
                     // VegaMovies / RogMovies first; after 25 s without them, the highest rung that is there.
                     val c = ok.firstOrNull { rung(it) == 3 }
                         ?: (if (waited) (ok.firstOrNull { rung(it) == 2 } ?: ok.firstOrNull { rung(it) == 1 }) else null)
@@ -3842,11 +3847,12 @@ fun PlayerScreen(
             val res = cur.resolution()
             val t = SystemClock.uptimeMillis()
             if (buffering || stalls > 0) smoothSince = t
-            val longStall = buffering && t - stallAt > 5000 && t - seekedAt > 60_000
-            if ((stalls >= 2 && t - seekedAt > 60_000) || longStall) {
+            // 0.9.3: weak-network thresholds from the rules (defaults as before: 2 stalls / 5 s, up after 90 s with 45 s ahead).
+            val longStall = buffering && t - stallAt > Rules.int(Rules.WEAK_LONG_STALL) && t - seekedAt > 60_000
+            if ((stalls >= Rules.int(Rules.WEAK_STALLS) && t - seekedAt > 60_000) || longStall) {
                 val lower = ladder.filter { it < res }.sortedDescending().firstNotNullOfOrNull { r -> streamAt(r, cur) }
                 if (lower != null) { stalls = 0; switchTo(lower, "Auto · ${lower.resolution()}p (slow connection)", auto = true, why = "slow connection, lower quality"); return@LaunchedEffect }
-            } else if (!usingVlc && t - smoothSince > 90_000 && player.bufferedPosition - player.currentPosition > 45_000) {
+            } else if (!usingVlc && t - smoothSince > Rules.ms(Rules.WEAK_UP_SMOOTH) && player.bufferedPosition - player.currentPosition > Rules.ms(Rules.WEAK_AHEAD)) {
                 val higher = ladder.filter { it > res }.sorted().firstNotNullOfOrNull { r -> streamAt(r, cur) }
                 if (higher != null) { switchTo(higher, "Auto · ${higher.resolution()}p", auto = true, why = "connection good again, higher quality"); return@LaunchedEffect }
                 smoothSince = t // nothing better: check again later

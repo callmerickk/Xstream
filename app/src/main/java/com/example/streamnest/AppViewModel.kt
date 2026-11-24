@@ -411,6 +411,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         Public.vm = this
         StreamHeaders.init(app); AddonSpeed.init(app); Relay.warmUp()
         // Source ranking: this phone's copy now, the shared one from the cloud in the background.
+        // 0.9.3 (devRules): the rules first (kept copy, no network), so the ranking below already uses their weights.
+        Rules.init(app)
         AutoPlayRules.init(app); Ranker.init(app); HostStats.init(app)
         if (!BuildConfig.IS_TV) { Buddies.init(app); Invites.start(app); if (Feature.roomRejoin) runCatching { Together.resumeIfRecent(app) } }
         ProfileLock.init(app)
@@ -1084,7 +1086,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     /** Streams arriving addon by addon: emits (list so far in addon order, finished?) so the page fills in fast. */
     fun streamsFlow(type: String, id: String, only: Set<String>? = null, except: Set<String>? = null): Flow<Pair<List<StreamItem>, Boolean>> {
-        val base = if (pluginMode()) PluginSources.modeStreams(this, type, id, only, except) else addonStreamsFlow(type, id, only, except)
+        val base = mixedStreamsFlow(type, id, only, except)
+            ?: if (pluginMode()) PluginSources.modeStreams(this, type, id, only, except) else addonStreamsFlow(type, id, only, except)
         // Live server (64-bit app): its own mode, or added to Turbo / Classic (on by default). It counts as a quick
         // server, so Quick Play and the title page's instant start get its links too.
         val live = LiveServer.enabled(appContext) && (except == null || LiveServer.NAME !in except)
@@ -1093,6 +1096,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             // Classic (addons) never get Live server links mixed in.
             liveMode() -> if (live) liveStreamsFlow(type, id) else kotlinx.coroutines.flow.flowOf(emptyList<StreamItem>() to true)
             else -> base
+        }
+    }
+
+    /**
+     * 0.9.3 (devRules): a Quick Play / backup rule that names addons AND plugins (e.g. MovieBox plugin + an HLS addon +
+     * a Nuvio plugin) asks both kinds, whatever the source mode. null = the usual one-mode flow (no rule naming the
+     * other kind: always the case with the switch off).
+     */
+    private fun mixedStreamsFlow(type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>>? {
+        if (only == null || !Rules.namesSources()) return null
+        val addonNames = only.filter { n -> active.any { it.label() == n } }.toSet()
+        val plugNames = only - addonNames
+        val plug = pluginMode()
+        if (plug && addonNames.isEmpty()) return null
+        if (!plug && (plugNames.isEmpty() || BuildConfig.IS_TV)) return null
+        val a = if (addonNames.isEmpty()) null else addonStreamsFlow(type, id, addonNames, except)
+        val p = if (plugNames.isEmpty() || BuildConfig.IS_TV) null else PluginSources.modeStreams(this, type, id, plugNames, except)
+        if (a == null) return p
+        if (p == null) return a
+        return channelFlow {
+            val lock = Any()
+            var la: List<StreamItem> = emptyList(); var da = false
+            var lp: List<StreamItem> = emptyList(); var dp = false
+            suspend fun push() { val snap = synchronized(lock) { (la + lp).distinctBy { it.stream.url } to (da && dp) }; send(snap) }
+            launch { runCatching { p.collect { (l, d) -> synchronized(lock) { lp = l; dp = d }; push() } }; synchronized(lock) { dp = true }; push() }
+            runCatching { a.collect { (l, d) -> synchronized(lock) { la = l; da = d }; push() } }; synchronized(lock) { da = true }; push()
         }
     }
 

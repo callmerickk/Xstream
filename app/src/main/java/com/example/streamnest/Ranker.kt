@@ -61,9 +61,12 @@ object Ranker {
     private fun use(f: RankFile) {
         file = f
         scores.clear(); anyScores.clear(); unseekable.clear(); deadGroups.clear()
+        // 0.9.3: other ranking weights in the rules → every score worked out again from its counts (defaults: stored score).
+        val fresh = !Rules.weightsDefault()
         f.entries.forEach { e ->
-            scores["${e.key}|${e.bucket}|${e.lang}"] = e.score
-            anyScores[e.key] = maxOf(anyScores[e.key] ?: Double.NEGATIVE_INFINITY, e.score)
+            val sc = if (fresh) scoreOf(e.ok, e.tests, e.medianMs, e.seekable) else e.score
+            scores["${e.key}|${e.bucket}|${e.lang}"] = sc
+            anyScores[e.key] = maxOf(anyScores[e.key] ?: Double.NEGATIVE_INFINITY, sc)
             if (!e.seekable) unseekable += e.key
         }
         // A group is dead only when it never played in any quality / language and every test called it dead.
@@ -82,6 +85,9 @@ object Ranker {
             prefs?.edit()?.putStringSet("observed", observed.toSet())?.apply()
         }
     }
+
+    /** 0.9.3: the ranking weights changed (Rules): scores worked out again. */
+    fun rescore() { if (prefs != null) use(file) }
 
     /** Brings back a saved ranking and dead-server list (Developer's Corner › Auto-play logic › Restore). */
     fun restore(f: RankFile, hosts: List<String>?) {
@@ -241,8 +247,9 @@ object Ranker {
     fun scoreOf(ok: Int, tests: Int, medianMs: Long, seekable: Boolean): Double {
         if (tests == 0) return 0.0
         val rate = ok.toDouble() / tests
-        val secs = (medianMs / 1000.0).coerceAtMost(20.0)
-        return rate * 100 - secs * 4 - (if (seekable) 0 else 60)
+        // 0.9.3: the weights are rules (defaults 100 / 4 per second / 20 s at most / 60: the same score as before).
+        val secs = (medianMs / 1000.0).coerceAtMost(Rules.num(Rules.RANK_MAX_SEC))
+        return rate * Rules.num(Rules.RANK_PLAYED) - secs * Rules.num(Rules.RANK_PER_SEC) - (if (seekable) 0.0 else Rules.num(Rules.RANK_UNSEEK))
     }
 
     // ───── Learning while you watch ─────
@@ -340,6 +347,7 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
         .distinctBy { it.stream.url }
     val target = AllQualityLevels.firstOrNull { it.id == level }?.res ?: 0
     val plugTiers = pluginMode()
+    val langFirst = Rules.bool(Rules.RANK_LANG_FIRST)
     // Auto: Full HD (TV and phone start fast), else the best below, else anything.
     val targetTier = if (target == 0) 3 else Ranker.tier(target)
     fun tierCost(s: StreamItem): Int { val t = Ranker.tier(s.effectiveRes()); return if (t == targetTier) 0 else if (t < targetTier) targetTier - t else 10 + t }
@@ -356,8 +364,9 @@ fun AppViewModel.rankedCandidates(list: List<StreamItem>, level: String, quickOn
             { if (it.liveTooHeavy()) 1 else 0 },
             // M Player's DASH link often shows nothing (its HLS starts in ~1 s): HLS first for these.
             { if (plugTiers && it.isOtt() && StreamType.mimeFor(it.stream.url.orEmpty(), it.fileName()) == StreamType.DASH) 1 else 0 },
-            { tierCost(it) }, { HostStats.penalty(it.stream.url.orEmpty()) }, { langRank(it) }, { if (it.isHeavy()) 1 else 0 })
-            .thenByDescending { Ranker.score(it) }.thenByDescending { it.effectiveRes() },
+            // 0.9.3: "language before the score" and the backup rule's order are rules (on / no list = as before).
+            { tierCost(it) }, { HostStats.penalty(it.stream.url.orEmpty()) }, { if (langFirst) langRank(it) else 0 }, { if (it.isHeavy()) 1 else 0 }, { Rules.backupRank(it.addonName) })
+            .thenByDescending { Ranker.score(it) }.thenBy { if (langFirst) 0 else langRank(it) }.thenByDescending { it.effectiveRes() },
     )
     // MovieBox only: your language before quality (Hindi → English → Original audio → unlabelled → other dubs), in the
     // places MovieBox links already hold — every other server keeps its order.
