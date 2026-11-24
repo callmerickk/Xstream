@@ -133,6 +133,56 @@ object StreamCache {
 
     /** Servers that refused parallel pieces (403 / 429): one connection from now on. */
     private val singleHosts: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    // 0.9.1 (smartParts, Xstream 0.8.20): pixeldrain refuses more than a few connections at once: it gets 2 pieces (1 if it
+    // refuses even those). Other hosts that refuse are learned and kept on disk for 7 days (max 50).
+    private val seedHosts = setOf("pixeldrain.dev", "pixeldrain.com", "pixeldrain.net")
+    private val learnedAt = ConcurrentHashMap<String, Long>()
+    /** How often a host delivered all of 4+ parallel pieces this session (2 or more = 8 pieces are allowed). */
+    private val parallelOk = ConcurrentHashMap<String, Int>()
+    private val loggedSingle: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    @Volatile private var singleLoaded = false
+    private const val SINGLE_KEY = "single_hosts"
+    private const val SINGLE_MAX = 50
+    private const val SINGLE_TTL = 7L * 24 * 3600 * 1000
+    private fun singlePrefs(ctx: Context) = ctx.applicationContext.getSharedPreferences("stream_cache", Context.MODE_PRIVATE)
+
+    private fun loadSingleHosts(ctx: Context) {
+        if (singleLoaded) return
+        synchronized(this) {
+            if (singleLoaded) return
+            val now = System.currentTimeMillis()
+            runCatching {
+                singlePrefs(ctx).getString(SINGLE_KEY, null).orEmpty().split(';').forEach { e ->
+                    val h = e.substringBefore('=')
+                    val t = e.substringAfter('=', "").toLongOrNull() ?: return@forEach
+                    if (h.isNotBlank() && now - t < SINGLE_TTL) { learnedAt[h] = t; singleHosts += h }
+                }
+            }
+            singleLoaded = true
+        }
+    }
+
+    /** This host refused extra connections: one connection from now on, and remembered across restarts. */
+    private fun rememberSingle(ctx: Context, host: String) {
+        if (host.isBlank()) return
+        parallelOk.remove(host)
+        singleHosts += host
+        if (host in seedHosts) return
+        val now = System.currentTimeMillis()
+        learnedAt[host] = now
+        learnedAt.entries.removeIf { now - it.value >= SINGLE_TTL }
+        if (learnedAt.size > SINGLE_MAX) {
+            learnedAt.entries.sortedBy { it.value }.take(learnedAt.size - SINGLE_MAX).forEach { learnedAt.remove(it.key); singleHosts.remove(it.key) }
+        }
+        runCatching { singlePrefs(ctx).edit().putString(SINGLE_KEY, learnedAt.entries.joinToString(";") { "${it.key}=${it.value}" }).apply() }
+    }
+
+    /** 4+ parallel pieces all delivered. Twice this session = the host may get 8 pieces. */
+    private fun noteParallelOk(host: String, parts: Int) {
+        if (host.isBlank()) return
+        val n = parallelOk.merge(host, 1) { a, b -> a + b } ?: 1
+        if (n == 2) ActLog.add("NET", "$host answered $parts parallel parts twice — up to 8 allowed")
+    }
     /** File sizes learned from probes (for the playback booster). */
     val sizes = ConcurrentHashMap<String, Long>()
 
@@ -148,11 +198,25 @@ object StreamCache {
     suspend fun saveParts(ctx: Context, url: String, start: Long, length: Long, parts0: Int, onHeadDone: (() -> Unit)?, onProgress: (Float) -> Unit): String? =
         withContext(Dispatchers.IO) {
             val host = runCatching { Uri.parse(url).host }.getOrNull().orEmpty()
-            val parts = if (!parallel || host in singleHosts || length < 4L * 1024 * 1024) 1 else parts0.coerceIn(1, 8)
+            val smart = Feature.smartParts
+            val parts = if (!smart) { if (!parallel || host in singleHosts || length < 4L * 1024 * 1024) 1 else parts0.coerceIn(1, 8) } else {
+                // 0.9.1 (smartParts): 4 pieces by default; 8 only for a host that already delivered 4 parallel pieces twice.
+                loadSingleHosts(ctx)
+                val cap = if ((parallelOk[host] ?: 0) >= 2) 8 else 4
+                val wantsParallel = parallel && length >= 4L * 1024 * 1024 && parts0 > 1
+                if (wantsParallel && host in singleHosts && loggedSingle.add(host)) ActLog.add("NET", "$host: saving with one connection (it refuses extra ones)")
+                if (!parallel || host in singleHosts || length < 4L * 1024 * 1024) 1
+                else if (host in seedHosts) parts0.coerceIn(1, 2)
+                else parts0.coerceIn(1, cap)
+            }
             val piece = (length + parts - 1) / parts
             val got = LongArray(parts)
             val headSent = java.util.concurrent.atomic.AtomicBoolean(false)
             val errors = java.util.Collections.synchronizedList(ArrayList<String>())
+            // 0.9.1 (smartParts): part 0 saved completely / an error that is not a 403 or 429 / all pieces delivering (once).
+            val head0Done = java.util.concurrent.atomic.AtomicBoolean(false)
+            val otherError = java.util.concurrent.atomic.AtomicBoolean(false)
+            val parallelCounted = java.util.concurrent.atomic.AtomicBoolean(false)
             try {
                 coroutineScope {
                     (0 until parts).map { i ->
@@ -166,6 +230,7 @@ object StreamCache {
                                 got[i] = cached
                                 // The first quarter of the range is in, without gaps: enough for the player to start.
                                 if (i == 0 && cached >= headAt && !headSent.getAndSet(true)) onHeadDone?.invoke()
+                                if (smart && parts >= 4 && !parallelCounted.get() && got.all { it > 0 } && parallelCounted.compareAndSet(false, true)) noteParallelOk(host, parts)
                                 onProgress((got.sum().toFloat() / length).coerceIn(0f, 1f))
                             }
                             try {
@@ -173,18 +238,28 @@ object StreamCache {
                                     val watcher = launch { try { awaitCancellation() } finally { w.cancel() } }
                                     try { runInterruptible { w.cache() } } finally { watcher.cancel() }
                                 }
+                                if (i == 0) head0Done.set(true)
                                 if (i == 0 && !headSent.getAndSet(true)) onHeadDone?.invoke()
                             } catch (e: kotlinx.coroutines.CancellationException) {
                                 throw e
                             } catch (e: Throwable) {
                                 val msg = e.javaClass.simpleName + (e.message?.let { ": " + it.take(120) } ?: "")
-                                if (parts > 1 && (msg.contains("403") || msg.contains("429"))) singleHosts += host
+                                val refused = msg.contains("403") || msg.contains("429")
+                                if (!refused) otherError.set(true)
+                                // 0.9.1 (smartParts): remembered on disk too (7 days), not only until the app closes.
+                                if (parts > 1 && refused) { if (smart) rememberSingle(ctx, host) else singleHosts += host }
                                 errors += msg
                             }
                         }
                     }
                 }
-                errors.firstOrNull()
+                val first = errors.firstOrNull()
+                // 0.9.1 (smartParts): the host refused the EXTRA connections (403 / 429) but part 0, the head, is saved
+                // completely: a good link — success, and the host is on the one-connection list from now on.
+                if (smart && first != null && parts > 1 && head0Done.get() && !otherError.get()) {
+                    ActLog.add("NET", "$host refused extra connections — the first part is saved, using the link")
+                    null
+                } else first
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -209,7 +284,7 @@ object StreamCache {
                 // A server that answers but then sends nothing (seen with FSL storage links) must not win: the first
                 // 128 KB of real video has to arrive. Playlists are small text files: their answer is enough.
                 val ok = good && (isPlaylistType(u, pr.type) || firstBytes(u, 128 * 1024))
-                if (ok) warm += u
+                if (ok) { warm += u; if (Feature.smartParts) raced[u] = SystemClock.elapsedRealtime() to pr }   // 0.9.1: kept for the next link
                 ch.trySend(if (ok) u to pr else null)
             }
         }
@@ -222,6 +297,14 @@ object StreamCache {
             kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { kotlinx.coroutines.delay(5_000); bgJob.cancel() }
         }
         win
+    }
+
+    /** 0.9.1 (smartParts): the answer each good link gave inside race() (kept 60 s), so attempt() needn't probe it again. */
+    private val raced = ConcurrentHashMap<String, Pair<Long, LinkProbe>>()
+    fun racedProbe(url: String): LinkProbe? {
+        if (!Feature.smartParts) return null
+        if (raced.size > 60) raced.clear()
+        return raced[url]?.takeIf { SystemClock.elapsedRealtime() - it.first < 60_000 }?.second
     }
 
     /** Links that already delivered real video this session (fast, proven backups). */

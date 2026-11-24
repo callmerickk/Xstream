@@ -245,6 +245,8 @@ fun DetailScreen(
         SlowAddons.watch(vm, meta.type, playTarget.target.videoId)
         // 0.9.71 (from Xstream 0.8.16): the plugins get this title's name + year at once (they asked Cinemeta first).
         PluginSources.noteMeta(meta)
+        // 0.9.1 (detailTiming): the title page's timing lines start here (nothing when the switch is off).
+        if (Feature.detailTiming) DetailTiming.begin(meta.name, playTarget.target.videoId)
         if (!instantOn) { runCatching { if (quick) vm.quickStreams(meta.type, playTarget.target.videoId) else vm.allStreams(meta.type, playTarget.target.videoId) }; return@LaunchedEffect }
         Prepare.start(vm, ctx, meta.type, playTarget.target.videoId, playTarget.resumeMs, runtimeMs(meta.runtime), quick, level, meta)
     }
@@ -259,6 +261,7 @@ fun DetailScreen(
         if (names.isNotEmpty()) runCatching { vm.streamsFlow(meta.type, playTarget.target.videoId, only = names).collect { } }
     }
     val prep by Prepare.state.collectAsStateWithLifecycle()
+    if (Feature.detailTiming) LaunchedEffect(prep) { DetailTiming.on(prep) }   // 0.9.1: timing lines only
     // Play pressed while it is still saving: stay here; start as soon as enough is saved (or fall back).
     var waitingFor by remember { mutableStateOf<SourceTarget?>(null) }
     var waitingResume by remember { mutableLongStateOf(0L) }

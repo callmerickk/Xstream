@@ -26,6 +26,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -105,6 +108,8 @@ object Updater {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("updates", Context.MODE_PRIVATE)
 
+    /** 0.9.1 (accessGate): versions.json's "minPhone" from the last check (0 = none). */
+    fun minPhone(ctx: Context): Int = if (!Feature.accessGate) 0 else prefs(ctx).getInt("minPhone", 0)
     fun installedCode(ctx: Context): Int = runCatching {
         val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
         if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode.toInt() else @Suppress("DEPRECATION") pi.versionCode
@@ -144,6 +149,8 @@ object Updater {
         p.edit().putLong("checkedAt", now).apply()
         val tv = BuildConfig.IS_TV
         val code = versions[if (tv) "tv" else "phone"]?.jsonPrimitive?.intOrNull ?: 0
+        // 0.9.1 (accessGate): the oldest version still allowed ("minPhone"); older ones show "Update required".
+        if (!tv && Feature.accessGate) p.edit().putInt("minPhone", versions["minPhone"]?.jsonPrimitive?.intOrNull ?: 0).apply()
         val name = versions.s(if (tv) "tvName" else "phoneName") ?: ""
         // The APK of exactly this release (its tag), so the version shown is the version installed.
         val tag = versions.s("tag")
@@ -220,8 +227,17 @@ object Updater {
     /** StreamX came to the front: open the installer for a download that finished meanwhile. */
     fun onResume(ctx: Context) {
         foreground = true
+        // 0.9.1 (updatePill): after allowing "unknown apps", the installer opens on return (only once it's allowed).
+        if (installWaiting && Feature.updatePill && !BuildConfig.IS_TV) {
+            if (Build.VERSION.SDK_INT < 26 || ctx.packageManager.canRequestPackageInstalls()) { installWaiting = false; install(ctx.applicationContext) }
+            return
+        }
         if (installWaiting) { installWaiting = false; install(ctx.applicationContext) }
     }
+
+    /** 0.9.1 (updatePill): a finished download waiting for "Install" (phones). */
+    val ready = MutableStateFlow<UpdateInfo?>(null)
+    private val pill: Boolean get() = Feature.updatePill && !BuildConfig.IS_TV
 
     /** Android's download manager: survives minimising and closing the app, shows its own notification. */
     private suspend fun dmDownload(ctx: Context, info: UpdateInfo): Boolean? = withContext(Dispatchers.IO) {
@@ -288,11 +304,17 @@ object Updater {
             if (!ok) { error.value = "Download failed. Check your connection and try again."; return }
             if (fast) pf.edit().putInt("dlCode", info.versionCode).putLong("dlLen", apkFile(ctx).length()).apply()
             ActLog.add("UPDATE", "${info.versionName} downloaded")
-            if (foreground) install(ctx) else installWaiting = true
+            // 0.9.1 (updatePill): "<app> X is ready · Install" instead of opening the installer straight away.
+            if (pill) ready.value = info
+            else if (foreground) install(ctx) else installWaiting = true
         } finally { UpdateService.stop(ctx) }
     }
 
-    private fun client() = Api.http.newBuilder().readTimeout(25, java.util.concurrent.TimeUnit.SECONDS).build()
+    // 0.9.1 (updatePill): the update file uses the phone's own DNS first (it picks the nearest file server — the private
+    // DNS could pick a far one, which crawled at KB/s), the private DNS only if that fails. Off = as before.
+    private fun client() = Api.http.newBuilder().readTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
+        .apply { if (pill) dns(object : okhttp3.Dns { override fun lookup(hostname: String) = runCatching { okhttp3.Dns.SYSTEM.lookup(hostname) }.getOrNull()?.takeIf { it.isNotEmpty() } ?: Api.http.dns.lookup(hostname) }) }
+        .build()
 
     /** Parallel ranged download into [apkFile]; resumes each part a few times if a connection drops. */
     private suspend fun fastDownload(ctx: Context, info: UpdateInfo): Boolean = withContext(Dispatchers.IO) {
@@ -379,7 +401,9 @@ object Updater {
     fun install(ctx: Context) {
         val f = listOf(dmFile(ctx), apkFile(ctx)).filter { it.exists() && it.length() > 0 }.maxByOrNull { it.lastModified() } ?: return
         if (Build.VERSION.SDK_INT >= 26 && !ctx.packageManager.canRequestPackageInstalls()) {
-            error.value = "Allow ${Brand.NAME} to install updates, then press Update again."
+            // 0.9.1 (updatePill): the file is kept; coming back after allowing opens the installer by itself.
+            if (pill) { installWaiting = true; error.value = "Allow ${Brand.NAME} to install updates — the installer opens when you come back." }
+            else error.value = "Allow ${Brand.NAME} to install updates, then press Update again."
             runCatching {
                 ctx.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
@@ -448,11 +472,42 @@ fun UpdatePrompt() {
             confirmButton = { androidx.compose.material3.TextButton({ nudge = null; info = k }) { androidx.compose.material3.Text("Update now") } },
             dismissButton = { androidx.compose.material3.TextButton({ nudge = null }) { androidx.compose.material3.Text("Later") } })
     }
+    // 0.9.1 (updatePill, phones): downloading shows as a small pill with a progress bar; when it's done, "Install".
+    val pillOn = Feature.updatePill && !BuildConfig.IS_TV
+    if (pillOn) {
+        val prog by Updater.progress.collectAsState()
+        val bgOn by Updater.inBackground.collectAsState()
+        val spd by Updater.speed.collectAsState()
+        if (prog != null && bgOn) UpdatePill(prog ?: 0f, spd)
+        val done by Updater.ready.collectAsState()
+        done?.takeIf { it.versionCode > BuildConfig.VERSION_CODE && info == null }?.let { r ->
+            androidx.compose.material3.AlertDialog(onDismissRequest = { Updater.ready.value = null },
+                title = { androidx.compose.material3.Text("${Brand.NAME} ${r.versionName} is ready") },
+                text = { androidx.compose.material3.Text("The update has downloaded. Install it now?") },
+                confirmButton = { androidx.compose.material3.TextButton({ Updater.ready.value = null; Updater.install(ctx) }) { androidx.compose.material3.Text("Install") } },
+                dismissButton = { androidx.compose.material3.TextButton({ Updater.ready.value = null }) { androidx.compose.material3.Text("Later") } })
+        }
+    }
     val i = info ?: return
+    fun bg() { Updater.inBackground.value = true; if (Updater.progress.value == null) Updater.start(ctx, i); info = null }
     UpdateDialog(i, onLater = { Updater.laterThisRun = true; Updater.laterAt = System.currentTimeMillis(); info = null }, onSkip = { Updater.skip(ctx, i); info = null },
-        onBackground = { Updater.inBackground.value = true; if (Updater.progress.value == null) Updater.start(ctx, i); info = null
-            android.widget.Toast.makeText(ctx, "Downloading in the background — the installer opens when it's done.", android.widget.Toast.LENGTH_LONG).show() }) {
-        Updater.start(ctx, i)
+        onBackground = { bg()
+            if (!pillOn) android.widget.Toast.makeText(ctx, "Downloading in the background — the installer opens when it's done.", android.widget.Toast.LENGTH_LONG).show() }) {
+        if (pillOn) bg() else Updater.start(ctx, i)
+    }
+}
+
+/** 0.9.1 (updatePill): the update downloading — a small pill with its progress, above the bottom bar. */
+@Composable
+private fun UpdatePill(p: Float, bytesPerSec: Long) {
+    Box(Modifier.fillMaxSize().navigationBarsPadding().padding(end = 14.dp, bottom = 96.dp), contentAlignment = Alignment.BottomEnd) {
+        Column(Modifier.width(170.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xF0181A21)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(14.dp)).padding(10.dp)) {
+            Text("Updating ${Brand.NAME} · ${(p * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+            if (bytesPerSec > 0) Text(if (bytesPerSec > 1_000_000) "%.1f MB/s".format(bytesPerSec / 1_000_000.0) else "${bytesPerSec / 1000} KB/s", fontSize = 10.5.sp, color = Color(0xFF9AA3B5))
+            Box(Modifier.padding(top = 6.dp).fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0x33FFFFFF))) {
+                Box(Modifier.fillMaxWidth(p.coerceIn(0.02f, 1f)).fillMaxHeight().background(BrandRed))
+            }
+        }
     }
 }
 

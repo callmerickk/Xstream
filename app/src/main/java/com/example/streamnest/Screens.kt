@@ -465,6 +465,11 @@ fun App(vm: AppViewModel = viewModel()) {
         if (profile != null && texts["guideDone"].isNullOrEmpty()) QuickGuide { vm.setText("guideDone", "1") }
         // First start on a profile: Turbo or Classic (each profile chooses once; Settings › Sources & Extensions later).
         if (!BuildConfig.IS_TV && profile != null && texts["srcMode"].isNullOrEmpty()) FirstWatchChooser(vm)
+        // 0.9.1 (tasteRows): then once — what do you like to watch, and in which languages (Home is personalised from it).
+        else if (Feature.tasteRows && !BuildConfig.IS_TV && profile != null && !texts["guideDone"].isNullOrEmpty() && texts["tasteDone"].isNullOrEmpty() && !showSplash) TasteOnboarding(vm) {}
+        // 0.9.1 (tastePick): then once — titles you love (tap posters or search any title).
+        else if (profile != null && !texts["guideDone"].isNullOrEmpty() && tasteTitlesDue(texts, profile) && !showSplash && stack.lastOrNull() !is Screen.Player)
+            androidx.compose.ui.window.Dialog({}, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, decorFitsSystemWindows = false)) { TasteTitlesScreen(vm) {} }
         // 0.9.76: "Choose your look" once per profile (new and existing): Home style + theme (Glass first, NEW). Skip = All Live.
         else if (profile != null && !texts["guideDone"].isNullOrEmpty() && lookDue(texts, profile) && !showSplash && stack.lastOrNull() !is Screen.Player)
             androidx.compose.ui.window.Dialog({}, androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, decorFitsSystemWindows = false)) {

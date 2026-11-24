@@ -1,5 +1,9 @@
 # Merge inventory: Xstream 0.8.20 vs StreamX 0.9.79 (24 Nov 2026)
 
+> **Step 2 (Xstream 0.9.1) status** — see the table "Port status" at the end. Direction is now one way: the Xstream repo
+> is the single source of the shared code; `tools/sync-to-streamx.sh` copies it into the StreamX tree
+> (`tools/sync-shared.sh`, the old StreamX → Xstream copy, is removed). How switches work: `docs/HOW-SWITCHES-WORK.md`.
+
 Decision: StreamX's code, as it is, is the one shared base. Xstream = StreamX's code + Xstream's identity (brand layer)
 + Xstream-only extras behind `Feature` switches (Step 2). This file lists what Xstream 0.8.20 has that StreamX lacks,
 and what behaves differently. Branding (names, repo, package) is listed only under "Where branding lives".
@@ -142,7 +146,54 @@ payload, prefs names (`streamx_cloud`, trailer keys), profile PIN salt, theme st
 
 ## F. Open points for Step 2
 
-1. StreamX's tree must take the same brand-layer edits (Brand.kt, Feature.kt, manifest placeholders, strings without
-   `app_name`, widget layout) and the StreamX values in its Gradle file before `tools/sync-shared.sh` can run.
-2. Music needs manifest entries (a brand/flavor manifest), not only a runtime switch.
-3. Access gate and `minPhone` are also an update-channel feature: until ported, `min-version.txt` has no effect.
+1. Done (0.9.1): the StreamX tree gets the shared code from `tools/sync-to-streamx.sh`; its Gradle file carries the
+   StreamX brand map (`BRAND_NAME "StreamX"`, `brandBeta = false` …). Proof: StreamX 0.9.79 built from the shared code.
+2. Done (0.9.1): Music's manifest entries are in `app/src/brand/phone/AndroidManifest.xml` (Xstream only).
+3. Done (0.9.1): `accessGate` reads versions.json `minPhone` (Xstream's workflow writes it from `min-version.txt`).
+
+---
+
+## Port status (Xstream 0.9.1, shared-base)
+
+"Ported" = in the shared code behind its switch, on in Xstream, off in StreamX (`Feature.STABLE` is empty).
+"Kept StreamX's" = StreamX's own equivalent stays, Xstream's version was not brought back. "Not ported" = left out
+for now (listed so it isn't forgotten).
+
+| # | Item | Status | Switch | Notes |
+|---|------|--------|--------|-------|
+| A1/B2 | CloudFind, cancellable | Ported | `cloudFind` | CloudFind.kt; phone only |
+| A2 | Ask once (addonStreamsFlow) + refused cloud link → direct ask | Ported | `cloudFind` | `addonStreamsFlow` → `cloudStreamsFlow` (on) / `directStreamsFlow` (off, StreamX's body unchanged); Prepare extraL / ≤8 s wait |
+| A3 | PluginGuard | Ported | `pluginGuard` | good first candidate for STABLE |
+| A4 | saveParts 4/8, pixeldrain 2, single hosts 7 days, racedProbe 60 s, runner-up probe, 25 ms poll | Ported | `smartParts` | |
+| A5 | DetailTiming + green breakdown | Ported | `detailTiming` | logging only; good STABLE candidate |
+| B1/C24/C28 | Access gate, Access requests (Settings › Advanced, developer), minPhone "Update required" | Ported | `accessGate` | approval stays off via `access/config/required` |
+| B3 | Donate bubble / payments | Not ported | (`donate`) | 244 lines + Developer's Corner page; not cheap |
+| B4/C6 | LinkMemory (disk, 4 h) + Prepare seed + CW idle refresh | Ported | `linkMemory` | Xstream's Home `lookAhead` not brought back: kept StreamX's 0.9.79 "work on intent" |
+| B5 | LiveBar | Kept StreamX's | none | PhoneOrbitBar |
+| B6 | MicHold | Kept StreamX's | none | in WakeWord.kt |
+| B7 | MusicLog ("MUSIC" log lines) | Not ported | (`music`) | logging only, touches many Music files |
+| B8 | ProfileHorizon | Kept StreamX's | none | PhoneHorizon |
+| B9 | SxDeck | Kept StreamX's | none | Deck |
+| B10/C13 | Taste: "What do you like to watch?" + Anime / K-Drama rows | Ported | `tasteRows` | "New for you" / language pills code is there but (as in 0.8.20) not on Home |
+| B11/C21 | TastePick title picker + tmdbDiscover | Ported | `tastePick` | uses StreamX's PhoneHorizonGround; TMDB tall-poster memory (`tmdbPosters` on disk) not ported |
+| C1 | memTight "Phone memory is full" prompt | Kept StreamX's | (`memPrompt`) | StreamX's MemWatch + HiddenCap are quieter and newer |
+| C2–C5 | PlayerCount room, next-episode 75 %, quality sheet, fake-video order | Kept StreamX's | none | |
+| C7 | Live server green light | Not ported | (`liveServer`) | HAS_LIVE is false in both apps |
+| C8 | HostDown | Ported | `hostDown` | only inside ActLog.Net when on; every request untouched when off |
+| C9 | DNS "private only" chain | Kept StreamX's | none | phone DNS first (agreed fix 5) |
+| C10 | Cloud sync waits quietly offline | Not ported | (`syncWaitOnline`) | not in the 0.9.1 list |
+| C11 | Watch together rejoin (2 min), guests wait 2 min, TOGETHER logs, "This room has ended" | Ported | `roomRejoin` | StreamX's call relay (TURN, Call.status) kept |
+| C12 | Log upload path | Kept StreamX's | none | same place |
+| C14 | Long-press poster lift with trailer | Kept StreamX's | none | StreamX has its own lift + TrailerInCard |
+| C15 | Dock hides after 4 s | Not ported | (`dockAutoHide`) | StreamX's bar is a different component; not cheap/safe blind |
+| C16 | TmdbOpening | Not ported | (`tmdbOpening`) | StreamX resolves collection items (realTitles) |
+| C17 | First start sign-in | Kept StreamX's | none | |
+| C18 | Ticket / round-avatar profile picker | Not ported | (`ticketPicker`) | look only; Horizon kept |
+| C19 | Per-episode saved places, Play-button layout | Not ported | (`episodePlaces`) | |
+| C20 | Trailer quality by network | Not ported | (`trailerByNetwork`) | YtDirect differs; StreamX has its own pick |
+| C22 | Posters+ in Live-only / Picked for you | Kept StreamX's | none | |
+| C23 | Adult / Trailers on cards / Auto-play toggles | Not ported | (`extraToggles`) | |
+| C25 | Bottom bar / Look picker | Kept StreamX's | none | |
+| C26/C27 | Update pill + ready/Install dialog + installer after allowing unknown apps + phone DNS first | Ported | `updatePill` | StreamX's own finished-download reuse (dlCode/dlLen) and relay kept |
+| C29 | Xstream Music (launcher, service, widget) | Ported | `music` + `HAS_MUSIC` | manifest in `app/src/brand/phone` (Xstream only) |
+| D | Invite links of both apps | Ported | `inviteBoth` | Xstream also registers `streamx://join` (brand manifest) |

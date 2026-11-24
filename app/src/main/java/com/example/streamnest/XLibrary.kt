@@ -318,7 +318,7 @@ private fun LibraryHome(vm: AppViewModel, friends: List<Person>, onOpen: (Meta) 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 150.dp)) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (BuildConfig.HAS_MUSIC) LibTile("Music", "Songs, albums, videos", Icons.Default.MusicNote, true, Modifier.weight(1f)) { MusicPlayer.openLibrary.value = true }
+                if (Feature.music) LibTile("Music", "Songs, albums, videos", Icons.Default.MusicNote, true, Modifier.weight(1f)) { MusicPlayer.openLibrary.value = true }
                 LibTile("Watch Together", "${friends.size} friend${if (friends.size == 1) "" else "s"} · ${shared.size} shared", Icons.Default.Groups, false, Modifier.weight(1f)) { onTile("together") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

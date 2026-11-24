@@ -13,6 +13,18 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.9.1", "24 Nov 2026", "Beta features are back", listOf(
+        "Faster start from the cloud: your sources are asked all at once, and each only once",
+        "Crash fix for big files: a search site can no longer fill the phone's memory with a whole video",
+        "Smarter saving: videos start sooner from hosts that limit connections",
+        "Music is back, with its own app icon, lock-screen controls and widget",
+        "Access approval: new accounts can ask for access (off until it's switched on)",
+        "Titles you opened recently turn green at once; Continue watching stays ready on Wi-Fi",
+        "\"What do you like to watch?\" and Anime / K-Drama rows on Home",
+        "Watch together: the host is put back in the room after a restart; everyone waits up to 2 minutes",
+        "Updates download in a small progress pill, then ask to install",
+        "StreamX invite links open Xstream too",
+    )),
     Release("0.9.0", "24 Nov 2026", "Xstream now runs on StreamX's code", listOf(
         "Xstream now runs on StreamX's code — same look and speed as StreamX; beta features come back step by step",
     )),
@@ -587,6 +599,23 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.9.1", "24 Nov 2026", "Xstream extras on the shared code, behind Feature switches", listOf(
+        "Feature.kt: cloudFind, pluginGuard, smartParts, detailTiming, accessGate, linkMemory, music, tasteRows, tastePick, hostDown, roomRejoin, updatePill, inviteBoth — all on in Xstream (IS_BETA), off in StreamX unless listed in Feature.STABLE",
+        "cloudFind: CloudFind.kt (cancellable /find, 5 MB cap, directOnly, cloudUrls); AppViewModel.addonStreamsFlow → cloudStreamsFlow (on) / directStreamsFlow (off = StreamX 0.9.79 body); askAddonDirect; Prepare: refused cloud link (401/403/410) → direct ask, merged via extraL, ≤8 s wait",
+        "pluginGuard: PluginGuard interceptor (video/audio, big/unknown octet-stream, >16 MB → empty body + X-SX-Cut; chunked text capped 12 MB) added to the CloudStream plugin client only when on",
+        "smartParts: StreamCache.saveParts 4 pieces (8 after two clean 4-piece saves), pixeldrain 2, single hosts on disk 7 days (max 50), head saved + 403/429 = success; race() answers kept 60 s (racedProbe); runner-up probed in the background; save poll 25 ms",
+        "detailTiming: DetailTiming (page open, first link, link ready, light green) + green breakdown line in Prepare.readyPlayer",
+        "accessGate: Access.kt (AccessGate in MainActivity, Settings › Advanced › Access requests for the developer, access/config/required default off); Updater.minPhone from versions.json",
+        "linkMemory: LinkMemory.kt disk memory (4 h) seeds Prepare's live list; refreshCw on Home (idle 10 s via UserIdle, unmetered, top 3, every 30 min). Xstream's lookAhead not brought back (StreamX 0.9.79 work-on-intent kept)",
+        "music: HAS_MUSIC true (phone); src/brand/phone/AndroidManifest.xml (MusicActivity launcher, MusicService, MusicWidget, MusicWidgetControl, FOREGROUND_SERVICE_MEDIA_PLAYBACK, MainActivity INFO filter, streamx://join); BuildConfig.HAS_MUSIC checks → Feature.music",
+        "tasteRows / tastePick: Taste.kt, TastePick.kt (PhoneHorizonGround instead of HorizonGround), Tmdb.tmdbDiscover; Screens onboarding chain before Choose your look; Home Anime / K-Drama rows",
+        "hostDown: HostDown in ActLog.kt, called from ActLog.Net only when on; ActLog.netHandle",
+        "roomRejoin: Together.saveRoom/resumeIfRecent (2 min), guests wait 2 min (reconnecting), TOGETHER log lines, \"This room has ended\"",
+        "updatePill: UpdatePill + ready/Install dialog (phone), installWaiting + canRequestPackageInstalls on return, update client phone DNS first",
+        "inviteBoth: JoinIntent accepts streamx:// / xstream:// and streamx-watch.pages.dev / workers.dev links",
+        "tools/sync-to-streamx.sh (Xstream → StreamX tree, one source of truth), tools/zip-streamx.sh; docs/HOW-SWITCHES-WORK.md; MERGE-INVENTORY.md statuses",
+        "versionName 0.9.1, versionCode 61",
+    )),
     Release("0.9.0", "24 Nov 2026", "Shared base: StreamX 0.9.79 code + Xstream brand layer", listOf(
         "app/src/main, phone, tv = StreamX 0.9.79 / TV 0.9.15 source, unchanged except branding (tools/sync-shared.sh copies it)",
         "Brand.kt: name, update repo (callmerickk/Xstream, no download relay), APK names, cloud shelf xshared/, invite xstream://join + workers.dev/xjoin — all from app/build.gradle.kts",

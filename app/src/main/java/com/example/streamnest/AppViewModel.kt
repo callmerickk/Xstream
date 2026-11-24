@@ -412,7 +412,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         StreamHeaders.init(app); AddonSpeed.init(app); Relay.warmUp()
         // Source ranking: this phone's copy now, the shared one from the cloud in the background.
         AutoPlayRules.init(app); Ranker.init(app); HostStats.init(app)
-        if (!BuildConfig.IS_TV) { Buddies.init(app); Invites.start(app) }
+        if (!BuildConfig.IS_TV) { Buddies.init(app); Invites.start(app); if (Feature.roomRejoin) runCatching { Together.resumeIfRecent(app) } }
         ProfileLock.init(app)
         AppLook.init(app); Call.init(app); Vpn.resume(app)
         Downloads.init(app)
@@ -1113,7 +1113,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         base.collect { (l, done) -> synchronized(lock) { others = l; othersDone = done }; push() }
     }
 
-    internal fun addonStreamsFlow(type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
+    // 0.9.1: with Feature.cloudFind on (Xstream) the cloud link finder asks every addon first; off = StreamX's own flow below, unchanged.
+    internal fun addonStreamsFlow(type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> =
+        if (Feature.cloudFind && !BuildConfig.IS_TV) cloudStreamsFlow(type, id, only, except) else directStreamsFlow(type, id, only, except)
+
+    private fun directStreamsFlow(type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
         val addons = active.filter { it.supports("stream", type, id) && (only == null || it.label() in only) && (except == null || it.label() !in except) }
         // Plugins (Settings › Content & Discovery › Plugins) are asked alongside the addons.
         val plugins = if (BuildConfig.IS_TV) emptyList() else Plugins.enabled().filter { type in it.types && (only == null || it.name in only) && (except == null || it.name !in except) }
@@ -1159,6 +1163,136 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                 send(snapshot)
             }
         }
+    }
+
+    /** 0.9.1 (Xstream 0.8.18–0.8.20): the cloud link finder first (1.5 s head start); an addon the cloud answered isn't asked again. */
+    private fun cloudStreamsFlow(type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
+        val addons = active.filter { it.supports("stream", type, id) && (only == null || it.label() in only) && (except == null || it.label() !in except) }
+        // Plugins (Settings › Content & Discovery › Plugins) are asked alongside the addons.
+        val plugins = if (BuildConfig.IS_TV) emptyList() else Plugins.enabled().filter { type in it.types && (only == null || it.name in only) && (except == null || it.name !in except) }
+        if (addons.isEmpty() && plugins.isEmpty()) { send(emptyList<StreamItem>() to true); return@channelFlow }
+        val results = arrayOfNulls<List<StreamItem>>(addons.size + plugins.size)
+        val total = addons.size + plugins.size
+        // A film's year (for dropping links to other titles with the same name), looked up alongside.
+        val yearJob = async { TitleMatch.ensureYear(type, id) }
+        suspend fun right(l: List<StreamItem>): List<StreamItem> {
+            kotlinx.coroutines.withTimeoutOrNull(1500) { yearJob.await() }
+            return l.filterNot { TitleMatch.wrong(it, type, id) || it.isInstantDownload() }
+        }
+        val lock = Any()
+        var done = 0
+        // 0.8.18: the Cloudflare link finder asks all addons at once; an addon's cloud answer is shown until its own
+        // direct answer arrives (which then replaces it). Counted as answered on whichever comes first.
+        val answered = BooleanArray(addons.size)
+        // 0.8.20: an addon whose cloud answer has links is not asked a second time. started = its direct call was
+        // launched; skipDirect = it never will be (cloud answered); cloudN = addons answered by the cloud.
+        val started = BooleanArray(addons.size)
+        val skipDirect = BooleanArray(addons.size)
+        var cloudN = 0
+        val bases = addons.map { CloudFind.baseOf(it.baseUrl) }
+        val cloud: kotlinx.coroutines.Deferred<Map<String, List<StreamInfo>>>? = if (addons.isEmpty() || BuildConfig.IS_TV) null else async {
+            runCatching { CloudFind.find(type, id, bases) }.getOrDefault(emptyMap<String, List<StreamInfo>>())
+        }
+        // 0.8.20: always asked directly: quick-play addons and CNCVerse (links can be tied to the device), and addons
+        // whose cloud links were refused earlier this session.
+        fun mustAsk(i: Int): Boolean = addons[i].label() in qsAddons() || addons[i].label().contains("CNCVerse", ignoreCase = true) || bases[i] in CloudFind.directOnly
+
+        fun startDirect(i: Int) {
+            val a = addons[i]
+            if (synchronized(lock) { if (started[i]) true else { started[i] = true; false } }) return
+            launch {
+                val t0 = android.os.SystemClock.elapsedRealtime()
+                // One shared request per addon + title (title page, player, upgrade and Sources all ask the same thing —
+                // asking a server several times a second is what gets us "too many requests"); an empty answer or a
+                // refusal from the quick-play addon is asked once more after a short pause.
+                val res = runCatching {
+                    AddonCalls.streams("${a.baseUrl}/stream/$type/${enc(id)}.json", retry = a.label() in qsAddons())
+                        .filter { !it.url.isNullOrBlank() }.map { StreamItem(a.label(), it).also { si -> StreamHeaders.remember(si) } }
+                }
+                if (res.exceptionOrNull() !is kotlinx.coroutines.CancellationException) PlayTiming.mark("${a.label()}: " + res.fold({ "${it.size} links" }, { "no answer (${it.message?.take(40)})" }) +
+                    " in ${"%.1f".format((android.os.SystemClock.elapsedRealtime() - t0) / 1000f)} s", once = "addon:${a.label()}")
+                AddonSpeed.record(a.label(), android.os.SystemClock.elapsedRealtime() - t0, res.isSuccess)
+                val r = right(res.getOrDefault(emptyList()))
+                // 0.8.20: links the addon itself gave are no longer "cloud links" (a refusal of them is a real refusal).
+                r.forEach { si -> si.stream.url?.let { u -> CloudFind.cloudUrls.remove(u) } }
+                val snapshot = synchronized(lock) {
+                    // A cloud answer already counted: the direct one replaces it (kept if the direct one is empty).
+                    if (answered[i]) { if (r.isNotEmpty()) results[i] = r } else { results[i] = r; answered[i] = true; done++ }
+                    results.filterNotNull().flatten().distinctBy { it.stream.url } to (done == total)
+                }
+                send(snapshot)
+            }
+        }
+
+        /** Cloud answers go to addons that haven't answered yet. early = the first look (within 1500 ms): addons that can skip their direct call do. */
+        suspend fun applyCloud(m: Map<String, List<StreamInfo>>, early: Boolean) {
+            if (m.isEmpty()) return
+            val pending = addons.indices.filter { i -> synchronized(lock) { !answered[i] } }
+            for (i in pending) {
+                val a = addons[i]
+                val l = m[bases[i]].orEmpty()
+                if (l.isEmpty()) continue
+                val r = right(l.map { StreamItem(a.label(), it).also { si -> StreamHeaders.remember(si) } })
+                if (r.isEmpty()) continue
+                // Marked before it is shown, so a refusal of one of these links is always recognised as a cloud refusal.
+                CloudFind.markCloud(bases[i], r.map { it.stream.url })
+                val snapshot = synchronized(lock) {
+                    if (answered[i]) null else {
+                        results[i] = r; answered[i] = true; done++; cloudN++
+                        if (early && !mustAsk(i)) skipDirect[i] = true
+                        results.filterNotNull().flatten().distinctBy { it.stream.url } to (done == total)
+                    }
+                }
+                if (snapshot != null) send(snapshot)
+            }
+        }
+
+        if (cloud == null) {
+            // TV, or nothing to ask the cloud about: exactly as before.
+            addons.indices.forEach { startDirect(it) }
+        } else {
+            // The ones that are always asked directly don't wait for the cloud.
+            addons.indices.filter { mustAsk(it) }.forEach { startDirect(it) }
+            launch {
+                val early = kotlinx.coroutines.withTimeoutOrNull(1500) { cloud.await() }
+                if (early != null) applyCloud(early, true)
+                // Cloud empty / failed / slow: everything that hasn't answered is asked directly now.
+                synchronized(lock) { addons.indices.filter { !skipDirect[it] && !started[it] } }.forEach { startDirect(it) }
+                val line = synchronized(lock) {
+                    "addons: $cloudN from the cloud, ${started.count { it }} asked directly (${skipDirect.count { it }} skipped — cloud already answered)"
+                }
+                ActLog.add("NET", line)
+                // Slower than 1500 ms: its answer still fills addons that are pending (the old behaviour).
+                if (early == null) applyCloud(cloud.await(), false)
+            }
+        }
+        plugins.forEachIndexed { j, pl ->
+            launch {
+                val r = right(Plugins.streams(pl, type, id))
+                val snapshot = synchronized(lock) {
+                    results[addons.size + j] = r; done++
+                    results.filterNotNull().flatten() to (done == total)
+                }
+                send(snapshot)
+            }
+        }
+    }
+
+    /** 0.8.20: one addon asked directly (a cloud link of it was refused). Empty when the addon is gone or has nothing. */
+    suspend fun askAddonDirect(type: String, id: String, base: String): List<StreamItem> {
+        val a = active.firstOrNull { CloudFind.baseOf(it.baseUrl) == base } ?: return emptyList()
+        val l = try {
+            AddonCalls.streams("${a.baseUrl}/stream/$type/${enc(id)}.json", retry = a.label() in qsAddons())
+                .filter { !it.url.isNullOrBlank() }.map { StreamItem(a.label(), it).also { si -> StreamHeaders.remember(si) } }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            emptyList<StreamItem>()
+        }
+        kotlinx.coroutines.withTimeoutOrNull(1500) { TitleMatch.ensureYear(type, id) }
+        val r = l.filterNot { TitleMatch.wrong(it, type, id) || it.isInstantDownload() }
+        r.forEach { si -> si.stream.url?.let { u -> CloudFind.cloudUrls.remove(u) } }
+        return r
     }
 
     // ───────────── Last working link per title (Playback > Reuse last link) ─────────────

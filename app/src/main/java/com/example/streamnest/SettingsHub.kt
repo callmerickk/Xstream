@@ -85,6 +85,8 @@ fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) 
         "extensions" -> ExtensionsPage(vm, back)
         "live" -> LiveServerPage(vm, back)
         "health" -> SourceHealthPage(back)
+        // 0.9.1 (accessGate): the developer's Access requests page.
+        "access" -> if (Feature.accessGate) Page("Access requests", back) { AccessAdmin() } else SettingsRootPage(vm, onClose, open, query) { query = it }
         "notifications" -> NotificationsPage(vm, back)
         "updates" -> UpdateLogPage(vm, back, open)
         "playback" -> PlaybackPage(vm, back)
@@ -1041,6 +1043,11 @@ private fun AdvancedPage(vm: AppViewModel, onBack: () -> Unit, open: (String) ->
                 SettingRow(Icons.Default.Code, "Developer's Corner", "App name, logo, password and UI editing.") { open("dev") }
                 RowDivider(20.dp)
                 SettingRow(null, "Source health", "Which plugins and addons find and play links, and why they fail.") { open("health") }
+                // 0.9.1 (accessGate): approve who may use the app (approval itself stays off until switched on there).
+                if (Feature.accessGate) {
+                    RowDivider(20.dp)
+                    SettingRow(null, "Access requests", "Approve who can use ${Brand.NAME}, and turn approval on or off.") { open("access") }
+                }
             }
         }
     }

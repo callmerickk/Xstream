@@ -33,8 +33,8 @@ android {
         applicationId = "com.example.xstream"
         minSdk = 24
         targetSdk = 34
-        versionCode = 60
-        versionName = "0.9.0"
+        versionCode = 61
+        versionName = "0.9.1"
         brand.forEach { (k, v) -> buildConfigField("String", k, "\"$v\"") }
         buildConfigField("boolean", "IS_BETA", brandBeta.toString())
         manifestPlaceholders["brandName"] = brand.getValue("BRAND_NAME")
@@ -52,7 +52,8 @@ android {
             dimension = "device"
             buildConfigField("boolean", "IS_TV", "false")
             buildConfigField("boolean", "HAS_LIVE", "false")
-            buildConfigField("boolean", "HAS_MUSIC", "false")
+            // 0.9.1: Xstream Music is back (Feature.music; launcher entry, service and widget in src/brand/phone).
+            buildConfigField("boolean", "HAS_MUSIC", "true")
             // Testing app: no "Publish for everyone" buttons (as Xstream always had).
             buildConfigField("boolean", "NO_PUBLISH", "true")
             resValue("string", "app_name", brand.getValue("BRAND_NAME"))
@@ -115,6 +116,9 @@ android {
     sourceSets {
         getByName("phone").res.srcDir("src/brand/res")
         getByName("tv").res.srcDir("src/brand/res")
+        // 0.9.1: Xstream's phone manifest (Music entries, 0.8.x invite links), merged over src/main's. The shared code has
+        // no src/phone manifest; if it ever gets one, merge it into this file.
+        getByName("phone").manifest.srcFile("src/brand/phone/AndroidManifest.xml")
     }
     packaging {
         // Keep one copy of the C++ runtime, and store native libraries compressed (much smaller APK).

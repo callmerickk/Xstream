@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 0.9.1: Xstream's own phone manifest (brand file, never synced to StreamX). Merged over the shared app/src/main
+     manifest for the phone flavor only (app/build.gradle.kts: sourceSets phone manifest). Holds what the Xstream build
+     adds: Music (launcher entry, background playback, widget) and the 0.8.x invite links. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <application>
+        <activity android:name="com.example.streamnest.MainActivity">
+            <!-- "Open" after installing / updating opens the main app (not Music): Android asks for this category first. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.INFO" />
+            </intent-filter>
+            <!-- 0.8.x StreamX-style invites keep working in Xstream (streamx://join/CODE). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="streamx" android:host="join" />
+            </intent-filter>
+        </activity>
+        <!-- Music: its own launcher entry. -->
+        <activity
+            android:name="com.example.streamnest.MusicActivity"
+            android:taskAffinity="${applicationId}.music"
+            android:label="${brandName} Music"
+            android:icon="@mipmap/ic_launcher_music"
+            android:roundIcon="@mipmap/ic_launcher_music"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode"
+            android:supportsPictureInPicture="false"
+            android:exported="true"
+            android:theme="@style/Theme.StreamX">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- Music: background playback with the media notification and lock-screen controls. -->
+        <service android:name="com.example.streamnest.MusicService" android:exported="true" android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+        <!-- Home screen widget: Music (MusicHomeScreen.kt). -->
+        <receiver
+            android:name="com.example.streamnest.MusicWidget"
+            android:exported="false"
+            android:label="${brandName} Music">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_music_info" />
+        </receiver>
+        <receiver android:name="com.example.streamnest.MusicWidgetControl" android:exported="false" />
+    </application>
+</manifest>

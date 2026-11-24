@@ -128,6 +128,32 @@ object Together {
     private var bestAt = 0L
 
     val me: String get() = Cloud.user.value?.uid ?: ""
+
+    // 0.9.1 (roomRejoin, Xstream 0.8.17): the host's room is remembered for 2 minutes, so an app restart (crash, Android
+    // closing it) rejoins it. Off = nothing saved, nothing rejoined.
+    @Volatile var appCtx: android.content.Context? = null
+    private fun roomPrefs() = appCtx?.getSharedPreferences("together", android.content.Context.MODE_PRIVATE)
+    fun saveRoom(c: String?) { if (!Feature.roomRejoin) return; runCatching { roomPrefs()?.edit()?.apply { if (c == null) clear() else putString("code", c).putLong("at", System.currentTimeMillis()) }?.apply() } }
+    /** At app start: back into your own room if you were its host less than 2 minutes ago. */
+    fun resumeIfRecent(ctx: android.content.Context) {
+        if (!Feature.roomRejoin) return
+        appCtx = ctx.applicationContext
+        val p = roomPrefs() ?: return
+        val c = p.getString("code", null) ?: return
+        if (System.currentTimeMillis() - p.getLong("at", 0L) > 120_000) { saveRoom(null); return }
+        io.launch {
+            var w = 0; while (Cloud.user.value == null && w < 40) { delay(500); w++ }
+            val body = call("GET", "${base(c)}/state")
+            val st = body?.takeIf { it != "null" }?.let { runCatching { Api.json.decodeFromString<RoomState>(it) }.getOrNull() }
+            if (st == null || st.host != me || code.value != null) { saveRoom(null); return@launch }
+            isHost = true
+            start(c)
+            ActLog.add("TOGETHER", "back in your room $c after a restart")
+            withContext(Dispatchers.Main) { Snack.show("You're back in your watch party ($c) — open the video to carry on") }
+        }
+    }
+    /** 0.9.1 (roomRejoin): TOGETHER lines in the activity log (created / joined / left / ended). */
+    private fun tlog(msg: String) { if (Feature.roomRejoin) ActLog.add("TOGETHER", msg) }
     fun active() = code.value != null
     fun serverNow() = System.currentTimeMillis() + offset
 
@@ -188,6 +214,7 @@ object Together {
                     ?: return "Couldn't create the room. Check the Firebase rules (rooms) and your connection."
                 isHost = true
                 start(c)
+                tlog("room created: $c")
                 return null
             }
         }
@@ -200,7 +227,7 @@ object Together {
         val c = c0.trim().uppercase()
         if (c.length != 4) return null to "Room codes have 4 letters."
         val body = call("GET", "${base(c)}/state") ?: return null to "Couldn't reach the room."
-        if (body == "null") return null to "No room with code $c."
+        if (body == "null") return null to (if (Feature.roomRejoin) "This room has ended — ask your friend to start a new one." else "No room with code $c.")
         val st = runCatching { Api.json.decodeFromString<RoomState>(body) }.getOrNull() ?: return null to "That room looks broken."
         isHost = st.host == me
         // You and whoever invited you (the link / ring sender, else the room's host) become watch friends.
@@ -210,6 +237,7 @@ object Together {
         // Learn the server clock before the video opens (so it starts at the right second).
         stamped("${base(c)}/members/$me", memberJson(), "seen")
         start(c)
+        tlog("joined room $c${if (isHost) " (as its host, back again)" else ""}")
         return st.copy(receivedAt = System.currentTimeMillis()) to null
     }
 
@@ -228,6 +256,7 @@ object Together {
         if (o == null || o["end"] != null) {
             val who = o?.get("end")?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
             val msg = if (who.isNullOrBlank()) "The watch party ended" else "$who ended the watch party"
+            tlog("room $c ended: ${if (o == null) "the room is gone" else "${who ?: "the host"} ended it"}")
             withContext(Dispatchers.Main) { Snack.show(msg) }
             if (!isHost) ended.tryEmit(msg)
             leave(); return
@@ -240,6 +269,11 @@ object Together {
         }
         val m = (o["members"] as? JsonObject)?.mapValues { (_, v) -> runCatching { Api.json.decodeFromJsonElement(RoomMember.serializer(), v) }.getOrDefault(RoomMember()) } ?: emptyMap()
         if (m != members.value) {
+            if (Feature.roomRejoin) {
+                val before = members.value
+                (m.keys - before.keys).filter { it != me }.forEach { u -> tlog("room $c: ${m[u]?.name?.ifBlank { null } ?: "a friend"} joined") }
+                (before.keys - m.keys).filter { it != me }.forEach { u -> tlog("room $c: ${before[u]?.name?.ifBlank { null } ?: "a friend"} left") }
+            }
             members.value = m
             // People who came in through you become your watch friends (both ways).
             m.forEach { (uid, mm) -> if (uid != me && mm.by == me) Social.befriend(uid, mm.name) }
@@ -312,6 +346,7 @@ object Together {
         beat = io.launch {
             while (isActive) {
                 stamped("${base(c)}/members/$me", memberJson(), "seen")
+                if (isHost) saveRoom(c)   // 0.9.1 (roomRejoin): nothing when off
                 // Someone else buffering for over 1.5 s (and still here): everyone waits for them.
                 repeat(20) {
                     val now = serverNow()
@@ -322,9 +357,14 @@ object Together {
                     val host = remote.value?.host
                     if (!isHost && host != null && joinedAt > 0 && System.currentTimeMillis() - joinedAt > 50_000) {
                         val hm = here[host]
-                        if (hm == null || now - hm.seen > 45_000) {
+                        // 0.9.1 (roomRejoin): the host gets 2 minutes to come back (an app restart, a phone call); off = 45 s.
+                        val gone = if (Feature.roomRejoin) 120_000 else 45_000
+                        if (Feature.roomRejoin && hm != null && now - hm.seen in 20_000..120_000 && waitingFor.value == null)
+                            waitingFor.value = "${hm.name.ifBlank { null } ?: "The host"} (reconnecting)"
+                        if (hm == null || now - hm.seen > gone) {
                             val n = hm?.name?.ifBlank { null } ?: "The host"
                             withContext(Dispatchers.Main) { Snack.show("$n left — the watch party ended") }
+                            tlog("room $c ended: the host was gone for 2 minutes")
                             ended.tryEmit("$n left"); leave(); return@launch
                         }
                     }
@@ -420,6 +460,8 @@ object Together {
     fun leave() {
         val c = code.value
         val host = isHost
+        if (c != null) tlog(if (host) "room $c ended by you" else "left room $c")
+        saveRoom(null)
         leaveQuietly()
         Call.stop()
         code.value = null; remote.value = null; members.value = emptyMap(); buf.value = emptyMap(); isHost = false; chat.value = emptyList(); unread.value = 0
@@ -790,6 +832,10 @@ object JoinIntent {
             when {
                 u.scheme == Brand.INVITE_SCHEME -> u.lastPathSegment ?: u.host
                 u.host?.endsWith(Brand.INVITE_HOST) == true -> u.getQueryParameter("c") ?: u.pathSegments.getOrNull(1)
+                // 0.9.1 (inviteBoth): the other app's invite links work too, as in Xstream 0.8.x.
+                Feature.inviteBoth && (u.scheme == "streamx" || u.scheme == "xstream") -> u.lastPathSegment ?: u.host
+                Feature.inviteBoth && (u.host?.endsWith("streamx-watch.pages.dev") == true || u.host?.endsWith("workers.dev") == true) ->
+                    u.getQueryParameter("c") ?: u.pathSegments.getOrNull(1)
                 else -> null
             }
         }

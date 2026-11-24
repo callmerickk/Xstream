@@ -70,6 +70,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                     // 0.9.76: Glass theme (phones) — one blurred picture behind every page.
                     if (!BuildConfig.IS_TV && Palette.glass) GlassBackdrop(GlassBg.url)
                     if (BuildConfig.IS_TV) TvApp() else App()
+                    // 0.9.1 (accessGate): approval-only access + "Update required" (approval off until turned on in Access requests).
+                    if (Feature.accessGate && !BuildConfig.IS_TV) AccessGate(androidx.lifecycle.viewmodel.compose.viewModel<AppViewModel>())
                     UpdatePrompt()
                     ProfileLockDialog()
                     // Source Test running: the screen stays awake; afterwards your normal screen timeout applies again.
@@ -104,6 +106,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         // 0.9.79: the phone's start-up work waits while you touch the screen (as the TV waits for the remote).
         if (!BuildConfig.IS_TV) TvIdle.lastKeyAt = android.os.SystemClock.elapsedRealtime()
+        if (Feature.linkMemory) UserIdle.lastTouch = System.currentTimeMillis()   // 0.9.1: idle Continue watching refresh
         val r = super.dispatchTouchEvent(ev)
         runCatching { ActLog.onTouch(window.decorView, ev) }
         return r

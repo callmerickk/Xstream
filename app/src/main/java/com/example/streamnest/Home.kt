@@ -186,6 +186,11 @@ fun HomeScreen(
         delay(3_000)
         if (vm.qsActive()) runCatching { vm.quickStreams(if (k.contains(":")) "series" else "movie", k) }
     }
+    // 0.9.1 (linkMemory): keep Continue watching's links fresh while the phone sits idle on Wi-Fi (Xstream 0.8.18).
+    if (Feature.linkMemory && !BuildConfig.IS_TV) LaunchedEffect(Unit) {
+        delay(20_000)
+        while (true) { runCatching { LinkMemory.refreshCw(vm) }; delay(60_000) }
+    }
     val myList by vm.myList.collectAsStateWithLifecycle()
     val profile by vm.current.collectAsStateWithLifecycle()
     val liveRecs by vm.recommended.collectAsStateWithLifecycle()
@@ -208,6 +213,12 @@ fun HomeScreen(
     val homeBlur by androidx.compose.animation.core.animateDpAsState(if (lifted != null && !BuildConfig.IS_TV) 14.dp else 0.dp,
         androidx.compose.animation.core.tween(320), label = "cwBlur")
     val showRecs = isOn(t("showRecs"))
+    // 0.9.1 (tasteRows): rows from this profile's taste (Anime / K-Drama), from TMDB.
+    val tasteKey = t("tasteLangs") + "|" + t("tasteTypes")
+    var tasteExtras by remember { mutableStateOf<List<Shelf>>(emptyList()) }
+    if (Feature.tasteRows && !BuildConfig.IS_TV) LaunchedEffect(tasteKey, profile?.id) {
+        tasteExtras = runCatching { TasteRows.extras(vm) }.getOrDefault(emptyList())
+    }
     // 0.8: StreamX's order — Pick up where you left off → Trending → AIDEN picked for you → the rest.
     val recsFirst = false
     // Old default names (kept by phones that saved them) give way to the new ones.
@@ -456,6 +467,10 @@ fun HomeScreen(
             if (recs.isNotEmpty() && filter == null && showRecs) {
                 item(key = "recTitle", contentType = "title") { SectionTitle(recTitle) }
                 item(key = "recRow", contentType = "row") { AidenRow(recs, onOpen) }
+            }
+            // 0.9.1 (tasteRows): Anime / K-Drama rows when this profile picked them.
+            if (filter == null && Feature.tasteRows) itemsIndexed(tasteExtras, key = { i, s -> "taste:$i:${s.title}" }, contentType = { _, _ -> "shelf" }) { _, sh ->
+                SectionTitle(sh.title); PortraitRow(sh.items, onOpen)
             }
             if (filter == null) item(key = "collections", contentType = "collections") { CollectionsRows(vm) { c, f -> onOpenCollection(c, f) } }
             itemsIndexed(shelves.drop(2), key = { i, s -> "shelf:${i + 2}:${s.title}" }, contentType = { _, _ -> "shelf" }) { i, shelf -> shelfItem(i + 2, shelf) }

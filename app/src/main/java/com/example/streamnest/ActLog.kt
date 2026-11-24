@@ -49,6 +49,10 @@ object ActLog {
     private val dayFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     private val timeFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
     @Volatile var screen = "Start"
+    /** 0.9.1 (hostDown): the network in use now (home-network servers are judged per network). */
+    fun netHandle(): Long = runCatching {
+        (app?.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager)?.activeNetwork?.networkHandle ?: 0L
+    }.getOrDefault(0L)
     /**
      * 0.9.79 (phone): light logging by default — the per-plugin timings, memory every 5 s, ranking notes and the button
      * under every tap (a walk through the screen's tree) are written only with Developer's Corner › Detailed logs on.
@@ -230,6 +234,7 @@ object ActLog {
     // ── Network: every request (images left out), its answer and time ──
 
     object Net : Interceptor {
+        private val mediaRx = Regex("(?i)\\.(m4s|ts|mp4|mkv|m3u8|mpd|aac|vtt|srt)$|/dash/|/hls/|/videoplayback")
         private val imgRx = Regex("(?i)\\.(jpe?g|png|webp|gif|svg|avif)(\\?|$)|image\\.tmdb\\.org|images\\.metahub|/t/p/w\\d+/|/poster/|/background/|/logo/")
         override fun intercept(chain: Interceptor.Chain): Response {
             val req = chain.request()
@@ -237,12 +242,21 @@ object ActLog {
             val skip = imgRx.containsMatchIn(u.toString()) || u.host.endsWith("firebaseio.com") || u.host.endsWith("firebasedatabase.app")
             val t0 = SystemClock.elapsedRealtime()
             val what = "${req.method} ${u.host}${u.encodedPath.take(90)}"
+            // 0.9.1 (hostDown): a server that can't be reached twice in a row (while others answer) is skipped for
+            // 10 minutes, so dead mirrors stop costing 15–45 s on every search. Off = every request as before.
+            val hd = Feature.hostDown && !mediaRx.containsMatchIn(u.encodedPath)
+            if (hd) HostDown.check(u.host)?.let { left ->
+                if (!skip) add("NET", "$what · skipped (server down, retry in ${left / 1000} s)")
+                throw java.io.IOException("skipped: ${u.host} is down")
+            }
             return try {
                 val r = chain.proceed(req)
+                if (hd) HostDown.ok(u.host)
                 if (!skip) add("NET", "$what · ${r.code} · ${SystemClock.elapsedRealtime() - t0} ms" + (r.body?.contentLength()?.takeIf { it > 0 }?.let { " · ${it / 1024} KB" } ?: ""))
                 if (BuildConfig.IS_TV) capPage(r, what) else r
             } catch (e: Exception) {
                 if (!skip) add("NET", "$what · failed (${e.javaClass.simpleName}: ${e.message?.take(80)}) · ${SystemClock.elapsedRealtime() - t0} ms")
+                if (hd) HostDown.failed(u.host, e, SystemClock.elapsedRealtime() - t0)
                 throw e
             }
         }
@@ -472,6 +486,70 @@ object ActLog {
         o.entries.filter { it.key in keep }.sortedBy { it.key }.joinToString("\n") { (day, v) ->
             "===== $day =====\n" + ((v as? JsonObject)?.values?.mapNotNull { c -> (c as? JsonObject)?.let { (it["at"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L) to (it["t"]?.jsonPrimitive?.contentOrNull ?: "") } }
                 ?.sortedBy { it.first }?.joinToString("") { it.second } ?: "")
+        }
+    }
+}
+
+
+/** Servers that can't be reached: after 2 connection failures in a row they are skipped for 10 minutes.
+ *  0.9.1: on the shared code behind Feature.hostDown (ActLog.Net calls it only when on). */
+object HostDown {
+    private val fails = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val recent = java.util.ArrayDeque<Pair<String, Long>>()
+    /** The app's own servers and the local network are never skipped. */
+    private fun local(h: String) = h == "localhost" || h.startsWith("127.") || h.startsWith("10.") || h.startsWith("192.168.") ||
+        Regex("^172\\.(1[6-9]|2\\d|3[01])\\.").containsMatchIn(h) || h == "::1"
+    private val until = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    @Volatile private var lastOkAt = 0L
+    private val never = Regex("(?i)(firebase|googleapis|google\\.com|gstatic|themoviedb|strem\\.io|github|tmdb|metahub|googlevideo|youtube)")
+    /** Milliseconds left while [host] is skipped, or null. */
+    /** 0.8.12: a home-network server (10.x / 192.168.x) that can't be reached here is skipped until the network changes
+     *  (away from home Wi-Fi every search and subtitle request waited 4 s for it). */
+    private fun lan(h: String) = local(h) && !h.startsWith("127.") && h != "localhost" && h != "::1"
+    private val lanFails = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    @Volatile private var lanNet = Long.MIN_VALUE
+    private fun sameNet() { val id = ActLog.netHandle(); if (id != lanNet) { lanNet = id; lanFails.clear() } }
+
+    fun check(host: String): Long? {
+        if (lan(host)) { sameNet(); return if ((lanFails[host] ?: 0) >= 2) 60_000L else null }
+        if (local(host)) return null
+        val t = until[host] ?: return null
+        val left = t - SystemClock.elapsedRealtime()
+        if (left <= 0) { until.remove(host); fails.remove(host); return null }
+        return left
+    }
+    fun ok(host: String) { fails.remove(host); if (lan(host)) lanFails.remove(host); lastOkAt = SystemClock.elapsedRealtime() }
+    @Synchronized fun failed(host: String, e: Exception, ms: Long = 0) {
+        // 0.8.15: "no address" (a DNS answer, often a blocked or slow lookup) never marks a server as down.
+        if (e is java.net.UnknownHostException && !lan(host)) return
+        val connect = e is java.net.ConnectException ||
+            (e is java.net.SocketTimeoutException && e.message?.contains("failed to connect") == true) ||
+            e is javax.net.ssl.SSLHandshakeException
+        if (lan(host)) {
+            sameNet()
+            if (connect || e is java.net.SocketTimeoutException || (e is java.net.SocketException && ms >= 3_000)) {
+                val n = (lanFails[host] ?: 0) + 1; lanFails[host] = n
+                if (n == 2) ActLog.add("NET", "$host (home network server) can't be reached on this network — skipped until the network changes")
+            }
+            return
+        }
+        // 0.8.12: servers that reset every connection (blocked) or ask for a proxy password count too, after 3 in a row.
+        val soft = (e is java.net.SocketException && e.message?.contains("reset", true) == true) ||
+            (e is java.net.ProtocolException && e.message?.contains("407") == true)
+        if ((!connect && !soft) || never.containsMatchIn(host) || local(host)) return
+        val now = SystemClock.elapsedRealtime()
+        // Only when the internet itself works (something else answered in the last minute)…
+        if (now - lastOkAt > 60_000) return
+        // …and not when many servers fail together (that is the phone's network dropping, not the servers): 0.8.6 blocked
+        // ~20 servers at once at 19:16 and even the app's own server (127.0.0.1), so The Office failed.
+        recent.addLast(host to now)
+        while (recent.isNotEmpty() && now - recent.first().second > 5_000) recent.removeFirst()
+        if (recent.map { it.first }.distinct().size >= 3) { fails.clear(); return }
+        val n = (fails[host] ?: 0) + 1
+        fails[host] = n
+        if (n >= (if (soft) 3 else 2) && until[host] == null) {
+            until[host] = SystemClock.elapsedRealtime() + 10 * 60_000L
+            ActLog.add("NET", "$host can't be reached twice — skipped for 10 min")
         }
     }
 }

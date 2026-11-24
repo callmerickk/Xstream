@@ -503,10 +503,11 @@ fun MusicHost(vm: AppViewModel, profileId: String, profileName: String) {
     val nowOpen by MusicPlayer.openNow.collectAsStateWithLifecycle()
     val splash by MusicPlayer.splash.collectAsStateWithLifecycle()
     if (splash) MusicSplash { MusicPlayer.splash.value = false; MusicPlayer.openLibrary.value = true }
-    if (BuildConfig.HAS_MUSIC && (lib || nowOpen)) MusicApp(profileId, profileName, profileVm = vm, initiallyNowPlaying = nowOpen) {
+    // 0.9.1: Feature.music (Xstream: on with HAS_MUSIC; StreamX: off, as before).
+    if (Feature.music && (lib || nowOpen)) MusicApp(profileId, profileName, profileVm = vm, initiallyNowPlaying = nowOpen) {
         MusicPlayer.openLibrary.value = false
         MusicPlayer.openNow.value = false
-    } else if (!BuildConfig.HAS_MUSIC) {
+    } else if (!Feature.music) {
         if (lib) MusicLibrary { MusicPlayer.openLibrary.value = false }
         if (nowOpen) MusicNowPlaying { MusicPlayer.openNow.value = false }
     }
