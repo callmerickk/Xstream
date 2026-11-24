@@ -222,3 +222,14 @@ Source paths are in the Xstream repo, under `app/src/main/java/com/example/strea
 - Continue watching links kept fresh while idle on Wi-Fi (LinkMemory.refreshCw).
 - Invite-only access (Access.kt: AccessGate + Settings › Access requests; Firebase access/…; off by default).
 - Minimum version (versions.json minPhone from min-version.txt) → "Update required".
+
+## Xstream 0.8.20 (24 Nov) — port to StreamX next
+- **PluginGuard** (CsPlugins.kt): outermost interceptor on the plugin client; cuts video/audio, octet-stream big/unknown, >16 MB
+  (empty body, X-SX-Cut: 1); chunked text/JSON capped at 12 MB. Fixes the StreamX OOM (HubCloud t3dl.php 1.75 GB body).
+  StreamX also needs its stopped plugin searches to really cancel (Xstream's nicehttp already cancels via enqueue + invokeOnCancellation).
+- **Ask once** (addonStreamsFlow): cloud finder first, 1.5 s head start; addons it answered skip the direct call
+  (Quick Play addons, CNCVerse, CloudFind.directOnly excepted). Refused cloud link (401/403/410) → that addon asked directly.
+  StreamX has no CloudFind yet: port CloudFind.kt (cancellable) together with this.
+- **saveParts**: 4 pieces default, pixeldrain 2, learned single hosts on disk 7 days, head saved + extra parts refused = success.
+- **race**: probes kept 60 s (racedProbe), runner-up probed in background.
+- **DetailTiming**: "link ready" vs "light green" (what the user sees) + "green breakdown" line.
