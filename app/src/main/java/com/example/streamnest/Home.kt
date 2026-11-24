@@ -186,6 +186,11 @@ fun HomeScreen(
         delay(3_000)
         if (vm.qsActive()) runCatching { vm.quickStreams(if (k.contains(":")) "series" else "movie", k) }
     }
+    // 0.9.4 (cloudPrep): the Continue-watching titles (type + IMDb id only) go to the Worker once a day, so the cloud prepares them.
+    if (Feature.cloudPrep && !BuildConfig.IS_TV) LaunchedEffect(progress.take(10).map { it.key }) {
+        delay(8_000)
+        CloudPrep.reportCw(progress.take(10).map { pr -> (if (pr.key.contains(":")) "series" else "movie") to pr.key })
+    }
     // 0.9.1 (linkMemory): keep Continue watching's links fresh while the phone sits idle on Wi-Fi (Xstream 0.8.18).
     if (Feature.linkMemory && !BuildConfig.IS_TV) LaunchedEffect(Unit) {
         delay(20_000)
@@ -456,7 +461,7 @@ fun HomeScreen(
                 // The first two rows: tall rounded posters with big 1, 2, 3 numbers (Home Layout can change any row's style).
                 when (RowStyles.of(shelf.title, i)) {
                     // Trending rows come in a new order every time the app opens.
-                    "numbered" -> NumberedRow(remember(shelf.items) { shelf.items.shuffled(java.util.Random(HomeShuffle.seed xor shelf.title.hashCode().toLong())) }, onOpen)
+                    "numbered" -> NumberedRow(remember(shelf.items) { shelf.items.shuffled(java.util.Random(HomeShuffle.seed xor shelf.title.hashCode().toLong())) }, onOpen, rowKey = shelf.title)
                     "portrait" -> PortraitRow(shelf.items, onOpen)
                     "landscape" -> LandscapeRow(shelf.items, onOpen)
                     else -> ShelfRow(shelf.items, onOpen)
@@ -573,7 +578,7 @@ object RowStyles {
 
 /** Top 10 style: tall rounded posters (real portrait art from TMDB), a big solid number beside each one (1, 2, 3 …). */
 @Composable
-fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
+fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit, rowKey: String = "") {
     val corner = Palette.corner.dp.coerceAtMost(18.dp)
     val shape = remember(corner) { RoundedCornerShape(corner) }
     // Bollywood mixed in: the newest popular Hindi titles of the same kind take every third place.
@@ -583,13 +588,18 @@ fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     val hindi by produceState(HindiTrending.cachedOrNull(kind), kind) {
         if (value == null) value = kotlinx.coroutines.withTimeoutOrNull(3_000) { runCatching { HindiTrending.list(kind) }.getOrNull() } ?: emptyList()
     }
-    val h = hindi ?: run { Spacer(Modifier.fillMaxWidth().height(186.dp)); return }
+    // 0.9.4 (homeSteady): this row's order is fixed for the session — last time's order is shown at once (no waiting
+    // for the Hindi titles); today's order is worked out quietly and saved for the next open.
+    val steady = if (Feature.homeSteady && rowKey.isNotEmpty()) HomeSteady.top(rowKey) else null
+    val h = hindi ?: if (steady != null) emptyList() else run { Spacer(Modifier.fillMaxWidth().height(186.dp)); return }
     // Hindi trending titles are checked too: a film not out online never takes a place in the top 10.
     val notOut by CinemaOnly.hidden.collectAsState()
     LaunchedEffect(h) { Public.vm?.let { v -> if (h.isNotEmpty()) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { CinemaOnly.check(v, h) } } } }
     val adultIds by CinemaOnly.adult.collectAsState()
     val adultOk = Public.vm?.texts?.value?.get("adultOn") == "yes"
-    val top = remember(items, h, notOut, adultIds) { HindiTrending.mix(items, h).filter { it.id.substringBefore(":").let { id -> id !in notOut && (adultOk || id !in adultIds) } }.take(10) }
+    val fresh = remember(items, h, notOut, adultIds) { HindiTrending.mix(items, h).filter { it.id.substringBefore(":").let { id -> id !in notOut && (adultOk || id !in adultIds) } }.take(10) }
+    if (Feature.homeSteady && rowKey.isNotEmpty()) LaunchedEffect(fresh, hindi != null) { if (hindi != null) HomeSteady.keepTop(rowKey, fresh) }
+    val top = steady ?: fresh
     // All ten posters are asked for at once (one quick TMDB call each, remembered), so the row fills in together.
     LaunchedEffect(top) { top.forEach { m -> launch { runCatching { TmdbPosters.portrait(m) } } } }
     // Same numbers, a little dimmer (soft grey), so the eye goes to the posters first.
@@ -623,13 +633,14 @@ fun NumberedRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
 @Composable
 fun TallPoster(m: Meta, modifier: Modifier) {
     var tries by remember(m.id) { mutableIntStateOf(0) }
-    val choices by produceState<List<String>?>(TmdbPosters.cached(m)?.let { listOfNotNull(it, TmdbPosters.fallback(m)) }, m.id) {
+    // 0.9.4 (homeSteady): the small TMDB size (w342, already fetched while the profile page showed) and the card's colour.
+    val choices by produceState<List<String>?>(TmdbPosters.cached(m)?.let { listOfNotNull(HomeSteady.small(it), TmdbPosters.fallback(m)) }, m.id) {
         if (value == null) {
             val t = kotlinx.coroutines.withTimeoutOrNull(3500) { TmdbPosters.portrait(m) }
-            value = listOfNotNull(t, TmdbPosters.fallback(m)).distinct()
+            value = listOfNotNull(HomeSteady.small(t), TmdbPosters.fallback(m)).distinct()
         }
     }
-    Box(modifier.background(Surface1)) {
+    Box(modifier.background(HomeSteady.cardBg(m))) {
         val list = choices ?: return@Box
         val url = list.getOrNull(tries)
         if (url != null) {
@@ -671,7 +682,7 @@ fun PortraitRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
     val shape = remember(corner) { RoundedCornerShape(corner) }
     LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items(items, key = { "p" + it.type + it.id }) { m ->
-            AsyncImage(hiResArt(m.poster ?: hdPoster(m)), m.name, Modifier.width(posterWidth()).aspectRatio(2f / 3f).clip(shape).background(Surface1).titleTap(m) { onOpen(m) },
+            AsyncImage(hiResArt(m.poster ?: hdPoster(m)), m.name, Modifier.width(posterWidth()).aspectRatio(2f / 3f).clip(shape).background(HomeSteady.cardBg(m)).titleTap(m) { onOpen(m) },
                 contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
         }
     }
@@ -737,7 +748,7 @@ fun ShelfRow(items: List<Meta>, onOpen: (Meta) -> Unit) {
                 landscape -> LandscapeCard(m, w * 1.87f) { onOpen(m) }
                 else -> AsyncImage(
                     hiResArt(m.poster), m.name,
-                    Modifier.width(w).aspectRatio(2f / 3f).clip(posterShape).background(Surface1).titleTap(m) { onOpen(m) },
+                    Modifier.width(w).aspectRatio(2f / 3f).clip(posterShape).background(HomeSteady.cardBg(m)).titleTap(m) { onOpen(m) },
                     contentScale = ContentScale.Crop,
                     onSuccess = { st -> val sz = st.painter.intrinsicSize; if (addonDesign && sz.width > 0f && sz.height > 0f) onRatio(sz.width / sz.height) },
                 )
@@ -778,7 +789,7 @@ fun LandscapeRow(items: List<Meta>, onOpen: (Meta) -> Unit) =
 fun LandscapeCard(m: Meta, width: Dp = 236.dp, onClick: () -> Unit) {
     var logoFailed by remember(m.id) { mutableStateOf(false) }
     val hideLabels = isOn(t("hideLabels"))
-    Box(Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(posterCorner())).background(Surface1).titleTap(m, onClick)) {
+    Box(Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(posterCorner())).background(HomeSteady.cardBg(m)).titleTap(m, onClick)) {
         AsyncImage(backdropOf(m), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color(0xCC000000), 0.65f to Color.Transparent)))
         val logo = logoOf(m)
@@ -1387,7 +1398,7 @@ fun RankedRow(title: String, items: List<Meta>, onOpen: (Meta) -> Unit) {
 private fun RankedCard(rank: Int, m: Meta, flag: String?, service: Pair<String, Color>?, onClick: () -> Unit) {
     val shape = RoundedCornerShape(posterCorner().coerceAtLeast(14.dp))
     Column(Modifier.width(262.dp).clip(RoundedCornerShape(16.dp)).titleTap(m, onClick)) {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(shape).background(Surface1)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(shape).background(HomeSteady.cardBg(m))) {
             // 0.9.75: the Top 10 picture from the fast picture CDN at card size (the number is drawn here, not by a server).
             AsyncImage(rankArt(m), m.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             // Dark fade on the left so the number and info stay readable.
@@ -1542,7 +1553,18 @@ object HomeFreeze {
     fun shelves(live: List<Shelf>, profile: String?): List<Shelf> {
         if (live.isEmpty()) return snap.takeIf { key?.startsWith("$profile|") == true }.orEmpty()
         val k = "$profile|" + live.mapNotNull { it.src ?: it.title }.sorted().joinToString(",")
-        if (k != key) { key = k; snap = live; hid = null; recSnap = emptyList() }
+        if (k != key) {
+            // 0.9.4 (homeSteady): same profile and the same addons — a catalog missing or added this time doesn't rebuild
+            // Home in front of you: rows already shown stay, new rows join at the end; the fresh rows are saved for next
+            // open. Another profile, or an addon added / removed, still builds it again.
+            fun bases(l: List<Shelf>) = l.mapNotNull { it.src?.substringBefore("/catalog/") }.toSet()
+            if (Feature.homeSteady && snap.isNotEmpty() && key?.startsWith("$profile|") == true && bases(live) == bases(snap)) {
+                val have = snap.map { it.src ?: it.title }.toSet()
+                val add = live.filter { (it.src ?: it.title) !in have }
+                key = k
+                if (add.isNotEmpty()) snap = snap + add
+            } else { key = k; snap = live; hid = null; recSnap = emptyList() }
+        }
         return snap
     }
     /** Films found to be unreleased are taken off (never put back during the session); the rest of Home stays frozen. */

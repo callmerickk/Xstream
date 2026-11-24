@@ -1,3 +1,12 @@
+Xstream 0.9.4
+
+A calmer Home, HDR when you want it:
+• Home stays still: rows and the Top 10 no longer change in front of you. Anything new shows the next time you open Home.
+• Posters are ready as Home opens; while one loads, its card shows the poster's own colour instead of grey.
+• Videos are prepared ahead in the cloud, so more titles are ready to play the moment you open them.
+• Lighter on your phone: the heavy search sites only run when nothing else was found.
+• HDR: turn it on in Quality and the picture moves to an HDR copy at the same moment, without stopping. Turn it off to go back. Your choice is remembered (only on screens that can show HDR).
+
 Xstream 0.9.3
 
 Smarter starts, tuned for you:

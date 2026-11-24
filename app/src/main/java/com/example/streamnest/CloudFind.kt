@@ -80,7 +80,10 @@ object CloudFind {
 
     /** 0.8.20: enqueue() instead of execute(): cancelling the coroutine cancels the OkHttp call. Any failure = empty map. */
     private suspend fun post(body: String): Map<String, List<StreamInfo>> = suspendCancellableCoroutine { cont ->
-        val call = Api.http.newCall(Request.Builder().url(URL).header("x-sx", KEY).post(body.toRequestBody("application/json".toMediaType())).build())
+        // 0.9.4: x-sx-ver always; the sign-in token only while approval is required (SxWorker.approvalToken).
+        val rb = SxWorker.stamp(Request.Builder().url(URL)).post(body.toRequestBody("application/json".toMediaType()))
+        SxWorker.approvalToken()?.let { rb.header("Authorization", "Bearer $it") }
+        val call = Api.http.newCall(rb.build())
         cont.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { cont.resume(emptyMap()) }
@@ -99,6 +102,8 @@ object CloudFind {
         if (src.buffer.size > MAX_BODY) return emptyMap()
         val o = Api.json.parseToJsonElement(src.buffer.readUtf8()) as? JsonObject ?: return emptyMap()
         val per = o["addons"] as? JsonObject ?: return emptyMap()
+        // 0.9.4 (cloudPrep): the Cron's checks of these links (size, seekable, when).
+        if (Feature.cloudPrep) CloudPrep.noteChecked(CloudPrep.parseChecked(o["checked"] as? JsonObject))
         return per.mapNotNull { (base, v) ->
             runCatching { base to Api.json.decodeFromJsonElement(ListSerializer(StreamInfo.serializer()), v).filter { !it.url.isNullOrBlank() } }.getOrNull()
         }.toMap()

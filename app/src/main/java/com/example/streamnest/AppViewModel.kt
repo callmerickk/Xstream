@@ -1846,6 +1846,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         switchCollections(pid)
         // Last start's Home rows, shown straight away while the fresh ones load.
         viewModelScope.launch(Dispatchers.IO) {
+            // 0.9.4 (homeSteady): this profile's saved Top 10 orders, tall posters and card colours (tiny file).
+            if (Feature.homeSteady) runCatching { HomeSteady.load(ctx, pid) }
             val cached = runCatching { File(ctx.filesDir, "shelves_$pid.json").takeIf { it.exists() }?.readText()?.let { Api.json.decodeFromString<List<Shelf>>(it) } }.getOrNull()
             if (!cached.isNullOrEmpty()) withContext(Dispatchers.Main) { if (dataPid == pid && (shelves.value.isEmpty() || loading.value)) shelves.value = cached.map { s -> s.copy(items = s.items.distinctBy { it.type + it.id }) } }
             // 0.9.72 (from Xstream): the saved rows' pictures are fetched while the profile page shows, so Home opens drawn.
@@ -1866,6 +1868,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             rows.take(3).flatMap { s -> s.items.take(10).flatMap { listOf(hdPoster(it), backdropOf(it)) } } +
             rows.take(n).flatMap { it.items.take(10) }.mapNotNull { TmdbPosters.cached(it) }
         Posters.warm(appContext, urls)
+        // 0.9.4 (homeSteady): the Top 10 tall posters fetched small (looked up if needed) and the cards' colours.
+        if (Feature.homeSteady) HomeSteady.warm(appContext, rows)
     }
 
     init {

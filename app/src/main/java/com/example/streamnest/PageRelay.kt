@@ -43,7 +43,8 @@ object PageRelay : Interceptor {
     }
 
     private fun viaRelay(chain: Interceptor.Chain, req: Request, first: java.io.IOException? = null): Response {
-        val rb = Request.Builder().url("$RELAY?u=" + java.net.URLEncoder.encode(req.url.toString(), "UTF-8")).header("x-sx", KEY)
+        val rb = SxWorker.stamp(Request.Builder().url("$RELAY?u=" + java.net.URLEncoder.encode(req.url.toString(), "UTF-8")))
+        SxWorker.approvalToken()?.let { rb.header("Authorization", "Bearer $it") }   // 0.9.4: only while approval is required
         fun fwd(h: String) { req.header(h)?.let { rb.header("x-h-" + h.lowercase(), it) } }
         fwd("User-Agent"); fwd("Referer"); fwd("Cookie"); fwd("Content-Type"); fwd("Accept")
         if (req.method == "POST" && req.body != null) rb.post(req.body!!) else rb.get()

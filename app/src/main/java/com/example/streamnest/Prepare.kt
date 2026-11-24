@@ -233,7 +233,10 @@ object Prepare {
                 val label = if (Public.dev) "${Ranker.labelOf(Ranker.groupKey(s)).substringAfter(" · ", "")} · ${qualityName(s.resolution())}" else qualityName(s.resolution())
                 put(Prepared(id, "Checking ${i + 1}/$n · $label", list = list, subs = subs))
                 StreamCache.register(s)
-                val pr = known ?: StreamCache.probe(url)
+                // 0.9.4 (cloudPrep): a link the cloud checked under 10 minutes ago counts as checked (no second request).
+                val cloudPr = if (known == null && Feature.cloudPrep) CloudPrep.probeOf(url) else null
+                if (cloudPr != null) ActLog.add("PLAY", "prepare · ${s.addonName}: checked in the cloud (${cloudPr.size / 1_048_576} MB, ${if (cloudPr.seekable) "seekable" else "not seekable"}) — no second check")
+                val pr = known ?: cloudPr ?: StreamCache.probe(url)
                 if (!pr.ok) {
                     // 0.9.1 (cloudFind): a link that came from the cloud was refused (401 / 403 / 410: often a link made for
                     // another device): its addon is asked directly now, once per title, and the answer joins the live list.

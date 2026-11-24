@@ -191,7 +191,7 @@ object DevAsk {
         }
         return runCatching {
             val http = Api.http.newBuilder().readTimeout(60, TimeUnit.SECONDS).callTimeout(70, TimeUnit.SECONDS).build()
-            http.newCall(Request.Builder().url(URL).header("x-sx", KEY).header("Authorization", "Bearer $t")
+            http.newCall(SxWorker.stamp(Request.Builder().url(URL)).header("Authorization", "Bearer $t")
                 .post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r ->
                 val txt = r.body?.string().orEmpty()
                 if (!r.isSuccessful) { ActLog.add("RULES", "AI via Worker: HTTP ${r.code}${if (r.code == 503) " (no GEMINI_KEY yet) — using the app's key" else ""}"); return@use null }

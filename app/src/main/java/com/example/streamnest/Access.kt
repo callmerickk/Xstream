@@ -117,6 +117,8 @@ object Access {
     suspend fun deny(uid: String) { call("DELETE", "allowed/$uid"); call("PUT", "requests/$uid/status", "\"denied\"") }
     suspend fun remove(uid: String) { call("DELETE", "allowed/$uid"); call("PUT", "requests/$uid/status", "\"removed\"") }
     suspend fun required(): Boolean = call("GET", "config/required")?.trim() == "true"
+    /** 0.9.4: the last known "approval required" (kept from the start check; no network). */
+    fun requiredKnown(ctx: Context): Boolean = prefs(ctx).getBoolean("required", false)
     suspend fun setRequired(on: Boolean): Boolean = call("PUT", "config/required", if (on) "true" else "false") != null
 }
 

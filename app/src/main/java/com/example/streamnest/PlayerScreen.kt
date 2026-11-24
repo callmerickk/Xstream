@@ -651,6 +651,8 @@ fun PlayerScreen(
     // Source health: which source is playing (a failure is counted against it) and that it played.
     LaunchedEffect(now?.addon) { PlayFailNote.addon = now?.addon }
     LaunchedEffect(firstFrame) { if (firstFrame) now?.addon?.let { SourceHealth.played(it) } }
+    // 0.9.4 (cloudPrep): the link that really showed a picture, and how fast, goes to the Worker (hashes only).
+    LaunchedEffect(firstFrame) { if (firstFrame && Feature.cloudPrep) now?.let { n -> CloudPrep.good(vm, type, p.key, n.url, n.addon, PlayTiming.sinceStartMs()) } }
     var status by remember { mutableStateOf(if (p.url.isBlank() && pre == null) "Finding stream source" else "Buffering…") }
     var failure by remember { mutableStateOf<String?>(null) }
     DisposableEffect(Unit) { TrailerHold.on.value = true; onDispose { TrailerHold.on.value = false } }
@@ -3555,6 +3557,73 @@ fun PlayerScreen(
             else switchTo(st, label, why = why, upgrade = upgrade)
         }
     }
+    // ───── 0.9.4 (hdrMode): HDR on → an HDR copy is found and faded in at the same moment; off → back to the regular copy ─────
+    // The fade is the same quiet switch as the ladder / Upgrade (ottSwapTo: same length, same audio language, same frame).
+    // The remembered choice (Quality › HDR) starts every play on the instant regular copy first, then fades to HDR.
+    /** HDR wanted now. Never on screens that can't show it. */
+    var hdrWant by remember { mutableStateOf(Feature.hdrMode && !BuildConfig.IS_TV && HdrRule.on(vm) && PicturePref.hdrScreen(ctx)) }
+    /** Turned on / off from the Quality sheet during this play (the remembered choice alone is "automatic"). */
+    var hdrTapped by remember(p.key) { mutableStateOf(false) }
+    /** The regular copy that played before HDR (HDR off fades back to it). */
+    var hdrFrom by remember(p.key) { mutableStateOf<StreamItem?>(null) }
+    if (Feature.hdrMode && !BuildConfig.IS_TV) LaunchedEffect(hdrWant, firstFrame, p.key) {
+        if (!firstFrame || usingVlc) return@LaunchedEffect
+        if (!hdrWant) {
+            val back = hdrFrom ?: return@LaunchedEffect
+            hdrFrom = null
+            if (now?.url == back.stream.url) return@LaunchedEffect
+            PlayTiming.late("HDR off: back to the regular copy")
+            val ok = runCatching { ottSwapTo(back, asked = true, why = "HDR off") }.getOrDefault(false)
+            if (!ok || now?.url != back.stream.url) switchTo(back, "Regular picture", why = "HDR off")
+            return@LaunchedEffect
+        }
+        if (runCatching { HdrRule.isHdr(player.videoFormat) }.getOrDefault(false)) return@LaunchedEffect
+        if (hdrFrom != null) return@LaunchedEffect
+        val asked = hdrTapped
+        if (!asked) {
+            // The remembered choice: never on slow or metered internet unless it is clearly fast; only once the regular
+            // copy plays smoothly with some of it loaded ahead.
+            delay(4_000)
+            val metered = runCatching { (ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered }.getOrDefault(true)
+            val fast = bwNow[0] >= (Rules.num(Rules.WEAK_MIN_BW) * 2_000_000).toLong()
+            val weak = hlsCap > 0 || (lastSlowAt > 0 && SystemClock.uptimeMillis() - lastSlowAt < Rules.ms(Rules.WEAK_COOLDOWN))
+            if (weak || (metered && !fast)) { ActLog.add("SWITCH", "auto · HDR — not now: ${if (weak) "the internet was slow" else "mobile data, not clearly fast"}"); return@LaunchedEffect }
+            withTimeoutOrNull(60_000) { while (buffering || curBuffered() - curPos() < 15_000) delay(1_000) } ?: return@LaunchedEffect
+        }
+        val cur = now?.url?.let { itemFor(it) } ?: return@LaunchedEffect
+        val curAudio = runCatching { player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
+            ?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it).language } } }.getOrNull()
+        // HDR copies: what the player already knows, the link memory, then every source (the cloud first) for ≤ 20 s.
+        val pool = LinkedHashMap<String, StreamItem>()
+        fun take(l: List<StreamItem>) = l.forEach { s -> val u = s.stream.url; if (u != null && HdrRule.named(s)) pool.putIfAbsent(u, s) }
+        fun cands() = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false).filter {
+            it.stream.url != cur.stream.url && !Ranker.isDead(it) && !Ranker.knownUnseekable(it) && !it.unplayableHere() &&
+                it.addonName !in wrongAddons && hasLang(it, curAudio) && vm.langRank(it) <= vm.langRank(cur)
+        }
+        take(known + quickList)
+        if (Feature.linkMemory) LinkMemory.get(ctx, p.key)?.let { take(it) }
+        if (cands().isEmpty()) withTimeoutOrNull(20_000) {
+            vm.streamsFlow(type, p.key).first { (l, d) -> take(vm.filtered(l).list); d || cands().size >= 3 }
+        }
+        val list = cands().take(3)
+        if (list.isEmpty()) {
+            ActLog.add("SWITCH", "${if (asked) "you" else "auto"} · HDR — no HDR copy for this title")
+            if (asked) Snack.show("HDR isn't available for this title")
+            return@LaunchedEffect
+        }
+        for (c in list) {
+            if (!hdrWant || now?.url != cur.stream.url) return@LaunchedEffect
+            val ok = runCatching { ottSwapTo(c, asked = false, why = "HDR") }.getOrDefault(false)
+            if (ok && now?.url == c.stream.url) {
+                hdrFrom = cur
+                byHand = true   // your picture choice: no automatic swap away from it
+                if (asked) Snack.show("✨ HDR on")
+                else Snack.show("✨ Switched to HDR — your preference\nPrefer the regular picture? Turn off HDR in Quality.", millis = 6_000)
+                return@LaunchedEffect
+            }
+        }
+        if (asked) Snack.show("HDR isn't available for this title")
+    }
     // The picture turned out HDR after a switch the app made while "no HDR" is set: back to what played before.
     LaunchedEffect(hdrHit) {
         if (!hdrHit) return@LaunchedEffect
@@ -5602,8 +5671,13 @@ fun PlayerScreen(
                 if (!BuildConfig.IS_TV) PhoneQualityBar(qCols, playing, readySet, if (ladder.size > 1) ladder else if (onBasePl) ladder else baseLadder,
                     if (ladder.size > 1) pinnedH else null, fourK = fourK, onBase = !onBasePl && ladder.size <= 1 && basePl != null,
                     playingH = hNow, playing60 = sixtyNow, tick = tickColor, chosen = qChosen, onChosen = { qChosen = it; if (it == "auto") { byHand = false; userPicked = false } },
-                    hdrOn = HdrRule.on(vm), onHdr = { on -> vm.setText("hdrOn", if (on) "on" else "off"); ActLog.add("PLAY", "HDR ${if (on) "on" else "off"} (quality menu)")
-                        Snack.show(if (on) "HDR on — HDR copies are offered and played" else "HDR off — no HDR copies") },
+                    hdrOn = HdrRule.on(vm) && (!Feature.hdrMode || PicturePref.hdrScreen(ctx)),
+                    // 0.9.4 (hdrMode): the switch finds and fades to an HDR copy; screens that can't show HDR say so.
+                    hdrSub = if (!Feature.hdrMode) null else if (!PicturePref.hdrScreen(ctx)) "This screen can't show HDR" else if (HdrRule.on(vm)) "On — HDR when there's a copy" else "Off — regular picture",
+                    hdrEnabled = !Feature.hdrMode || PicturePref.hdrScreen(ctx),
+                    onHdr = { on -> vm.setText("hdrOn", if (on) "on" else "off"); ActLog.add("PLAY", "HDR ${if (on) "on" else "off"} (quality menu)")
+                        if (Feature.hdrMode) { hdrTapped = true; hdrWant = on; Snack.show(if (on) "HDR on — looking for an HDR copy" else "HDR off — back to the regular picture") }
+                        else Snack.show(if (on) "HDR on — HDR copies are offered and played" else "HDR off — no HDR copies") },
                     curLabel = curItem?.let { if (playingRes >= 1440) "4K" else if (playingRes > 0) "${playingRes}p" else null }, onVariant = { h ->
                     // Playing the 4K file (or another file): back to the playlist first, then that quality.
                     if (ladder.size <= 1 && basePl != null && !onBasePl) {
@@ -7961,6 +8035,8 @@ private fun PhoneQualityBar(
     onPoke: () -> Unit, fourK: StreamItem? = null, onBase: Boolean = false, curLabel: String? = null,
     playingH: Int = 0, playing60: Boolean = false, tick: Color = Color(0xFFFF4D57), chosen: String = "auto", onChosen: (String) -> Unit = {},
     hdrOn: Boolean = false, onHdr: (Boolean) -> Unit = {},
+    /** 0.9.4 (hdrMode): the line under "HDR" (null = the 0.9.76 wording) and whether the switch can be used. */
+    hdrSub: String? = null, hdrEnabled: Boolean = true,
     onPick: (StreamItem) -> Unit,
 ) {
     var open by remember { mutableStateOf<String?>(null) }
@@ -7976,13 +8052,13 @@ private fun PhoneQualityBar(
         Text("QUALITY", Modifier.padding(start = 6.dp, top = 2.dp), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8A94A8), letterSpacing = 0.8.sp)
         val rs = RoundedCornerShape(12.dp)
         // 0.9.76: HDR on / off (default off = strictly no HDR copies; on = HDR offered and played without limits).
-        Row(Modifier.fillMaxWidth().clip(rs).background(Color(0x14FFFFFF)).clickable { onHdr(!hdrOn) }.padding(horizontal = 12.dp, vertical = 8.dp),
+        Row(Modifier.fillMaxWidth().clip(rs).background(Color(0x14FFFFFF)).clickable(enabled = hdrEnabled) { onHdr(!hdrOn) }.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("HDR", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                Text(if (hdrOn) "HDR copies allowed" else "No HDR copies", fontSize = 10.5.sp, color = Color(0xFF9AA3B5))
+                Text(hdrSub ?: if (hdrOn) "HDR copies allowed" else "No HDR copies", fontSize = 10.5.sp, color = Color(0xFF9AA3B5))
             }
-            androidx.compose.material3.Switch(hdrOn, { onHdr(it) }, Modifier.graphicsLayer { scaleX = 0.75f; scaleY = 0.75f },
+            androidx.compose.material3.Switch(hdrOn, { onHdr(it) }, Modifier.graphicsLayer { scaleX = 0.75f; scaleY = 0.75f }, enabled = hdrEnabled,
                 colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = red, checkedThumbColor = Color.White))
         }
         fun is60(st: StreamItem) = VisualTags.video(st).contains("60 fps")

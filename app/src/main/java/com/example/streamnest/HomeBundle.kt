@@ -23,7 +23,7 @@ object HomeBundle {
         val body = buildJsonObject { put("urls", JsonArray(urls.map { JsonPrimitive(it) })) }.toString()
         val out = withTimeoutOrNull(5_000) {
             runCatching {
-                Api.http.newCall(Request.Builder().url(URL).header("x-sx", KEY).post(body.toRequestBody("application/json".toMediaType())).build()).execute().use { r ->
+                Api.http.newCall(SxWorker.stamp(Request.Builder().url(URL)).post(body.toRequestBody("application/json".toMediaType())).build()).execute().use { r ->
                     if (!r.isSuccessful) return@runCatching emptyMap<String, String>()
                     val o = Api.json.parseToJsonElement(r.body?.string().orEmpty()) as? JsonObject ?: return@runCatching emptyMap<String, String>()
                     o.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { k to it } }.toMap()

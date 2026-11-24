@@ -48,6 +48,8 @@ object PlayTiming {
     }
 
     fun active(): Boolean = cur != null
+    /** 0.9.4: ms since this play started (0 = none yet). */
+    fun sinceStartMs(): Long = if (t0 == 0L) 0L else SystemClock.elapsedRealtime() - t0
 
     /** The play ended (first picture, error or left): saved to the log. */
     fun finish(result: String) {

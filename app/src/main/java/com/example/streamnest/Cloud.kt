@@ -328,6 +328,9 @@ object Cloud {
         status.value = ""
     }
 
+    /** 0.9.4: the current ID token without refreshing it (null when none or about to expire). For the page relay. */
+    fun freshToken(): String? = idToken?.takeIf { System.currentTimeMillis() < idExp }
+
     /** A valid ID token (refreshed when it is about to expire), or null when signed out / offline. */
     suspend fun token(): String? = tokenLock.withLock {
         val now = System.currentTimeMillis()

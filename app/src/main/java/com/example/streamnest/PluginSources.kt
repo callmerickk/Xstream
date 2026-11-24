@@ -539,7 +539,7 @@ object PluginSources {
      * Plugin mode's stream source (replaces the addons everywhere): every switched-on CloudStream provider and Nuvio
      * plugin, as (links so far, all answered?). [only] / [except] are link names ("CloudStream · Netflix").
      */
-    fun modeStreams(vm: AppViewModel, type: String, id: String, only: Set<String>?, except: Set<String>?): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
+    fun modeStreams(vm: AppViewModel, type: String, id: String, only: Set<String>?, except: Set<String>?, all: Boolean = false): Flow<Pair<List<StreamItem>, Boolean>> = channelFlow {
         val ctx = vm.appContext
         CsPlugins.init(ctx)
         SourceHealth.init(ctx); FoundPages.init(ctx)
@@ -591,9 +591,20 @@ object PluginSources {
                 send(acc.distinctBy { it.stream.url } to (pending <= 0))
             }
             val t0 = System.currentTimeMillis()
+            // 0.9.4 (lightPlugins): only the light plugins run now; a heavy one counts as answered at once and runs later,
+            // quietly, only if nothing playable came from the light ones within the plugin wait (HeavyGate). Tests ask all.
+            val gate = Feature.lightPlugins && !BuildConfig.IS_TV && !all
+            HeavyGate.begin(id)
+            suspend fun heavyLater(name: String, fetch: suspend () -> List<StreamItem>) {
+                add(emptyList())
+                if (!HeavyGate.await(id)) { ActLog.add("PLUGIN", "$name: not run on the phone (light plugins had something) · $id"); return }
+                ActLog.add("PLUGIN", "$name: run now — nothing playable from the light plugins · $id")
+                add(fetch(), delta = 0)
+            }
             if (direct != null) jobs += launch {
                 val l = direct.await()
                 ActLog.add("PLUGIN", "MovieBox (direct): ${l.size} links in ${System.currentTimeMillis() - t0} ms · $id")
+                if (gate) HeavyGate.noteLight(id, l)
                 add(l)
             }
             entries.forEach { e -> jobs += launch {
@@ -602,6 +613,15 @@ object PluginSources {
                 if (apis.isEmpty()) { add(emptyList()); return@launch }
                 lock.withLock { pending += apis.size - 1 }
                 apis.forEach { api -> launch {
+                    if (gate && !HeavyGate.light(csDisplayName(api.name))) {
+                        heavyLater(api.name) {
+                            val l = shared(api, id) { linksFrom(api, meta.name, year, series, season, episode) }
+                            ActLog.add("PLUGIN", "${api.name}: ${l.size} links in ${System.currentTimeMillis() - t0} ms · $id")
+                            SourceHealth.answered(api.name, l.size, System.currentTimeMillis() - t0)
+                            l
+                        }
+                        return@launch
+                    }
                     val isMb = api.name.contains("moviebox", true)
                     val got = if (isMb && direct != null) direct.await() else null
                     if (got != null && got.isNotEmpty()) { MovieBoxDirect.noteOk(); add(emptyList()); return@launch }
@@ -613,15 +633,23 @@ object PluginSources {
                     // Timing of each plugin (Activity log → PLUGIN), to see which one is slow.
                     ActLog.add("PLUGIN", "${api.name}: ${l.size} links in ${System.currentTimeMillis() - t0} ms · $id")
                     SourceHealth.answered(api.name, l.size, System.currentTimeMillis() - t0)
+                    if (gate) HeavyGate.noteLight(id, l)
                     add(l)
                 } }
             } }
             if (nuvio.isNotEmpty()) jobs += launch {
+                // 0.9.4 (lightPlugins): Nuvio plugins are heavy unless the light list names one; counted as answered at
+                // once, then asked only if nothing playable came from the light plugins within the plugin wait.
+                val nuvioLater = gate && nuvio.none { HeavyGate.light("Nuvio · ${it.name}") }
+                if (nuvioLater) {
+                    add(emptyList())
+                    if (!HeavyGate.await(id)) { ActLog.add("PLUGIN", "Nuvio: not run on the phone (light plugins had something) · $id"); return@launch }
+                }
                 // Each Nuvio link is passed on the moment it comes (they used to wait for the slowest Nuvio plugin,
                 // and arrived after the player had already given up).
                 val seen = HashSet<String>()
                 runCatching { nuvio(ctx, vm, meta, id).collect { l -> val n = l.filter { it.stream.url?.let { u -> seen.add(u) } == true }; if (n.isNotEmpty()) add(n, delta = 0) } }
-                add(emptyList())
+                if (!nuvioLater) add(emptyList())
             }
         }
     }.flowOn(kotlinx.coroutines.Dispatchers.IO)
@@ -665,6 +693,44 @@ object PluginSources {
                     }
                     ActLog.add("NUVIOPLAY", "${s.name}: ${items.size} streams for ${meta.name}")
                     return items
+    }
+}
+
+/**
+ * 0.9.4 (Feature.lightPlugins): heavy plugins wait per title. The first ask of a title starts the clock; after the
+ * plugin wait (Rules › Wait before backup — plugins) they run — once, quietly — only if no light link is still usable
+ * (none came, or every one failed while preparing). Once opened for a title, later asks run them at once.
+ */
+object HeavyGate {
+    private val started = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val lightLinks = java.util.concurrent.ConcurrentHashMap<String, MutableList<StreamItem>>()
+    private val opened = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    fun begin(id: String) {
+        if (started.size > 200) { started.clear(); lightLinks.clear(); opened.clear() }
+        val now = System.currentTimeMillis()
+        // A title opened again later starts a fresh wait (its earlier links may have expired).
+        val at = started[id]
+        if (at == null || now - at > 15 * 60_000L) { started[id] = now; opened -= id; lightLinks.remove(id) }
+    }
+    /** Named in the light list (MovieBox and the Netflix-type groups by default; "MovieBox" = MovieBox direct). */
+    fun light(name: String): Boolean = Rules.list(Rules.LIGHT_PLUGINS).any { Rules.matches(name, it) }
+    fun noteLight(id: String, l: List<StreamItem>) { if (l.isNotEmpty()) lightLinks.getOrPut(id) { java.util.Collections.synchronizedList(mutableListOf()) }.addAll(l) }
+    private fun playable(id: String): Boolean {
+        val bad = Prepare.failedFor(id)
+        val l = lightLinks[id]?.let { synchronized(it) { it.toList() } }.orEmpty()
+        return l.any { s -> s.stream.url !in bad && !Ranker.isDead(s) }
+    }
+    /** Waits until the plugin wait has passed since the title was first asked; true = run the heavy plugins now. */
+    suspend fun await(id: String): Boolean {
+        if (id in opened) return true
+        val t0 = started[id] ?: System.currentTimeMillis().also { started[id] = it }
+        val left = t0 + Rules.ms(Rules.QUICK_WAIT_PLUGINS) - System.currentTimeMillis()
+        if (left > 0) kotlinx.coroutines.delay(left)
+        if (id in opened) return true
+        if (playable(id)) return false
+        opened += id
+        return true
     }
 }
 

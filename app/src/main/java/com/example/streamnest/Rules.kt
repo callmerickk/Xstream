@@ -92,6 +92,7 @@ object Rules {
     const val TEST_QS_MEDIAN = "testQuickMaxMedianMs"
     const val TEST_QS_REMOVE = "testQuickRemoveBelow"
     const val TEST_MIN_LINKS = "testMinLinks"
+    const val LIGHT_PLUGINS = "lightPlugins"
 
     val groups = listOf(
         RuleGroup("quick", "Quick Play sources", "Which sources are asked first when a title opens, and how long before the backup"),
@@ -103,6 +104,7 @@ object Rules {
         RuleGroup("weak", "Weak network", "When the player steps quality down and up again"),
         RuleGroup("memory", "Link memory & HDR", "How long found links are remembered; HDR on or off for new users"),
         RuleGroup("test", "Source Test arranging", "How the Source Test decides Quick Start"),
+        RuleGroup("plugins", "Plugins on the phone", "Which plugins run on the phone every time (the rest only when nothing playable came)"),
     )
 
     val defs = listOf(
@@ -145,6 +147,10 @@ object Rules {
         RuleDef(TEST_QS_MEDIAN, "test", "…and a median start of at most (ms)", RuleKind.INT, "2000", ""),
         RuleDef(TEST_QS_REMOVE, "test", "Removed from Quick Start below played share", RuleKind.NUM, "0.3", ""),
         RuleDef(TEST_MIN_LINKS, "test", "Links needed to decide", RuleKind.INT, "3", ""),
+        // 0.9.4 (lightPlugins): the light plugins; every other plugin (VegaMovies, RogMovies, HDHub, UHD, 4KHDHub, Nuvio …)
+        // runs once, quietly, only when nothing playable came within "Wait before backup — plugins".
+        RuleDef(LIGHT_PLUGINS, "plugins", "Light plugins (always run on the phone)", RuleKind.LIST, "$MB_ANY\n$OTT_ANY",
+            "Default: MovieBox (direct and plugins) and the Netflix / Prime / Hotstar-type (HLS) plugins. The others run only when nothing playable is ready after the plugin wait.", sources = true),
     )
     private val byKey = defs.associateBy { it.key }
     fun def(key: String) = byKey[key]

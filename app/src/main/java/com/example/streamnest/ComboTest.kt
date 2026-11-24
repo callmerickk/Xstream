@@ -173,7 +173,7 @@ object ComboTest {
                     }
                 }
                 launch { withTimeoutOrNull(GATHER_MS) { runCatching { vm.addonStreamsFlow(t.type, t.videoId, null, null).first { (l, d) -> onList(vm.filtered(l).list); d } } } }
-                if (!BuildConfig.IS_TV) launch { withTimeoutOrNull(GATHER_MS) { runCatching { PluginSources.modeStreams(vm, t.type, t.videoId, null, null).first { (l, d) -> onList(vm.filtered(l).list); d } } } }
+                if (!BuildConfig.IS_TV) launch { withTimeoutOrNull(GATHER_MS) { runCatching { PluginSources.modeStreams(vm, t.type, t.videoId, null, null, all = true).first { (l, d) -> onList(vm.filtered(l).list); d } } } }
             }
         }
         // First picture: the fastest playable link of each source (at most 6 sources), in the real player.

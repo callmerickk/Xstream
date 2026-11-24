@@ -55,4 +55,18 @@ object Feature {
     /** 0.9.3: Source Test › Combined: every addon, CloudStream and Nuvio plugin asked at once for ~10 titles, then
      *  Quick Play strategies replayed from the recording (ComboTest.kt). */
     val comboTest: Boolean = on("comboTest")
+    /** 0.9.4: Netflix-style Home (HomeSteady.kt): what is on screen never changes while you look at it — fresh rows wait
+     *  for the next open, the Top 10 order is fixed for the session, posters are fetched small while the profile page
+     *  shows and each card shows its own colour instead of grey. */
+    val homeSteady: Boolean = on("homeSteady")
+    /** 0.9.4: links prepared in the cloud (Worker Cron + D1): the cloud's check of a link (size, seekable, < 10 min old)
+     *  counts as the phone's own check; Continue-watching titles (/cw) and the link that really played (/good) are sent
+     *  to the Worker — type + IMDb id and hashes only, never an account. Needs cloudFind. */
+    val cloudPrep: Boolean = on("cloudPrep") && cloudFind
+    /** 0.9.4: plugin mode runs only the light plugins (Rules › Plugins on the phone: MovieBox + the HLS / OTT ones);
+     *  the heavy site scrapers run once, quietly, only when nothing playable came within "wait before backup". */
+    val lightPlugins: Boolean = on("lightPlugins")
+    /** 0.9.4: HDR mode (Quality › HDR): on = an HDR copy is found and faded in at the same moment (SDR first, so the start
+     *  stays instant); off = back to the regular copy. Only on screens that can show HDR. */
+    val hdrMode: Boolean = on("hdrMode")
 }
