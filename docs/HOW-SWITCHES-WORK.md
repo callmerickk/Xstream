@@ -51,3 +51,24 @@ All on in Xstream, off in StreamX (`Feature.STABLE` = `updatePill` only):
   rules at start too (both apps use the same path).
 - `devAsk` — "Ask about this" boxes in Developer's Corner (DevAsk.kt, Worker `/ai`).
 - `comboTest` — Source Test › Combined (ComboTest.kt).
+
+## Switches new in 0.9.4 (step 5)
+
+All on in Xstream, off in StreamX. Off = the 0.9.3 code path: nothing read, written or sent.
+
+- `homeSteady` — Netflix-style Home (HomeSteady.kt): shown rows never change during the session (HomeFreeze appends new
+  rows at the end; fresh rows are saved for the next open), the Top 10 order is fixed per session and shown at once from
+  `filesDir/homesteady_<pid>.json`, tall posters are fetched small (TMDB w342) while the profile page shows, and each
+  card shows its own colour instead of grey.
+- `cloudPrep` (needs `cloudFind`) — the Worker's Cron prepares links (D1); `/find` answers carry `checked`, and Prepare
+  uses a cloud check under 10 min old instead of its own one-byte request; `/good` after a real first picture (hashes
+  only), `/cw` with Continue-watching ids (type + IMDb id).
+- `lightPlugins` — plugin mode runs only Rules › Plugins on the phone (`lightPlugins`, default MovieBox + Netflix-type);
+  the rest run once, quietly, after `quickWaitPluginsSec` if no light link is still usable (HeavyGate, PluginSources.kt).
+- `hdrMode` — Quality › HDR finds an HDR copy and fades to it at the same frame (ottSwapTo: same length, same audio
+  language); off fades back to the regular copy. The remembered choice starts SDR first, then fades (not on metered /
+  slow internet unless clearly fast). Screens that can't show HDR: the row says so and is disabled.
+
+Not switched (both apps): the `x-sx-ver` header on every Worker call — only a version number. The Worker's version /
+approval gate does nothing until the owner sets `MIN_VER`; approval needs `access/config/required` = true and only apps
+with `accessGate` on send the sign-in token (never the developer's account).

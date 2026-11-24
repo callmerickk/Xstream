@@ -219,3 +219,13 @@ Not switched (wording for all apps, 0.9.1): "saved video" / "start saved" → "c
 | Rules in one place (defaults = 0.9.2 behaviour), Developer's Corner › Rules: try on this phone / reset / publish to everyone / reset for everyone / history with Undo | Beta only | `devRules` | Rules.kt, RulesUi.kt; published at Firebase `xshared/devconfig/rules` (+ `rulesHistory`), kept in `filesDir/rules-published.json`, fetched in the background 4 s after start. Read by Quick.kt, AppViewModel.mixedStreamsFlow, Prepare, PlayerScreen, Ranker, SourceTest, LinkMemory, HdrRule. Off = every rule is its default, nothing read or written |
 | "Ask about this" boxes (AI with the section's logic book, values, last 150 log lines) + "What if?" replay | Beta only | `devAsk` | DevAsk.kt; Worker `POST /ai` (Firebase ID token checked, `GEMINI_KEY`, `DEV_UIDS`), 503 → the app's Gemini key |
 | Source Test › Combined: every addon + CloudStream + Nuvio plugin at once, strategies replayed, Quick Play suggested per title type | Beta only | `comboTest` | ComboTest.kt; reports in `filesDir/combo-tests` |
+
+### Step 5 (Xstream 0.9.4)
+
+| Item | Status | Switch | Notes |
+|------|--------|--------|-------|
+| Netflix-style Home: rows never change while shown, Top 10 fixed per session (saved order shown at once), small posters fetched on the profile page, card colour instead of grey | Beta only | `homeSteady` | HomeSteady.kt, Home.kt (HomeFreeze, NumberedRow, TallPoster, card backgrounds), AppViewModel.loadProfileData / warmHome |
+| Cloud preparation: Worker Cron + D1 prepares links for Home + Continue-watching titles, checks them (ad pages, wrong film, size / seekable, expiry), last good link first | Beta only | `cloudPrep` (needs `cloudFind`) | SxWorker.kt (CloudPrep), CloudFind.parse (`checked`), Prepare.attempt, PlayerScreen (/good), Home (/cw); Worker: scheduled(), /cw, /good, /addons |
+| Light plugins on the phone; heavy scrapers only when nothing playable came | Beta only | `lightPlugins` | Rules `lightPlugins` (group "Plugins on the phone"), PluginSources.modeStreams + HeavyGate; ComboTest asks all |
+| HDR mode (Quality › HDR → fade to an HDR copy; off → back) | Beta only | `hdrMode` | PlayerScreen (effect after fadeTo, PhoneQualityBar hdrSub / hdrEnabled), PicturePref.hdrScreen |
+| `x-sx-ver` header; Worker version + approval gate (update video) | Both apps, no switch (header only); approval token only with `accessGate` | — | SxWorker.stamp; Worker MIN_VER (unset = no effect); videos on the `assets` branch |

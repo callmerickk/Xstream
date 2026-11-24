@@ -3557,6 +3557,27 @@ fun PlayerScreen(
             else switchTo(st, label, why = why, upgrade = upgrade)
         }
     }
+    // The picture turned out HDR after a switch the app made while "no HDR" is set: back to what played before.
+    LaunchedEffect(hdrHit) {
+        if (!hdrHit) return@LaunchedEffect
+        hdrHit = false
+        val back = hdrBackTo?.let { itemFor(it) } ?: return@LaunchedEffect
+        now?.url?.let { hdrBlocked += it; upTried += it }
+        hdrBackTo = null
+        swLog(true, "HDR not allowed", back.stream.url, "going back")
+        switchTo(back, "Back · no HDR")
+    }
+    // ───── Plugin mode: the quality ladder (same 1080p film, lowest → highest) ─────
+    //   0 = MovieBox streaming playlist (MPD / HLS) or Netflix / Prime Video / Hotstar / MPlayer at 720p or lower
+    //   1 = MovieBox MP4 · 2 = Netflix / Prime Video / Hotstar / MPlayer above 720p · 3 = VegaMovies / RogMovies (CNCVerse)
+    // Play starts on the quickest link; the player then climbs silently: VegaMovies / RogMovies are waited for 25 s, then
+    // the highest rung that is there (OTT above 720p, else MovieBox MP4). Each step fades in at the same frame when every
+    // safety check passes, else one quick switch with a still frame. 4K is never automatic (the pill offers it).
+    fun hasLang(s: StreamItem, code: String?): Boolean {
+        val want = code?.let { langName(it) } ?: return true
+        val l = s.languages().filter { it != "multi" && it != "unlabelled" }
+        return l.isEmpty() || "multi" in s.languages() || l.any { it.equals(want, true) }
+    }
     // ───── 0.9.4 (hdrMode): HDR on → an HDR copy is found and faded in at the same moment; off → back to the regular copy ─────
     // The fade is the same quiet switch as the ladder / Upgrade (ottSwapTo: same length, same audio language, same frame).
     // The remembered choice (Quality › HDR) starts every play on the instant regular copy first, then fades to HDR.
@@ -3623,27 +3644,6 @@ fun PlayerScreen(
             }
         }
         if (asked) Snack.show("HDR isn't available for this title")
-    }
-    // The picture turned out HDR after a switch the app made while "no HDR" is set: back to what played before.
-    LaunchedEffect(hdrHit) {
-        if (!hdrHit) return@LaunchedEffect
-        hdrHit = false
-        val back = hdrBackTo?.let { itemFor(it) } ?: return@LaunchedEffect
-        now?.url?.let { hdrBlocked += it; upTried += it }
-        hdrBackTo = null
-        swLog(true, "HDR not allowed", back.stream.url, "going back")
-        switchTo(back, "Back · no HDR")
-    }
-    // ───── Plugin mode: the quality ladder (same 1080p film, lowest → highest) ─────
-    //   0 = MovieBox streaming playlist (MPD / HLS) or Netflix / Prime Video / Hotstar / MPlayer at 720p or lower
-    //   1 = MovieBox MP4 · 2 = Netflix / Prime Video / Hotstar / MPlayer above 720p · 3 = VegaMovies / RogMovies (CNCVerse)
-    // Play starts on the quickest link; the player then climbs silently: VegaMovies / RogMovies are waited for 25 s, then
-    // the highest rung that is there (OTT above 720p, else MovieBox MP4). Each step fades in at the same frame when every
-    // safety check passes, else one quick switch with a still frame. 4K is never automatic (the pill offers it).
-    fun hasLang(s: StreamItem, code: String?): Boolean {
-        val want = code?.let { langName(it) } ?: return true
-        val l = s.languages().filter { it != "multi" && it != "unlabelled" }
-        return l.isEmpty() || "multi" in s.languages() || l.any { it.equals(want, true) }
     }
     fun rung(s: StreamItem): Int = when {
         s.isVega() -> 3
