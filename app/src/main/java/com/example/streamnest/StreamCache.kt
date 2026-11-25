@@ -134,7 +134,7 @@ object StreamCache {
      * Cancelling the coroutine stops it (what was saved stays saved).
      */
     suspend fun save(ctx: Context, url: String, start: Long, length: Long, onProgress: (Float) -> Unit): String? =
-        saveParts(ctx, url, start, length, 1, null, onProgress)
+        saveParts(ctx, url, start, length, 1, null, onProgress = onProgress)
 
     /** Servers that refused parallel pieces (403 / 429): one connection from now on. */
     private val singleHosts: MutableSet<String> = ConcurrentHashMap.newKeySet()
