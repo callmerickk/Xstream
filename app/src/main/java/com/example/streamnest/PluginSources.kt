@@ -243,7 +243,7 @@ object PluginSources {
     private val tvGate = kotlinx.coroutines.sync.Semaphore(3)
 
     suspend fun linksFrom(api: MainAPI, name: String, year: Int?, series: Boolean, season: Int?, episode: Int?,
-                          retried: Boolean = false, onLink: ((StreamItem) -> Unit)? = null, altTried: Boolean = false): List<StreamItem> {
+                          retried: Boolean = false, altTried: Boolean = false, onLink: ((StreamItem) -> Unit)? = null): List<StreamItem> {
         fun log(s: String) = ActLog.add("CSPLAY", "${api.name}: $s")
         val tSearch = System.currentTimeMillis()
         var searchErr = false
