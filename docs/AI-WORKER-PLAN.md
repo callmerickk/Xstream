@@ -1,4 +1,4 @@
-# AI worker app ("name TBD") — plan saved 26 Nov 2026
+# Xcoder AI — AI worker app — plan saved 26 Nov 2026 (name chosen; launch animation: X zoom-in like Xstream)
 Goal: Claude (head) plans + writes prompts → workers (Arena + other playground sites + API keys from the owner's OmniRouter)
 answer → Claude checks, fixes, builds. No manual copy-paste.
 - Bridge = private GitHub repo (only thing Claude's session can reach): jobs/<id>/prompt.md (+code, code words only) → status
