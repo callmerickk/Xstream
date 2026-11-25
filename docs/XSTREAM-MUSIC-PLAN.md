@@ -71,3 +71,7 @@ build in GitHub Actions, publish, tell owner. Big fixes go back as prompts. Xstr
 - Approval per device: the same account on a new device shows "Request access" again.
 - Request shows the developer: account email, device name/model, and a name the user types on the request page.
 - Firebase: access/allowed/<uid>/<deviceId> (rules change needed); old approvals keep working for the device already in use.
+- Device match after clear data / reinstall: account + device model (+ Android build fingerprint) = same device → no new request.
+- Developer's Corner › Access: grouped by account email; inside, the list of devices (model, user-typed name, last seen,
+  app + version) with Grant / Revoke per device, plus Revoke all for the account. A revoked device sees the access page
+  on its next open ("Access paused — ask again", with the name box and a Request button).
