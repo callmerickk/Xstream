@@ -145,3 +145,6 @@ MainActivity `singleTask` lives in Xstream's brand manifest only.
 - `glassPlus`: the saved backdrop is decoded in MainActivity.onCreate (GlassBg.preload) on every start.
 - Bug fixes (both apps): PageRelay relays numbered VegaMovies / RogMovies mirrors and, for those sites, timeouts / aborts /
   DNS failures; plugin search retries a non-Latin title once with TMDB's English name.
+- Code names (both apps, owner rule): every source name — plugins, providers and addons — is a code name except on the
+  developer's account (`Public.codeName`, `addonLabel`); new sources get a random star name (AutoCodes) and the developer
+  confirms them in Developer's Corner (NewSourcesDialog → codeNames → publish).

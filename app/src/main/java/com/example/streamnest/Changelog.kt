@@ -22,6 +22,7 @@ private val UserReleases get() = listOf(
         "Glass background shows at once on every start",
         "Simpler Sources & Extensions",
         "Better search for titles shown in Hindi and other languages",
+        "Upgrade shows exactly what you get (e.g. Upgrade to 1080p)",
     )),
     Release("0.9.8", "25 Nov 2026", "Watch together, all new", listOf(
         "Move friends' bubbles anywhere and pinch them bigger or smaller; they stay where you put them",
@@ -675,6 +676,8 @@ private val AllReleases get() = listOf(
         "glassPlus: GlassBg.preload decodes the saved backdrop in MainActivity.onCreate (every start); the backdrop's own disk read resets diskTried when it is dropped mid-read (it was dropped when the first screen went away, and never tried again)",
         "addonFirst: one merged pipeline — pluginMode() true, liveMode() false, no FirstWatchChooser, no How you watch / Source mode cards, Extensions listed once; srcMode is no longer read to change anything",
         "streamx-logs collect.yml: repository_dispatch (type collect) next to the schedule and workflow_dispatch",
+        "Code names for every source (bug fix, owner rule): addonLabel → Public.codeName for addons too (CNCVerse profiles, HdHub, 111477, Stremio addons); StreamCard masked for every addon on normal accounts; Addons page shows the code name unless you renamed it. AutoCodes: a source without a code name gets a random star name at once (no duplicates, prefs codenames_auto), Developer's Corner opens NewSourcesDialog (\"New sources — set their code names\"), Save writes codeNames + DevDefaults.publish",
+        "addonFirst (Turbo wording): UpgradePill / snacks name the target (\"Upgrade to 1080p\", \"1080p 60 fps\", \"HDR\") instead of \"Upgrade quality\"",
     )),
     Release("0.9.8", "25 Nov 2026", "Watch together 2 (wt2) + Music logs; single build with 0.9.7 (versionCode 68)", listOf(
         "wt2 Call.kt: CallBubbles → CallBubblesV2 (off = CallBubblesLegacy word for word): free drag + pinch 56–180 dp (one awaitEachGesture: slop = drag, 2 fingers = pinch, tap waits for a double-tap), gentle edge snap, BubbleSpots per bubble (prefs call_bubbles), glass ring, name pill, signal dots (Call.quality from RTT / loss window / fps in statsLoop), pulsing talking ring, talker grows with 3+ on camera (600 ms debounce)",

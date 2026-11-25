@@ -9,6 +9,7 @@ Watch together stays in sync:
 • Glass background shows at once on every start.
 • Simpler Sources & Extensions.
 • Better search for titles shown in Hindi and other languages.
+• Upgrade shows exactly what you get (e.g. Upgrade to 1080p).
 
 Xstream 0.9.8
 
