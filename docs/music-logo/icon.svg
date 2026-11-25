@@ -1,36 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-<defs><linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#23232a"/><stop offset="1" stop-color="#101013"/></linearGradient></defs>
-<rect width="1024" height="1024" rx="230" fill="url(#tile)"/>
-<rect x="3" y="3" width="1018" height="1018" rx="228" fill="none" stroke="#ffffff" stroke-opacity=".06" stroke-width="4"/>
-<g transform="translate(0 -40)"><defs>
-<linearGradient id="red" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff6a6a"/><stop offset=".35" stop-color="#f0141e"/><stop offset=".75" stop-color="#c30812"/><stop offset="1" stop-color="#7d0008"/></linearGradient>
-<linearGradient id="fold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5a0006" stop-opacity="0"/><stop offset="1" stop-color="#4a0005" stop-opacity=".85"/></linearGradient>
-<linearGradient id="wv" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#a9a9b0"/></linearGradient>
-<linearGradient id="pill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff2a34"/><stop offset="1" stop-color="#c3060f"/></linearGradient>
-<filter id="sh" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="16"/></filter>
-<filter id="gl" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="22"/></filter>
-<g id="noteShape">
-<path d="M437 615 L437 245 C437 220 460 208 480 221 C565 272 655 335 643 455 C638 505 614 538 588 556 C602 502 597 440 560 400 C534 372 510 360 495 353 L495 615 Z"/>
-<ellipse cx="372" cy="628" rx="122" ry="90" transform="rotate(-24 372 628)"/>
-</g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024"><defs>
+<linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#34323d"/><stop offset=".55" stop-color="#1b1a21"/><stop offset="1" stop-color="#0f0f12"/></linearGradient>
+<radialGradient id="glowP" cx=".5" cy=".38" r=".55"><stop offset="0" stop-color="#6a5a8a" stop-opacity=".55"/><stop offset="1" stop-color="#6a5a8a" stop-opacity="0"/></radialGradient>
+<radialGradient id="glowR" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#ff1a2a" stop-opacity=".55"/><stop offset="1" stop-color="#ff1a2a" stop-opacity="0"/></radialGradient>
+<linearGradient id="bar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff7a7f"/><stop offset=".3" stop-color="#f01622"/><stop offset=".8" stop-color="#b8060f"/><stop offset="1" stop-color="#6e0007"/></linearGradient>
+<linearGradient id="wv2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#9b9ba3"/></linearGradient>
+<linearGradient id="pl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff2a34"/><stop offset="1" stop-color="#b8050e"/></linearGradient>
+<linearGradient id="metal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d9d9de"/><stop offset="1" stop-color="#5d5d66"/></linearGradient>
+<filter id="bl" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="14"/></filter>
 </defs>
-<g transform="translate(-40 0)">
-<use href="#noteShape" fill="#e50914" opacity=".35" filter="url(#gl)"/>
-<use href="#noteShape" transform="translate(14 20)" fill="#000" opacity=".6" filter="url(#sh)"/>
-<use href="#noteShape" fill="url(#red)"/>
-<path d="M495 353 C510 360 534 372 560 400 C597 440 602 502 588 556 C575 500 560 455 520 420 C508 410 500 400 495 395 Z" fill="url(#fold)"/>
-<path d="M437 470 L437 615 L495 615 L495 560 C470 560 450 520 437 470 Z" fill="#5a0006" opacity=".35"/>
-<path d="M453 596 L453 258" stroke="#fff" stroke-opacity=".6" stroke-width="11" stroke-linecap="round"/>
-<path d="M488 238 C562 283 628 338 628 430" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="9" stroke-linecap="round"/>
-<ellipse cx="326" cy="598" rx="52" ry="19" transform="rotate(-24 326 598)" fill="#fff" opacity=".55"/>
-<ellipse cx="420" cy="676" rx="70" ry="22" transform="rotate(-24 420 676)" fill="#3a0004" opacity=".35"/>
-</g>
-<g fill="none" stroke-linecap="round">
-<path d="M682 392 Q728 470 682 548" stroke="url(#wv)" stroke-width="36"/>
-<path d="M748 334 Q828 470 748 606" stroke="url(#wv)" stroke-width="36" opacity=".85"/>
-<path d="M814 278 Q928 470 814 662" stroke="url(#wv)" stroke-width="36" opacity=".65"/>
-</g></g>
-<rect x="307" y="800" width="410" height="108" rx="54" fill="url(#pill)"/>
-<circle cx="365" cy="854" r="15" fill="#fff"/>
-<text x="538" y="878" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="62" letter-spacing="6" fill="#fff">MUSIC</text>
-</svg>
+<rect width="1024" height="1024" rx="230" fill="url(#tile)"/><rect width="1024" height="1024" rx="230" fill="url(#glowP)"/>
+<circle cx="512" cy="480" r="330" fill="url(#glowR)"/>
+<rect x="3" y="3" width="1018" height="1018" rx="228" fill="none" stroke="#fff" stroke-opacity=".08" stroke-width="5"/>
+<g transform="translate(512 470) scale(1.1) translate(-460 -500)">
+<path d="M230 500 A 230 230 0 0 1 690 500" fill="none" stroke="url(#metal)" stroke-width="44" stroke-linecap="round"/>
+<path d="M262 470 A 200 200 0 0 1 420 300" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width="10" stroke-linecap="round"/>
+<g transform="translate(460 505) scale(0.78)"><g transform="translate(0 0) rotate(-45)">
+<rect x="-205.0" y="-43.0" width="430" height="118" rx="59.0" fill="#000" opacity=".55" filter="url(#bl)"/>
+<rect x="-215.0" y="-59.0" width="430" height="118" rx="59.0" fill="url(#bar)"/>
+<rect x="-175.0" y="-45.0" width="350" height="23.6" rx="11.8" fill="#fff" opacity=".45"/></g><g transform="translate(0 0) rotate(45)">
+<rect x="-205.0" y="-43.0" width="430" height="118" rx="59.0" fill="#000" opacity=".55" filter="url(#bl)"/>
+<rect x="-215.0" y="-59.0" width="430" height="118" rx="59.0" fill="url(#bar)"/>
+<rect x="-175.0" y="-45.0" width="350" height="23.6" rx="11.8" fill="#fff" opacity=".45"/></g></g>
+<rect x="168" y="420" width="96" height="200" rx="44" fill="url(#bar)"/><rect x="186" y="440" width="22" height="150" rx="11" fill="#fff" opacity=".4"/>
+<rect x="656" y="420" width="96" height="200" rx="44" fill="url(#bar)"/><rect x="674" y="440" width="22" height="150" rx="11" fill="#fff" opacity=".4"/>
+<g transform="translate(148 520) scale(-1 1)" fill="none" stroke="url(#wv2)" stroke-linecap="round" stroke-width="26">
+<path d="M0 -50 Q30 0 0 50"/><path d="M42 -88 Q92 0 42 88" opacity=".75"/></g><g transform="translate(772 520) scale(1 1)" fill="none" stroke="url(#wv2)" stroke-linecap="round" stroke-width="26">
+<path d="M0 -50 Q30 0 0 50"/><path d="M42 -88 Q92 0 42 88" opacity=".75"/></g></g>
+<rect x="352" y="806" width="320" height="92" rx="46" fill="url(#pl)" stroke="#5a0006" stroke-width="5"/>
+<circle cx="404" cy="852" r="13" fill="#fff"/><text x="545" y="874" text-anchor="middle" font-family="Poppins" font-weight="700" font-size="54" letter-spacing="5" fill="#fff">MUSIC</text></svg>
