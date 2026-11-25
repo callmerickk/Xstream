@@ -394,6 +394,7 @@ internal fun DevGate(vm: AppViewModel, onUnlocked: () -> Unit, onBack: () -> Uni
 
 @Composable
 internal fun DevCorner(vm: AppViewModel, onBack: () -> Unit) {
+    NewSourcesDialog(vm)   // 0.9.9: new sources since last time → set their code names
     val texts by vm.texts.collectAsStateWithLifecycle()
     val ver by vm.imgVersion.collectAsStateWithLifecycle()
     val logo = remember(ver) { vm.logoFile().takeIf { it.exists() } }

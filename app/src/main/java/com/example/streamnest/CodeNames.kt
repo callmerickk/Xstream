@@ -79,3 +79,47 @@ fun CodeNamesPage(vm: AppViewModel, onBack: () -> Unit) {
         PublishBar("Publish code names for everyone") { save(); DevDefaults.publish(vm) }
     }
 }
+
+/**
+ * 0.9.9: Developer's Corner opens with this when sources without a code name appeared (they already got a random star
+ * name, AutoCodes): one field each, prefilled; Save writes them into the code names and publishes them like the Code
+ * names page. Developer's account only.
+ */
+@Composable
+fun NewSourcesDialog(vm: AppViewModel) {
+    if (!Public.dev) return
+    val n by AutoCodes.newCount.collectAsState()
+    var dismissed by remember { mutableStateOf(false) }
+    val list = remember(n) { AutoCodes.pendingList() }
+    if (dismissed || list.isEmpty()) return
+    val edits = remember(list) { mutableStateListOf<String>().apply { addAll(list.map { it.second }) } }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    AlertDialog(
+        onDismissRequest = { dismissed = true },
+        title = { Text("New sources — set their code names") },
+        text = {
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Everyone except you sees these names. Each already has a random one.", fontSize = 13.sp, color = Muted)
+                list.forEachIndexed { i, (real, _) ->
+                    Column {
+                        Text(real.replaceFirstChar { it.uppercase() }, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        OutlinedTextField(edits[i], { v -> edits[i] = v }, Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(12.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton({
+                if (busy) return@TextButton
+                busy = true
+                val saved = list.mapIndexed { i, (real, code) -> real to (edits[i].trim().ifBlank { code }) }.toMap()
+                val old = (vm.texts.value["codeNames"] ?: "").lines().filter { l -> l.isNotBlank() && l.substringBefore('=').trim().lowercase() !in saved.keys }
+                vm.setText("codeNames", (old + saved.map { "${it.key}=${it.value}" }).joinToString("\n"))
+                AutoCodes.confirm(saved)
+                scope.launch { runCatching { DevDefaults.publish(vm) }; busy = false; dismissed = true }
+            }) { Text(if (busy) "Saving…" else "Save", color = Color.White) }
+        },
+        dismissButton = { TextButton({ dismissed = true }) { Text("Later", color = Color.White) } },
+    )
+}

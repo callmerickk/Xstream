@@ -59,7 +59,8 @@ fun StreamCard(
 ) {
     val shape = RoundedCornerShape(if (compact) 16.dp else 20.dp)
     // The built-in servers: no names, file names or descriptions for normal users — quality, language and tags only.
-    val masked = !Public.dev && (Public.isDevChoice(s.addonName) || s.addonName.startsWith("CloudStream · ") || s.addonName.startsWith("Nuvio · "))
+    // 0.9.9: every addon is masked for normal accounts (code names only; a stream's own title often names its addon).
+    val masked = !Public.dev
     Column(
         Modifier.fillMaxWidth().clip(shape).background(StreamCardBg)
             .border(1.dp, if (playing) Accent.copy(alpha = 0.8f) else Color(0x0FFFFFFF), shape)

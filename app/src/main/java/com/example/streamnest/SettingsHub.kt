@@ -914,7 +914,8 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(a.label(), Modifier.weight(1f, fill = false).pointerInput(a.baseUrl) {
+                            // 0.9.9: code name for normal accounts (your own rename stays as you wrote it).
+                            Text(if (Public.dev || a.label() != a.manifest.name) a.label() else Public.codeName(a.label()), Modifier.weight(1f, fill = false).pointerInput(a.baseUrl) {
                                 detectTapGestures(onLongPress = {
                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                     runCatching {
@@ -926,7 +927,7 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
                             }, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Icon(Icons.Default.Edit, "Rename", Modifier.padding(start = 6.dp).size(26.dp).clip(CircleShape).clickable { renaming = true }.padding(5.dp), tint = Color(0xFF9AA3B5))
                         }
-                        Text((if (a.label() != a.manifest.name) "${a.manifest.name} · " else "") + "Version ${a.manifest.version}" + (if (borrowed) " · Borrowed" else ""), fontSize = 15.sp, color = Muted)
+                        Text((if (Public.dev && a.label() != a.manifest.name) "${a.manifest.name} · " else "") + "Version ${a.manifest.version}" + (if (borrowed) " · Borrowed" else ""), fontSize = 15.sp, color = Muted)
                     }
                     Switch(on, { vm.toggleAddon(a) })
                 }
@@ -965,7 +966,7 @@ private fun AddonsPage(vm: AppViewModel, onBack: () -> Unit) {
                     }
                     Spacer(Modifier.weight(1f))
                     // Pin: stays at the top (Cinemeta and OpenSubtitles always).
-                    IconButton({ if (fixed) Snack.show("${a.label()} always stays at the top") else vm.togglePin(a) }) {
+                    IconButton({ if (fixed) Snack.show("${if (Public.dev) a.label() else addonLabel(a.label())} always stays at the top") else vm.togglePin(a) }) {
                         Icon(Icons.Default.PushPin, if (pinned) "Unpin" else "Pin", tint = if (pinned) Accent else Color(0xFF8A94A8))
                     }
                     val prevPinned = addons.getOrNull(i - 1)?.let { vm.isPinned(it) } == true

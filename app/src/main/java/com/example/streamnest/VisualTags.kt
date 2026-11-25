@@ -109,6 +109,63 @@ object VisualTags {
     fun quality(s: StreamItem): String = s.effectiveRes().let { r -> when { r >= 2160 -> "4K"; r >= 1440 -> "1440p"; r > 0 -> "${r}p"; else -> "SD" } }
 }
 
+/**
+ * 0.9.9: random code names for sources (plugins, providers, addons, CNCVerse profiles…) that have none yet. Kept on the
+ * phone (prefs "codenames_auto": real=code per line); the new ones wait in "pending" until the developer saves them in
+ * Developer's Corner (NewSourcesDialog), which writes them into the published codeNames text.
+ */
+object AutoCodes {
+    private val pool = listOf("Acrux", "Adhara", "Albireo", "Alcor", "Aldebaran", "Algol", "Alnair", "Alnitak", "Alphard", "Altair", "Ankaa",
+        "Arcturus", "Atria", "Avior", "Betelgeuse", "Canopus", "Capella", "Caph", "Diphda", "Dubhe", "Elnath", "Eltanin", "Enif", "Fomalhaut",
+        "Gacrux", "Gienah", "Hamal", "Kochab", "Larawag", "Markab", "Menkar", "Merak", "Miaplacidus", "Mimosa", "Mintaka", "Mirfak", "Mirach",
+        "Naos", "Nunki", "Peacock", "Phecda", "Polaris", "Procyon", "Rasalhague", "Rigil", "Ruchbah", "Sabik", "Sadr", "Saiph", "Scheat",
+        "Shaula", "Spica", "Suhail", "Tarazed", "Thuban", "Unukalhai", "Vega Prime", "Wasat", "Zosma", "Zubenelgenubi", "Achernar", "Alkaid",
+        "Alphecca", "Ascella", "Botein", "Chara", "Cursa", "Fafnir", "Furud", "Grumium", "Heze", "Imai", "Jabbah", "Keid", "Kraz", "Lesath",
+        "Maia", "Matar", "Meissa", "Menkent", "Muphrid", "Nekkar", "Okab", "Porrima", "Rana", "Sadalmelik", "Sargas", "Talitha", "Tejat", "Vindemiatrix")
+    private val map = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val pending = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var loaded = false
+    /** Bumps when a new name was given (the Developer's Corner popup follows it). */
+    val newCount = kotlinx.coroutines.flow.MutableStateFlow(0)
+    private fun prefs() = Public.vm?.appContext?.getSharedPreferences("codenames_auto", android.content.Context.MODE_PRIVATE)
+    private fun load() {
+        if (loaded) return
+        val p = prefs() ?: return
+        loaded = true
+        p.getString("map", null)?.lines()?.forEach { l -> l.split('=', limit = 2).takeIf { it.size == 2 && it[0].isNotBlank() }?.let { map[it[0]] = it[1] } }
+        p.getStringSet("pending", null)?.let { pending += it }
+        newCount.value = pending.size
+    }
+    private fun save() { prefs()?.edit()?.putString("map", map.entries.joinToString("\n") { "${it.key}=${it.value}" })?.putStringSet("pending", pending.toSet())?.apply() }
+    /** A plain source key worth naming: letters in it, not a link or a whole sentence. */
+    private fun nameable(n: String) = n.length in 2..60 && n.any { it.isLetter() } && "://" !in n && n.count { it == ' ' } <= 6
+
+    /** The code name for [n] (lower-case real name) — given now if it has none. Null when it can't be named. */
+    fun nameFor(n: String): String? {
+        val k = n.trim().lowercase()
+        if (!nameable(k)) return null
+        load()
+        map[k]?.let { return it }
+        synchronized(this) {
+            map[k]?.let { return it }
+            val used = Public.usedNames() + map.values.map { it.lowercase() }
+            val free = pool.filter { it.lowercase() !in used }
+            val pick = if (free.isNotEmpty()) free.random() else "${pool.random()} ${(map.size + 2)}"
+            map[k] = pick; pending += k
+            save(); newCount.value = pending.size
+            return pick
+        }
+    }
+    /** New names not confirmed by the developer yet: (real, code). */
+    fun pendingList(): List<Pair<String, String>> { load(); return pending.mapNotNull { k -> map[k]?.let { k to it } }.sortedBy { it.first } }
+    /** The developer saved them (into codeNames): no longer pending; the code is what was saved. */
+    fun confirm(saved: Map<String, String>) {
+        load()
+        saved.forEach { (k, v) -> if (v.isNotBlank()) map[k] = v; pending -= k }
+        save(); newCount.value = pending.size
+    }
+}
+
 /** Who may see "Dev sources" (Developer's Corner › Dev sources access): "email" or "email / profile" lines. */
 /**
  * What normal users see: no server, source or addon names anywhere. Accounts on the Dev access list, and phones where
@@ -176,12 +233,16 @@ object Public {
         'w' to "Wezen", 'x' to "Xena", 'y' to "Ymir", 'z' to "Zaurak")
     fun codeName(addon: String): String {
         val real = addon.removePrefix("CloudStream · ").removePrefix("Nuvio · ")
-        if (dev) return real
         val n = real.lowercase().replace(Regex("provider(in)?$"), "").trim()
-        codes.firstOrNull { (k, _) -> n.startsWith(k) || n == k }?.let { return it.second }
-        codes.firstOrNull { (k, _) -> k in n }?.let { return it.second }
-        return stars[n.firstOrNull { it.isLetter() } ?: 'n'] ?: "Nova"
+        val known = codes.firstOrNull { (k, _) -> n.startsWith(k) || n == k }?.second ?: codes.firstOrNull { (k, _) -> k in n }?.second
+        if (dev) { if (known == null) AutoCodes.nameFor(n); return real }   // 0.9.9: a new source gets its name on the dev phone too
+        known?.let { return it }
+        // 0.9.9: a source without a code name gets its own random star name at once (kept, never a duplicate);
+        // the developer is asked to confirm / change it in Developer's Corner.
+        return AutoCodes.nameFor(n) ?: stars[n.firstOrNull { it.isLetter() } ?: 'n'] ?: "Nova"
     }
+    /** 0.9.9: names already in use (built-in / edited code names + the random ones), lower case. */
+    internal fun usedNames(): Set<String> = codes().map { it.second.lowercase() }.toSet()
 
     /** "Quick server" / "HD server" for the developer's-choice addons; other addons keep their own name. */
     fun serverName(addon: String?): String {

@@ -5280,21 +5280,22 @@ fun PlayerScreen(
                                 onDragCancel = { dx = 0f; dy = 0f },
                             ) { ch, d -> ch.consume(); dx = (dx + d.x).coerceAtLeast(0f); dy = (dy + d.y).coerceAtMost(0f) }
                         }) {
-                        UpgradePill(u.is4k, upLeft) {
+                        val upTarget = upgradeTarget(u.item)
+                        UpgradePill(u.is4k, upLeft, upTarget) {
                             upgradedFrom = now?.url?.let { itemFor(it) }; upgradedUrl = u.item.stream.url
                             upgrade = null; poke++
                             // Gets the better file ready in the background, then fades it in at the same frame (no
                             // "Resuming" screen). Only when that can't be done does it switch the usual way.
                             byHand = true   // after your upgrade the player never swaps back by itself
-                            val upWhy = if (u.is4k) "Upgrade to 4K" else "Upgrade quality"
-                            if (usingVlc) switchTo(u.item, if (u.is4k) "4K" else "Better quality", why = upWhy, upgrade = true)
+                            val upWhy = if (u.is4k) "Upgrade to 4K" else upTarget?.let { "Upgrade to $it" } ?: "Upgrade quality"
+                            if (usingVlc) switchTo(u.item, if (u.is4k) "4K" else upTarget ?: "Better quality", why = upWhy, upgrade = true)
                             else scope.launch {
-                                upPrep = if (u.is4k) "Getting 4K ready" else "Getting better quality ready"
+                                upPrep = if (u.is4k) "Getting 4K ready" else upTarget?.let { "Getting $it ready" } ?: "Getting better quality ready"
                                 val ok = runCatching { ottSwapTo(u.item, asked = true, why = upWhy) }.getOrDefault(false)
                                 upPrep = null
                                 if (!ok && u.item.stream.url in hdrBlocked && HdrRule.banned(vm)) Snack.show("That copy is HDR — not switched (no HDR is on)")
-                                else if (!ok) switchTo(u.item, if (u.is4k) "4K" else "Better quality", why = upWhy, upgrade = true)
-                                else Snack.show(if (u.is4k) "Now in 4K" else "Better quality on")
+                                else if (!ok) switchTo(u.item, if (u.is4k) "4K" else upTarget ?: "Better quality", why = upWhy, upgrade = true)
+                                else Snack.show(if (u.is4k) "Now in 4K" else upTarget?.let { "Now in $it" } ?: "Better quality on")
                             }
                         }
                     }
@@ -7967,12 +7968,28 @@ private fun SwitchCapsule(progress: Float, at: Long, modifier: Modifier = Modifi
 
 private data class UpgradeOffer(val item: StreamItem, val is4k: Boolean)
 
+/** 0.9.9 (addonFirst, Turbo wording): what an upgrade goes to — "1080p", "1080p 60 fps", "HDR"; null = unknown (old label). */
+private fun upgradeTarget(s: StreamItem): String? {
+    if (!Feature.addonFirst) return null
+    val r = s.effectiveRes()
+    val q = when { r >= 2160 -> "4K"; r >= 1440 -> "1440p"; r >= 1080 -> "1080p"; r >= 720 -> "720p"; else -> null }
+    val fps60 = Regex("(?i)\\b(50|59|60)\\s?fps\\b").containsMatchIn(listOfNotNull(s.stream.name, s.stream.title, s.stream.description, s.stream.behaviorHints?.filename).joinToString(" "))
+    val hdr = HdrRule.named(s)
+    return when {
+        q != null && fps60 -> "$q 60 fps"
+        q != null && hdr -> "$q HDR"
+        q != null -> q
+        hdr -> "HDR"
+        else -> null
+    }
+}
+
 /**
  * "Upgrade to 4K" (4K bold in StreamX red) / "Upgrade quality": the size of Skip intro, glass with a red edge; the ring
  * counts down the seconds of the better file still saved ahead (38 → 1).
  */
 @Composable
-private fun UpgradePill(is4k: Boolean, left: Int, onClick: () -> Unit) {
+private fun UpgradePill(is4k: Boolean, left: Int, target: String? = null, onClick: () -> Unit) {
     val shape = RoundedCornerShape(50)
     val frac by animateFloatAsState(left / 30f, tween(450), label = "upLeft")
     Row(
@@ -7990,6 +8007,10 @@ private fun UpgradePill(is4k: Boolean, left: Int, onClick: () -> Unit) {
         if (is4k) {
             Text("Upgrade to ", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             Text("4K", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFFF4B55))
+        } else if (target != null) {
+            // 0.9.9 (addonFirst): the Turbo wording — the target itself ("Upgrade to 1080p"), never a generic label.
+            Text("Upgrade to ", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(target, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFFF4B55))
         } else Text("Upgrade quality", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
