@@ -55,3 +55,14 @@ build in GitHub Actions, publish, tell owner. Big fixes go back as prompts. Xstr
 ### Prompt 6 — Listen together
 - Like Watch together (rooms, invite, ring a friend, chat, bubbles), synced play/pause/seek/queue, everyone can add to the queue,
   host controls, reactions. Reuse Together/room code; same Firebase rooms rules.
+
+### Logo — approved direction 26 Nov 2026
+- Final: ribbon X (same glossy 3D X as Xstream Live) wearing headphones, small sound waves out of both ear cups,
+  Live-style glow (purple light top, red glow behind), red "● MUSIC" pill. File: docs/music-logo/icon.svg.
+- Splash: icon appears, X zooms in, waves pulse from the ear cups, "MUSIC" pill pops where LIVE is (exact Live animation).
+- Show previews INLINE in chat (owner can't open sent image cards without downloading).
+
+### Order agreed 26 Nov
+1. Finish Xstream 0.9.10 (faster starts) from the other AI's result → fix small things myself, big ones = new prompt.
+2. Then Xstream Music prompts 1–6. Then build everything together with all features intact.
+3. LATER (reminder): Live TV the same way — inside the main Xstream app, with its own home-screen shortcut like Xstream Music.
