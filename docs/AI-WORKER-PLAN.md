@@ -16,3 +16,11 @@ answer → Claude checks, fixes, builds. No manual copy-paste.
 - Several accounts per site (separate browser profile per account), auto-switch when one hits its limit.
   ChatGPT + Gemini websites as Arena backups. Better/official: Codex CLI (ChatGPT login) and Gemini CLI (Google login)
   as workers on the cloud VM.
+
+## 26 Nov — owner decisions
+- Claude = AI manager (plans, splits, reviews). Workers: Arena, other Claude site account (free Sonnet), ChatGPT (2 accounts, consent),
+  Gemini, OmniRouter API keys, Codex/Gemini CLI. As many as possible, in parallel.
+- Start without cloud: always-on Windows PC / spare phone = worker host; GitHub schedule later. Phone keep-alive like the
+  PencariMovie server app: foreground service + permanent notification + battery-optimisation exemption + auto-start prompt (realme).
+- Pipeline idea: job → worker → answer auto-applied on a branch → GitHub build → compile errors auto-sent back to the same worker
+  (max 3 rounds) → only a green build reaches Claude for review. Same job to 2 workers for important parts; Claude picks the better.
