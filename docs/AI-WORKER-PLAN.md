@@ -12,3 +12,7 @@ answer → Claude checks, fixes, builds. No manual copy-paste.
 - Never send personal data: code words (tools/cw.py), no keys/emails.
 - Order: after the Music prompts. Step 1 jobs repo + format, 2 API worker (GitHub Action), 3 cloud browser worker (Arena),
   4 phone/Windows app.
+- Files: attach any file (txt, zip, code, PDF) → app reads it and pastes the text into the prompt, split into parts.
+- Several accounts per site (separate browser profile per account), auto-switch when one hits its limit.
+  ChatGPT + Gemini websites as Arena backups. Better/official: Codex CLI (ChatGPT login) and Gemini CLI (Google login)
+  as workers on the cloud VM.
