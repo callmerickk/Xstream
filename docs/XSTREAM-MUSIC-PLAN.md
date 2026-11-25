@@ -66,3 +66,8 @@ build in GitHub Actions, publish, tell owner. Big fixes go back as prompts. Xstr
 1. Finish Xstream 0.9.10 (faster starts) from the other AI's result → fix small things myself, big ones = new prompt.
 2. Then Xstream Music prompts 1–6. Then build everything together with all features intact.
 3. LATER (reminder): Live TV the same way — inside the main Xstream app, with its own home-screen shortcut like Xstream Music.
+
+### Next build idea (not Music) — access requests per device (26 Nov)
+- Approval per device: the same account on a new device shows "Request access" again.
+- Request shows the developer: account email, device name/model, and a name the user types on the request page.
+- Firebase: access/allowed/<uid>/<deviceId> (rules change needed); old approvals keep working for the device already in use.
