@@ -74,7 +74,11 @@ data class RoomState(
 
 /** Someone in the room: [seen] in server time; [mic]/[cam] on; [rtc] = their StreamX can do voice/video. */
 /** [by]: who brought this person into the room (their inviter), used to show "+N" on that person for the others. */
-@Serializable data class RoomMember(val name: String = "", val seen: Long = 0, val mic: Boolean = false, val cam: Boolean = false, val rtc: Boolean = false, val by: String = "")
+@Serializable data class RoomMember(val name: String = "", val seen: Long = 0, val mic: Boolean = false, val cam: Boolean = false, val rtc: Boolean = false, val by: String = "",
+    /** 0.9.8 (wt2): the frame this person chose for their own bubble, and when they raised a hand (server time). */
+    val frame: FrameMsg? = null, val hand: Long = 0)
+/** 0.9.8 (wt2): members/<uid>/frame, published by the owner of the camera ([at] = server time). */
+@Serializable data class FrameMsg(val fx: Float = 0.5f, val fy: Float = 0.42f, val r: Float = 0.9f, val at: Long = 0)
 @Serializable data class RoomReact(val k: String = "", val by: String = "", val at: Long = 0)
 @Serializable data class ChatMsg(val by: String = "", val name: String = "", val text: String = "", val at: Long = 0)
 
@@ -112,6 +116,25 @@ object Together {
     val unread = MutableStateFlow(0)
     @Volatile var chatOpen = false
     private val seenChat = HashSet<String>()
+    // 0.9.8 (wt2)
+    /** Someone raised a hand: (uid, server time). Clears itself after 6 s. */
+    val handFrom = MutableStateFlow<Pair<String, Long>?>(null)
+    /** Someone new came in (their name), for the "Riya joined" line. */
+    val joined = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    /** A room made on the title page just got its video: the app opens the player (same as after a join). */
+    val videoReady = MutableSharedFlow<RoomState>(extraBufferCapacity = 2)
+    /** The room panel asks the player to open the chat panel. */
+    val chatShown = MutableStateFlow(false)
+    @Volatile private var myFrame: FrameMsg? = null
+    @Volatile private var myHand = 0L
+    @Volatile private var titleHost: String? = null
+    @Volatile private var waitingTitle = false
+    @Volatile private var joinedSome = false
+    @Volatile private var firstTree = true
+    @Volatile private var extrasBadUntil = 0L
+    private var idleJob: Job? = null
+    private var frameJob: Job? = null
+    private val seenHand = java.util.concurrent.ConcurrentHashMap<String, Long>()
     /** The room ended (who ended it / why): the player closes. */
     val ended = MutableSharedFlow<String>(extraBufferCapacity = 4)
     /** Voice / video signalling for this phone: (from, message). */
@@ -128,6 +151,8 @@ object Together {
     private var bestAt = 0L
 
     val me: String get() = Cloud.user.value?.uid ?: ""
+    /** 0.9.8 (wt2): join() answer for a title-page room without a video yet (in the room, not an error). */
+    const val WAITING_HOST = "You're in — waiting for the host to pick the video"
 
     // 0.9.1 (roomRejoin, Xstream 0.8.17): the host's room is remembered for 2 minutes, so an app restart (crash, Android
     // closing it) rejoins it. Off = nothing saved, nothing rejoined.
@@ -195,16 +220,38 @@ object Together {
 
     /** Who invited this phone into the current room (the host when it was a plain code). */
     @Volatile var invitedBy = ""
-    private fun memberJson(): JsonObject = Api.json.encodeToJsonElement(RoomMember.serializer(),
-        RoomMember(myName.ifBlank { "Guest" }, 0, Call.micOn.value, Call.camOn.value, rtc = true, by = invitedBy)).jsonObject
+    private fun memberJson(): JsonObject {
+        val full = Api.json.encodeToJsonElement(RoomMember.serializer(),
+            RoomMember(myName.ifBlank { "Guest" }, 0, Call.micOn.value, Call.camOn.value, rtc = true, by = invitedBy)).jsonObject
+        // 0.9.8: with wt2 off the node is exactly as before (no frame / hand keys).
+        val plain = JsonObject(full.filterKeys { it != "frame" && it != "hand" })
+        if (!Feature.wt2 || System.currentTimeMillis() < extrasBadUntil) return plain
+        val extra = HashMap<String, JsonElement>()
+        myFrame?.let { extra["frame"] = Api.json.encodeToJsonElement(FrameMsg.serializer(), it) }
+        if (myHand > 0 && serverNow() - myHand < 10_000) extra["hand"] = JsonPrimitive(myHand)
+        return JsonObject(plain + extra)
+    }
+
+    /** 0.9.8: the beat writes the whole member node, so it carries my frame / hand (else they'd be wiped). If the cloud
+     *  rules refuse the new keys, the plain node goes (and no extras for 5 min) so nobody drops out of the room. */
+    private suspend fun putMember(c: String): Long? {
+        val r = stamped("${base(c)}/members/$me", memberJson(), "seen")
+        if (r == null && Feature.wt2 && (myFrame != null || myHand > 0) && System.currentTimeMillis() >= extrasBadUntil) {
+            extrasBadUntil = System.currentTimeMillis() + 5 * 60_000
+            ActLog.add("TOGETHER", "wt2: member write failed with frame/hand, sending the plain node for 5 min")
+            return stamped("${base(c)}/members/$me", memberJson(), "seen")
+        }
+        return r
+    }
 
     /** Tell the room this phone is here (and its mic / camera). */
-    fun announce() { val c = code.value ?: return; io.launch { stamped("${base(c)}/members/$me", memberJson(), "seen") } }
+    fun announce() { val c = code.value ?: return; io.launch { if (Feature.wt2) putMember(c) else stamped("${base(c)}/members/$me", memberJson(), "seen") } }
 
     /** Starts a room with what is playing now. Null = done, else why not. */
-    suspend fun create(state: RoomState): String? {
+    suspend fun create(state: RoomState, fromTitle: Boolean = false): String? {
         if (Cloud.user.value == null) return "Sign in first (Settings › Account & Cloud Sync)."
-        if (!state.url.startsWith("http")) return "Downloaded videos can't be shared — play it from a source."
+        // 0.9.8 (wt2): a room made on the title page has no video yet (url = ""); the host picks a stream afterwards.
+        if (!(Feature.wt2 && fromTitle) && !state.url.startsWith("http")) return "Downloaded videos can't be shared — play it from a source."
         val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         repeat(5) {
             val c = (1..4).map { alphabet.random() }.joinToString("")
@@ -215,6 +262,7 @@ object Together {
                 isHost = true
                 start(c)
                 tlog("room created: $c")
+                if (Feature.wt2 && fromTitle) { ActLog.add("TOGETHER", "room $c made from the title page (closes in 15 min if nobody joins)"); idleClose(c) }
                 return null
             }
         }
@@ -238,6 +286,12 @@ object Together {
         stamped("${base(c)}/members/$me", memberJson(), "seen")
         start(c)
         tlog("joined room $c${if (isHost) " (as its host, back again)" else ""}")
+        // 0.9.8 (wt2): a title-page room with no video yet: in the room, the player opens when the host's video starts.
+        if (Feature.wt2 && st.url.isBlank()) {
+            titleHost = st.host.ifBlank { null }; waitingTitle = true
+            ActLog.add("TOGETHER", "joined title room $c (no video yet)")
+            return null to WAITING_HOST
+        }
         return st.copy(receivedAt = System.currentTimeMillis()) to null
     }
 
@@ -264,11 +318,28 @@ object Together {
         runCatching {
             o["state"]?.let { e ->
                 val st = Api.json.decodeFromJsonElement(RoomState.serializer(), e)
-                if (st.rev > (remote.value?.rev ?: 0)) remote.value = st.copy(receivedAt = System.currentTimeMillis())
+                if (Feature.wt2 && st.url.isBlank()) {
+                    // 0.9.8: title-page room, no video yet: players must not see it as a new video.
+                    titleHost = st.host.ifBlank { null }; waitingTitle = true
+                } else if (st.rev > (remote.value?.rev ?: 0)) {
+                    val rs = st.copy(receivedAt = System.currentTimeMillis())
+                    remote.value = rs
+                    if (Feature.wt2 && waitingTitle) {
+                        waitingTitle = false
+                        if (!isHost && provider == null) { ActLog.add("TOGETHER", "title room got its video"); videoReady.tryEmit(rs) }
+                    }
+                }
             }
         }
         val m = (o["members"] as? JsonObject)?.mapValues { (_, v) -> runCatching { Api.json.decodeFromJsonElement(RoomMember.serializer(), v) }.getOrDefault(RoomMember()) } ?: emptyMap()
+        val wasFirst = firstTree; firstTree = false
         if (m != members.value) {
+            if (Feature.wt2) {
+                // 0.9.8: "Riya joined" only for people who come in after us, and only people we may see.
+                if (!wasFirst) (m.keys - members.value.keys).filter { it != me && Social.visible(it) }
+                    .forEach { u -> joined.tryEmit(m[u]?.name?.ifBlank { null } ?: "A friend") }
+                if (m.keys.any { it != me }) joinedSome = true
+            }
             if (Feature.roomRejoin) {
                 val before = members.value
                 (m.keys - before.keys).filter { it != me }.forEach { u -> tlog("room $c: ${m[u]?.name?.ifBlank { null } ?: "a friend"} joined") }
@@ -279,6 +350,17 @@ object Together {
             m.forEach { (uid, mm) -> if (uid != me && mm.by == me) Social.befriend(uid, mm.name) }
             // Voice / video only with people who approved each other.
             Call.onMembers(m.filterKeys { Social.approved(it) })
+        }
+        // 0.9.8 (wt2): a raised hand shows for 6 s on every screen (only fresh ones, each once).
+        if (Feature.wt2) m.forEach { (uid, mm) ->
+            val h = mm.hand
+            if (h > 0 && seenHand[uid] != h) {
+                seenHand[uid] = h
+                if (serverNow() - h in -3000..8000) {
+                    handFrom.value = uid to h
+                    io.launch { delay(6000); if (handFrom.value?.second == h) handFrom.value = null }
+                }
+            }
         }
         (o["reacts"] as? JsonObject)?.forEach { (k, v) ->
             if (seenReacts.add(k)) {
@@ -342,10 +424,11 @@ object Together {
         code.value = c
         joinedAt = System.currentTimeMillis()
         seenReacts.clear(); seenSig.clear(); seenChat.clear(); tree = JsonNull; unread.value = 0
+        resetWt2()
         poll = io.launch { follow(c) }
         beat = io.launch {
             while (isActive) {
-                stamped("${base(c)}/members/$me", memberJson(), "seen")
+                if (Feature.wt2) putMember(c) else stamped("${base(c)}/members/$me", memberJson(), "seen")
                 if (isHost) saveRoom(c)   // 0.9.1 (roomRejoin): nothing when off
                 // Someone else buffering for over 1.5 s (and still here): everyone waits for them.
                 repeat(20) {
@@ -354,7 +437,7 @@ object Together {
                     val w = buf.value.entries.firstOrNull { (uid, at) -> uid != me && now - at in 1_500..60_000 && here[uid]?.let { now - it.seen < 40_000 } == true }
                     waitingFor.value = w?.let { here[it.key]?.name?.ifBlank { "a friend" } }
                     // The room's creator went silent for 45 s (phone off, app closed, no internet): the room is over.
-                    val host = remote.value?.host
+                    val host = remote.value?.host ?: titleHost   // 0.9.8: titleHost is null unless wt2
                     if (!isHost && host != null && joinedAt > 0 && System.currentTimeMillis() - joinedAt > 50_000) {
                         val hm = here[host]
                         // 0.9.1 (roomRejoin): the host gets 2 minutes to come back (an app restart, a phone call); off = 45 s.
@@ -398,7 +481,7 @@ object Together {
     private suspend fun send(p: RoomState) {
         val c = code.value ?: return
         if (!p.url.startsWith("http")) return
-        val st = p.copy(rev = maxOf(System.currentTimeMillis(), (remote.value?.rev ?: 0) + 1), by = me, host = remote.value?.host?.ifBlank { null } ?: me, sat = serverNow())
+        val st = p.copy(rev = maxOf(System.currentTimeMillis(), (remote.value?.rev ?: 0) + 1), by = me, host = remote.value?.host?.ifBlank { null } ?: titleHost ?: me, sat = serverNow())
         remote.value = st.copy(receivedAt = System.currentTimeMillis())
         stamped("${base(c)}/state", Api.json.encodeToJsonElement(RoomState.serializer(), st).jsonObject, "sat")
     }
@@ -446,6 +529,7 @@ object Together {
         io.launch { call("PUT", "${base(c)}/end", Api.json.encodeToString(myName.ifBlank { "The host" })); delay(1500); call("DELETE", base(c)) }
         leaveQuietly(); Call.stop()
         code.value = null; remote.value = null; members.value = emptyMap(); buf.value = emptyMap(); isHost = false; chat.value = emptyList(); unread.value = 0
+        resetWt2()
     }
 
     fun react(kind: String) {
@@ -455,6 +539,49 @@ object Together {
         io.launch { call("POST", "${base(c)}/reacts", Api.json.encodeToString(r)) }
     }
 
+    private fun resetWt2() {
+        if (!Feature.wt2) return
+        myFrame = null; myHand = 0; titleHost = null; waitingTitle = false; joinedSome = false; firstTree = true
+        seenHand.clear(); handFrom.value = null; chatShown.value = false
+        idleJob?.cancel(); idleJob = null; frameJob?.cancel(); frameJob = null
+    }
+
+    /** 0.9.8 (wt2): a title-page room closes by itself when nobody joined within 15 min — never while the host plays. */
+    private fun idleClose(c: String) {
+        idleJob?.cancel()
+        idleJob = io.launch {
+            delay(15 * 60_000L)
+            if (code.value == c && isHost && !joinedSome && provider == null) {
+                ActLog.add("TOGETHER", "room $c closed: nobody joined in 15 min")
+                withContext(Dispatchers.Main) { Snack.show("Your watch party closed — nobody joined") }
+                endRoom()
+            } else if (code.value == c && provider != null) ActLog.add("TOGETHER", "room $c: 15 min without anyone, kept (you're playing)")
+        }
+    }
+
+    /** 0.9.8 (wt2): my own frame (members/<me>/frame, server time). The beat carries it too; the write waits 250 ms. */
+    fun publishFrame(f: Frame) {
+        if (!Feature.wt2) return
+        val c = code.value ?: return
+        val m = FrameMsg(f.fx, f.fy, f.r, serverNow())
+        myFrame = m
+        frameJob?.cancel()
+        frameJob = io.launch { delay(250); call("PUT", "${base(c)}/members/$me/frame", Api.json.encodeToString(FrameMsg.serializer(), m)) }
+    }
+
+    /** 0.9.8 (wt2): "✋ wants to pause": a 6 s banner on every screen; nobody is paused by it. */
+    fun raiseHand() {
+        if (!Feature.wt2) return
+        val c = code.value ?: return
+        val at = serverNow()
+        if (at - myHand < 3000) return
+        myHand = at; seenHand[me] = at
+        handFrom.value = me to at
+        ActLog.add("TOGETHER", "raised a hand")
+        io.launch { delay(6000); if (handFrom.value?.second == at) handFrom.value = null }
+        io.launch { call("PUT", "${base(c)}/members/$me/hand", at.toString()) }
+    }
+
     private fun leaveQuietly() { poll?.cancel(); ticker?.cancel(); beat?.cancel(); poll = null; ticker = null; beat = null; live.value = false; waitingFor.value = null; bufNow = false }
 
     fun leave() {
@@ -462,6 +589,7 @@ object Together {
         val host = isHost
         if (c != null) tlog(if (host) "room $c ended by you" else "left room $c")
         saveRoom(null)
+        resetWt2()
         leaveQuietly()
         Call.stop()
         code.value = null; remote.value = null; members.value = emptyMap(); buf.value = emptyMap(); isHost = false; chat.value = emptyList(); unread.value = 0
@@ -557,8 +685,8 @@ fun ChatToasts(modifier: Modifier) {
         var n = 0L
         Together.chatIn.collect { m ->
             if (!ctx.getSharedPreferences("call", android.content.Context.MODE_PRIVATE).getBoolean("chatPop", true) || Together.chatOpen) return@collect
-            val id = n++; live.add(id to m); if (live.size > 3) live.removeAt(0)
-            launch { delay(5000); live.removeAll { it.first == id } }
+            val id = n++; live.add(id to m); if (live.size > (if (Feature.wt2) 2 else 3)) live.removeAt(0)
+            launch { delay(if (Feature.wt2) 3000 else 5000); live.removeAll { it.first == id } }   // 0.9.8: 3 s on the video
         }
     }
     Column(modifier.widthIn(max = 300.dp), verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.End) {
@@ -733,7 +861,7 @@ private fun TogetherRoomControls(c: String, mem: Map<String, RoomMember>) {
         .clickable { act() }.padding(horizontal = 11.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold)
 
     section("Chat")
-    ChatSection()
+    if (Feature.wt2) WtChatEntry() else ChatSection()
 
     section("Audio")
     row("🎙", "My mic", if (mic) "Friends hear you" else "Off — friends can't hear you") { sw(mic) { want("mic", it) } }
@@ -743,6 +871,10 @@ private fun TogetherRoomControls(c: String, mem: Map<String, RoomMember>) {
     section("Video")
     row("📷", "My camera", if (cam) "Friends see you in their bubble" else "Off — friends see your initial") { sw(cam) { want("cam", it) } }
     row("◐", "Show friends' bubbles", if (bubbles) "Round frames on your screen" else "Hidden (you still hear them)") { sw(bubbles) { Call.setBubbles(it) } }
+    if (Feature.wt2) {
+        val selfV by Call.selfView.collectAsState()
+        row("🙂", "Show my own bubble", if (selfV) "You see yourself too" else "Hidden — only friends see you") { sw(selfV) { Call.setSelfView(it) } }
+    }
     row("◯", "Bubble size", "${size} dp · drag a bubble to move it, double-tap it to resize") {}
     if (BuildConfig.IS_TV) TvSlider(size.toFloat(), { Call.setSize(it.roundToInt()) }, 64f..170f, 6f, accent = Color.White)
     else androidx.compose.material3.Slider(size.toFloat(), { Call.setSize(it.roundToInt()) }, valueRange = 64f..170f,
@@ -756,6 +888,10 @@ private fun TogetherRoomControls(c: String, mem: Map<String, RoomMember>) {
         withVideo.forEach { (uid, m) -> chip(m.name.ifBlank { "Friend" }) { Call.framing.value = uid } }
     }
 
+    if (Feature.wt2) {
+        section("Raise hand")
+        row("✋", "Ask to pause", "Everyone sees it for 6 seconds — nobody is paused automatically") { chip("Raise") { Together.raiseHand() } }
+    }
     section("React")
     Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         ReactIcons.forEach { (k, v) ->
@@ -877,6 +1013,16 @@ object Invites {
     private const val CHANNEL = "together"
 
     /** The text shared by "Share / Invite" (also copied to the clipboard). */
+    /** 0.9.8 (wt2): copy the invite and open the share sheet at once (title page). */
+    fun shareNow(ctx: android.content.Context, code: String, title: String) {
+        val text = shareText(code, title)
+        runCatching { (ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("${Brand.NAME} invite", text)) }
+        runCatching {
+            ctx.startActivity(android.content.Intent.createChooser(
+                android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, text), "Invite to watch together",
+            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
     fun shareText(code: String, title: String): String =
         "🎬 Watch \"$title\" with me on ${Brand.NAME}!\n${Brand.INVITE_URL}/$code" + (Together.me.takeIf { it.isNotBlank() }?.let { "?by=$it" } ?: "") + "\nRoom code: $code"
 

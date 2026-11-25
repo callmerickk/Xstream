@@ -131,7 +131,8 @@ fun AppViewModel.qsLangs(): List<String> = (texts.value["qsLangs"] ?: "hindi,eng
 fun AppViewModel.isQuick(s: StreamItem): Boolean {
     // 0.9.3: a Quick Play rule names its sources: only those count as quick.
     val rule = Rules.quickSources()
-    if (rule.isNotEmpty()) return s.addonName == LiveServer.NAME || rule.any { Rules.matches(s.addonName, it) }
+    if (rule.isNotEmpty()) return s.addonName == LiveServer.NAME || rule.any { Rules.matches(s.addonName, it) } &&
+        !(Feature.addonFirst && AddonFirst.qualityOnly(s))   // 0.9.7: CNCVerse Rocky / HdHub copies never take the start
     return isQuickBuiltIn(s)
 }
 internal fun AppViewModel.isQuickBuiltIn(s: StreamItem) = s.addonName == LiveServer.NAME || (pluginMode() && (s.isMovieBox() || s.isOtt() || s.isVega())) || s.addonName in qsAddons() &&

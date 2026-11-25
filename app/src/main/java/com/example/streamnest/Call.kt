@@ -1,6 +1,40 @@
 package com.example.streamnest
 
 import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateOffsetAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import kotlinx.coroutines.flow.StateFlow
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import android.graphics.SurfaceTexture
 import android.view.TextureView
 import androidx.compose.animation.core.animateDpAsState
@@ -75,6 +109,33 @@ object Call {
     val status = MutableStateFlow("")
     /** 0.9.76: why the camera couldn't start (shown in the room panel), null = fine. */
     val camError = MutableStateFlow<String?>(null)
+    // 0.9.8 (wt2): per-friend mute, "You" bubble, my own video for the preview, signal dots, data saver.
+    private val _peerMuted = MutableStateFlow<Set<String>>(emptySet())
+    val peerMuted: StateFlow<Set<String>> = _peerMuted
+    private val _selfView = MutableStateFlow(true)
+    val selfView: StateFlow<Boolean> = _selfView
+    val localVideo = MutableStateFlow<VideoTrack?>(null)
+    /** 0.9.8: uid → 1..3 signal dots (3 = good). */
+    val quality = MutableStateFlow<Map<String, Int>>(emptyMap())
+    /** 0.9.8: true while my video is lowered (mobile data, or the movie is buffering). */
+    val dataSaver = MutableStateFlow(false)
+    /** 0.9.8: the player sets this while the movie buffers. */
+    val movieBuffering = MutableStateFlow(false)
+    private var saverJob: Job? = null
+
+    // 0.9.8: one friend's voice volume: the global switch AND their own mute.
+    private fun vol(uid: String): Double = if (hearOn.value && !(Feature.wt2 && uid in _peerMuted.value)) 1.0 else 0.0
+
+    fun setPeerMuted(uid: String, muted: Boolean) {
+        if (!Feature.wt2) return
+        val n = if (muted) _peerMuted.value + uid else _peerMuted.value - uid
+        _peerMuted.value = n
+        room?.let { r -> app?.getSharedPreferences("call", Context.MODE_PRIVATE)?.edit()?.putStringSet("muted_$r", n)?.apply() }
+        scope.launch { peers[uid]?.remoteAudio?.setVolume(vol(uid)) }
+        ActLog.add("ROOM", "call · ${Together.members.value[uid]?.name ?: "friend"}: ${if (muted) "muted" else "unmuted"} (this phone only)")
+    }
+
+    fun setSelfView(on: Boolean) { if (!Feature.wt2) return; _selfView.value = on; save("selfView", on) }
 
     /** 0.9.76: relay servers (TURN) from our Cloudflare Worker — mobile networks often can't reach each other directly. */
     @Volatile private var relayServers: List<PeerConnection.IceServer> = emptyList()
@@ -125,6 +186,8 @@ object Call {
         var remoteSet = false
         val pendingIce = mutableListOf<IceCandidate>()
         val made = System.currentTimeMillis()
+        var askedLow = false            // 0.9.8: this friend asked me for lighter video
+        var qRecv = 0L; var qLost = 0L; var qLoss = 0.0   // 0.9.8: loss window for the signal dots
     }
 
     fun init(ctx: Context) {
@@ -132,6 +195,7 @@ object Call {
         val p = ctx.getSharedPreferences("call", Context.MODE_PRIVATE)
         hearOn.value = p.getBoolean("hear", true); duckOn.value = p.getBoolean("duck", true)
         bubblesOn.value = p.getBoolean("bubbles", true); bubbleDp.value = p.getInt("size", 96)
+        if (Feature.wt2) _selfView.value = p.getBoolean("selfView", true)
     }
 
     private fun save(k: String, v: Any) {
@@ -179,17 +243,20 @@ object Call {
 
     // ── Room events ──
 
-    private var room: String? = null
+    @Volatile private var room: String? = null
     private var sigJob: Job? = null
 
     fun onRoom(code: String) {
         scope.launch {
             room = code
             status.value = ""
+            // 0.9.8: this room's muted friends are remembered.
+            if (Feature.wt2) _peerMuted.value = app?.getSharedPreferences("call", Context.MODE_PRIVATE)?.getStringSet("muted_$code", emptySet())?.toSet() ?: emptySet()
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { fetchRelay() }
             sigJob?.cancel()
             sigJob = scope.launch { Together.sig.collect { (from, msg) -> runCatching { onSignal(from, msg) } } }
             if (statsJob == null) statsJob = scope.launch { statsLoop() }
+            if (Feature.wt2) startSaver()
         }
     }
 
@@ -226,7 +293,7 @@ object Call {
             override fun onTrack(t: RtpTransceiver) {
                 scope.launch {
                     val tr = t.receiver.track()
-                    if (tr is AudioTrack) { peer?.remoteAudio = tr; tr.setVolume(if (hearOn.value) 1.0 else 0.0) }
+                    if (tr is AudioTrack) { peer?.remoteAudio = tr; tr.setVolume(if (Feature.wt2) vol(uid) else if (hearOn.value) 1.0 else 0.0) }
                     refreshVideos()
                 }
             }
@@ -238,7 +305,10 @@ object Call {
                     ActLog.add("ROOM", "call · $name: ${s.name.lowercase()}")
                     when (s) {
                         PeerConnection.IceConnectionState.CHECKING -> if (status.value != "Connected") status.value = "Connecting call…"
-                        PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> { status.value = "Connected"; logRoute(peer) }
+                        PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> {
+                            status.value = "Connected"; logRoute(peer)
+                            if (Feature.wt2 && dataSaver.value) peer?.let { tellSaver(it) }   // 0.9.8: a new call learns we're saving
+                        }
                         PeerConnection.IceConnectionState.FAILED -> {
                             status.value = if (relayServers.isEmpty()) "Couldn't connect — trying relay" else "Couldn't connect — retrying"
                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { relayUntil = 0; fetchRelay() }
@@ -272,8 +342,76 @@ object Call {
         p.audioT?.sender?.setTrack(if (micOn.value) audioTrack else null, false)
         p.videoT?.sender?.let { s ->
             s.setTrack(if (camOn.value) videoTrack else null, false)
-            runCatching { val prm = s.parameters; prm.encodings.forEach { it.maxBitrateBps = 450_000; it.maxFramerate = 24 }; s.parameters = prm }
+            // 0.9.8: normal or lowered limits per friend; off = the old fixed limits.
+            if (Feature.wt2) applySend(p)
+            else runCatching { val prm = s.parameters; prm.encodings.forEach { it.maxBitrateBps = 450_000; it.maxFramerate = 24 }; s.parameters = prm }
         }
+    }
+
+    /** 0.9.8: my video to this friend: lowered while I save data or they asked, normal otherwise. */
+    private fun applySend(p: Peer) {
+        val s = p.videoT?.sender ?: return
+        runCatching {
+            val low = dataSaver.value || p.askedLow
+            val prm = s.parameters
+            prm.encodings.forEach {
+                it.maxBitrateBps = if (low) 120_000 else 450_000
+                it.maxFramerate = if (low) 10 else 24
+                it.scaleResolutionDownBy = if (low) 2.0 else 1.0
+            }
+            s.parameters = prm
+        }
+    }
+
+    private fun tellSaver(p: Peer) {
+        Together.signal(p.uid, buildJsonObject { put("t", "saver"); put("on", dataSaver.value.toString()) })
+    }
+
+    private fun isMetered(): Boolean = runCatching {
+        (app?.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager)?.isActiveNetworkMetered == true
+    }.getOrDefault(false)
+
+    /** 0.9.8: mobile data or a buffering movie → lighter video; back to normal on Wi-Fi after 8 s of smooth playback. */
+    private fun startSaver() {
+        if (saverJob != null) return
+        saverJob = scope.launch {
+            var lastBuf = 0L
+            while (isActive) {
+                val now = System.currentTimeMillis()
+                if (movieBuffering.value) lastBuf = now
+                val metered = isMetered()
+                val choppy = lastBuf != 0L && now - lastBuf < 8_000
+                val want = metered || choppy
+                if (want != dataSaver.value) {
+                    dataSaver.value = want
+                    val why = if (metered) "mobile data" else if (want) "movie buffering" else "Wi-Fi, playback smooth"
+                    ActLog.add("ROOM", "call · data saver ${if (want) "on" else "off"} ($why)")
+                    peers.values.toList().forEach { applySend(it); tellSaver(it) }
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    /** 0.9.8: 1..3 dots from the call's round-trip time, packet loss (over a window) and incoming frame rate. */
+    private fun rate(p: Peer, rep: RTCStatsReport): Int {
+        var rtt = 0.0; var fps = -1.0; var lost = 0L; var recv = 0L
+        rep.statsMap.values.forEach { s ->
+            val m = s.members
+            if (s.type == "candidate-pair" && m["nominated"] == true && m["state"] == "succeeded") rtt = (m["currentRoundTripTime"] as? Number)?.toDouble() ?: rtt
+            if (s.type == "inbound-rtp") {
+                lost += (m["packetsLost"] as? Number)?.toLong() ?: 0L
+                recv += (m["packetsReceived"] as? Number)?.toLong() ?: 0L
+                if (m["kind"] == "video") fps = (m["framesPerSecond"] as? Number)?.toDouble() ?: fps
+            }
+        }
+        val dR = recv - p.qRecv; val dL = lost - p.qLost
+        if (dR < 0 || dL < 0) { p.qRecv = recv; p.qLost = lost }
+        else if (dR + dL >= 60) { p.qLoss = dL * 100.0 / (dR + dL); p.qRecv = recv; p.qLost = lost }
+        val a = if (rtt < 0.15) 3 else if (rtt < 0.35) 2 else 1
+        val b = if (p.qLoss < 3.0) 3 else if (p.qLoss < 10.0) 2 else 1
+        val c = if (fps <= 0.0 || fps >= 8.0) 3 else if (fps >= 4.0) 2 else 1
+        return minOf(a, b, c)
     }
 
     private open class Sdp : SdpObserver {
@@ -346,7 +484,7 @@ object Call {
                 val p = peers[from] ?: return
                 val sdp = SessionDescription(SessionDescription.Type.ANSWER, msg["sdp"]?.jsonPrimitive?.contentOrNull ?: return)
                 p.pc.setRemoteDescription(object : Sdp() {
-                    override fun onSetSuccess() { scope.launch { p.remoteSet = true; p.pendingIce.forEach { p.pc.addIceCandidate(it) }; p.pendingIce.clear() } }
+                    override fun onSetSuccess() { scope.launch { p.remoteSet = true; p.pendingIce.forEach { p.pc.addIceCandidate(it) }; p.pendingIce.clear(); if (Feature.wt2) applySend(p) } }
                 }, sdp)
             }
             "ice" -> {
@@ -354,12 +492,19 @@ object Call {
                 val c = IceCandidate(msg["m"]?.jsonPrimitive?.contentOrNull ?: "", msg["i"]?.jsonPrimitive?.intOrNull ?: 0, msg["c"]?.jsonPrimitive?.contentOrNull ?: return)
                 if (p.remoteSet) p.pc.addIceCandidate(c) else p.pendingIce += c
             }
+            // 0.9.8: a friend on a weak link asks for lighter video (older apps ignore this message).
+            "saver" -> if (Feature.wt2) peers[from]?.let { p ->
+                p.askedLow = msg["on"]?.jsonPrimitive?.contentOrNull == "true"
+                applySend(p)
+                ActLog.add("ROOM", "call · ${Together.members.value[from]?.name ?: "friend"} asked for ${if (p.askedLow) "lighter" else "normal"} video")
+            }
         }
     }
 
     private fun close(uid: String) {
         val p = peers.remove(uid) ?: return
         runCatching { p.pc.dispose() }
+        if (Feature.wt2) quality.value = quality.value - uid
         refreshVideos()
     }
 
@@ -373,21 +518,29 @@ object Call {
     private suspend fun statsLoop() {
         while (scope.isActive) {
             delay(330)
-            if (peers.isEmpty()) { if (talking.value.isNotEmpty()) talking.value = emptySet(); continue }
+            if (peers.isEmpty()) {
+                if (talking.value.isNotEmpty()) talking.value = emptySet()
+                if (Feature.wt2 && quality.value.isNotEmpty()) quality.value = emptyMap()
+                continue
+            }
             val now = HashSet<String>()
+            val qs = HashMap<String, Int>()   // 0.9.8
             val latch = CountDownLatch(peers.size)
             peers.values.toList().forEach { p ->
                 runCatching {
                     p.pc.getStats { rep ->
                         val lvl = rep.statsMap.values.filter { it.type == "inbound-rtp" && it.members["kind"] == "audio" }
                             .maxOfOrNull { (it.members["audioLevel"] as? Number)?.toDouble() ?: 0.0 } ?: 0.0
-                        if (lvl > 0.04) synchronized(now) { now += p.uid }
+                        // 0.9.8: a muted friend doesn't light the ring or lower the movie.
+                        if (lvl > 0.04 && !(Feature.wt2 && p.uid in _peerMuted.value)) synchronized(now) { now += p.uid }
+                        if (Feature.wt2) runCatching { val q = rate(p, rep); synchronized(qs) { qs[p.uid] = q } }
                         latch.countDown()
                     }
                 }.onFailure { latch.countDown() }
             }
             runCatching { latch.await(1, java.util.concurrent.TimeUnit.SECONDS) }
             if (now != talking.value) talking.value = now
+            if (Feature.wt2) { val snap = synchronized(qs) { HashMap(qs) }; if (snap != quality.value) quality.value = snap }
         }
     }
 
@@ -444,6 +597,7 @@ object Call {
             cap.startCapture(640, 480, 15)
             capturer = cap; texHelper = helper; videoSrc = src
             videoTrack = f.createVideoTrack("cam", src)
+            localVideo.value = videoTrack   // 0.9.8: for the "You" bubble
         }.onFailure { fail(it.message ?: it.javaClass.simpleName) }
     }
 
@@ -461,6 +615,7 @@ object Call {
     }
 
     private fun stopCamera() {
+        localVideo.value = null
         runCatching { capturer?.stopCapture() }
         runCatching { capturer?.dispose() }; capturer = null
         peers.values.forEach { it.videoT?.sender?.setTrack(null, false) }
@@ -476,7 +631,7 @@ object Call {
 
     fun setHear(on: Boolean) {
         hearOn.value = on; save("hear", on)
-        scope.launch { peers.values.forEach { it.remoteAudio?.setVolume(if (on) 1.0 else 0.0) } }
+        scope.launch { peers.values.forEach { it.remoteAudio?.setVolume(if (Feature.wt2) vol(it.uid) else if (on) 1.0 else 0.0) } }   // 0.9.8: + per-friend mute
     }
     fun setDuck(on: Boolean) { duckOn.value = on; save("duck", on) }
     fun setBubbles(on: Boolean) { bubblesOn.value = on; save("bubbles", on) }
@@ -488,6 +643,7 @@ object Call {
         scope.launch {
             sigJob?.cancel(); sigJob = null
             statsJob?.cancel(); statsJob = null
+            if (Feature.wt2) { saverJob?.cancel(); saverJob = null; dataSaver.value = false; quality.value = emptyMap() }
             room = null
             peers.keys.toList().forEach { close(it) }
             stopCamera()
@@ -511,14 +667,36 @@ data class Frame(val fx: Float = 0.5f, val fy: Float = 0.42f, val r: Float = 0.9
 
 object Frames {
     val all = MutableStateFlow<Map<String, Frame>>(emptyMap())
+    /** 0.9.8: server time of my own framing of each person (missing / 0 = saved before 0.9.8). */
+    val at = MutableStateFlow<Map<String, Long>>(emptyMap())
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("call_frames", Context.MODE_PRIVATE)
+    private fun atPrefs(ctx: Context) = ctx.getSharedPreferences("call_frames_at", Context.MODE_PRIVATE)
     fun load(ctx: Context) {
         all.value = prefs(ctx).all.mapNotNull { (k, v) -> (v as? String)?.split(",")?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 3 }?.let { k to Frame(it[0], it[1], it[2]) } }.toMap()
+        if (Feature.wt2) at.value = atPrefs(ctx).all.mapNotNull { (k, v) -> (v as? Long)?.let { k to it } }.toMap()
     }
     fun of(uid: String) = all.value[uid] ?: Frame()
-    fun set(ctx: Context, uid: String, f: Frame) {
+    fun set(ctx: Context, uid: String, f: Frame, stamp: Long = if (Feature.wt2) Together.serverNow() else 0L) {
         all.value = all.value + (uid to f)
         prefs(ctx).edit().putString(uid, "${f.fx},${f.fy},${f.r}").apply()
+        if (Feature.wt2) { at.value = at.value + (uid to stamp); atPrefs(ctx).edit().putLong(uid, stamp).apply() }
+    }
+    fun clear(ctx: Context, uid: String) {
+        all.value = all.value - uid; at.value = at.value - uid
+        prefs(ctx).edit().remove(uid).apply(); atPrefs(ctx).edit().remove(uid).apply()
+    }
+    /** 0.9.8: the framing rule: the owner's published frame, unless my own override is newer. */
+    fun pick(pub: FrameMsg?, o: Frame?, oAt: Long): Frame = when {
+        pub != null && (o == null || pub.at >= oAt) -> Frame(pub.fx, pub.fy, pub.r)
+        o != null -> o
+        else -> Frame()
+    }
+    fun effective(uid: String, pub: FrameMsg?): Frame = pick(pub, all.value[uid], at.value[uid] ?: 0L)
+    /** 0.9.8: true (once) when the owner's newer frame has just replaced my override; the override is dropped. */
+    fun takePublished(ctx: Context, uid: String, pub: FrameMsg?): Boolean {
+        val a = at.value[uid] ?: 0L
+        if (pub == null || all.value[uid] == null || a <= 0L || pub.at <= a) return false
+        clear(ctx, uid); return true
     }
 }
 
@@ -562,7 +740,7 @@ class RemoteView(ctx: Context, private val onSize: (Int, Int) -> Unit) : Texture
 
 /** A friend's camera framed into a circle of [sizeDp]. */
 @Composable
-fun FramedVideo(uid: String, track: VideoTrack, sizeDp: androidx.compose.ui.unit.Dp, frame: Frame, onView: (RemoteView) -> Unit = {}) {
+fun FramedVideo(uid: String, track: VideoTrack, sizeDp: androidx.compose.ui.unit.Dp, frame: Frame, onView: (RemoteView) -> Unit = {}, onAspect: (Float) -> Unit = {}) {
     var aspect by remember { mutableFloatStateOf(4f / 3f) }
     val f = frame.clamp(aspect)
     val d = LocalDensity.current
@@ -571,7 +749,7 @@ fun FramedVideo(uid: String, track: VideoTrack, sizeDp: androidx.compose.ui.unit
     val wPx = hPx * aspect
     Box(Modifier.size(sizeDp).clip(CircleShape).background(Color(0xFF1A1B22))) {
         AndroidView(
-            factory = { RemoteView(it) { w, h -> if (w > 0 && h > 0) aspect = w.toFloat() / h }.also(onView) },
+            factory = { RemoteView(it) { w, h -> if (w > 0 && h > 0) { aspect = w.toFloat() / h; onAspect(aspect) } }.also(onView) },
             update = { it.bind(track) },
             onRelease = { it.release() },
             modifier = Modifier.wrapContentSize(Alignment.TopStart, unbounded = true)
@@ -586,7 +764,7 @@ fun FramedVideo(uid: String, track: VideoTrack, sizeDp: androidx.compose.ui.unit
  * have the mic on). Drag to move — it snaps to the nearest corner; double-tap = bigger / smaller; tap = Watch together.
  */
 @Composable
-fun CallBubbles(modifier: Modifier, onTap: () -> Unit) {
+private fun CallBubblesLegacy(modifier: Modifier, onTap: () -> Unit) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val members by Together.members.collectAsState()
     val videos by Call.videos.collectAsState()
@@ -664,7 +842,7 @@ fun FrameDialog(uid: String, onDone: () -> Unit) {
     val members by Together.members.collectAsState()
     val track = videos[uid]
     var aspect by remember { mutableFloatStateOf(4f / 3f) }
-    var f by remember { mutableStateOf(Frames.of(uid)) }
+    var f by remember { mutableStateOf(if (Feature.wt2) Frames.effective(uid, members[uid]?.frame) else Frames.of(uid)) }
     var auto by remember { mutableStateOf(false) }
     var view by remember { mutableStateOf<RemoteView?>(null) }
     fun upd(n: Frame) { f = n.clamp(aspect); Frames.set(ctx, uid, f) }
@@ -739,3 +917,301 @@ fun FrameDialog(uid: String, onDone: () -> Unit) {
 fun duckTarget(): Float = if (Together.active() && Call.duckOn.value && Call.hearOn.value && Call.talking.value.isNotEmpty()) 0.35f else 1f
 
 @Suppress("unused") private fun Float.near(o: Float) = abs(this - o) < 0.01f
+
+/** 0.9.8: friends' bubbles. wt2 on = free placement (CallBubblesV2); off = the old corner bubbles. */
+@Composable
+fun CallBubbles(modifier: Modifier, controlsVisible: Boolean = false, onTap: () -> Unit) {
+    if (Feature.wt2) CallBubblesV2(modifier, controlsVisible, onTap) else CallBubblesLegacy(modifier, onTap)
+}
+
+/** 0.9.8: where each bubble sits and how big it is, remembered on this phone. x / y = top-left as a share of the player. */
+object BubbleSpots {
+    class Spot(val x: Float, val y: Float, val dp: Float)
+    val all = MutableStateFlow<Map<String, Spot>>(emptyMap())
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("call_bubbles", Context.MODE_PRIVATE)
+    fun load(ctx: Context) {
+        all.value = prefs(ctx).all.mapNotNull { (k, v) -> (v as? String)?.split(",")?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 3 }?.let { k to Spot(it[0], it[1], it[2]) } }.toMap()
+    }
+    fun set(ctx: Context, id: String, s: Spot) {
+        all.value = all.value + (id to s)
+        prefs(ctx).edit().putString(id, "${s.x},${s.y},${s.dp}").apply()
+    }
+}
+
+// 0.9.8: room around the circle so the pop-out buttons stay inside their parent (needed for touch).
+private val BUBBLE_PAD = 36.dp
+
+@Composable
+private fun CallBubblesV2(modifier: Modifier, controlsVisible: Boolean, onTap: () -> Unit) {
+    val ctx = LocalContext.current
+    remember(ctx) { BubbleSpots.load(ctx); Frames.load(ctx) }
+    val members by Together.members.collectAsState()
+    val videos by Call.videos.collectAsState()
+    val talking by Call.talking.collectAsState()
+    val show by Call.bubblesOn.collectAsState()
+    val quality by Call.quality.collectAsState()
+    val muted by Call.peerMuted.collectAsState()
+    val selfOn by Call.selfView.collectAsState()
+    val camMine by Call.camOn.collectAsState()
+    val myTrack by Call.localVideo.collectAsState()
+    val frames by Frames.all.collectAsState()
+    val stamps by Frames.at.collectAsState()
+    val me = Together.me
+    val now = Together.serverNow()
+    val people = members.filter { (uid, m) -> uid != me && now - m.seen < 40_000 && (m.cam || m.mic) }.toList()
+
+    // "You": shown with my camera on, or while the controls are up (and a moment after, so the buttons can slide back in).
+    var selfHold by remember { mutableStateOf(false) }
+    LaunchedEffect(controlsVisible) { if (controlsVisible) selfHold = true else { delay(900); selfHold = false } }
+    val selfShown = selfOn && (camMine || selfHold)
+
+    // Talker gets the big bubble (3+ on camera). Every change takes effect after 600 ms of staying the same.
+    val camUids = people.filter { (uid, m) -> m.cam && videos[uid] != null }.map { it.first }
+    val onCam = camUids.size + (if (selfShown && camMine) 1 else 0)
+    var big by remember { mutableStateOf<String?>(null) }
+    val cur = big
+    val talkerNow: String? = if (onCam < 3) null else talking.filter { it in camUids }.sorted().let { s -> if (cur != null && cur in s) cur else s.firstOrNull() }
+    LaunchedEffect(talkerNow) { delay(600); big = talkerNow }
+    val bigUid = big?.takeIf { it in camUids && onCam >= 3 }
+
+    // One line of text at the top: the first-time hint, "changed their frame", "camera is off".
+    var banner by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(banner) { if (banner != null) { delay(4000); banner = null } }
+    val anyBubble = show && (people.isNotEmpty() || selfShown)
+    LaunchedEffect(anyBubble) {
+        if (!anyBubble) return@LaunchedEffect
+        val p = ctx.getSharedPreferences("call", Context.MODE_PRIVATE)
+        if (!p.getBoolean("hint_wt2_frame", false)) { p.edit().putBoolean("hint_wt2_frame", true).apply(); banner = "Double-tap a bubble to frame it" }
+    }
+    // The owner re-framed after my override: theirs wins, tell me once.
+    val pubKey = people.map { (uid, m) -> uid to m.frame?.at }
+    LaunchedEffect(pubKey) {
+        people.forEach { (uid, m) -> if (Frames.takePublished(ctx, uid, m.frame)) banner = "${m.name.ifBlank { "Your friend" }} changed their frame" }
+    }
+
+    if (!anyBubble) return
+    BoxWithConstraints(modifier) {
+        val boxW = constraints.maxWidth.toFloat(); val boxH = constraints.maxHeight.toFloat()
+        fun modeOf(uid: String) = if (bigUid == null) 0 else if (uid == bigUid) 1 else -1
+        people.forEachIndexed { i, (uid, m) ->
+            key(uid) {
+                BubbleItem(
+                    id = uid, name = m.name.ifBlank { "Friend" }, track = if (m.cam) videos[uid] else null,
+                    speaking = uid in talking, dots = quality[uid] ?: 0, muted = uid in muted, isSelf = false,
+                    mode = modeOf(uid), frame = Frames.pick(m.frame, frames[uid], stamps[uid] ?: 0L),
+                    index = i, boxW = boxW, boxH = boxH, controlsVisible = false,
+                    onTap = onTap, onSaveFrame = { f -> Frames.set(ctx, uid, f) }, onNote = { banner = it },
+                )
+            }
+        }
+        if (selfShown) key("self") {
+            BubbleItem(
+                id = "self", name = "You", track = if (camMine) myTrack else null,
+                speaking = false, dots = 0, muted = false, isSelf = true,
+                mode = modeOf("self"), frame = Frames.pick(members[me]?.frame, frames[me], stamps[me] ?: 0L),
+                index = people.size, boxW = boxW, boxH = boxH, controlsVisible = controlsVisible,
+                onTap = onTap, onNote = { banner = it },
+                // My own frame: remember it now (newest time) and publish it; friends see it as the owner's frame.
+                onSaveFrame = { f -> Frames.set(ctx, me, f, Together.serverNow()); Together.publishFrame(f) },
+            )
+        }
+        banner?.let {
+            Text(it, Modifier.align(Alignment.TopCenter).padding(top = 72.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xB3000000))
+                .padding(horizontal = 14.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+/** 0.9.8: one bubble: free drag, pinch to resize, double-tap to frame, glass ring, name pill, dots, talking ring. */
+@Composable
+private fun BubbleItem(
+    id: String, name: String, track: VideoTrack?, speaking: Boolean, dots: Int, muted: Boolean, isSelf: Boolean,
+    mode: Int, frame: Frame, index: Int, boxW: Float, boxH: Float, controlsVisible: Boolean,
+    onTap: () -> Unit, onSaveFrame: (Frame) -> Unit, onNote: (String) -> Unit,
+) {
+    val ctx = LocalContext.current
+    val d = LocalDensity.current
+    val spots by BubbleSpots.all.collectAsState()
+    val defDp by Call.bubbleDp.collectAsState()
+    val saved = spots[id]
+    var liveDp by remember { mutableStateOf<Float?>(null) }
+    var liveXY by remember { mutableStateOf<Offset?>(null) }
+    var liveFrame by remember { mutableStateOf<Frame?>(null) }
+    var frameMode by remember { mutableStateOf(false) }
+    var aspect by remember { mutableFloatStateOf(4f / 3f) }
+    LaunchedEffect(track == null) { if (track == null) { frameMode = false; liveFrame = null } }
+
+    // Size: my own remembered size, times the talker factor (animated; the pinch itself is not delayed).
+    val baseDp = (liveDp ?: saved?.dp ?: defDp.toFloat()).coerceIn(56f, 180f)
+    val k by animateFloatAsState(when (mode) { 1 -> minOf(1.45f, 180f / baseDp); -1 -> maxOf(0.7f, 56f / baseDp); else -> 1f }, tween(380), label = "talkScale")
+    val shown = (baseDp * k).dp
+    val sizePx = with(d) { shown.toPx() }
+    val padPx = with(d) { BUBBLE_PAD.toPx() }
+    val maxX = (boxW - sizePx).coerceAtLeast(0f)
+    val maxY = (boxH - sizePx - with(d) { 26.dp.toPx() }).coerceAtLeast(0f)
+    val defX = with(d) { 18.dp.toPx() }
+    val defY = boxH - with(d) { (64.dp + ((index + 1) * (defDp + 30)).dp).toPx() }
+    val raw = liveXY ?: (if (saved != null) Offset(saved.x * boxW, saved.y * boxH) else Offset(defX, defY))
+    val target = Offset(raw.x.coerceIn(0f, maxX), raw.y.coerceIn(0f, maxY))
+    val spec: AnimationSpec<Offset> = if (liveXY != null) snap<Offset>() else spring<Offset>(stiffness = Spring.StiffnessMediumLow)
+    val pos by animateOffsetAsState(target, spec, label = "bubblePos")
+
+    // The gesture block below lives across recompositions, so it calls these (always the latest versions).
+    val onMove by rememberUpdatedState<(Offset, Float) -> Unit>({ pan, zoom ->
+        if (frameMode) {
+            val c = liveFrame ?: frame
+            val hPx = sizePx / c.r; val wPx = hPx * aspect
+            liveFrame = Frame(c.fx - pan.x / wPx, c.fy - pan.y / hPx, c.r / zoom).clamp(aspect)   // picture follows the finger
+        } else {
+            if (zoom != 1f) liveDp = ((liveDp ?: baseDp) * zoom).coerceIn(56f, 180f)
+            liveXY = (liveXY ?: target) + pan
+        }
+    })
+    val onEnd by rememberUpdatedState<() -> Unit>({
+        if (!frameMode) {
+            val p = liveXY ?: target
+            val edge = with(d) { 12.dp.toPx() }; val inset = with(d) { 6.dp.toPx() }
+            var x = p.x.coerceIn(0f, maxX); var y = p.y.coerceIn(0f, maxY)
+            if (x < edge) x = inset else if (maxX - x < edge) x = maxX - inset      // gentle edge snap, only near an edge
+            if (y < edge) y = inset else if (maxY - y < edge) y = maxY - inset
+            x = x.coerceIn(0f, maxX); y = y.coerceIn(0f, maxY)
+            BubbleSpots.set(ctx, id, BubbleSpots.Spot(x / boxW.coerceAtLeast(1f), y / boxH.coerceAtLeast(1f), liveDp ?: baseDp))
+            liveXY = null; liveDp = null
+        }
+    })
+    val onDouble by rememberUpdatedState<() -> Unit>({
+        if (!frameMode) {
+            if (track == null) onNote(if (isSelf) "Turn your camera on to frame yourself" else "$name's camera is off")
+            else { frameMode = true; liveFrame = null }
+        } else {
+            frameMode = false
+            liveFrame?.let { onSaveFrame(it) }      // my own → published; a friend's → my local override
+            liveFrame = null
+        }
+    })
+    val onTapCb by rememberUpdatedState(onTap)
+
+    Box(Modifier.offset { IntOffset((pos.x - padPx).roundToInt(), (pos.y - padPx).roundToInt()) }.size(shown + BUBBLE_PAD * 2)) {
+        Box(
+            Modifier.padding(BUBBLE_PAD).size(shown).shadow(10.dp, CircleShape).clip(CircleShape).background(Color(0xFF1A1B22))
+                // Drag, pinch, tap and double-tap in ONE block: slop decides drag; two fingers = pinch; a tap waits for a 2nd tap.
+                .pointerInput(id) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        val slop = viewConfiguration.touchSlop
+                        var moved = false
+                        var dist = Offset.Zero
+                        do {
+                            val ev = awaitPointerEvent()
+                            val pan = ev.calculatePan(); val zoom = ev.calculateZoom()
+                            if (!moved) {
+                                dist += pan
+                                if (ev.changes.count { it.pressed } >= 2 || dist.getDistance() > slop) moved = true
+                            } else if (pan != Offset.Zero || zoom != 1f) {
+                                onMove(pan, zoom)
+                                ev.changes.forEach { it.consume() }
+                            }
+                        } while (ev.changes.any { it.pressed })
+                        if (moved) { onEnd(); return@awaitEachGesture }
+                        val second = withTimeoutOrNull(viewConfiguration.doubleTapTimeoutMillis) { awaitFirstDown(requireUnconsumed = false) }
+                        if (second == null) { if (!frameMode) onTapCb(); return@awaitEachGesture }
+                        val up = waitForUpOrCancellation()
+                        if (up != null && (up.position - second.position).getDistance() <= slop * 2) { up.consume(); onDouble() }
+                    }
+                },
+            Alignment.Center,
+        ) {
+            if (track != null) FramedVideo(id, track, shown, liveFrame ?: frame, onAspect = { aspect = it })
+            else Box(Modifier.fillMaxSize().background(Color(0xFF3C3F58)), Alignment.Center) {
+                Text(name.take(1).uppercase(), fontSize = (shown.value * 0.36f).sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        // Thin glass ring (+ dashed edge in frame mode).
+        Canvas(Modifier.padding(BUBBLE_PAD - 8.dp).size(shown + 16.dp)) {
+            val r = size.minDimension / 2f - 8.dp.toPx()
+            drawCircle(Brush.linearGradient(listOf(Color(0xF2FFFFFF), Color(0x24FFFFFF), Color(0xB3FFFFFF)), Offset.Zero, Offset(size.width, size.height)),
+                r, center, style = Stroke(1.5.dp.toPx()))
+            drawCircle(Color(0x1FFFFFFF), r - 2.5.dp.toPx(), center, style = Stroke(1.dp.toPx()))
+            if (frameMode) drawCircle(Color.White, r - 1.dp.toPx(), center, style = Stroke(2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f))))
+        }
+        if (speaking) TalkRing(shown, Modifier.padding(BUBBLE_PAD - 8.dp))
+        // Name pill (or the frame-mode caption) with the signal dots.
+        Row(
+            Modifier.align(Alignment.TopCenter).padding(top = BUBBLE_PAD + shown + 3.dp)
+                .then(if (frameMode) Modifier.requiredWidthIn(max = 240.dp) else Modifier.widthIn(max = shown + BUBBLE_PAD * 2))
+                .clip(RoundedCornerShape(10.dp)).background(Color(0x66000000)).border(0.5.dp, Color(0x40FFFFFF), RoundedCornerShape(10.dp))
+                .padding(horizontal = 7.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (frameMode) Text("Drag · pinch · double-tap to save", fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+            else {
+                if (muted) Text("🔇", fontSize = 9.sp)
+                Text(name, Modifier.weight(1f, fill = false), fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (dots > 0) SignalDots(dots)
+            }
+        }
+        if (isSelf && !frameMode) SelfControls(controlsVisible, shown, onRight = target.x + sizePx / 2f < boxW / 2f)
+    }
+}
+
+/** 0.9.8: green talking ring with a soft pulse. */
+@Composable
+private fun TalkRing(shown: Dp, modifier: Modifier) {
+    val t = rememberInfiniteTransition(label = "talk")
+    val p by t.animateFloat(0f, 1f, infiniteRepeatable(tween(850, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
+    Canvas(modifier.size(shown + 16.dp)) {
+        val r = size.minDimension / 2f - 8.dp.toPx()
+        drawCircle(Color(0xFF3CCF7A).copy(alpha = 0.22f + 0.2f * p), r + 2.dp.toPx() + 4.dp.toPx() * p, center, style = Stroke(3.dp.toPx()))
+        drawCircle(Color(0xFF3CCF7A), r + 1.dp.toPx(), center, style = Stroke(2.5f.dp.toPx()))
+    }
+}
+
+@Composable
+private fun SignalDots(n: Int) {
+    val c = when (n) { 3 -> Color(0xFF3CCF7A); 2 -> Color(0xFFF2B84B); else -> Color(0xFFE5484D) }
+    Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+        for (i in 1..3) Box(Modifier.size(4.dp).clip(CircleShape).background(if (i <= n) c else Color(0x40FFFFFF)))
+    }
+}
+
+/** 0.9.8: mic / camera / switch-camera: 28 dp glass buttons that spring out of my bubble and slide back into it. */
+@Composable
+private fun BoxScope.SelfControls(visible: Boolean, shown: Dp, onRight: Boolean) {
+    val ctx = LocalContext.current
+    val mic by Call.micOn.collectAsState()
+    val cam by Call.camOn.collectAsState()
+    val micAsk = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) Call.setMic(true) }
+    val camAsk = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) Call.setCam(true) }
+    fun has(p: String) = androidx.core.content.ContextCompat.checkSelfPermission(ctx, p) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    val r = with(LocalDensity.current) { (shown / 2 + 18.dp).toPx() }
+    val sx = if (onRight) 1f else -1f
+    fun spot(deg: Float): Offset { val a = deg * (PI / 180.0).toFloat(); return Offset(cos(a) * r * sx, sin(a) * r) }
+    val a = spot(-44f); val b = spot(0f); val c = spot(44f)
+    PopButton(0, visible, a.x, a.y, if (mic) "🎤" else "🔇", "Microphone", mic) {
+        if (mic) Call.setMic(false) else if (has(android.Manifest.permission.RECORD_AUDIO)) Call.setMic(true) else micAsk.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
+    PopButton(1, visible, b.x, b.y, if (cam) "📷" else "🚫", "Camera", cam) {
+        if (cam) Call.setCam(false) else if (has(android.Manifest.permission.CAMERA)) Call.setCam(true) else camAsk.launch(android.Manifest.permission.CAMERA)
+    }
+    PopButton(2, visible, c.x, c.y, "🔄", "Switch camera", false) { Call.flip() }
+}
+
+@Composable
+private fun BoxScope.PopButton(index: Int, visible: Boolean, tx: Float, ty: Float, glyph: String, desc: String, on: Boolean, onClick: () -> Unit) {
+    val p = remember { Animatable(0f) }
+    LaunchedEffect(visible) {
+        delay(if (visible) index * 70L else (2 - index) * 45L)       // staggered out, staggered back in
+        p.animateTo(if (visible) 1f else 0f, spring(dampingRatio = 0.55f, stiffness = 380f))
+    }
+    Box(
+        Modifier.align(Alignment.Center)
+            .offset { IntOffset((tx * p.value).roundToInt(), (ty * p.value).roundToInt()) }
+            .graphicsLayer { val s = p.value.coerceAtLeast(0f); scaleX = s; scaleY = s; alpha = p.value.coerceIn(0f, 1f) }
+            .size(28.dp).clip(CircleShape)
+            .background(Brush.linearGradient(if (on) listOf(Color(0x883CCF7A), Color(0x443CCF7A)) else listOf(Color(0x66FFFFFF), Color(0x33000000))))
+            .border(1.dp, Color(0x66FFFFFF), CircleShape)
+            .then(if (visible) Modifier.clickable(onClick = onClick) else Modifier)
+            .semantics { contentDescription = desc },
+        Alignment.Center,
+    ) { Text(glyph, fontSize = 13.sp) }
+}

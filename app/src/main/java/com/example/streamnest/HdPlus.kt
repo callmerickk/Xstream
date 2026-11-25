@@ -86,7 +86,8 @@ object HdMemo {
 }
 
 /** Server check + jump test + start and index saved (used by the upgrade, the remembered HD file and next-episode HD). */
-suspend fun saveHdStart(ctx: Context, c: StreamItem, startMs: Long = 0, durMs: Long = 0): Boolean = withContext(Dispatchers.IO) {
+/** 0.9.7 (dataDiet): [light] = after the checks only one ~6 MB piece at the file's start (no resume spot, no index). */
+suspend fun saveHdStart(ctx: Context, c: StreamItem, startMs: Long = 0, durMs: Long = 0, light: Boolean = false): Boolean = withContext(Dispatchers.IO) {
     val url = c.stream.url ?: return@withContext false
     StreamCache.register(c)
     val pr = StreamCache.probe(url)
@@ -98,6 +99,13 @@ suspend fun saveHdStart(ctx: Context, c: StreamItem, startMs: Long = 0, durMs: L
     val jumpOk = withTimeoutOrNull(12_000) { StreamCache.saveParts(ctx, url, mid, 256L * 1024, 1, null) { } } == null &&
         StreamCache.savedBytes(ctx, url, mid, 256L * 1024) > 0
     if (!jumpOk) return@withContext false
+    if (light) {
+        val n = minOf(6L * 1024 * 1024, pr.size)
+        val r = withTimeoutOrNull(30_000) { Result.success(StreamCache.saveParts(ctx, url, 0, n, 1, null) { }) }
+        val ok = r != null && r.getOrNull() == null
+        if (ok && Feature.dataDiet) DataDiet.addBackground(n)
+        return@withContext ok
+    }
     val start = if (startMs > 5_000 && durMs > 0) ((pr.size.toDouble() * startMs / durMs).toLong() - 1024 * 1024).coerceAtLeast(0) / (1024 * 1024) * (1024 * 1024) else 0L
     withTimeoutOrNull(45_000) {
         kotlinx.coroutines.coroutineScope {

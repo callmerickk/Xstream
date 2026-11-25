@@ -145,6 +145,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         recommended.value = emptyList()
         if (switched || wasKids != p.kids || shelves.value.isEmpty()) refresh()
         refreshRecommended()
+        // 0.9.7 (smartFinish): once per profile, titles that count as watched now leave Continue watching.
+        if (Feature.smartFinish && !BuildConfig.IS_TV) viewModelScope.launch { delay(2_000); runCatching { smartFinishPass() } }
         // New-episode alerts: remember this profile's shows (after the addons are ready).
         viewModelScope.launch { delay(8000); runCatching { EpisodeAlerts.snapshot(ctx, this@AppViewModel) } }
         // Look up the streams of your top Continue Watching titles early, so their title pages prepare instantly.
@@ -270,7 +272,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
 
     fun refreshRecommended() {
         recJob?.cancel()
-        recJob = viewModelScope.launch { runCatching { recommended.value = buildRecommendations(); if (!BuildConfig.IS_TV) current.value?.let { p -> savePicked(p.id, recommended.value) } } }
+        recJob = viewModelScope.launch { runCatching {
+            // 0.9.7 (smartCache): the day's picks stay the same (per profile) unless the taste moved a lot.
+            val pid = current.value?.id
+            val keep = Feature.smartCache && !BuildConfig.IS_TV && pid != null
+            val taste = if (keep) PicksStore.taste(this@AppViewModel) else emptyMap()
+            val today = if (keep) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { PicksStore.load(ctx, pid!!, taste) } else null
+            recommended.value = if (today != null) {
+                val ex = votes.value.filterValues { it.v != 0 }.keys + doneKeys.value.map { it.substringBefore(":") } + progress.value.map { it.key.substringBefore(":") }
+                today.filter { it.id !in ex }
+            } else buildRecommendations().also { l -> if (keep) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { PicksStore.save(ctx, pid!!, taste, l) } }
+            if (!BuildConfig.IS_TV) current.value?.let { p -> savePicked(p.id, recommended.value) }
+        } }
     }
 
     /** Back to the "Who's watching?" screen. */
@@ -442,7 +455,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         refresh()
     }
 
-    private fun applyPalette() {
+    private fun applyPalette(by: String = "app") {
         val m = Defaults + texts.value
         parseColor(m["accent"]!!)?.let { Palette.accent = it }
         parseColor(m["background"]!!)?.let { Palette.bg = it }
@@ -451,7 +464,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         if (isOn(m["amoled"]!!)) Palette.bg = Color.Black
         val glass = m["theme"] == "Glass"  // 0.9.75: phones too
         // 0.9.2: one line when the look changes (a Glass page that went plain dark shows up in the log).
-        if (glass != Palette.glass && !BuildConfig.IS_TV) ActLog.add("APP", "look · Glass " + if (glass) "on" else "off")
+        // 0.9.7 (glassPlus): and who changed it (you, cloud sync, profile, start).
+        if (glass != Palette.glass && !BuildConfig.IS_TV) ActLog.add("APP", "look · Glass " + (if (glass) "on" else "off") + if (Feature.glassPlus) " · by $by" else "")
         Palette.glass = glass
         m["cardCorner"]!!.trim().toIntOrNull()?.let { Palette.corner = it.coerceIn(0, 50) }
         // Buttons: the theme's own button colours, else the accent with readable text.
@@ -474,7 +488,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
             }
         }
         texts.value = appTexts + profTexts
-        applyPalette()
+        applyPalette("you")
     }
 
     fun resetTexts() {
@@ -487,7 +501,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         }
         Cloud.markApp("appTexts")
         texts.value = appTexts + profTexts
-        applyPalette()
+        applyPalette("reset to defaults")
     }
 
     // ───────────── Watch data (per profile) ─────────────
@@ -509,7 +523,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         val others = progress.value.filter { it.key != p.key && !(series && it.key.contains(":") && it.key.substringBefore(":") == base) }
         // Watched: a movie past 92 % (credits) leaves the row; an episode past 95 % (or at its credits) is replaced by
         // the next episode, shown as Up next.
-        val done = p.durationMs > 0 && p.positionMs > p.durationMs * (if (series) 0.95 else 0.92)
+        // 0.9.7 (smartFinish): credits start, else 92 % / 95 %, else minutes left. Off = the 0.9.6 rule.
+        val done = if (Feature.smartFinish) SmartFinish.done(p, series) else p.durationMs > 0 && p.positionMs > p.durationMs * (if (series) 0.95 else 0.92)
         // No limit: every title you started stays (and syncs with your cloud) until it is finished or removed.
         progress.value = (if (done && !series) others else listOf(if (done) p.copy(positionMs = p.durationMs) else p) + others)
         if (done && !series && !BuildConfig.IS_TV) addWatched(p)
@@ -523,6 +538,48 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         ed.apply()
         markCur("prog")
         if (done && series && !BuildConfig.IS_TV) viewModelScope.launch { runCatching { sweepFinished() } }
+    }
+
+    /**
+     * 0.9.7 (smartFinish): once per profile, Continue-watching entries that count as watched by the new rule leave the
+     * row (films to Library › Watched; episodes at 100 % so the next one shows). Films with ≤ 20 min left get their
+     * credits time looked up first (at most 12 look-ups), so "12 min left of 115" goes.
+     */
+    suspend fun smartFinishPass() {
+        if (!Feature.smartFinish || BuildConfig.IS_TV) return
+        val pid = current.value?.id ?: return
+        if (lib.getBoolean("sfPass097", false)) return
+        val before = progress.value
+        if (before.isEmpty()) return                       // nothing (yet): the next start tries again
+        var lookups = 0
+        for (p in before) {
+            val rem = p.durationMs - p.positionMs
+            if (!p.key.contains(":") && p.durationMs > 0 && rem in 1..20 * 60_000L && SmartFinish.credits(p.key) == null && lookups < 12) {
+                lookups++
+                runCatching { segments(p.key)?.outro?.start_ms?.takeIf { it > 0 } }.getOrNull()?.let { SmartFinish.noteCredits(p.key, it) }
+            }
+        }
+        if (current.value?.id != pid) return               // profile changed meanwhile
+        val now = progress.value
+        val out = ArrayList<Progress>(); val finished = ArrayList<Progress>()
+        for (p in now) {
+            val series = p.key.contains(":")
+            if (SmartFinish.done(p, series) && p.positionMs < p.durationMs) {
+                finished += p
+                if (series) out += p.copy(positionMs = p.durationMs) else { addWatched(p); ActLog.add("APP", "finished: ${p.title} → Watched (one-time pass)") }
+            } else out += p
+        }
+        val ed = lib.edit().putBoolean("sfPass097", true)
+        if (finished.isNotEmpty()) {
+            progress.value = out
+            doneKeys.value = doneKeys.value + finished.map { it.key }
+            ed.putString("progress", Api.json.encodeToString(progress.value)).putStringSet("done", doneKeys.value)
+        }
+        ed.apply()
+        if (finished.isEmpty()) return
+        markCur("prog"); markCur("done")
+        ActLog.add("APP", "Continue watching: ${finished.size} finished title(s) removed by the new rule (one-time pass)")
+        runCatching { sweepFinished() }
     }
 
     /**
@@ -679,6 +736,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         val off = texts.value["addonsOff"].orEmpty().split("|").filter { it.isNotBlank() }.toSet()
         return addons.value.filter { it.baseUrl !in off }
     }
+
+    /** 0.9.7 (addonFirst): the switched-on addons (the quality lane picks CNCVerse / HdHub from these). */
+    fun activeAddons(): List<Addon> = active
 
     /** Base URLs of the switched-on addons that can describe this title (used by the episode-alert check). */
     fun metaBases(type: String, id: String): List<String> = active.filter { it.supports("meta", type, id) }.map { it.baseUrl }
@@ -1839,7 +1899,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
         val pp = prefsForId(pid)
         profTexts = decodeMap(pp.getString("pcustom", null)) ?: emptyMap()
         texts.value = appTexts + profTexts
-        applyPalette()
+        applyPalette("profile opened")
         val saved = pp.getString("paddons", null)?.let { runCatching { warm("a:$pid", it) { r -> Api.json.decodeFromString<List<Addon>>(r) } }.getOrNull() }
         addons.value = pinFirst(saved ?: emptyList())
         if (saved.isNullOrEmpty()) ensureDefaultAddons(pid)
@@ -1955,7 +2015,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), CloudHost {
                     val addonsChanged = merged["addonsOff"] != profTexts["addonsOff"]
                     profTexts = merged
                     texts.value = appTexts + profTexts
-                    applyPalette()
+                    applyPalette("cloud sync")
                     if (addonsChanged && current.value != null) refresh()
                 }
             }

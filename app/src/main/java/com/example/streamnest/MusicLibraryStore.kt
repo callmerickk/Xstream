@@ -31,6 +31,8 @@ object MusicLibraryStore {
     @Volatile private var current = MusicProfileData()
 
     fun active(): MusicProfileData = current
+    /** 0.9.7: the profile whose Music library is open (the notification opens Music for it). */
+    fun currentProfileId(): String? = profileId
 
     suspend fun open(context: Context, id: String): MusicProfileData = withContext(Dispatchers.IO) {
         lock.withLock {
@@ -66,16 +68,19 @@ object MusicLibraryStore {
             added = old.liked.none { it.id == item.id }
             old.copy(liked = if (added) listOf(item) + old.liked else old.liked.filterNot { it.id == item.id })
         }
+        MusicLog.add("${if (added) "liked" else "unliked"} \"${item.title}\"")
         return added
     }
 
     suspend fun createPlaylist(context: Context, name: String): MusicPlaylist {
         val playlist = MusicPlaylist(java.util.UUID.randomUUID().toString(), name.trim().ifBlank { "New playlist" })
         edit(context) { it.copy(playlists = listOf(playlist) + it.playlists) }
+        MusicLog.add("playlist created")
         return playlist
     }
 
     suspend fun addToPlaylist(context: Context, playlistId: String, item: YtmItem) = edit(context) { old ->
+        MusicLog.add("added to a playlist: \"${item.title}\"")
         old.copy(playlists = old.playlists.map { p ->
             if (p.id == playlistId && p.items.none { it.id == item.id }) p.copy(items = p.items + item) else p
         })
@@ -89,15 +94,18 @@ object MusicLibraryStore {
     }
 
     suspend fun addRecentSearch(context: Context, query: String) = edit(context) { old ->
+        MusicLog.add("search: \"${query.trim().take(60)}\"")
         val q = query.trim().take(120)
         if (q.isBlank()) old else old.copy(recentSearches = (listOf(q) + old.recentSearches.filterNot { it.equals(q, true) }).take(20))
     }
 
     suspend fun togglePinned(context: Context, item: YtmItem) = edit(context) { old ->
+        MusicLog.add("${if (old.pinned.any { it.id == item.id }) "unpinned" else "pinned"} \"${item.title}\"")
         old.copy(pinned = if (old.pinned.any { it.id == item.id }) old.pinned.filterNot { it.id == item.id } else (listOf(item) + old.pinned).take(27))
     }
 
     suspend fun toggleSubscription(context: Context, artist: YtmItem) = edit(context) { old ->
+        MusicLog.add("${if (old.subscriptions.any { it.id == artist.id }) "unsubscribed" else "subscribed"} \"${artist.title}\"")
         old.copy(subscriptions = if (old.subscriptions.any { it.id == artist.id }) old.subscriptions.filterNot { it.id == artist.id } else listOf(artist) + old.subscriptions)
     }
 

@@ -21,22 +21,48 @@ object PageRelay : Interceptor {
     private val videoRx = Regex("(?i)\\.(mkv|mp4|avi|ts|m4s|webm)(\\?|$)")
     /** Hosts that were cut this session: asked through the relay straight away. */
     private val blocked = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    // 0.9.7 (addonFirst): a host that was cut is remembered 24 h (not only this session).
+    private const val DAY = 24L * 3600_000
+    private val rememberedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    @Volatile private var loaded = false
+    private fun loadRemembered() {
+        if (loaded) return
+        val p = CsPlugins.prefsOrNull() ?: return
+        loaded = true
+        p.getString("relayHosts24", null)?.split(';')?.forEach { e ->
+            val x = e.split('='); if (x.size == 2) x[1].toLongOrNull()?.let { rememberedAt[x[0]] = it }
+        }
+    }
+    private fun remembered(host: String): Boolean {
+        loadRemembered()
+        val t = rememberedAt[host] ?: return false
+        if (System.currentTimeMillis() - t > DAY) { rememberedAt.remove(host); return false }
+        return true
+    }
+    private fun remember(host: String) {
+        rememberedAt[host] = System.currentTimeMillis()
+        CsPlugins.prefsOrNull()?.edit()?.putString("relayHosts24", rememberedAt.entries.joinToString(";") { "${it.key}=${it.value}" })?.apply()
+    }
 
     private fun relayable(req: Request): Boolean = allowed.containsMatchIn(req.url.host) && !videoRx.containsMatchIn(req.url.encodedPath) &&
         (req.method == "GET" || req.method == "POST") && (req.body?.contentLength() ?: 0L) < 256 * 1024
 
     private fun isCut(e: Throwable): Boolean {
         val m = (e.message ?: "") + " " + e.javaClass.simpleName + " " + (e.cause?.message ?: "")
-        return e is javax.net.ssl.SSLException || m.contains("reset", true) || m.contains("handshake", true) || m.contains("Connection closed", true)
+        return e is javax.net.ssl.SSLException || m.contains("reset", true) || m.contains("handshake", true) || m.contains("Connection closed", true) ||
+            (Feature.addonFirst && (m.contains("refused", true) || m.contains("Failed to connect", true)))   // 0.9.7: refused counts too
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
         if (!relayable(req)) return chain.proceed(req)
         if (req.url.host in blocked) return viaRelay(chain, req)
+        // 0.9.7: remembered (24 h): the relay first; if the relay itself fails, the direct way once more (never worse than before).
+        if (Feature.addonFirst && remembered(req.url.host)) return try { viaRelay(chain, req) } catch (e: java.io.IOException) { chain.proceed(req) }
         return try { chain.proceed(req) } catch (e: java.io.IOException) {
             if (!isCut(e)) throw e
             blocked += req.url.host
+            if (Feature.addonFirst) remember(req.url.host)
             ActLog.add("NET", "relay: ${req.url.host} via Cloudflare (${e.javaClass.simpleName})")
             viaRelay(chain, req, e)
         }

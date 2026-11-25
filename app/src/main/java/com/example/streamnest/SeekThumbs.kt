@@ -75,8 +75,11 @@ class SeekThumbs(url: String, headers: Map<String, String>, key: String? = null,
                 if (closed || dead) break
                 if (b == OPEN) { open(); continue }
                 if (b != latest) { finish(b, null); continue }
+                // 0.9.7 (dataDiet): only where the finger rests (250 ms), not for every spot a drag passes.
+                if (Feature.dataDiet && fromDisk(b) == null) { kotlinx.coroutines.delay(250); if (b != latest) { finish(b, null); continue } }
                 val img = runCatching { extract(b * STEP) }.getOrNull()
                 if (img != null) {
+                    if (Feature.dataDiet && !hls) DataDiet.addThumbs(300_000)   // 0.9.7: estimate (the frame reader fetches its own bytes)
                     synchronized(lock) { cache[b] = img }
                     succeeded = true; emptyInARow = 0
                 } else if (opened && !succeeded && ++emptyInARow >= 4) giveUp()
@@ -95,6 +98,8 @@ class SeekThumbs(url: String, headers: Map<String, String>, key: String? = null,
      * A seek request always goes first.
      */
     fun prefetch(durMs: Long, wifi: Boolean = true) {
+        // 0.9.7 (dataDiet): no frames fetched across the film in the background; only when the seek bar is touched.
+        if (Feature.dataDiet) return
         if (dead || closed || prefetching || durMs <= 0) return
         prefetching = true
         scope.launch {
@@ -270,6 +275,7 @@ class HlsFrames(private val master: String, private val headers: Map<String, Str
         val b = okhttp3.Request.Builder().url(url)
         headers.forEach { (k, v) -> runCatching { b.header(k, v) } }
         Api.http.newCall(b.build()).execute().use { r -> if (r.isSuccessful) r.body?.bytes() else null }
+            ?.also { if (Feature.dataDiet) DataDiet.addThumbs(it.size.toLong()) }   // 0.9.7: real bytes for the data line
     }.getOrNull()
     private fun text(url: String) = get(url)?.toString(Charsets.UTF_8)
     private fun abs(base: String, u: String) = runCatching { java.net.URI(base).resolve(u.trim()).toString() }.getOrDefault(u)

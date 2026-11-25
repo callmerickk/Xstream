@@ -121,6 +121,9 @@ fun SourcesScreen(
     onBack: () -> Unit,
     onPick: (picked: StreamItem, all: List<StreamItem>, resume: Long) -> Unit,
 ) {
+    // 0.9.7 (fastManual): a stream tapped by hand from the start begins saving its first seconds while the player opens.
+    val pickOuter = onPick
+    val onPick: (StreamItem, List<StreamItem>, Long) -> Unit = { s, l, r -> if (Feature.fastManual && r <= 0L) ManualFast.warm(vm, s); pickOuter(s, l, r) }
     val texts by vm.texts.collectAsStateWithLifecycle()
     val pack by vm.badgePack.collectAsStateWithLifecycle()
     fun v(k: String) = texts[k] ?: Defaults[k] ?: ""

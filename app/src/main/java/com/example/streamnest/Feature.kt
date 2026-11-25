@@ -75,6 +75,26 @@ object Feature {
      *  Off = the phone layout everywhere, buffers as before. */
     val bigScreen: Boolean = on("bigScreen")
 
+    /** 0.9.7: data diet (DataDiet.kt): phone buffer 20–40 s / 60 MB, no background seek-thumb prefetch, Quality-menu
+     *  files only after the sheet opens, gated "climbing", paced background saving, MovieBox answers kept 30 min,
+     *  one data line per play. */
+    val dataDiet: Boolean = on("dataDiet")
+    /** 0.9.7: addon-first sources: Quick Play default = OTT plugins + CNCVerse; a quiet quality lane (CNCVerse Rocky,
+     *  HdHub through the cloud finder) fades in a clearly better copy; relayed hosts remembered 24 h. Needs cloudFind. */
+    val addonFirst: Boolean = on("addonFirst") && cloudFind
+    /** 0.9.7: finished titles leave Continue watching by the credits / 92 % / minutes-left rule, plus a one-time pass. */
+    val smartFinish: Boolean = on("smartFinish")
+    /** 0.9.7: automatic video-cache cleaning (WorkManager + a start pass) and Home data kept in app storage. */
+    val smartCache: Boolean = on("smartCache")
+    /** 0.9.7: Glass: hero colour per slide, smoky sheet behind full pages, one-time re-apply after an update. */
+    val glassPlus: Boolean = on("glassPlus")
+    /** 0.9.7: a stream tapped by hand starts saving its first seconds while the player opens. */
+    val fastManual: Boolean = on("fastManual")
+    /** 0.9.8: Watch together 2 (Call.kt / Together.kt / TogetherUi.kt): free bubbles with pinch, framing rule, per-friend
+     *  mute, "You" bubble, data saver, chat panel with emojis, movable react button, raise hand, joined / sync lines,
+     *  rooms started from the title page, no info card in a room. */
+    val wt2: Boolean = on("wt2")
+
     // 0.9.6: the slim build. These four are NOT named switches: they follow BuildConfig.SLIM_LIBS (Xstream phone only),
     // the same value that leaves the native libraries out of the APK (app/build.gradle.kts), so a switch can never be on
     // in an APK that still needs the library, or off in one that lacks it. StreamX: SLIM_LIBS false in its brand file.

@@ -235,8 +235,11 @@ object YtMusic {
     }
 
     private suspend fun cached(key: String, block: suspend () -> YtmPage): YtmPage {
-        cache[key]?.takeIf { System.currentTimeMillis() - it.at < TTL }?.let { return it.page }
+        cache[key]?.takeIf { System.currentTimeMillis() - it.at < TTL }?.let { MusicLog.add("page ${key.take(80)} (kept copy)"); return it.page }
+        val t0 = System.currentTimeMillis()
         val page = block()
+        val n = page.items.size + page.shelves.sumOf { it.items.size }
+        MusicLog.add("page ${key.take(80)} loaded in ${System.currentTimeMillis() - t0} ms · ${page.shelves.size} rows, $n items" + if (n == 0) " · EMPTY (nothing found)" else "")   // 0.9.8
         cache[key] = Cached(System.currentTimeMillis(), page)
         return page
     }

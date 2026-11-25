@@ -11,7 +11,10 @@
     <application>
         <!-- 0.9.6: Google Play services downloads the face model ("Follow the speaker") when the app is installed. -->
         <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="face" />
-        <activity android:name="com.example.streamnest.MainActivity">
+        <!-- 0.9.7: the Xstream icon always shows the main app: one instance in its own task (Music keeps its own task). -->
+        <activity android:name="com.example.streamnest.MainActivity"
+            android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}">
             <!-- "Open" after installing / updating opens the main app (not Music): Android asks for this category first. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -33,6 +36,7 @@
             android:icon="@mipmap/ic_launcher_music"
             android:roundIcon="@mipmap/ic_launcher_music"
             android:launchMode="singleTask"
+            android:allowTaskReparenting="false"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode"
             android:supportsPictureInPicture="false"
             android:exported="true"

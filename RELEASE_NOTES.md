@@ -1,3 +1,26 @@
+Xstream 0.9.8
+
+Watch together, all new:
+• Move friends' bubbles anywhere and pinch them bigger or smaller; they stay where you put them.
+• Frame yourself: double-tap your own bubble and everyone sees you the way you chose.
+• Mute one friend just for you, and see your own bubble too.
+• Chat with emojis and favourites, and a small reaction button you can drag anywhere.
+• Raise your hand to ask everyone to pause.
+• See who joined and when everyone is back in sync.
+• Start a watch party right from a title's page and invite friends at once.
+• Calls use less data on mobile data or when the film is loading.
+
+Xstream 0.9.7
+
+Less data, better pictures:
+• Uses much less data.
+• Better quality copies appear on their own.
+• Finished films leave Continue Watching.
+• Home never grey after clearing cache.
+• Glass colour follows each poster; pages easier to read in Glass.
+• Hand-picked streams start faster.
+• Xstream icon always opens Xstream.
+
 Xstream 0.9.6
 
 A much smaller app:

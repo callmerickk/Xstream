@@ -39,6 +39,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 if (Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory(enforceMinimumFrameDelay = true)) else add(GifDecoder.Factory(enforceMinimumFrameDelay = true))
                 add(VideoFrameDecoder.Factory())
                 if (!BuildConfig.IS_TV) add(HdPoster)
+                // 0.9.7 (smartCache): the first screen's pictures are kept in app storage (before TvImgSize changes the address).
+                if (Feature.smartCache && !BuildConfig.IS_TV) add(KeepPosters)
                 // TV 0.9.13: pictures fetched at the size they are shown (a card never downloads a 1280-px backdrop).
                 add(TvImgSize)  // 0.9.75: phones too (as Xstream 0.8.17 ImgSize)
             }.okHttpClient { Posters.client() }.crossfade(if (BuildConfig.IS_TV) 0 else 120).allowRgb565(true)
@@ -48,6 +50,10 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 .respectCacheHeaders(false)
                 .build()
         )
+        // 0.9.7 (smartCache): the Glass backdrop to app storage + the video-cache keeper (before anything reads them).
+        if (Feature.smartCache && !BuildConfig.IS_TV) { AppStore.migrate(applicationContext); CacheKeeper.start(applicationContext) }
+        // 0.9.7: how this start came (the "Xstream icon opened Music" check): task, root, flags, entry.
+        if (!BuildConfig.IS_TV) ActLog.add("APP", "launch · task $taskId · root $isTaskRoot · flags 0x${Integer.toHexString(intent?.flags ?: 0)} · ${intent?.component?.shortClassName ?: "?"}")
         // Live server (64-bit app): started a few seconds after the app opens, so it's ready before a title page asks.
         LiveServer.start(this, 2_500)
         // "Xstream Music" when the app icon is held.
@@ -75,7 +81,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
                 androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                     // 0.9.76: Glass theme (phones) — one blurred picture behind every page.
                     // 0.9.2: not drawn at all while the video player is open (it only cost frames under the video).
-                    if (!BuildConfig.IS_TV && !BigScreen.on && Palette.glass && !GlassBg.paused) GlassBackdrop(GlassBg.url)
+                    if (!BuildConfig.IS_TV && !BigScreen.on && Palette.glass && !GlassBg.paused) { if (Feature.glassPlus) GlassBackdropAll(GlassBg.url) else GlassBackdrop(GlassBg.url) }
                     // 0.9.5: the phone app in big-screen mode uses the TV interface too (BigScreen.tvUi = IS_TV when off).
                     if (BigScreen.tvUi) TvApp() else App()
                     // 0.9.1 (accessGate): approval-only access + "Update required" (approval off until turned on in Access requests).
@@ -166,6 +172,13 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
+        // 0.9.7: MainActivity is singleTask in Xstream: a running app gets its links (invites, widget, Music) here.
+        if (!BuildConfig.IS_TV) {
+            setIntent(intent)
+            ActLog.add("APP", "launch (running) · task $taskId · flags 0x${Integer.toHexString(intent.flags)} · ${intent.component?.shortClassName ?: "?"}")
+            if (intent.getBooleanExtra("openMusic", false)) MusicPlayer.openNow.value = true
+            if (intent.getBooleanExtra("musicHome", false)) MusicPlayer.splash.value = true
+        }
         WidgetOpen.take(intent)
         JoinIntent.take(intent)
         DlEngine.take(intent)

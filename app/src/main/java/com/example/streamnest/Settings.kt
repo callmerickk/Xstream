@@ -295,6 +295,8 @@ internal fun AccountScreen(vm: AppViewModel, onBack: () -> Unit) {
         SettingsCard {
             SettingRow(Icons.Default.Delete, "Clear watch history", "Removes Continue Watching and your stats.") { confirm = true }
         }
+        // 0.9.8 (music): the Music lines of the activity log, to view or share.
+        MusicLogsCard()
     }
     if (confirm) PremiumAlert(
         onDismissRequest = { confirm = false },

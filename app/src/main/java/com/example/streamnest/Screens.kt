@@ -127,6 +127,15 @@ fun App(vm: AppViewModel = viewModel()) {
     // Music (Live server): its pages open from the Home chip, the mini bar and the notification.
     // Account-level terms must be accepted before the rest of the app can be used.
     LegalNoticeGate(vm)
+    // 0.9.7 (glassPlus): Glass applied once again after an update; the backdrop never starts black.
+    LaunchedEffect(Unit) { GlassUpdate.run(vm) }
+    LaunchedEffect(Unit) { GlassHealth.watch() }
+    // The room's video opens in the player (Join a room dialog, and 0.9.8: a title-page room whose host just started it).
+    val playRoom: (RoomState) -> Unit = { st ->
+        val expected = st.pos + if (st.playing) (System.currentTimeMillis() - st.receivedAt + 300) else 0L
+        stack.add(Screen.Player(st.title, st.url, emptyList(), key = st.key, image = st.image, resumeMs = expected, type = st.type))
+    }
+    LaunchedEffect(Unit) { if (Feature.wt2) Together.videoReady.collect { st -> stack.removeAll { it is Screen.Player }; playRoom(st) } }
     // 0.9.75: everyone starts on "All Live" (Live Home + Orbit bar + Midnight) once per profile; changeable in Settings › Layout.
     LaunchedEffect(profile?.id) {
         if (BuildConfig.IS_TV || profile == null || vm.texts.value["allLive0975"] == "1") return@LaunchedEffect
@@ -262,7 +271,11 @@ fun App(vm: AppViewModel = viewModel()) {
         val onPlayer = stack.lastOrNull() is Screen.Player
         // 0.9.2: Glass backdrop off while the player (or a full-screen trailer) is open.
         val fullVideo = onPlayer || stack.lastOrNull() is Screen.Trailer
-        SideEffect { if (GlassBg.paused != fullVideo) GlassBg.paused = fullVideo }
+        SideEffect {
+            if (GlassBg.paused != fullVideo) GlassBg.paused = fullVideo
+            // 0.9.7 (glassPlus): what the Glass health check needs (the page shown, video open or not).
+            if (Feature.glassPlus) { GlassHealth.fullVideo = fullVideo; GlassHealth.screen = stack.lastOrNull()?.let { it::class.simpleName } ?: "tab $tab" }
+        }
         val aiBusy = voiceOpen || VoiceAskBus.pending.collectAsState().value != null
         LaunchedEffect(onPlayer) { WakeWord.strict = onPlayer }
         LaunchedEffect(aiBusy) { if (!aiBusy) WakeWord.quietUntil = System.currentTimeMillis() + 3000 }
@@ -318,20 +331,18 @@ fun App(vm: AppViewModel = viewModel()) {
                 // "Play the movie": back to the title page, which then presses Play by itself.
                 TrailerScreen(top, onBack = pop, onPlayMovie = { pendingDetailPlay.value = top.meta?.id; pop() })
             }
-            is Screen.Settings -> key(top) { Box(Modifier.fillMaxSize().background(Bg)) { SettingsHost(vm, top.start, onClose = pop) } }
+            // 0.9.7 (glassPlus): full pages on the smoky Glass sheet (a plain Box otherwise).
+            is Screen.Settings -> key(top) { GlassSheet { Box(Modifier.fillMaxSize().background(Bg)) { SettingsHost(vm, top.start, onClose = pop) } } }
             Screen.Live -> Box(Modifier.fillMaxSize().background(Bg)) { LiveTvScreen(vm, onBack = pop) { stack.add(it) } }
             is Screen.Collection -> key(top) {
-                Box(Modifier.fillMaxSize().background(Bg)) { CollectionScreen(vm, top.collectionId, top.folderId, onBack = pop, onOpen = open) }
+                GlassSheet { Box(Modifier.fillMaxSize().background(Bg)) { CollectionScreen(vm, top.collectionId, top.folderId, onBack = pop, onOpen = open) } }
             }
             is Screen.Together -> key(top) {
-                WatchTogetherPage(vm, onBack = pop, onOpen = open, startChat = top.chat, startItem = top.item, onPlayRoom = { st ->
-                    val expected = st.pos + if (st.playing) (System.currentTimeMillis() - st.receivedAt + 300) else 0L
-                    stack.add(Screen.Player(st.title, st.url, emptyList(), key = st.key, image = st.image, resumeMs = expected, type = st.type))
-                })
+                WatchTogetherPage(vm, onBack = pop, onOpen = open, startChat = top.chat, startItem = top.item, onPlayRoom = playRoom)
             }
-            Screen.Library -> LibraryPage(vm, onBack = pop, onOpen = open, onPlay = { stack.add(it) })
-            is Screen.Watchlist -> key(top) { WatchlistPage(vm, onBack = pop, onOpen = open, startCalendar = top.calendar) }
-            Screen.Notes -> NotificationsPage(onBack = pop, onTogether = { stack.add(Screen.Together()) }, onOpen = open)
+            Screen.Library -> GlassSheet { LibraryPage(vm, onBack = pop, onOpen = open, onPlay = { stack.add(it) }) }
+            is Screen.Watchlist -> key(top) { GlassSheet { WatchlistPage(vm, onBack = pop, onOpen = open, startCalendar = top.calendar) } }
+            Screen.Notes -> GlassSheet { NotificationsPage(onBack = pop, onTogether = { stack.add(Screen.Together()) }, onOpen = open) }
             null -> Box(Modifier.fillMaxSize().background(Bg).nestedScroll(scrollWatcher)) {
                 Box(Modifier.fillMaxSize().then(if (voiceOpen) Modifier.blur(10.dp) else Modifier)) {
                 when (tab) {
@@ -344,8 +355,8 @@ fun App(vm: AppViewModel = viewModel()) {
                         onNotes = { stack.add(Screen.Notes) },
                         onTogether = { stack.add(Screen.Together()) },
                     )
-                    1 -> SearchScreen(vm, "", open)
-                    2 -> LibraryPage(vm, onBack = { tab = 0 }, onOpen = open, onPlay = { stack.add(it) })
+                    1 -> GlassSheet { SearchScreen(vm, "", open) }
+                    2 -> GlassSheet { LibraryPage(vm, onBack = { tab = 0 }, onOpen = open, onPlay = { stack.add(it) }) }
                     else -> MySpaceScreen(
                         vm,
                         onSettings = { stack.add(Screen.Settings()) },
@@ -408,7 +419,7 @@ fun App(vm: AppViewModel = viewModel()) {
                 var res: Pair<RoomState?, String?> = null to null
                 for (attempt in 0 until 3) {
                     res = Together.join(c)
-                    if (res.first != null || res.second?.startsWith("No room") == true) break
+                    if (res.first != null || res.second?.startsWith("No room") == true || res.second == Together.WAITING_HOST) break
                     delay(1200)
                 }
                 val st = res.first

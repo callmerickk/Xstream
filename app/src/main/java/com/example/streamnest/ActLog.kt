@@ -135,6 +135,10 @@ object ActLog {
 
     fun days(): List<String> { flush(); return dir?.listFiles()?.map { it.name.removeSuffix(".log") }?.sortedDescending().orEmpty() }
     fun read(day: String): String = runCatching { fileFor(day).readText() }.getOrDefault("")
+    /** 0.9.8 (music): a log line written by Xstream Music ("HH:mm:ss.SSS MUSIC  …"). */
+    fun isMusicLine(l: String): Boolean = l.length > 19 && l.regionMatches(13, "MUSIC ", 0, 6)
+    /** 0.9.8 (music): only the Music lines of a day (Settings › Account › Xstream Music logs). */
+    fun musicText(day: String): String { flush(); return read(day).lines().filter { isMusicLine(it) }.joinToString("\n") }
 
     fun clear() { dir?.listFiles()?.forEach { it.delete() } }
 
@@ -307,7 +311,7 @@ object ActLog {
      * arrived; "xshared/logs" takes every signed-in account's (as in Xstream). Each device says its app and version.
      */
     private val LOG_ROOT = "${CloudConfig.DB_URL}/xshared/logs"
-    private val importantRx = Regex("(?i)(\\bTOUR\\b|\\bTOGETHER\\b|\\bROOM\\b|\\bCALL\\b|length check|\\bERROR\\b|crash|app ended|froze|not responding|exception|failed|refused|can't play|cannot play|no streams|no links|nothing found|first picture|= ✓|stopped|gave up|timeout|timed out|HTTP [45]\\d\\d|wake word|live (closed|failed)|APP +opened|SWITCH|ladder|swap:|wrong title|MBDIRECT|SITE |plugins changed|NOSTREAM|PLAYFAIL|buffering at|playing again after|Watch next|93 %|episode ended|4K:|start · |opening the player|nothing played|screen rebuilt|display change|re-attached)")
+    private val importantRx = Regex("(?i)(\\bTOUR\\b|\\bTOGETHER\\b|\\bROOM\\b|\\bCALL\\b|length check|\\bERROR\\b|crash|app ended|froze|not responding|exception|failed|refused|can't play|cannot play|no streams|no links|nothing found|first picture|= ✓|stopped|gave up|timeout|timed out|HTTP [45]\\d\\d|wake word|live (closed|failed)|APP +opened|SWITCH|ladder|swap:|wrong title|MBDIRECT|SITE |plugins changed|NOSTREAM|PLAYFAIL|buffering at|playing again after|Watch next|93 %|episode ended|4K:|start · |opening the player|nothing played|screen rebuilt|display change|re-attached|glass · |data · |quality lane|launch · |cache · |manual start)")
 
     /** Sends the important lines written since the last upload (errors, crashes, play results) to shared/logs. */
     /** "Fire TV Stick 4K (TV)" instead of Amazon's codes (AFTMM…), so the TV is easy to find in the developer list. */
@@ -343,6 +347,11 @@ object ActLog {
                 val keys = runCatching { Api.json.parseToJsonElement(txt).jsonObject.keys }.getOrDefault(emptySet())
                 val keep = (0 until CLOUD_KEEP_DAYS).map { dayFmt.format(Date(System.currentTimeMillis() - it * 86_400_000L)) }.toSet()
                 keys.filter { it !in keep }.forEach { old -> Api.http.newCall(Request.Builder().url("$base/days/$old.json?auth=$t").delete().build()).execute().close() }
+                // 0.9.8 (music): the Music days too.
+                if (Feature.music && !BuildConfig.IS_TV) runCatching {
+                    val mk = runCatching { Api.json.parseToJsonElement(Api.get("$base/music/days.json?shallow=true&auth=$t")).jsonObject.keys }.getOrDefault(emptySet())
+                    mk.filter { it !in keep }.forEach { old -> Api.http.newCall(Request.Builder().url("$base/music/days/$old.json?auth=$t").delete().build()).execute().close() }
+                }
             }
             p.edit().putString("cPruned", day).apply()
         }
@@ -350,6 +359,14 @@ object ActLog {
         val chunk = runCatching { f.inputStream().use { it.skip(sent); it.readBytes() } }.getOrNull()?.decodeToString() ?: return
         // TV 0.8.3: the TV sends its whole log (only cancelled requests left out), so the phone's developer section can read it.
         val keep = chunk.lines().filter { it.isNotBlank() && (if (BuildConfig.IS_TV) !it.contains("Canceled") else importantRx.containsMatchIn(it)) }.joinToString("\n").take(120_000)
+        // 0.9.8 (music): every MUSIC line also goes to its own place (xshared/logs/<uid>/<dev>/music/days/<day>).
+        if (Feature.music && !BuildConfig.IS_TV) runCatching {
+            val music = chunk.lines().filter { isMusicLine(it) }.joinToString("\n").take(200_000)
+            if (music.isNotBlank()) {
+                val mb = buildJsonObject { put("t", music); put("at", System.currentTimeMillis()) }
+                Api.http.newCall(Request.Builder().url("$base/music/days/$day.json?auth=$t").post(mb.toString().toRequestBody("application/json".toMediaType())).build()).execute().close()
+            }
+        }
         if (keep.isNotBlank()) {
             val body = buildJsonObject { put("t", keep); put("at", System.currentTimeMillis()) }
             val ok = Api.http.newCall(Request.Builder().url("$base/days/$day.json?auth=$t").post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { it.isSuccessful }

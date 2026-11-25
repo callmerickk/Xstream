@@ -13,6 +13,25 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.9.8", "25 Nov 2026", "Watch together, all new", listOf(
+        "Move friends' bubbles anywhere and pinch them bigger or smaller; they stay where you put them",
+        "Frame yourself: double-tap your own bubble and everyone sees you the way you chose",
+        "Mute one friend just for you, and see your own bubble too",
+        "Chat with emojis and favourites, and a small reaction button you can drag anywhere",
+        "Raise your hand to ask everyone to pause",
+        "See who joined and when everyone is back in sync",
+        "Start a watch party right from a title's page and invite friends at once",
+        "Calls use less data on mobile data or when the film is loading",
+    )),
+    Release("0.9.7", "25 Nov 2026", "Less data, better pictures", listOf(
+        "Uses much less data",
+        "Better quality copies appear on their own",
+        "Finished films leave Continue Watching",
+        "Home never grey after clearing cache",
+        "Glass colour follows each poster; pages easier to read in Glass",
+        "Hand-picked streams start faster",
+        "Xstream icon always opens Xstream",
+    )),
     Release("0.9.6", "24 Nov 2026", "A much smaller app", listOf(
         "Much smaller app: quicker to download and install, and it takes less space on your phone",
         "Plays more audio and video formats on its own",
@@ -634,6 +653,24 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.9.8", "25 Nov 2026", "Watch together 2 (wt2) + Music logs; single build with 0.9.7 (versionCode 68)", listOf(
+        "wt2 Call.kt: CallBubbles → CallBubblesV2 (off = CallBubblesLegacy word for word): free drag + pinch 56–180 dp (one awaitEachGesture: slop = drag, 2 fingers = pinch, tap waits for a double-tap), gentle edge snap, BubbleSpots per bubble (prefs call_bubbles), glass ring, name pill, signal dots (Call.quality from RTT / loss window / fps in statsLoop), pulsing talking ring, talker grows with 3+ on camera (600 ms debounce)",
+        "wt2 framing rule: Frames.at (server time per override, prefs call_frames_at), Frames.pick(published FrameMsg, override, at): the owner's newer frame wins and drops my override once (\"… changed their frame\"); my own frame = Together.publishFrame (members/<me>/frame, 250 ms debounce); FrameDialog starts from the frame shown",
+        "wt2 per-friend mute (Call.setPeerMuted, prefs call/muted_<room>; no ring, no ducking), \"You\" bubble (Call.selfView / localVideo) with mic / camera / flip PopButtons; data saver: metered or Call.movieBuffering (player's buffering) → my sender 120 kbps / 10 fps / ½ size and a \"saver\" signal to friends (older apps ignore it), back after 8 s smooth on Wi-Fi",
+        "wt2 Together.kt: RoomMember.frame (FrameMsg) + hand; memberJson carries them in the 10 s beat (putMember: plain node for 5 min if the rules refuse); handFrom (6 s banner, Pause = the player's pauseNow so sync sends it), joined flow, title-page rooms (create(fromTitle) with url \"\", join answers WAITING_HOST, videoReady → App's playRoom = the Join dialog's handler), 15-min idle close only while nobody joined and the host isn't playing (provider == null)",
+        "wt2 TogetherUi.kt: WtMovableReact (drag, favourites row), WtChatButton + WtChatPanel (members with per-friend speaker, emoji tabs Recent / ★ / groups, long-press = favourite, prefs emoji), WtRoomNotices (loading → In sync ✓, joined, raised hand), WtChatEntry in the room panel; ChatToasts 3 s / 2 lines; info card off in a room; Detail action row \"Together\" (rememberWatchTogether: room + share sheet + Ring a friend); Ring a friend unchanged",
+        "music: MusicLog.kt ported from backup-xstream-0820 (B7) — MUSIC lines for song start (source, reason, time to start, audio format, quality), finished / left at, skips, seeks, pauses + reason (you, call, headphones, lock screen / notification), buffering, errors, quality changes, taps, pages (YtMusic.cached), library (likes, playlists, pins, subscriptions, searches, queue), sleep timer, widget; Settings › Account › Music logs (MUSIC lines only, view / share); upload also to xshared/logs/<uid>/<dev>/music/days/<day> (15 days); collector writes logs/<day>/music/<acct>/<device ver>.txt",
+        "glassPlus: Glass health log (GlassHealth: start line with source + ms, black / back every 5 s with reason + screen, look changes with who: you / cloud sync / profile / reset / update re-apply)",
+    )),
+    Release("0.9.7", "25 Nov 2026", "Data diet, addon-first + quality lane, smartFinish, smartCache, Glass+, fastManual, Music / launcher fix", listOf(
+        "dataDiet: phone buffer 20–40 s / 60 MB (DataDiet.kt, buildPlayer; big screen / TV unchanged); TransferListener → DATA line per play (video / background / thumbs MB, minutes); SeekThumbs.prefetch off + 250 ms dwell (HlsFrames already reads the smallest variant, bytes counted); Quality-menu saveHdStart only after the sheet opened, light = one 6 MB head piece; ladder: not in the first 30 s, ≥ 20 s ahead (Wi-Fi) / 30 s (mobile), search 20 s later, Vega wait +20 s; step-down hold in the first 10 s after start / jump while speed ≥ 2× (DataDiet.holdQuality in the QUALITY loop); Booster saving ahead = BgSaveGuard (stop on copy / quality change, ≤ 3 min ahead, 2× pace, 1 connection); MovieBoxCache 30 min (memory + noBackupFiles/mb-links) + Singleflight",
+        "addonFirst: Rules › Quick Play default = OTT_ANY + CNC_ANY (\"Addon · *cncverse*\", expanded to the CNCVerse addon labels on; no CNCVerse addon = empty default as before); isQuick never takes CNCVerse Rocky (isVegamovies / rogmovies in name, title, description, file name, address) or HdHub copies; backup tie-break CNCVerse → HdHub → MovieBoxIN → others → MovieBox; QualityLane: CloudFind.find(type, id, bases of the CNCVerse + HdHub addons on) + SlowAddons links → 4K / higher res / 60 fps / HDR / +35 % size → ottSwapTo (same length, same audio) after climbOk, ladder waits ≤ 90 s for it; PageRelay: cut hosts remembered 24 h (relayHosts24), refused counts as cut, relay-first with direct fallback",
+        "smartFinish: SmartFinish.done = credits start (from the player's skip times, ≥ 50 % of the length) → 92 % / 95 % → ≤ 8 min left of a ≥ 60 min film / ≤ 3 min of an episode; one-time pass per profile (sfPass097, ≤ 12 introdb look-ups)",
+        "smartCache: CacheKeeper (WorkManager idle + charging every 6 h, 10 s start pass; pieces > 24 h, cap min(1 GB, 10 % free); never while a player is open, spans used < 10 min, head 8 MB of playing / last link); AppStore keep folder (noBackupFilesDir/keep: glass_last.png moved — Home snapshot and picks were already in filesDir / prefs); KeepPosters Coil interceptor (first 30 pictures per start kept, read first); PicksStore: \"Picked for you\" same all day unless taste similarity < 0.85",
+        "glassPlus: HeroTint (w92 poster colour per slide, 600 ms, hero-colors.txt), GlassBackdropAll, GlassSheet (60 % tint + edge) on Settings / Notifications / Library / Watchlist / collections / Search, GlassUpdate (re-apply once per versionCode, backdrop URL restored from glass_url.txt)",
+        "fastManual: ManualFast.warm from title-page Sources (from the start, files only): 12 MB head in 4 pieces while the player opens, cancelled when it closes",
+        "Manifest: MainActivity singleTask (brand manifest) with onNewIntent → setIntent + Music extras; Music notification opens MusicActivity (own task, skipIntro + profile); launch log line (task, root, flags)",
+    )),
     Release("0.9.6", "24 Nov 2026", "Slim build (SLIM_LIBS): no LibVLC / Vosk / bundled face model / WebRTC .so in the phone APK; arm64 + arm32 APKs", listOf(
         "BuildConfig.SLIM_LIBS (= brandBeta && phone flavor; TV and StreamX false) drives Feature.noVlc / noVosk / mlkitUnbundled / webrtcOnDemand AND androidComponents.onVariants(phone) packaging.jniLibs.excludes (libvlc, libvlcjni, libvosk, libjnidispatch, libjingle_peerconnection_so) — one value, so a switch never meets a missing .so",
         "Two phone APKs, one versionCode (66): Xstream-phone.apk = arm64-v8a, Xstream-phone-arm32.apk = armeabi-v7a (gradle -PphoneAbi=arm32); Updates.check picks APK_PHONE_ARM32 when Build.SUPPORTED_64_BIT_ABIS is empty; versions.json unchanged",

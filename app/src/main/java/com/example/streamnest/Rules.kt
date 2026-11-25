@@ -108,7 +108,8 @@ object Rules {
     )
 
     val defs = listOf(
-        RuleDef(QUICK_SOURCES, "quick", "Quick Play asks only these (in order)", RuleKind.LIST, "",
+        // 0.9.7 (addonFirst): default = the Netflix-type plugins, then CNCVerse (only when a CNCVerse addon is on). Empty it here = as before.
+        RuleDef(QUICK_SOURCES, "quick", "Quick Play asks only these (in order)", RuleKind.LIST, if (Feature.addonFirst) AddonFirst.QUICK.joinToString("\n") else "",
             "Empty = as before: the Quick Start picks (addon mode) or the ticked plugins + MovieBox / Netflix-type / VegaMovies (plugin mode).", sources = true),
         RuleDef(QUICK_WAIT_ADDONS, "quick", "Wait before backup — addons (s)", RuleKind.INT, "6", "No link that starts fast within this time → every source is asked (title page)."),
         RuleDef(QUICK_WAIT_PLUGINS, "quick", "Wait before backup — plugins (s)", RuleKind.INT, "20", "Plugin mode: nothing from Quick Play within this time → every plugin is asked."),
@@ -241,14 +242,15 @@ object Rules {
 
     /** A source name matches a rule item (exact, or the MovieBox / Netflix-type / VegaMovies groups). */
     fun matches(name: String, item: String): Boolean = name == item ||
-        (item == MB_ANY && name.contains("moviebox", true)) || (item == VEGA_ANY && isVegaName(name)) || (item == OTT_ANY && isOttName(name))
-    fun quickSources(): List<String> = if (Feature.devRules) list(QUICK_SOURCES) else emptyList()
+        (item == MB_ANY && name.contains("moviebox", true)) || (item == VEGA_ANY && isVegaName(name)) || (item == OTT_ANY && isOttName(name)) ||
+        (item == CNC_ANY && AddonFirst.isCncName(name))   // 0.9.7
+    fun quickSources(): List<String> = if (Feature.devRules) list(QUICK_SOURCES).let { if (Feature.addonFirst) AddonFirst.expand(Public.vm, it) else it } else emptyList()
     fun backupSources(): List<String> = if (Feature.devRules) list(BACKUP_SOURCES) else emptyList()
     /** Backup flows ask only these (null = every source, as before). */
     fun backupOnly(): Set<String>? = backupSources().takeIf { it.isNotEmpty() }?.toSet()
     /** Position in the list (0 when no list is set: no change to any order). */
     fun quickRank(name: String): Int { val l = quickSources(); if (l.isEmpty()) return 0; val i = l.indexOfFirst { matches(name, it) }; return if (i < 0) l.size else i }
-    fun backupRank(name: String): Int { val l = backupSources(); if (l.isEmpty()) return 0; val i = l.indexOfFirst { matches(name, it) }; return if (i < 0) l.size else i }
+    fun backupRank(name: String): Int { val l = backupSources(); if (l.isEmpty()) return if (Feature.addonFirst) AddonFirst.backupRank(name) else 0; val i = l.indexOfFirst { matches(name, it) }; return if (i < 0) l.size else i }
     /** Some rule names its own sources: streamsFlow may mix addons and plugins. */
     fun namesSources(): Boolean = quickSources().isNotEmpty() || backupSources().isNotEmpty()
     fun autoSwitchHere(): Boolean = bool(if (BuildConfig.IS_TV) SWITCH_TV else SWITCH_PHONE)

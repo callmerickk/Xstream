@@ -54,6 +54,10 @@ import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
 
 class MusicActivity : ComponentActivity() {
+    // 0.9.7: singleTask: a tap on the notification / widget reaches the open Music here (kept as its intent).
+    override fun onNewIntent(intent: android.content.Intent) { super.onNewIntent(intent); setIntent(intent) }
+    override fun onResume() { super.onResume(); MusicLog.add("Music app in front") }
+    override fun onPause() { super.onPause(); MusicLog.add("Music app to background") }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MusicPlayer.init(applicationContext)

@@ -61,6 +61,7 @@ private suspend fun sourceOptions(vm: AppViewModel, ctx: android.content.Context
         out += MB_ANY to "Every MovieBox plugin"
         out += OTT_ANY to "Every Netflix / Prime / Hotstar-type plugin"
         out += VEGA_ANY to "VegaMovies / RogMovies"
+        if (Feature.addonFirst) out += CNC_ANY to "Every CNCVerse addon"
         out += "CloudStream · MovieBox" to "MovieBox (direct)"
         runCatching {
             CsPlugins.init(ctx)

@@ -262,8 +262,12 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     // 0.9.5 (bigScreen): the top device tier (laptop / PC emulator / big tablet, DeviceTier) keeps more video ready:
     // up to 400 MB (32 % of the app's memory) and 2 minutes ahead. Off: exactly as before.
     val topTier = !tv && Feature.bigScreen && DeviceTier.top(ctx)
-    val budgetMb = if (tv) byRam else if (topTier) minOf(400, (heapMb * (if (others > 0) 0.14 else 0.32)).toInt()).coerceAtLeast(64)
+    // 0.9.7 (dataDiet): phones keep at most ~40 s / 60 MB ahead, whatever DeviceTier says (big-screen / TV keep theirs).
+    val diet = Feature.dataDiet && DataDiet.phone()
+    val budgetMb0 = if (tv) byRam else if (topTier) minOf(400, (heapMb * (if (others > 0) 0.14 else 0.32)).toInt()).coerceAtLeast(64)
         else minOf(byRam, (heapMb * (if (others > 0) 0.10 else 0.22)).toInt()).coerceAtLeast(32)
+    val budgetMb = if (diet) minOf(budgetMb0, DataDiet.PHONE_MB) else budgetMb0
+    if (diet && !hidden) ActLog.add("PLAY", "data · buffer target ${DataDiet.PHONE_MIN_MS / 1000}–${DataDiet.PHONE_MAX_MS / 1000} s ahead · ≤ $budgetMb MB (tier ${DeviceTier.get(ctx)})")
     // 0.9.77: a hidden player (the title page's ready paused one, the next episode's) loads only enough to start:
     // ~5 s / 6 MB while it waits (0.9.78; was 15 s / 16 MB). Its full budget opens up the moment it is handed to the player ([HiddenCap.lift]).
     // The 0.9.76 crashes: each title page's paused player kept loading up to 84 MB while the user browsed on.
@@ -273,7 +277,10 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     val hold0 = if (capped) java.util.concurrent.atomic.AtomicBoolean(true) else null
     val load = object : DefaultLoadControl(
         androidx.media3.exoplayer.upstream.DefaultAllocator(true, androidx.media3.common.C.DEFAULT_BUFFER_SEGMENT_SIZE),
-        if (tv) 30_000 else 25_000, if (tv) 60_000 else if (BuildConfig.HAS_LIVE || topTier) 120_000 else 60_000, if (fast) 1_500 else 2_500, if (fast) 3_000 else 5_000,
+        // 0.9.7 (dataDiet): low-water 20 s / high-water 40 s on phones (loads in bursts between the two marks).
+        if (tv) 30_000 else if (diet) DataDiet.PHONE_MIN_MS else 25_000,
+        if (tv) 60_000 else if (diet) DataDiet.PHONE_MAX_MS else if (BuildConfig.HAS_LIVE || topTier) 120_000 else 60_000,
+        if (fast) 1_500 else 2_500, if (fast) 3_000 else 5_000,
         budgetMb * 1024 * 1024, false, if (tv) 10_000 else 20_000, true) {
         override fun shouldContinueLoading(parameters: androidx.media3.exoplayer.LoadControl.Parameters): Boolean {
             // 0.9.78: ~5 s / 6 MB. The byte cap waits until enough is loaded to start (3 s), so a big 4K file still
@@ -287,6 +294,8 @@ fun buildPlayer(ctx: android.content.Context, vm: AppViewModel, fast: Boolean, c
     }
     // Streams go through the app's HTTP client (DNS setting) with the addon's request headers.
     val http = OkHttpDataSource.Factory(PlayerHttp.client()).setUserAgent(PlayerUserAgent)
+        // 0.9.7 (dataDiet): network bytes counted for the per-play data line (a held / hidden player counts as background).
+        .also { if (Feature.dataDiet && !tv) it.setTransferListener(DataDiet.transfer { hidden && hold0?.get() != false }) }
     // Phones: read the saved video first (instant play), then the network. (Source Test measures without it.)
     val dataSource = DefaultDataSource.Factory(ctx, withStreamHeaders(http, hold)).let { if (cache) StreamCache.factory(ctx, it) else it }
     // The phone's own hardware decoders first (smoothest); FFmpeg only for audio the phone can't decode
@@ -1010,7 +1019,7 @@ fun PlayerScreen(
         val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
         val metered = cm.isActiveNetworkMetered
         if (metered) delay(6_000)
-        val d = curDur(); if (d > 0) th.prefetch(d, wifi = !metered)
+        val d = curDur(); if (d > 0 && !Feature.dataDiet) th.prefetch(d, wifi = !metered)   // 0.9.7: no background frames on the diet
     }
     fun curBuffered(): Long = if (usingVlc) curPos() else player.bufferedPosition
     fun isPlayingNow(): Boolean = if (usingVlc) vlc?.isPlaying == true else player.isPlaying
@@ -1073,6 +1082,13 @@ fun PlayerScreen(
 
     LaunchedEffect(now) { now?.let { n -> PlayingSrc.url = n.url; PlayingSrc.source = n.source; PlayingSrc.addon = n.addon } }
     DisposableEffect(Unit) { PlayingSrc.open++; onDispose { PlayingSrc.open-- } }
+    // 0.9.7: per-play data line when the player closes; a hand-picked stream's head saving stops with it.
+    DisposableEffect(Unit) {
+        if (Feature.dataDiet && !BuildConfig.IS_TV) DataDiet.beginPlay(p.title)
+        onDispose { if (Feature.dataDiet && !BuildConfig.IS_TV) DataDiet.endPlay(); if (Feature.fastManual) ManualFast.cancel() }
+    }
+    // 0.9.7 (smartCache): the start pieces of the last played link are never cleaned.
+    LaunchedEffect(firstFrame, now?.url) { if (firstFrame && Feature.smartCache && !BuildConfig.IS_TV) now?.url?.let { CacheKeeper.notePlayed(it) } }
 
     fun startVlc(n: Now, startMs: Long, w: Way) {
         // 0.9.6 (noVlc): this build has no VLC engine. Nothing may touch LibVLC; if a VLC way still gets here, it fails the
@@ -1322,6 +1338,10 @@ fun PlayerScreen(
         val size = StreamCache.sizes[u] ?: withContext(Dispatchers.IO) { StreamCache.probe(u) }.size.takeIf { it > 0 } ?: return@LaunchedEffect
         if (size < 400L * 1024 * 1024) return@LaunchedEffect
         var boostedTo = 0L
+        // 0.9.7 (dataDiet): background saving follows BgSaveGuard: stops when the copy / quality changes, never more than
+        // ~3 min ahead of the play position, paced to ~2× the file's bitrate, one connection (parts only at a start).
+        val qKey0 = runCatching { player.videoFormat?.height?.toString() }.getOrNull()
+        val guard = if (Feature.dataDiet) BgSaveGuard(qKey0.orEmpty(), u) else null
         while (isActive) {
             delay(3_000)
             val d = curDur()
@@ -1333,8 +1353,15 @@ fun PlayerScreen(
             if (from - (curBuffered() * perMs).toLong() > (40_000 * perMs).toLong()) continue
             val len = minOf((30_000 * perMs).toLong(), 64L * 1024 * 1024, size - from)
             if (len < 1024 * 1024) continue
-            StreamCache.saveParts(ctx, u, from, len, 3, null) { }
+            if (guard != null) {
+                val qNow = runCatching { player.videoFormat?.height?.toString() }.getOrNull() ?: qKey0
+                if (guard.mustStop(qNow.orEmpty(), now?.url)) { ActLog.add("DATA", "background saving stopped (copy or quality changed)"); break }
+                if (!guard.aheadAllowed(((from + len) / perMs).toLong(), curPos())) continue
+            }
+            val t1 = SystemClock.elapsedRealtime()
+            StreamCache.saveParts(ctx, u, from, len, guard?.partsFor(false, 3) ?: 3, null) { }
             boostedTo = from + len
+            if (guard != null) { DataDiet.addBackground(len); guard.pace(len, SystemClock.elapsedRealtime() - t1, (size * 8_000.0 / d).toLong()) }
         }
     }
 
@@ -2482,6 +2509,8 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(p.key) { if (isOn(opt("skipIntro"))) segs = vm.segments(p.key) ?: (if (BuildConfig.IS_TV) Segments() else null) }
+    // 0.9.7 (smartFinish): the credits start (as the player uses it) decides "watched" for Continue watching.
+    LaunchedEffect(segs?.outro?.start_ms) { if (Feature.smartFinish) segs?.outro?.start_ms?.takeIf { it > 0 }?.let { SmartFinish.noteCredits(p.key, it) } }
     // 0.9.9: once the picture is on — the copy's speed, its kind and the correction learned for this show + kind.
     LaunchedEffect(firstFrame, now?.url, segs != null) {
         if (!firstFrame || segs == null) return@LaunchedEffect
@@ -3230,7 +3259,7 @@ fun PlayerScreen(
         if ((tvQ || tvPillMode) && showInfo && !infoManual) showInfo = false
         if (firstFrame && !playing && !buffering && isOn(opt("pauseInfo"))) {
             if (panel != null || touchingControls || qualityMenu || tvQ || tvPillMode) return@LaunchedEffect
-            delay(6000); if (!isPlayingNow() && panel == null && !tvQ && !tvPillMode) { showInfo = true; controls = false }
+            delay(6000); if (!isPlayingNow() && panel == null && !tvQ && !tvPillMode && !(Feature.wt2 && Together.active())) { showInfo = true; controls = false }   // 0.9.8: never in a room
         } else if (playing && !infoManual) showInfo = false
     }
 
@@ -3455,6 +3484,8 @@ fun PlayerScreen(
     // fades in over 0.3 s (sound crossfades too) and simply becomes the player — no loading, no message. If the two
     // copies aren't the same length (another cut), there's no swap: "Upgrade quality" pops up instead.
     var ottSwapStarted by remember(p.key) { mutableStateOf(false) }
+    /** 0.9.7 (addonFirst): the quality lane — 0 = not done yet, 1 = switched, 2 = nothing found / not run. */
+    var laneState by remember(p.key) { mutableIntStateOf(0) }
     /** A stream you picked yourself (Play manually / Sources): it is never swapped for another one. */
     var byHand by remember(p.key) { mutableStateOf(p.manual) }
     /** Why the last fade didn't happen: smooth… / timing… / cut… (a quick switch is fine), other = skip that copy. */
@@ -3739,6 +3770,7 @@ fun PlayerScreen(
         scope.launch {
             val pool = java.util.concurrent.ConcurrentHashMap<String, StreamItem>()
             val gather = scope.launch {
+                if (Feature.dataDiet) delay(20_000)   // 0.9.7: no second search while the film starts
                 runCatching { vm.streamsFlow(type, p.key).collect { (l, _) -> vm.filtered(l).list.filter { rung(it) >= 1 }.forEach { s -> s.stream.url?.let { u -> pool.putIfAbsent(u, s) } } } }
             }
             try {
@@ -3760,7 +3792,15 @@ fun PlayerScreen(
                     if (buffering && firstFrame) stallTicks.addLast(tNow)
                     while (stallTicks.isNotEmpty() && tNow - stallTicks.first() > 60_000) stallTicks.removeFirst()
                     val struggling = stallTicks.size >= Rules.int(Rules.WEAK_STRUGGLE)
-                    if (!struggling && (buffering || curBuffered() - curPos() < 30_000)) { delay(1_000); continue }
+                    // 0.9.7 (addonFirst): the quality lane goes first; the ladder climbs only when it found nothing (≤ 90 s wait).
+                    if (Feature.addonFirst && !struggling) {
+                        if (laneState == 1) break
+                        if (laneState == 0 && tNow - t0 < 90_000) { delay(1_000); continue }
+                    }
+                    // 0.9.7 (dataDiet): not in the first 30 s; ≥ 20 s ahead on Wi-Fi, ≥ 30 s on mobile data.
+                    val needAhead = if (Feature.dataDiet) (if (isOnWifi(ctx)) DataDiet.AHEAD_WIFI_MS else DataDiet.AHEAD_MOBILE_MS) else 30_000L
+                    val tooEarly = Feature.dataDiet && tNow - t0 < DataDiet.CLIMB_AFTER_MS
+                    if (!struggling && (buffering || tooEarly || curBuffered() - curPos() < needAhead)) { delay(1_000); continue }
                     // 0.9.75 (from Xstream 0.8.11): no heavy upgrades on weak internet (they took the speed the film needed),
                     // 3 tries per title. Phones; TV has its own rules.
                     if (!BuildConfig.IS_TV && (hlsCap > 0 || (lastSlowAt > 0 && SystemClock.uptimeMillis() - lastSlowAt < Rules.ms(Rules.WEAK_COOLDOWN)) || tried.size >= Rules.int(Rules.SWITCH_TRIES) ||
@@ -3777,7 +3817,7 @@ fun PlayerScreen(
                             // Never one streaming service for another (Netflix ↔ Prime: different cuts, different shows).
                             !(cur.isOtt() && it.isOtt())
                     }
-                    val waited = SystemClock.elapsedRealtime() - t0 >= Rules.ms(Rules.SWITCH_VEGA_WAIT) || struggling
+                    val waited = SystemClock.elapsedRealtime() - t0 >= Rules.ms(Rules.SWITCH_VEGA_WAIT) + (if (Feature.dataDiet) 20_000L else 0L) || struggling
                     // VegaMovies / RogMovies first; after 25 s without them, the highest rung that is there.
                     val c = ok.firstOrNull { rung(it) == 3 }
                         ?: (if (waited) (ok.firstOrNull { rung(it) == 2 } ?: ok.firstOrNull { rung(it) == 1 }) else null)
@@ -3801,6 +3841,49 @@ fun PlayerScreen(
                 ottSwapping = false
             }
         }
+    }
+    // 0.9.7 (addonFirst): quality lane — quietly, once playback is steady, CNCVerse Rocky (Vega / Rog) and HdHub are asked
+    // through the cloud finder; a clearly better copy (4K / 60 fps / HDR / higher bitrate) fades in with ottSwapTo (same
+    // length, same audio language, same frame). One run per play.
+    LaunchedEffect(firstFrame, p.key) {
+        if (!Feature.addonFirst || !firstFrame || laneState != 0) return@LaunchedEffect
+        if (BuildConfig.IS_TV || usingVlc || byHand || !vm.upgradeAllowed() || !QualityLane.hasAddons(vm, type, p.key)) { laneState = 2; return@LaunchedEffect }
+        val t0 = SystemClock.elapsedRealtime()
+        var ready = false
+        while (SystemClock.elapsedRealtime() - t0 < 300_000) {
+            val weak = hlsCap > 0 || (lastSlowAt > 0 && SystemClock.uptimeMillis() - lastSlowAt < Rules.ms(Rules.WEAK_COOLDOWN)) ||
+                (bwNow[0] in 1 until (Rules.num(Rules.WEAK_MIN_BW) * 1_000_000).toLong())
+            if (byHand || usingVlc) { laneState = 2; return@LaunchedEffect }
+            if (!buffering && !weak && shadow == null &&
+                DataDiet.climbOk(SystemClock.elapsedRealtime() - t0, curBuffered() - curPos(), isOnWifi(ctx))) { ready = true; break }
+            delay(1_000)
+        }
+        val cur = now?.url?.let { itemFor(it) }
+        if (!ready || cur == null) { laneState = 2; return@LaunchedEffect }
+        val found = QualityLane.fetch(vm, type, p.key)
+        if (found.isEmpty()) { ActLog.add("SWITCH", "auto · quality lane — nothing from the addons"); laneState = 2; return@LaunchedEffect }
+        val curAudio = runCatching { player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
+            ?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it).language } } }.getOrNull()
+        val hdrOk = !HdrRule.banned(vm) && PicturePref.hdrScreen(ctx)
+        val list = vm.filtered(found).list.filter { s ->
+            val u = s.stream.url
+            u != null && u != cur.stream.url && !s.unplayableHere() && !Ranker.knownUnseekable(s) && !Ranker.isDead(s) &&
+                vm.langRank(s) <= vm.langRank(cur) && hasLang(s, curAudio) && !TitleMatch.wrong(s, type, p.key) &&
+                s.addonName !in wrongAddons && Ranker.groupKey(s) !in langMissGroups && !(!hdrOk && (HdrRule.named(s) || u in hdrBlocked))
+        }.mapNotNull { s -> QualityLane.reason(cur, s, hdrOk)?.let { s to it } }
+            .sortedByDescending { QualityLane.score(it.first) }.take(2)
+        if (list.isEmpty()) ActLog.add("SWITCH", "auto · quality lane — ${found.size} links, none clearly better")
+        for ((c, why) in list) {
+            if (byHand || now?.url != cur.stream.url) break
+            withTimeoutOrNull(30_000) { while (shadow != null) delay(1_000) }   // another fade is running: wait for it
+            val ok = runCatching { ottSwapTo(c, asked = false, why = "quality lane · $why") }.getOrDefault(false)
+            if (ok && now?.url == c.stream.url) {
+                Snack.show("✨ Better quality found — switched to ${QualityLane.label(c)}")
+                ActLog.add("SWITCH", "auto · quality lane · $why → ${Public.streamName(c)}")
+                laneState = 1; return@LaunchedEffect
+            }
+        }
+        laneState = 2
     }
     /** An online subtitle: reload this link from the same second with it added first, and pick it. */
     fun addOnlineSub(sub: Subtitle) {
@@ -3863,6 +3946,7 @@ fun PlayerScreen(
     }
     LaunchedEffect(firstFrame, p.key) {
         if (!firstFrame || BuildConfig.IS_TV) return@LaunchedEffect
+        val ffAt = SystemClock.uptimeMillis()   // 0.9.7: when the picture came (step-down guard)
         var loggedFor: String? = null
         var capFor: String? = null
         var goodSince = 0L
@@ -3900,7 +3984,9 @@ fun PlayerScreen(
                 val topRate = rungs.firstOrNull { it.first <= top }?.second ?: cur.second
                 // Down, early: the speed can't carry this quality and the loaded part is getting short (or it already stalled).
                 val tooSlow = bw in 1 until (topRate * 12 / 10) && ahead < 10_000
-                if (!afterSeek && (tooSlow || (buffering && t - stallAt > 1_500))) {
+                // 0.9.7 (dataDiet): first 10 s after the start / a jump: little ahead alone is no reason while the speed is ≥ 2× this quality.
+                val hold = Feature.dataDiet && DataDiet.holdQuality(t - maxOf(ffAt, seekedAt), ahead, bw, topRate.toLong())
+                if (!afterSeek && !hold && (tooSlow || (buffering && t - stallAt > 1_500))) {
                     val lower = rungs.firstOrNull { it.first < top - 50 && (bw <= 0 || it.second * 12 / 10 <= bw || it == rungs.last()) }
                         ?: rungs.firstOrNull { it.first < top - 50 }
                     if (lower != null) {
@@ -4880,12 +4966,28 @@ fun PlayerScreen(
             // Watch together: reactions from everyone float up the right side.
             val roomCode by Together.code.collectAsState()
             if (roomCode != null) ReactionsOverlay(Modifier.fillMaxSize())
-            if (roomCode != null && !inPip && !BuildConfig.IS_TV && firstFrame) QuickReactBar(Modifier.align(Alignment.BottomStart).padding(start = side, bottom = if (controls) 150.dp else 28.dp))
+            // 0.9.8 (wt2): one small emoji button you can drag anywhere, instead of the fixed bar.
+            if (Feature.wt2) {
+                if (roomCode != null && !inPip && !BuildConfig.IS_TV && firstFrame) WtMovableReact(Modifier.fillMaxSize())
+            } else if (roomCode != null && !inPip && !BuildConfig.IS_TV && firstFrame) QuickReactBar(Modifier.align(Alignment.BottomStart).padding(start = side, bottom = if (controls) 150.dp else 28.dp))
             if (roomCode != null && !inPip) ChatToasts(Modifier.align(Alignment.CenterEnd).padding(end = side, top = 40.dp))
             // Friends' camera / voice bubbles (tap one = Watch together), and "Waiting for …" while someone buffers.
-            if (roomCode != null && !inPip) CallBubbles(Modifier.fillMaxSize()) { panel = "together"; controls = true; poke++ }
-            if (roomCode != null && waitingFor != null) Text("Waiting for $waitingFor…", Modifier.align(Alignment.TopCenter).padding(top = 28.dp)
+            if (roomCode != null && !inPip) CallBubbles(Modifier.fillMaxSize(), controlsVisible = controls) { panel = "together"; controls = true; poke++ }
+            // 0.9.8 (wt2): the movie's own buffering state lets the call lower video on a weak link.
+            if (Feature.wt2 && roomCode != null) DisposableEffect(buffering) { Call.movieBuffering.value = buffering; onDispose { Call.movieBuffering.value = false } }
+            if (Feature.wt2) {
+                // 0.9.8: small top-centre lines (loading / in sync / joined / raised hand). "Pause" = the pause button's own call (sync sends it).
+                if (roomCode != null && !inPip) WtRoomNotices { pauseNow() }
+            } else if (roomCode != null && waitingFor != null) Text("Waiting for $waitingFor…", Modifier.align(Alignment.TopCenter).padding(top = 28.dp)
                 .clip(RoundedCornerShape(22.dp)).background(Color(0xB3000000)).padding(horizontal = 16.dp, vertical = 8.dp), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            if (Feature.wt2 && roomCode != null && !inPip && !BuildConfig.IS_TV) {
+                val chatShown by Together.chatShown.collectAsState()
+                val chatUnread by Together.unread.collectAsState()
+                LaunchedEffect(chatShown) { if (chatShown) panel = null }   // the room panel closes when the chat opens
+                if (!chatShown && (controls || chatUnread > 0))
+                    WtChatButton(Modifier.align(Alignment.TopEnd).padding(top = topY + 52.dp, end = topEnd)) { Together.chatShown.value = true }
+                if (chatShown) WtChatPanel { Together.chatShown.value = false }
+            }
 
             // Hold-for-speed pill.
             AnimatedVisibility(holdSpeed != null, Modifier.align(Alignment.TopCenter).padding(top = 28.dp), enter = fadeIn(tween(150)), exit = fadeOut(tween(200))) {
@@ -5564,9 +5666,9 @@ fun PlayerScreen(
                 LaunchedEffect(poke) { delay(2500); if (locked) controls = false }
             }
 
-            // Info screen while paused.
+            // Info screen while paused. 0.9.8 (wt2): completely off while in a room.
             AnimatedVisibility(
-                showInfo, Modifier.fillMaxSize(),
+                showInfo && !(Feature.wt2 && roomCode != null), Modifier.fillMaxSize(),
                 enter = fadeIn(tween(450)) + androidx.compose.animation.scaleIn(tween(450), initialScale = 1.03f),
                 exit = fadeOut(tween(380)) + androidx.compose.animation.scaleOut(tween(380), targetScale = 1.06f),
             ) {
@@ -5693,9 +5795,12 @@ fun PlayerScreen(
             }
             // The first file of each quality gets its start + index saved (opens in about a second from the menu). On mobile
             // data only the quality playing and the next one up; on Wi-Fi all three. Elite on → only on Wi-Fi.
-            LaunchedEffect(qCols.any { it.second.isNotEmpty() }, firstFrame, p.key) {
+            // 0.9.7 (dataDiet): only once the Quality sheet was opened for this video, and only a short start of each file.
+            var qmOpened by remember(p.key) { mutableStateOf(false) }
+            LaunchedEffect(qualityMenu) { if (qualityMenu) qmOpened = true }
+            LaunchedEffect(qCols.any { it.second.isNotEmpty() }, firstFrame, p.key, if (Feature.dataDiet) qmOpened else false) {
                 if (!firstFrame || BuildConfig.IS_TV || usingVlc || !vm.upgradeAllowed() || qCols.all { it.second.isEmpty() }) return@LaunchedEffect
-                delay(20_000)
+                if (Feature.dataDiet) { if (!qmOpened) return@LaunchedEffect; delay(1_500) } else delay(20_000)
                 val wifi = isOnWifi(ctx)
                 val curRes = now?.url?.let { itemFor(it) }?.effectiveRes() ?: 0
                 val curCol = when { curRes >= 1440 -> 0; curRes >= 1080 -> 1; else -> 2 }
@@ -5706,7 +5811,7 @@ fun PlayerScreen(
                     val c = groups.flatMap { it.second }.firstOrNull { !it.isPlaylist() && it.stream.url != now?.url } ?: return@forEachIndexed
                     val u = c.stream.url ?: return@forEachIndexed
                     if (u in tagReady || hdReady.values.flatten().any { it.stream.url == u }) return@forEachIndexed
-                    if (saveHdStart(ctx, c)) { tagReady = tagReady + u; PlayTiming.late("Quality menu: $title first file ready") }
+                    if (saveHdStart(ctx, c, light = Feature.dataDiet)) { tagReady = tagReady + u; PlayTiming.late("Quality menu: $title first file ready") }
                 }
             }
             // Instant (already playing) folds away 2 s after the menu opens; tap its header to open it again.

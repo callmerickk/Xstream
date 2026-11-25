@@ -48,14 +48,15 @@ fun glassy(c: Color): Color = if (Palette.glass && !BuildConfig.IS_TV && !GlassB
  */
 object GlassBg {
     private val s = androidx.compose.runtime.mutableStateOf<String?>(null)
-    var url: String? get() = s.value; set(v) { if (v != null) s.value = v }
+    var url: String? get() = s.value; set(v) { if (v != null) { s.value = v; if (Feature.glassPlus) GlassUpdate.saveUrl(v) } }
     /** 0.9.2: the backdrop on screen now (kept until a new one is ready). */
     internal val shown = androidx.compose.runtime.mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
     internal val tint = androidx.compose.runtime.mutableStateOf(Color(0xFF070810))
     /** 0.9.2: no backdrop (and no see-through pages) while the video player is on screen. */
     var paused by androidx.compose.runtime.mutableStateOf(false)
     @Volatile internal var diskTried = false
-    internal fun file(ctx: android.content.Context) = java.io.File(ctx.cacheDir, "glass_last.png")
+    // 0.9.7 (smartCache): kept in app storage, so "Clear cache" never leaves the backdrop black.
+    internal fun file(ctx: android.content.Context) = AppStore.pathFor(ctx, "glass_last.png")
 }
 
 /**
@@ -78,11 +79,11 @@ fun GlassBackdrop(url: String?) {
         val b = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching { GlassBg.file(ctx).takeIf { it.length() > 0 }?.let { android.graphics.BitmapFactory.decodeFile(it.path) }?.asImageBitmap() }.getOrNull()
         }
-        if (b != null && last == null) last = b
+        if (b != null && last == null) { last = b; GlassHealth.shown("disk") }   // 0.9.7: health log
     }
     androidx.compose.runtime.LaunchedEffect(small) {
         val u = small ?: return@LaunchedEffect
-        TvGlass.blurred[u]?.let { last = it; GlassTints[u]?.let { t -> tint = t }; return@LaunchedEffect }
+        TvGlass.blurred[u]?.let { last = it; GlassTints[u]?.let { t -> tint = t }; GlassHealth.shown("url"); return@LaunchedEffect }
         val b = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             suspend fun load(x: String): android.graphics.drawable.Drawable? = runCatching {
                 val r = coil.request.ImageRequest.Builder(ctx).data(x).size(192, 108).allowHardware(false).build()
@@ -102,7 +103,8 @@ fun GlassBackdrop(url: String?) {
                 bl.asImageBitmap()
             }.getOrNull()
         }
-        if (b != null) { if (TvGlass.blurred.size > 6) { TvGlass.blurred.clear(); GlassTints.keys.retainAll(setOf(u)) }; TvGlass.blurred[u] = b; last = b; GlassTints[u]?.let { tint = it } }
+        if (b != null) { if (TvGlass.blurred.size > 6) { TvGlass.blurred.clear(); GlassTints.keys.retainAll(setOf(u)) }; TvGlass.blurred[u] = b; last = b; GlassTints[u]?.let { tint = it }; GlassHealth.shown("url") }
+        else GlassHealth.failed(u)   // 0.9.7: health log
     }
     androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(Color(0xFF07080C))) {
         // 0.9.2: nothing loaded yet: a soft glow in the theme's colours, never plain black.
@@ -116,6 +118,21 @@ fun GlassBackdrop(url: String?) {
         androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color(0x33000000), 0.6f to t.copy(alpha = 0.5f), 1f to t.copy(alpha = 0.8f))))
     }
 }
+/** 0.9.7 (glassPlus): the one backdrop = GlassBackdrop + the Home slide's own colour on top (cross-faded over 600 ms). */
+@Composable
+fun GlassBackdropAll(url: String?) {
+    GlassBackdrop(url)
+    if (Feature.glassPlus) GlassHeroTint()
+}
+
+@Composable
+private fun GlassHeroTint() {
+    val c by androidx.compose.animation.animateColorAsState(HeroTint.color.value, androidx.compose.animation.core.tween(600), label = "heroTint")
+    val a by androidx.compose.animation.core.animateFloatAsState(if (HeroTint.has.value) 1f else 0f, androidx.compose.animation.core.tween(600), label = "heroTintA")
+    if (a > 0.01f) androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(
+        listOf(c.copy(alpha = 0.40f * a), c.copy(alpha = 0.18f * a), Color.Transparent))))
+}
+
 /**
  * 0.9.2: a soft (blurred-looking) picture for long lists: a tiny copy (32 px wide) stretched up, so nothing is blurred
  * on every frame while the list scrolls (Modifier.blur re-blurs each card as it moves).

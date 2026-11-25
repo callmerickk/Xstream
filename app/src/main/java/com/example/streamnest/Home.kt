@@ -365,6 +365,11 @@ fun HomeScreen(
             // 0.9.76: drawn once behind the whole app (every page follows the Glass theme); Home only sets the picture.
             val u = glassMeta.background ?: glassMeta.poster
             LaunchedEffect(u) { GlassBg.url = u }
+            // 0.9.7 (glassPlus): the backdrop tint follows each slide (colour from its small poster, kept).
+            if (Feature.glassPlus) {
+                val hctx = androidx.compose.ui.platform.LocalContext.current
+                LaunchedEffect(glassMeta.poster) { HeroTint.show(hctx, glassMeta.poster) }
+            }
         } else Box(Modifier.fillMaxWidth().height(600.dp).background(topBrush))
 
         CompositionLocalProvider(LocalTitleHold provides { m, r -> holdFor = m to r }) {

@@ -113,3 +113,20 @@ Off (StreamX, TV) = the 0.9.5 code path word for word. On (Xstream phone):
 
 Two phone APKs with one versionCode: `Xstream-phone.apk` (arm64-v8a) and `Xstream-phone-arm32.apk` (armeabi-v7a,
 `gradle assemblePhoneDebug -PphoneAbi=arm32`); the updater picks the 32-bit one when the phone has no 64-bit ABI.
+
+## Switches new in 0.9.7 / 0.9.8 (one build: 0.9.8, versionCode 68)
+
+All on in Xstream, off in StreamX. Off = the 0.9.6 code path.
+
+- `dataDiet` — DataDiet.kt: phone buffer 20–40 s / 60 MB, data line per play, no seek-thumb prefetch, Quality-menu files
+  only after the sheet opens, gated ladder, BgSaveGuard on the Booster, MovieBoxCache (30 min).
+- `addonFirst` (needs `cloudFind`) — Quick Play default `OTT_ANY` + `CNC_ANY` (only when a CNCVerse addon is on),
+  quality lane (QualityLane.kt), backup tie-break, PageRelay 24 h memory.
+- `smartFinish` — SmartFinish.kt + one-time Continue-watching pass.
+- `smartCache` — CacheKeeper (WorkManager), AppStore keep folder, KeepPosters, PicksStore.
+- `glassPlus` — HeroTint, GlassSheet, GlassUpdate, GlassHealth (backdrop health log lines).
+- `fastManual` — ManualFast (head saved while the player opens, title-page Sources).
+- `wt2` — Watch together 2 (Call.kt, Together.kt, TogetherUi.kt; title-page rooms; info card off in a room).
+
+Not a new switch: Music logs (MusicLog.kt, Settings › Account › Music logs, cloud `…/music/days/<day>`) follow `music`.
+MainActivity `singleTask` lives in Xstream's brand manifest only.

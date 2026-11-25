@@ -626,8 +626,12 @@ object PluginSources {
                     val got = if (isMb && direct != null) direct.await() else null
                     if (got != null && got.isNotEmpty()) { MovieBoxDirect.noteOk(); add(emptyList()); return@launch }
                     val l = shared(api, id) {
-                        if (BuildConfig.IS_TV && TvWeak.on && !isOttName(api.name)) tvGate.withPermit { linksFrom(api, meta.name, year, series, season, episode) }
-                        else linksFrom(api, meta.name, year, series, season, episode)
+                        val run: suspend () -> List<StreamItem> = {
+                            if (BuildConfig.IS_TV && TvWeak.on && !isOttName(api.name)) tvGate.withPermit { linksFrom(api, meta.name, year, series, season, episode) }
+                            else linksFrom(api, meta.name, year, series, season, episode)
+                        }
+                        // 0.9.7 (dataDiet): MovieBox answers are reused for 30 min (one ask per title, not one per ladder / prep call).
+                        if (Feature.dataDiet && isMb && !BuildConfig.IS_TV) MovieBoxCache.links("${api.name}|$id", run) else run()
                     }
                     if (isMb && got != null && l.isNotEmpty()) MovieBoxDirect.noteBroken("nothing found for \"${meta.name}\" while ${api.name} found ${l.size}")
                     // Timing of each plugin (Activity log → PLUGIN), to see which one is slow.

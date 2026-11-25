@@ -676,6 +676,14 @@ fun DetailScreen(
                                 Icon(if (dlDone) Icons.Default.DownloadDone else Icons.Default.Download, "Download", Modifier.size(24.dp), tint = Color.White)
                             }
                         }
+                        // 0.9.8 (wt2): Watch together straight from the title page (room for this title, share sheet at once).
+                        if (Feature.wt2 && !BuildConfig.IS_TV) {
+                            val startWt = rememberWatchTogether(key = playTarget.target.videoId, title = meta.name, image = meta.poster, type = meta.type)
+                            val inRoom by Together.code.collectAsStateWithLifecycle()
+                            LabeledRound("Together", Modifier.quietClick { startWt() }, rim = if (inRoom != null) Color(0x8CE50914) else Color(0xFF23252D)) {
+                                Icon(Icons.Default.Groups, "Watch together", Modifier.size(24.dp), tint = Color.White)
+                            }
+                        }
                         if (TrailerInCard) Box {
                             // 0.9.78 (from Xstream): tap = trailer in the card · hold = every trailer; a small bubble explains it.
                             LaunchedEffect(hasTrailer) { if (hasTrailer) { delay(700); tipOnce(if (videos.size > 1) "Play trailer · hold for more" else "Play trailer") } }
