@@ -13,6 +13,12 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.9.10", "25 Nov 2026", "Faster starts", listOf(
+        "Videos that start with a black screen now recover on their own",
+        "Episodes you pick by hand start faster, and the next ones are prepared while you browse",
+        "Videos start faster on a good connection",
+        "Less mobile data used by background saving",
+    )),
     Release("0.9.9", "25 Nov 2026", "Watch together stays in sync", listOf(
         "Watch together stays in sync and in the same language for everyone",
         "Fixed a crash when starting a call",
@@ -664,6 +670,9 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.9.10", "26 Nov 2026", "Faster starts: prepared-player rescue, first good link, ask ahead, burst start, background cap (versionCode 70)", listOf(
+        "prepRescue, firstGood, askAhead, burstPlan, bgCap switches (beta first)",
+    )),
     Release("0.9.9", "25 Nov 2026", "Fixes from the 0.9.8 log: WebRTC bundled, room sync + language, lane caps, VegaMovies relay, Glass start (versionCode 69)", listOf(
         "Native crash after the on-demand WebRTC download (13:01:16 sha ok → 13:01:18 crash in native code): Feature.webrtcOnDemand = false, libjingle_peerconnection_so.so packaged again (jniLibs exclude removed; build.yml fails when it is missing), WebRtcLib.forgetDownloaded deletes filesDir/native copies at start; nothing calls System.load on a downloaded file",
         "Watch together (bug fix): in a room (Together.active) no automatic copy switch — switchTo(auto) / ottSwapTo(!asked) refuse (logged \"Watch together: no automatic switch in a room\"), the ladder waits, the quality lane and remembered HDR don't run; only ExoPlayer's own steps inside the copy. Going back after a chosen upgrade failed is kept. The sync code itself (expected(), 0.15 / 1.5 s drift rule, 5 % rate nudge, pause on the same frame, buffering wait, 2 s host clock) is StreamX 0.9.79's word for word; the drift came from copies switching under the room (url differs → drift correction skipped, and the switch was sent to the room)",

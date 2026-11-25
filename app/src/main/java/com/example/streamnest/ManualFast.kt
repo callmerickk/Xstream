@@ -28,7 +28,8 @@ object ManualFast {
             val t0 = System.currentTimeMillis()
             StreamCache.register(s); StreamHeaders.remember(s)
             val raced = StreamCache.racedProbe(url) != null
-            val r = withTimeoutOrNull(20_000) { Result.success(StreamCache.saveParts(vm.appContext, url, 0L, len, 4, null) { }) }
+            // 0.9.10 (burstPlan): the first 8 MB with many pieces (the switch is checked inside saveParts).
+            val r = withTimeoutOrNull(20_000) { Result.success(StreamCache.saveParts(vm.appContext, url, 0L, len, 4, null, burstHead = true) { }) }
             val ok = r != null && r.getOrNull() == null
             if (ok && Feature.dataDiet) DataDiet.addBackground(len)
             ActLog.add("PLAY", "manual start · head ${len / 1048576} MB ${if (ok) "saved" else "not saved"} in ${System.currentTimeMillis() - t0} ms · raced probe ${if (raced) "yes" else "no"}")

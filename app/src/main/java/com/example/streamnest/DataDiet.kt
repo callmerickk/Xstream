@@ -23,6 +23,8 @@ object DataDiet {
 
     private val video = AtomicLong(); private val bg = AtomicLong(); private val thumbs = AtomicLong()
     @Volatile private var title = ""; @Volatile private var startedAt = 0L
+    /** 0.9.10 (bgCap): the cap of this play, made on first use. */
+    @Volatile private var cap: BgCap? = null
 
     fun addBackground(bytes: Long) { if (bytes > 0) bg.addAndGet(bytes) }
     fun addThumbs(bytes: Long) { if (bytes > 0) thumbs.addAndGet(bytes) }
@@ -37,15 +39,39 @@ object DataDiet {
         override fun onTransferEnd(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
     }
 
-    fun beginPlay(name: String) { video.set(0); bg.set(0); thumbs.set(0); title = name; startedAt = android.os.SystemClock.elapsedRealtime() }
+    fun beginPlay(name: String) { video.set(0); bg.set(0); thumbs.set(0); cap = null; title = name; startedAt = android.os.SystemClock.elapsedRealtime() }
 
     /** The per-play summary line, written when the player closes. */
     fun endPlay() {
         if (startedAt == 0L) return
         fun mb(a: AtomicLong) = "%.1f".format(a.get() / 1048576.0)
         val min = (android.os.SystemClock.elapsedRealtime() - startedAt) / 60_000.0
-        ActLog.add("DATA", "data · $title · video ${mb(video)} MB · background ${mb(bg)} MB · thumbs ${mb(thumbs)} MB · minutes ${"%.1f".format(min)}")
-        video.set(0); bg.set(0); thumbs.set(0); startedAt = 0L
+        // 0.9.10 (bgCap): the line also says whether the cap was hit.
+        val capNote = if (Feature.bgCap && !BuildConfig.IS_TV) (cap?.dataLineSuffix() ?: " · cap hit: no") else ""
+        ActLog.add("DATA", "data · $title · video ${mb(video)} MB · background ${mb(bg)} MB · thumbs ${mb(thumbs)} MB · minutes ${"%.1f".format(min)}$capNote")
+        video.set(0); bg.set(0); thumbs.set(0); cap = null; startedAt = 0L
+    }
+
+    /** 0.9.10 (bgCap): a play is running (beginPlay was called, endPlay not yet). */
+    fun playing(): Boolean = startedAt != 0L
+
+    /** 0.9.10 (bgCap): on Wi-Fi? (the cap is doubled there). Unknown counts as mobile data. */
+    fun onWifi(ctx: android.content.Context): Boolean = runCatching {
+        val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        cm.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+    }.getOrDefault(false)
+
+    /**
+     * 0.9.10 (bgCap): bytes background saving may still use for this play right now; 0 = paused (it resumes by itself when the
+     * video has caught up). No limit when the switch is off or on TV.
+     */
+    fun bgRoom(wifi: Boolean): Long {
+        if (!Feature.bgCap || BuildConfig.IS_TV) return Long.MAX_VALUE
+        if (startedAt == 0L) return 0L
+        val c = cap ?: BgCap(wifi).also { cap = it }
+        val playMs = android.os.SystemClock.elapsedRealtime() - startedAt
+        val v = video.get(); val b = bg.get()
+        return if (c.allow(b, v, playMs)) c.capBytes(v, playMs) - b else 0L
     }
 
     /** May a better copy be loaded in the background now? (30 s since start and enough loaded ahead.) */

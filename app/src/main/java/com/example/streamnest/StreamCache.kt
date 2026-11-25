@@ -200,7 +200,67 @@ object StreamCache {
      * soon as the first piece — the part the player needs first — is complete. A server that refuses extra connections
      * is remembered and gets one connection after that. Null = all saved, else why not.
      */
-    suspend fun saveParts(ctx: Context, url: String, start: Long, length: Long, parts0: Int, onHeadDone: (() -> Unit)?, onProgress: (Float) -> Unit): String? =
+    /** 0.9.10 (burstPlan): normal speed of a host (MB/s) from its last full head save; a burst has to beat it. */
+    private val baseMbps = java.util.concurrent.ConcurrentHashMap<String, Double>()
+    private fun mbPerSec(bytes: Long, ms: Long) = bytes / 1048576.0 / (ms.coerceAtLeast(1L) / 1000.0)
+
+    /**
+     * Saves a range in parts. [burstHead] = this is the start of a play: its first 8 MB use many pieces (12 on Wi-Fi, 8 on mobile),
+     * the rest uses today's numbers. Not for pixeldrain-type hosts, not for a host flagged "no burst" (24 h), stops at the first picture.
+     * With burstPlan off, on TV, or burstHead = false this is exactly the old function.
+     */
+    suspend fun saveParts(ctx: Context, url: String, start: Long, length: Long, parts0: Int, onHeadDone: (() -> Unit)?, burstHead: Boolean = false, onProgress: (Float) -> Unit): String? {
+        if (!burstHead || !Feature.burstPlan || !Feature.smartParts || BuildConfig.IS_TV) return savePartsCore(ctx, url, start, length, parts0, onHeadDone, onProgress, false, null)
+        val host = runCatching { Uri.parse(url).host }.getOrNull().orEmpty()
+        loadSingleHosts(ctx)
+        val head = BurstPlan.BURST_BYTES
+        val normal = parts0.coerceIn(1, if ((parallelOk[host] ?: 0) >= 2) 8 else 4)
+        val want = if (host in singleHosts || host in seedHosts || length <= head + (1L shl 20)) 0
+            else BurstPlan.parts(host, 0L, DataDiet.onWifi(ctx), normal) { HostStats.noBurst(url) }
+        val got = if (want > normal) BurstPlan.acquire(want) else 0
+        if (got <= normal) {
+            BurstPlan.release(got)
+            val t0n = SystemClock.elapsedRealtime()
+            val r = savePartsCore(ctx, url, start, length, parts0, onHeadDone, onProgress, false, null)
+            if (r == null && length >= head) baseMbps[host] = mbPerSec(length, SystemClock.elapsedRealtime() - t0n)
+            return r
+        }
+        val refused = java.util.concurrent.atomic.AtomicBoolean(false)
+        val byUs = java.util.concurrent.atomic.AtomicBoolean(false)
+        var err: String? = null
+        val t0 = SystemClock.elapsedRealtime()
+        try {
+            coroutineScope {
+                val work = launch { err = savePartsCore(ctx, url, start, head, got, null, { f -> onProgress(head * f / length) }, true, refused) }
+                // The first picture is on screen: the burst stops, the player takes over.
+                val watch = launch { while (!BurstPlan.stopped.get()) kotlinx.coroutines.delay(100); byUs.set(true); work.cancel() }
+                work.join()
+                watch.cancel()
+            }
+        } finally { BurstPlan.release(got) }
+        val ms = SystemClock.elapsedRealtime() - t0
+        if (byUs.get()) {
+            ActLog.add("PLAY", "burst stopped: the first picture is on screen")
+        } else if (refused.get()) {
+            HostStats.noteNoBurst(url)
+            BurstPlan.logRefused(host)
+            err = savePartsCore(ctx, url, start, head, 4, onHeadDone, { f -> onProgress(head * f / length) }, false, null)
+        } else if (err == null) {
+            val speed = mbPerSec(head, ms)
+            BurstPlan.logDone(got, host, speed)
+            val base = baseMbps[host]
+            if (base != null && speed < base) {
+                HostStats.noteNoBurst(url)
+                ActLog.add("PLAY", "burst slower than normal on $host (${"%.1f".format(speed)} vs ${"%.1f".format(base)} MB/s) → 4 pieces from now on")
+            }
+            onHeadDone?.invoke()   // the first 8 MB are in, without gaps
+        }
+        if (err != null) return err
+        // The rest of the range: today's numbers.
+        return savePartsCore(ctx, url, start + head, length - head, parts0, null, { f -> onProgress((head + (length - head) * f) / length) }, false, null)
+    }
+
+    private suspend fun savePartsCore(ctx: Context, url: String, start: Long, length: Long, parts0: Int, onHeadDone: (() -> Unit)?, onProgress: (Float) -> Unit, burst: Boolean, refusedOut: java.util.concurrent.atomic.AtomicBoolean?): String? =
         withContext(Dispatchers.IO) {
             val host = runCatching { Uri.parse(url).host }.getOrNull().orEmpty()
             val smart = Feature.smartParts
@@ -212,6 +272,7 @@ object StreamCache {
                 if (wantsParallel && host in singleHosts && loggedSingle.add(host)) ActLog.add("NET", "$host: saving with one connection (it refuses extra ones)")
                 if (!parallel || host in singleHosts || length < 4L * 1024 * 1024) 1
                 else if (host in seedHosts) parts0.coerceIn(1, 2)
+                else if (burst) parts0.coerceIn(1, 12)
                 else parts0.coerceIn(1, cap)
             }
             val piece = (length + parts - 1) / parts
@@ -250,9 +311,11 @@ object StreamCache {
                             } catch (e: Throwable) {
                                 val msg = e.javaClass.simpleName + (e.message?.let { ": " + it.take(120) } ?: "")
                                 val refused = msg.contains("403") || msg.contains("429")
+                                if (refused) refusedOut?.set(true)
                                 if (!refused) otherError.set(true)
                                 // 0.9.1 (smartParts): remembered on disk too (7 days), not only until the app closes.
-                                if (parts > 1 && refused) { if (smart) rememberSingle(ctx, host) else singleHosts += host }
+                                // 0.9.10: a refused burst is not "one connection only": the burst code marks it "no burst" for 24 h instead.
+                                if (parts > 1 && refused && !burst) { if (smart) rememberSingle(ctx, host) else singleHosts += host }
                                 errors += msg
                             }
                         }
@@ -261,7 +324,7 @@ object StreamCache {
                 val first = errors.firstOrNull()
                 // 0.9.1 (smartParts): the host refused the EXTRA connections (403 / 429) but part 0, the head, is saved
                 // completely: a good link — success, and the host is on the one-connection list from now on.
-                if (smart && first != null && parts > 1 && head0Done.get() && !otherError.get()) {
+                if (smart && !burst && first != null && parts > 1 && head0Done.get() && !otherError.get()) {
                     ActLog.add("NET", "$host refused extra connections — the first part is saved, using the link")
                     null
                 } else first

@@ -94,6 +94,12 @@ object Feature {
      *  mute, "You" bubble, data saver, chat panel with emojis, movable react button, raise hand, joined / sync lines,
      *  rooms started from the title page, no info card in a room. */
     val wt2: Boolean = on("wt2")
+    /** 0.9.10 */
+    val askAhead: Boolean = on("askAhead") && cloudPrep
+    val firstGood: Boolean = on("firstGood")
+    val burstPlan: Boolean = on("burstPlan")
+    val prepRescue: Boolean = on("prepRescue")
+    val bgCap: Boolean = on("bgCap")
 
     // 0.9.6: the slim build. These four are NOT named switches: they follow BuildConfig.SLIM_LIBS (Xstream phone only),
     // the same value that leaves the native libraries out of the APK (app/build.gradle.kts), so a switch can never be on

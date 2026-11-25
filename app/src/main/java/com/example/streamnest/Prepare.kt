@@ -298,7 +298,7 @@ object Prepare {
                 val savedNow = java.util.concurrent.atomic.AtomicLong(0)
                 val saver = async {
                     // 4 pieces at once; the first piece done = enough to start.
-                    StreamCache.saveParts(ctx, url, startByte, len, 8, onHeadDone = { enough.set(true) }) { f ->
+                    StreamCache.saveParts(ctx, url, startByte, len, 8, onHeadDone = { enough.set(true) }, burstHead = true) { f ->
                         val done = (len * f).toLong()
                         savedNow.set(done)
                         if (!enough.get()) put(Prepared(id, "Saving ${(f * 100).toInt()}% · $label", f, item = s, list = list, subs = subs, saved = done, target = len))
@@ -620,8 +620,27 @@ object Prepare {
                 if (!pr.ok || !pr.seekable || pr.size <= 0) continue
                 val perMin = minuteBytes(s, pr.size, durMs)
                 val start = ((pr.size.toDouble() * posMs / durMs.coerceAtLeast(1)).toLong() - 1024 * 1024).coerceAtLeast(0L) / (1024 * 1024) * (1024 * 1024)
-                StreamCache.save(ctx, url, start, minOf(perMin, pr.size - start)) { }
+                if (Feature.bgCap && !BuildConfig.IS_TV) saveCapped(ctx, url, start, minOf(perMin, pr.size - start))
+                else StreamCache.save(ctx, url, start, minOf(perMin, pr.size - start)) { }
             }
+        }
+    }
+
+    /**
+     * 0.9.10 (bgCap): the same minute as before, but in pieces sized to the room left under the cap. At the cap it waits
+     * (what is saved stays) and goes on when the video has caught up. Stops with the play or when the job is cancelled.
+     */
+    private suspend fun saveCapped(ctx: Context, url: String, start: Long, length: Long) {
+        val minPiece = 1L shl 20
+        var off = start
+        val end = start + length
+        while (off < end) {
+            if (!DataDiet.playing()) return
+            val room = DataDiet.bgRoom(DataDiet.onWifi(ctx))
+            if (room < minPiece) { kotlinx.coroutines.delay(2_000); continue }
+            val n = minOf(end - off, room)
+            StreamCache.save(ctx, url, off, n) { }
+            off += n
         }
     }
 

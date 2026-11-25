@@ -36,8 +36,8 @@ android {
         minSdk = 24
         targetSdk = 34
         // 0.9.6: one code for both phone APKs (arm64 and arm32): a phone only ever installs the one for its own ABI.
-        versionCode = 69
-        versionName = "0.9.9"
+        versionCode = 70
+        versionName = "0.9.10"
         brand.forEach { (k, v) -> buildConfigField("String", k, "\"$v\"") }
         buildConfigField("boolean", "IS_BETA", brandBeta.toString())
         manifestPlaceholders["brandName"] = brand.getValue("BRAND_NAME")

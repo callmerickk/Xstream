@@ -1842,11 +1842,69 @@ fun PlayerScreen(
             tryNextSource(n, if (firstFrame) keepPos() else resumeAt, "WRONG_TITLE", quiet = true)
         }
     }
+    // 0.9.10 (prepRescue): when the picture view was last attached (0 = not yet) and whether the rescue already ran.
+    val surfaceAt = remember { LongArray(1) }
+    val rescued = remember { BooleanArray(1) }
+    /** 0.9.10 (prepRescue): take the main video view off the player and put it back on the next frame. */
+    suspend fun reattachMain(why: String) {
+        val pv = mainPv[0] ?: return
+        val pl = player
+        if (pv.player !== pl) return
+        pv.player = null
+        androidx.compose.runtime.withFrameNanos { }
+        if (pv.player == null) { pv.player = player; surfaceAt[0] = SystemClock.elapsedRealtime(); ActLog.add("PLAY", why) }
+    }
+    fun surfaceOk(): Boolean {
+        val sv = mainPv[0]?.videoSurfaceView ?: return false
+        if (!sv.isAttachedToWindow) return false
+        return when (sv) { is android.view.SurfaceView -> sv.holder.surface.isValid; is android.view.TextureView -> sv.isAvailable; else -> true }
+    }
     // The paused player from the title page: if no picture 6 s after Play, it is treated like a stuck link.
     LaunchedEffect(Unit) {
         if (pre == null) return@LaunchedEffect
+        val t0 = SystemClock.elapsedRealtime()
         delay(6_000L)
-        if (!firstFrame && failure == null && !recovering && loadTick == 0) { PlayTiming.mark("paused player gave no picture in 6 s — next link"); onEngineError("TIMEOUT") }
+        val rescueOn = Feature.prepRescue && !BuildConfig.IS_TV
+        // Play pressed during a rotation: count the 6 s from the moment the picture view was attached (at most 6 s more).
+        if (rescueOn && surfaceAt[0] > t0 + 500) {
+            PlayTiming.mark("paused player: waiting for the picture view (display changed)")
+            while (!firstFrame && SystemClock.elapsedRealtime() < minOf(surfaceAt[0] + 6_000L, t0 + 12_000L)) delay(250)
+        }
+        if (!firstFrame && failure == null && !recovering && loadTick == 0) {
+            if (rescueOn && !rescued[0] && player === pre.player) {
+                rescued[0] = true
+                val ok = prepRescue(
+                    player = player,
+                    hasSurface = { surfaceOk() },
+                    reattach = { reattachMain("prepared player re-attached for the rescue") },
+                    firstFrame = { firstFrame },
+                    linkAgeMin = null,
+                    startBackupSearch = {
+                        // Backups are only collected (known / candidates); nothing switches until the 3 s are over.
+                        launch {
+                            vm.streamsFlow(type, p.key).collect { (l, _) ->
+                                val cur = player.currentMediaItem?.localConfiguration?.uri?.toString()
+                                val list = vm.filtered(l).list.filter { it.stream.url != null && it.stream.url != cur && it.stream.url !in tried }
+                                known = (known + list).distinctBy { it.stream.url }
+                                candidates = (candidates + list).distinctBy { it.stream.url }.sortedBy { vm.langRank(it) }
+                            }
+                        }
+                    },
+                    stopBackupSearch = { it.cancel() },
+                )
+                if (ok) return@LaunchedEffect
+                if (firstFrame || failure != null || recovering || loadTick != 0) return@LaunchedEffect
+            }
+            PlayTiming.mark("paused player gave no picture in 6 s — next link"); onEngineError("TIMEOUT")
+        }
+    }
+    // 0.9.10 (prepRescue): the phone turned or the window changed size before the first picture → give the video view its player again.
+    val cfgNow = androidx.compose.ui.platform.LocalConfiguration.current
+    val cfgSeen = remember { BooleanArray(1) }
+    if (Feature.prepRescue && !BuildConfig.IS_TV && pre != null) LaunchedEffect(cfgNow.orientation, cfgNow.screenWidthDp, cfgNow.screenHeightDp) {
+        if (!cfgSeen[0]) { cfgSeen[0] = true; return@LaunchedEffect }   // the first run is just the start
+        if (firstFrame || player !== pre.player) return@LaunchedEffect
+        reattachMain("prepared player re-attached after display change")
     }
     // Back on screen after a switch: say where we continued, with a quick way to start over.
     // Started: the provider group worked; instant play says how fast; phones save the other qualities' next minute.
@@ -2182,6 +2240,55 @@ fun PlayerScreen(
         load(Now(url, q.stream.subtitles.orEmpty() + extra, q.stream.name ?: q.addonName, q.addonName), resumeAt)
         return true
     }
+    /**
+     * 0.9.10 (firstGood): the first non-empty filtered answer of the search starts raceStart at once; later answers only
+     * join known / candidates. true = a link started; false = the search ended and nothing could be raced.
+     */
+    suspend fun startOnFirstAnswer(subsJob: kotlinx.coroutines.Deferred<List<Subtitle>>, findT0: Long): Boolean {
+        val req = findRequest
+        val result = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        scope.launch {
+            var seen = emptyList<StreamItem>(); var allDone = false; var won = false
+            val raced = HashSet<String>()
+            var raceJob: Job? = null
+            fun mergeAll() {
+                known = (known + seen).distinctBy { it.stream.url }
+                candidates = (candidates + seen.filter { it.stream.url != now?.url && it.stream.url.orEmpty() !in tried }).distinctBy { it.stream.url }
+            }
+            fun tryRace() {
+                if (won || raceJob?.isActive == true) return
+                val fresh = seen.filter { it.stream.url.orEmpty() !in raced && it.stream.url.orEmpty() !in tried }
+                    .let { tvCamFilter(it, SystemClock.elapsedRealtime() - findT0, allDone) }
+                if (fresh.isEmpty()) return
+                fresh.forEach { f -> f.stream.url?.let { raced += it } }
+                raceJob = launch {
+                    if (findRequest != req) return@launch
+                    if (runCatching { raceStart(fresh, subsJob) }.getOrDefault(false)) { won = true; mergeAll(); result.complete(true) }
+                    else { raceJob = null; tryRace() }   // the race failed: links that came meanwhile get their turn
+                }
+            }
+            try {
+                vm.streamsFlow(type, p.key).collect { (l, d) ->
+                    if (findRequest != req) throw kotlinx.coroutines.CancellationException("new search")
+                    allDone = d
+                    seen = (seen + vm.filtered(l).list.filter { it.stream.url != null }).distinctBy { it.stream.url }
+                    if (won) mergeAll() else tryRace()
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { result.complete(false); throw e
+            } catch (e2: Throwable) { }
+            allDone = true
+            if (!won && raceJob?.isActive != true) tryRace()
+            while (!won) { val j = raceJob ?: break; if (!j.isActive) break; j.join() }
+            if (won) mergeAll()
+            result.complete(won)
+        }
+        return result.await()
+    }
+
+    if (Feature.burstPlan && !BuildConfig.IS_TV) {
+        DisposableEffect(p.key) { BurstPlan.reset(); onDispose { BurstPlan.reset() } }
+        LaunchedEffect(firstFrame) { if (firstFrame) BurstPlan.onFirstFrame() }
+    }
 
     LaunchedEffect(findRequest) {
         if (findRequest == 0) return@LaunchedEffect
@@ -2373,6 +2480,8 @@ fun PlayerScreen(
                 if (started || nothingFound) return@LaunchedEffect
             }
         }
+        // 0.9.10 (firstGood): start on the first good answer; later answers join the backups.
+        if (Feature.firstGood && !BuildConfig.IS_TV && !forced && startOnFirstAnswer(subsJob, findT0)) return@LaunchedEffect
         val mode = opt("autoPlayMode").let { if (it == "manual") "first" else it }
         val patterns = regexList(opt("autoRegex"))
         val prefer = p.source
@@ -4754,7 +4863,7 @@ fun PlayerScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else AndroidView(
-                    factory = { c -> PlayerView(c).apply { useController = false; this.player = if (shadow === player) null else player; keepScreenOn = true; mainPv[0] = this; if (shadow == null) videoView = this } },
+                    factory = { c -> PlayerView(c).apply { useController = false; this.player = if (shadow === player) null else player; keepScreenOn = true; mainPv[0] = this; if (Feature.prepRescue && !BuildConfig.IS_TV) surfaceAt[0] = SystemClock.elapsedRealtime(); if (shadow == null) videoView = this } },
                     update = { v -> v.resizeMode = if (BuildConfig.IS_TV) AspectRatioFrameLayout.RESIZE_MODE_FIT else resize; v.subtitleView?.visibility = View.GONE },
                     // TV: most videos are 16:9 like the TV, so Crop / Stretch changed nothing. On TV they zoom past the
                     // black bars instead: Crop = 1.33× (fills a wide film), Stretch = taller only.

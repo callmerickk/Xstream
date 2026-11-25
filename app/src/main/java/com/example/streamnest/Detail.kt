@@ -234,6 +234,16 @@ fun DetailScreen(
         mutableIntStateOf(episodes.firstOrNull { it.id == playTarget.target.videoId }?.season ?: seasons.firstOrNull() ?: 1)
     }
     val shown = remember(episodes, season) { episodes.filter { it.season == season }.distinctBy { it.id } }
+    // 0.9.10 (askAhead): the next 3 unwatched episodes after the Play target + the first 2 of the open season are asked ahead.
+    if (Feature.askAhead && !BuildConfig.IS_TV && meta.type == "series") LaunchedEffect(playTarget.target.videoId, season, episodes.size) {
+        if (episodes.isEmpty()) return@LaunchedEffect
+        kotlinx.coroutines.delay(2_000)   // the page's own preparing goes first
+        val at = episodes.indexOfFirst { it.id == playTarget.target.videoId }
+        val next = if (at < 0) emptyList() else episodes.drop(at + 1)
+            .filter { (it.season ?: 0) > 0 && it.id !in done && airsIn(it.released) == null }.take(3)
+        val open = shown.filter { (it.season ?: 0) > 0 && airsIn(it.released) == null }.take(2)
+        CwAhead.ask(ctx, meta.id, (next + open).map { it.id }, "$season")
+    }
 
     // Instant play: as soon as the page opens, find the streams and save the start of the best link to storage
     // (Prepare.kt). The line under the Play button says what happened.
@@ -761,6 +771,11 @@ fun DetailScreen(
                             ep.id == lastInSeason && ended && ep.season == lastSeason -> "SERIES FINALE"
                             ep.id == lastInSeason -> "SEASON FINALE"
                             else -> null
+                        }
+                        // 0.9.10 (askAhead): a row held in view for 1 s is asked ahead (leaving the screen cancels this).
+                        if (Feature.askAhead && !BuildConfig.IS_TV && !watched) LaunchedEffect(ep.id) {
+                            kotlinx.coroutines.delay(1_000)
+                            if (airsIn(ep.released) == null) CwAhead.ask(ctx, meta.id, listOf(ep.id), null)
                         }
                         EpisodeRow(ep, watched, frac, isNext = ep.id == playTarget.target.videoId, tag = tag,
                             onClick = { start(target(ep)) }, onLongClick = { start(target(ep), forceSources = true) })

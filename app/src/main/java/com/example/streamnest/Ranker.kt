@@ -469,6 +469,11 @@ object HostStats {
     private val ok = ConcurrentHashMap<String, Int>()
     private val fail = ConcurrentHashMap<String, Int>()
     private val slowest = ConcurrentHashMap<String, Long>()
+    // 0.9.10 (burstPlan): hosts that refused a burst of parallel pieces: no burst for 24 h (own prefs file, max 50).
+    private var burstPrefs: android.content.SharedPreferences? = null
+    private val noBurstAt = ConcurrentHashMap<String, Long>()
+    private const val NO_BURST_MS = 24L * 3600 * 1000
+    private const val NO_BURST_MAX = 50
 
     fun init(ctx: Context) {
         if (prefs != null) return
@@ -478,6 +483,15 @@ object HostStats {
             ok[k] = parts.getOrNull(0)?.toIntOrNull() ?: 0
             fail[k] = parts.getOrNull(1)?.toIntOrNull() ?: 0
             parts.getOrNull(2)?.toLongOrNull()?.let { slowest[k] = it }
+        }
+        if (Feature.burstPlan) runCatching {
+            val bp = ctx.getSharedPreferences("host_nobust", Context.MODE_PRIVATE)
+            burstPrefs = bp
+            val now = System.currentTimeMillis()
+            bp.all.forEach { (k, v) ->
+                val t = v as? Long ?: return@forEach
+                if (now - t < NO_BURST_MS) noBurstAt[k] = t else bp.edit().remove(k).apply()
+            }
         }
     }
 
@@ -504,6 +518,28 @@ object HostStats {
         val k = key(url).ifEmpty { return }
         fail[k] = (fail[k] ?: 0) + 1
         save(k)
+    }
+
+    /** 0.9.10 (burstPlan): this server refused a burst of parallel pieces — no burst for it for the next 24 h. */
+    fun noteNoBurst(url: String) {
+        if (!Feature.burstPlan) return
+        val k = key(url).ifEmpty { return }
+        val now = System.currentTimeMillis()
+        noBurstAt[k] = now
+        val e = burstPrefs?.edit()
+        e?.putLong(k, now)
+        if (noBurstAt.size > NO_BURST_MAX)
+            noBurstAt.entries.sortedBy { it.value }.take(noBurstAt.size - NO_BURST_MAX).forEach { noBurstAt.remove(it.key); e?.remove(it.key) }
+        e?.apply()
+    }
+
+    /** 0.9.10 (burstPlan): true = no burst for this server (flag younger than 24 h). Always false with the switch off. */
+    fun noBurst(url: String): Boolean {
+        if (!Feature.burstPlan) return false
+        val k = key(url).ifEmpty { return false }
+        val t = noBurstAt[k] ?: return false
+        if (System.currentTimeMillis() - t >= NO_BURST_MS) { noBurstAt.remove(k); burstPrefs?.edit()?.remove(k)?.apply(); return false }
+        return true
     }
 
     /** Mostly failing? (3+ failures and under half the starts worked.) FSL storage links count as failing until proven. */
