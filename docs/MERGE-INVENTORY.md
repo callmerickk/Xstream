@@ -237,3 +237,15 @@ Not switched (wording for all apps, 0.9.1): "saved video" / "start saved" → "c
 | Big-screen mode: TV interface in the phone app on tablets (landscape), laptops, PC emulators (MuMu), wide windows, keyboard / mouse without touch; rotate back → phone layout; Esc = Back; hover / click / Shift-wheel / drag on TV components | Beta only | `bigScreen` | BigScreen.kt, MainActivity (BigScreen.tvUi picks TvApp), TvApp (phone-build branches: CloudGate, ModeChooser, LegalNoticeGate, MemWatch), TvCommon (tvCard hover, TvRow mouse), TvSidebar (hover, narrow closed hit area), TvHome (hero card + buttons tap). Player stays the phone PlayerScreen |
 | Device tier "top" (x86 host / PC / emulator, or ≥ 7.5 GB + 4K HEVC): bigger video buffer, logged once | Beta only | `bigScreen` | DeviceTier (BigScreen.kt), buildPlayer |
 | MuMu installer: one Install.bat that always installs the latest phone APK (GitHub releases/latest), MuMu's own adb / MuMuManager | Windows repo | — | callmerickk/StreamX-Windows |
+
+### Xstream 0.9.9 (fixes from the owner's 0.9.8 log)
+
+| Item | Status | Switch | Notes |
+|------|--------|--------|-------|
+| WebRTC library bundled again (downloaded copy crashed), old download deleted | Xstream phone | `webrtcOnDemand` off | app/build.gradle.kts, build.yml check, WebRtcLib.forgetDownloaded, MainActivity |
+| Watch together: no auto switching in a room; room carries the host's audio language (`RoomState.lang`) | Both apps (bug fix) | — | PlayerScreen (switchTo / ottSwapTo / ladder / lane / HDR gates, room-language effect, tryNextSource), Together.RoomState |
+| "You" bubble off by default + 👤 chip; chat hides the controls | Beta only | `wt2` | Call.kt (SelfChip, selfView2), PlayerScreen chat effect |
+| Quality lane: no 4K / HDR unless chosen; Rocky = "VegaMovies · CNCVerse"; Turbo / Classic removed | Beta only | `addonFirst` | QualityLane.reason, ottSwapTo lane guards, AddonFirst.rockyLabel / shownGroup, Public.streamName, Quick.pluginMode, SettingsHub ContentPage |
+| VegaMovies / RogMovies through the relay (mirrors, timeouts, DNS) | Both apps (bug fix) | — | PageRelay.kt; Worker RELAY_HOSTS + pages-only + rate limit |
+| Plugin search: non-Latin title → once more with the English name | Both apps (bug fix) | — | PluginSources (altKey, latin, englishFor, linksFrom altTried) |
+| Glass backdrop from disk on every start | Beta only | `glassPlus` | GlassBg.preload, GlassBackdrop disk effect |

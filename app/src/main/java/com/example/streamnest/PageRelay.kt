@@ -16,7 +16,8 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 object PageRelay : Interceptor {
     private const val RELAY = "https://streamx-home.callmerick093.workers.dev/p"
     private const val KEY = "sx-home-1"
-    private val allowed = Regex("(?i)(^|\\.)(vcloud\\.[a-z.]+|hubcloud\\.[a-z.]+|vegamovies\\.[a-z.]+|rogmovies\\.[a-z.]+|gamerxyt\\.com|fastdl\\.[a-z.]+|" +
+    // 0.9.9: numbered mirrors too (1vegamovies.shop was cut and never relayed: the name didn't match).
+    private val allowed = Regex("(?i)(^|\\.)(vcloud\\.[a-z.]+|hubcloud\\.[a-z.]+|[a-z0-9-]*vegamovies\\.[a-z.]+|[a-z0-9-]*rogmovies\\.[a-z.]+|gamerxyt\\.com|fastdl\\.[a-z.]+|" +
         "nexdrive\\.[a-z.]+|uhdmovies\\.[a-z.]+|hdhub4u\\.[a-z.]+|hubdrive\\.[a-z.]+|driveseed\\.[a-z.]+|driveleech\\.[a-z.]+)$")
     private val videoRx = Regex("(?i)\\.(mkv|mp4|avi|ts|m4s|webm)(\\?|$)")
     /** Hosts that were cut this session: asked through the relay straight away. */
@@ -47,8 +48,16 @@ object PageRelay : Interceptor {
     private fun relayable(req: Request): Boolean = allowed.containsMatchIn(req.url.host) && !videoRx.containsMatchIn(req.url.encodedPath) &&
         (req.method == "GET" || req.method == "POST") && (req.body?.contentLength() ?: 0L) < 256 * 1024
 
-    private fun isCut(e: Throwable): Boolean {
+    /** 0.9.9: the VegaMovies / RogMovies sites themselves (their search pages). */
+    private val siteRx = Regex("(?i)(^|\\.)[a-z0-9-]*(vegamovies|rogmovies)\\.[a-z.]+$")
+
+    private fun isCut(e: Throwable, host: String = ""): Boolean {
         val m = (e.message ?: "") + " " + e.javaClass.simpleName + " " + (e.cause?.message ?: "")
+        // 0.9.9: for the VegaMovies / RogMovies sites a connect timeout ("failed to connect"), a read timeout, an aborted
+        // connection and a DNS failure (UnknownHost) count as cut too — the ISP blocks them in all these ways.
+        if (siteRx.containsMatchIn(host) && (e is java.net.SocketTimeoutException || e is java.net.UnknownHostException ||
+                m.contains("abort", true) || m.contains("timeout", true) || m.contains("timed out", true) || m.contains("UnknownHost", true) ||
+                m.contains("is down", true))) return true   // HostDown's "skipped: … is down" (a blocked site looks down)
         return e is javax.net.ssl.SSLException || m.contains("reset", true) || m.contains("handshake", true) || m.contains("Connection closed", true) ||
             (Feature.addonFirst && (m.contains("refused", true) || m.contains("Failed to connect", true)))   // 0.9.7: refused counts too
     }
@@ -60,7 +69,7 @@ object PageRelay : Interceptor {
         // 0.9.7: remembered (24 h): the relay first; if the relay itself fails, the direct way once more (never worse than before).
         if (Feature.addonFirst && remembered(req.url.host)) return try { viaRelay(chain, req) } catch (e: java.io.IOException) { chain.proceed(req) }
         return try { chain.proceed(req) } catch (e: java.io.IOException) {
-            if (!isCut(e)) throw e
+            if (!isCut(e, req.url.host)) throw e
             blocked += req.url.host
             if (Feature.addonFirst) remember(req.url.host)
             ActLog.add("NET", "relay: ${req.url.host} via Cloudflare (${e.javaClass.simpleName})")

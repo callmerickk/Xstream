@@ -166,6 +166,8 @@ object Public {
             val k = kindName(if (mp4) "moviebox mp4" else "moviebox dash") ?: if (mp4) "Mercury Prime" else "Mercury Swift"
             return if (dev) "${codeName(s.addonName)} · ${if (mp4) "MP4" else if (s.mbKind() == 0) "DASH" else "HLS"} ($k)" else k
         }
+        // 0.9.9: CNCVerse Rocky copies by their site (developers: "VegaMovies · CNCVerse"; others the site's code name).
+        AddonFirst.rockyLabel(s)?.let { return if (dev) it else codeName(it.substringBefore(" · ")) }
         return addonLabel(s.addonName)
     }
     private val stars = mapOf('a' to "Antares", 'b' to "Bellatrix", 'c' to "Castor", 'd' to "Deneb", 'e' to "Electra", 'f' to "Fomalhaut",

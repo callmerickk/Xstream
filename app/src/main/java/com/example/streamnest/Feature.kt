@@ -105,8 +105,10 @@ object Feature {
     val noVosk: Boolean get() = BuildConfig.SLIM_LIBS
     /** 0.9.6: the face model comes from Google Play services ("Follow the speaker" hidden without them, FaceModelGms.kt). */
     val mlkitUnbundled: Boolean get() = BuildConfig.SLIM_LIBS
-    /** 0.9.6: Watch together's native library is downloaded the first time a call starts (WebRtcLib.kt). */
-    val webrtcOnDemand: Boolean get() = BuildConfig.SLIM_LIBS
+    /** 0.9.6: Watch together's native library is downloaded the first time a call starts (WebRtcLib.kt).
+     *  0.9.9: OFF everywhere — loading the downloaded copy crashed in native code (owner's log 25 Nov 13:01). The library
+     *  is in the APK again (app/build.gradle.kts no longer excludes it); WebRtcLib.kt stays for a later try. */
+    val webrtcOnDemand: Boolean get() = false
 
     /** 0.9.6: the engine setting as the player sees it. A stored "vlc" is ignored with noVlc (never rewritten, so cloud
      *  sync is untouched). */

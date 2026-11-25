@@ -79,20 +79,30 @@ object PluginSources {
         if (plain.endsWith("s", true) && plain.length > 4) out += plain.dropLast(1)
         if (' ' in plain && plain.split(' ').size == 2) out += plain.replace(" ", "")
         // The title's other names on TMDB (US / India titles, alternative titles), asked last.
-        altOf[core(name)]?.let { out += it }
+        // 0.9.9: not for a name in another script (Hindi…): linksFrom then asks again with the English name as a whole.
+        if (latin(name)) altOf[altKey(name)]?.let { out += it }
         return out.filter { it.length >= 2 }.take(9)
     }
     /** core(name) → TMDB's other names for the title (filled before the plugins are asked). */
     val altOf = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+    /** 0.9.9: core() keeps only a–z / 0–9, so every Hindi / Telugu name was "" (one shared, wrong entry): such names
+     *  are keyed by themselves. */
+    private fun altKey(name: String) = core(name).ifEmpty { "~" + name.trim().lowercase() }
+    /** 0.9.9: written in Latin letters (English, Spanish…)? "वाइब" / "प्रीतम और पेड्रो" are not. */
+    fun latin(name: String) = name.none { it.isLetter() && Character.UnicodeScript.of(it.code) != Character.UnicodeScript.LATIN }
+    /** 0.9.9: the English (or original Latin-letter) name TMDB gave for a localized title, once loadAltNames ran. */
+    fun englishFor(name: String): String? = altOf[altKey(name)]?.firstOrNull { latin(it) && core(it).isNotEmpty() }
     /** Fetches TMDB's alternative names once per title (US, IN, GB and the original title). */
     suspend fun loadAltNames(vm: AppViewModel, imdb: String, name: String, series: Boolean) {
-        if (altOf.containsKey(core(name))) return
+        if (altOf.containsKey(altKey(name))) return
         val key = vm.tmdbKey().ifEmpty { return }
         runCatching {
             val f = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/find/$imdb?api_key=$key&external_source=imdb_id")) as kotlinx.serialization.json.JsonObject
             val arr = (f[if (series) "tv_results" else "movie_results"] as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? kotlinx.serialization.json.JsonObject ?: return
             val id = arr["id"]?.toString()?.trim('"') ?: return
             val orig = (arr[if (series) "original_name" else "original_title"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            // 0.9.9: TMDB's English name (find answers in en-US): first for a name in another script.
+            val en = (arr[if (series) "name" else "title"] as? kotlinx.serialization.json.JsonPrimitive)?.content
             val alt = Api.json.parseToJsonElement(Api.get("https://api.themoviedb.org/3/${if (series) "tv" else "movie"}/$id/alternative_titles?api_key=$key")) as kotlinx.serialization.json.JsonObject
             val list = ((alt["results"] ?: alt["titles"]) as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { e ->
                 val o = e as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
@@ -100,7 +110,8 @@ object PluginSources {
                 if (c != null && c !in setOf("US", "IN", "GB")) return@mapNotNull null
                 (o["title"] as? kotlinx.serialization.json.JsonPrimitive)?.content
             }
-            altOf[core(name)] = (listOfNotNull(orig) + list).map { it.trim() }.filter { it.isNotBlank() && core(it) != core(name) }.distinct().take(4)
+            val firsts = if (latin(name)) listOfNotNull(orig) else listOfNotNull(en, orig)
+            altOf[altKey(name)] = (firsts + list).map { it.trim() }.filter { it.isNotBlank() && it != name.trim() && (core(it) != core(name) || !latin(name)) }.distinct().take(4)
         }
     }
 
@@ -232,7 +243,7 @@ object PluginSources {
     private val tvGate = kotlinx.coroutines.sync.Semaphore(3)
 
     suspend fun linksFrom(api: MainAPI, name: String, year: Int?, series: Boolean, season: Int?, episode: Int?,
-                          retried: Boolean = false, onLink: ((StreamItem) -> Unit)? = null): List<StreamItem> {
+                          retried: Boolean = false, onLink: ((StreamItem) -> Unit)? = null, altTried: Boolean = false): List<StreamItem> {
         fun log(s: String) = ActLog.add("CSPLAY", "${api.name}: $s")
         val tSearch = System.currentTimeMillis()
         var searchErr = false
@@ -245,7 +256,7 @@ object PluginSources {
             if (System.currentTimeMillis() - (tvFailAt[apiKey(api)] ?: 0L) < 10 * 60_000L) return emptyList()
             tvFails.remove(apiKey(api))
         }
-        val noKey = "${apiKey(api)}|${core(name)}|$year|$series"
+        val noKey = "${apiKey(api)}|${altKey(name)}|$year|$series"   // 0.9.9: altKey (core() of a Hindi name is "")
         noTitle[noKey]?.let { if (System.currentTimeMillis() - it < 30 * 60_000L) return emptyList() else noTitle.remove(noKey) }
         // The show's page (search + load) is kept 15 minutes: any other episode then needs only its links (~0.5 s),
         // so episode 4 or 10 starts as fast as episode 1.
@@ -299,7 +310,16 @@ object PluginSources {
         }
         if (found == null && searchErr && !retried && SiteAddress.handles(api)) {
             // VegaMovies / RogMovies: their site moves. The known addresses are tested and the working one is used.
-            if (SiteAddress.fix(api)) return linksFrom(api, name, year, series, season, episode, retried = true, onLink = onLink)
+            if (SiteAddress.fix(api)) return linksFrom(api, name, year, series, season, episode, retried = true, onLink = onLink, altTried = altTried)
+        }
+        // 0.9.9: a name in another script (TMDB's Hindi title) failed or matched nothing (CNCVerse Netflix: "वाइब" →
+        // MissingKotlinParameterException): once more with the English / original name.
+        if (!altTried && !latin(name) && (found == null || cands.isEmpty())) {
+            val en = englishFor(name)
+            if (en != null) {
+                log("search \"$name\" ${if (found == null) "failed" else "matched nothing"} — asking again with \"$en\"")
+                return linksFrom(api, en, year, series, season, episode, retried = retried, onLink = onLink, altTried = true)
+            }
         }
         if (BuildConfig.IS_TV) {
             if (found == null && searchErr) {

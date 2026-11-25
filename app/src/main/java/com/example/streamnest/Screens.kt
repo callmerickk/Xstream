@@ -478,7 +478,8 @@ fun App(vm: AppViewModel = viewModel()) {
         }
         if (profile != null && texts["guideDone"].isNullOrEmpty()) QuickGuide { vm.setText("guideDone", "1") }
         // First start on a profile: Turbo or Classic (each profile chooses once; Settings › Sources & Extensions later).
-        if (!BuildConfig.IS_TV && profile != null && texts["srcMode"].isNullOrEmpty()) FirstWatchChooser(vm)
+        // 0.9.9 (addonFirst): no Turbo / Classic question — one merged pipeline.
+        if (!BuildConfig.IS_TV && !Feature.addonFirst && profile != null && texts["srcMode"].isNullOrEmpty()) FirstWatchChooser(vm)
         // 0.9.1 (tasteRows): then once — what do you like to watch, and in which languages (Home is personalised from it).
         else if (Feature.tasteRows && !BuildConfig.IS_TV && profile != null && !texts["guideDone"].isNullOrEmpty() && texts["tasteDone"].isNullOrEmpty() && !showSplash) TasteOnboarding(vm) {}
         // 0.9.1 (tastePick): then once — titles you love (tap posters or search any title).

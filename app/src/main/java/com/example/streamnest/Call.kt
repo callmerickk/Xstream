@@ -112,7 +112,7 @@ object Call {
     // 0.9.8 (wt2): per-friend mute, "You" bubble, my own video for the preview, signal dots, data saver.
     private val _peerMuted = MutableStateFlow<Set<String>>(emptySet())
     val peerMuted: StateFlow<Set<String>> = _peerMuted
-    private val _selfView = MutableStateFlow(true)
+    private val _selfView = MutableStateFlow(false)   // 0.9.9: off by default
     val selfView: StateFlow<Boolean> = _selfView
     val localVideo = MutableStateFlow<VideoTrack?>(null)
     /** 0.9.8: uid → 1..3 signal dots (3 = good). */
@@ -135,7 +135,8 @@ object Call {
         ActLog.add("ROOM", "call · ${Together.members.value[uid]?.name ?: "friend"}: ${if (muted) "muted" else "unmuted"} (this phone only)")
     }
 
-    fun setSelfView(on: Boolean) { if (!Feature.wt2) return; _selfView.value = on; save("selfView", on) }
+    // 0.9.9: a new key ("selfView2", default off): 0.9.8's default-on is not carried over.
+    fun setSelfView(on: Boolean) { if (!Feature.wt2) return; _selfView.value = on; save("selfView2", on) }
 
     /** 0.9.76: relay servers (TURN) from our Cloudflare Worker — mobile networks often can't reach each other directly. */
     @Volatile private var relayServers: List<PeerConnection.IceServer> = emptyList()
@@ -195,7 +196,7 @@ object Call {
         val p = ctx.getSharedPreferences("call", Context.MODE_PRIVATE)
         hearOn.value = p.getBoolean("hear", true); duckOn.value = p.getBoolean("duck", true)
         bubblesOn.value = p.getBoolean("bubbles", true); bubbleDp.value = p.getInt("size", 96)
-        if (Feature.wt2) _selfView.value = p.getBoolean("selfView", true)
+        if (Feature.wt2) _selfView.value = p.getBoolean("selfView2", false)
     }
 
     private fun save(k: String, v: Any) {
@@ -960,10 +961,9 @@ private fun CallBubblesV2(modifier: Modifier, controlsVisible: Boolean, onTap: (
     val now = Together.serverNow()
     val people = members.filter { (uid, m) -> uid != me && now - m.seen < 40_000 && (m.cam || m.mic) }.toList()
 
-    // "You": shown with my camera on, or while the controls are up (and a moment after, so the buttons can slide back in).
-    var selfHold by remember { mutableStateOf(false) }
-    LaunchedEffect(controlsVisible) { if (controlsVisible) selfHold = true else { delay(900); selfHold = false } }
-    val selfShown = selfOn && (camMine || selfHold)
+    // 0.9.9: "You" only when I turned it on (room panel, or the 👤 chip on a friend's bubble) — never just because the
+    // controls came up. Its mic / camera buttons still spring out while the controls are up.
+    val selfShown = selfOn
 
     // Talker gets the big bubble (3+ on camera). Every change takes effect after 600 ms of staying the same.
     val camUids = people.filter { (uid, m) -> m.cam && videos[uid] != null }.map { it.first }
@@ -1001,6 +1001,8 @@ private fun CallBubblesV2(modifier: Modifier, controlsVisible: Boolean, onTap: (
                     mode = modeOf(uid), frame = Frames.pick(m.frame, frames[uid], stamps[uid] ?: 0L),
                     index = i, boxW = boxW, boxH = boxH, controlsVisible = false,
                     onTap = onTap, onSaveFrame = { f -> Frames.set(ctx, uid, f) }, onNote = { banner = it },
+                    // 0.9.9: the first friend's bubble carries a small 👤 chip (while the controls are up) for my own bubble.
+                    selfChip = if (i == 0) controlsVisible else null, selfOnNow = selfOn,
                 )
             }
         }
@@ -1028,6 +1030,8 @@ private fun BubbleItem(
     id: String, name: String, track: VideoTrack?, speaking: Boolean, dots: Int, muted: Boolean, isSelf: Boolean,
     mode: Int, frame: Frame, index: Int, boxW: Float, boxH: Float, controlsVisible: Boolean,
     onTap: () -> Unit, onSaveFrame: (Frame) -> Unit, onNote: (String) -> Unit,
+    /** 0.9.9: non-null on the bubble that carries the "my own bubble" chip: whether the chip shows now. */
+    selfChip: Boolean? = null, selfOnNow: Boolean = false,
 ) {
     val ctx = LocalContext.current
     val d = LocalDensity.current
@@ -1151,7 +1155,29 @@ private fun BubbleItem(
             }
         }
         if (isSelf && !frameMode) SelfControls(controlsVisible, shown, onRight = target.x + sizePx / 2f < boxW / 2f)
+        if (selfChip != null && !isSelf && !frameMode) SelfChip(selfChip, selfOnNow, shown)
     }
+}
+
+/** 0.9.9: a tiny 👤 chip at a friend's bubble edge (upper right, on the ring) while the controls are up: shows / hides
+ *  my own bubble. */
+@Composable
+private fun BoxScope.SelfChip(visible: Boolean, selfOn: Boolean, shown: Dp) {
+    val a by animateFloatAsState(if (visible) 1f else 0f, tween(180), label = "selfChip")
+    if (a <= 0.01f) return
+    val c = shown / 2
+    val off = c * 0.7071f      // 45° on the circle
+    Box(
+        Modifier.align(Alignment.TopStart)
+            .offset(x = BUBBLE_PAD + c + off - 11.dp, y = BUBBLE_PAD + c - off - 11.dp)
+            .graphicsLayer { alpha = a; scaleX = 0.6f + 0.4f * a; scaleY = 0.6f + 0.4f * a }
+            .size(22.dp).clip(CircleShape)
+            .background(if (selfOn) Color(0xCC3CCF7A) else Color(0xB3202228))
+            .border(1.dp, Color(0x80FFFFFF), CircleShape)
+            .then(if (visible) Modifier.clickable { Call.setSelfView(!selfOn) } else Modifier)
+            .semantics { contentDescription = if (selfOn) "Hide my own bubble" else "Show my own bubble" },
+        Alignment.Center,
+    ) { Text("👤", fontSize = 10.sp) }
 }
 
 /** 0.9.8: green talking ring with a soft pulse. */

@@ -57,6 +57,18 @@ object GlassBg {
     @Volatile internal var diskTried = false
     // 0.9.7 (smartCache): kept in app storage, so "Clear cache" never leaves the backdrop black.
     internal fun file(ctx: android.content.Context) = AppStore.pathFor(ctx, "glass_last.png")
+
+    /** 0.9.9 (glassPlus): every start, before the first screen: the saved backdrop (≈ 40 KB, 192×108) is decoded right
+     *  away on the main thread, so Glass never starts black; the new picture cross-fades over it. Before, the disk copy
+     *  was read inside the backdrop's own effect, which was dropped when that first screen went away (and diskTried
+     *  stayed set, so it was never read again until the next update). */
+    fun preload(ctx: android.content.Context) {
+        if (!Feature.glassPlus || BuildConfig.IS_TV || shown.value != null) return
+        val f = runCatching { file(ctx) }.getOrNull() ?: return
+        val b = runCatching { f.takeIf { it.length() > 0 }?.let { android.graphics.BitmapFactory.decodeFile(it.path) }?.asImageBitmap() }.getOrNull() ?: return
+        shown.value = b; diskTried = true
+        GlassHealth.shown("disk")
+    }
 }
 
 /**
@@ -76,10 +88,15 @@ fun GlassBackdrop(url: String?) {
     androidx.compose.runtime.LaunchedEffect(Unit) {
         if (last != null || GlassBg.diskTried) return@LaunchedEffect
         GlassBg.diskTried = true
-        val b = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { GlassBg.file(ctx).takeIf { it.length() > 0 }?.let { android.graphics.BitmapFactory.decodeFile(it.path) }?.asImageBitmap() }.getOrNull()
-        }
-        if (b != null && last == null) { last = b; GlassHealth.shown("disk") }   // 0.9.7: health log
+        var done = false
+        try {
+            val b = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { GlassBg.file(ctx).takeIf { it.length() > 0 }?.let { android.graphics.BitmapFactory.decodeFile(it.path) }?.asImageBitmap() }.getOrNull()
+            }
+            done = true
+            if (b != null && last == null) { last = b; GlassHealth.shown("disk") }   // 0.9.7: health log
+        } finally { if (!done && Feature.glassPlus) GlassBg.diskTried = false }   // 0.9.9: dropped mid-read → the next screen reads it
+
     }
     androidx.compose.runtime.LaunchedEffect(small) {
         val u = small ?: return@LaunchedEffect

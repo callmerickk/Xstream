@@ -130,3 +130,18 @@ All on in Xstream, off in StreamX. Off = the 0.9.6 code path.
 
 Not a new switch: Music logs (MusicLog.kt, Settings › Account › Music logs, cloud `…/music/days/<day>`) follow `music`.
 MainActivity `singleTask` lives in Xstream's brand manifest only.
+
+## 0.9.9 (versionCode 69): fixes, no new switch
+
+- `webrtcOnDemand` is now **off everywhere** (`Feature.webrtcOnDemand = false`): loading the downloaded WebRTC library
+  crashed in native code. `libjingle_peerconnection_so.so` is in the phone APK again (no jniLibs exclude; the workflow now
+  checks it IS there); a copy downloaded by 0.9.6–0.9.8 is deleted at start (`WebRtcLib.forgetDownloaded`). WebRtcLib.kt
+  and `tools/webrtc-assets.sh` stay for a later try (the workflow step is `continue-on-error`).
+- Watch together (bug fix, both apps): no automatic copy switch in a room (switchTo / ottSwapTo / ladder / quality lane /
+  HDR remembered); the room state carries `lang` (host's audio language) and guests select it.
+- `wt2`: "You" bubble off by default (prefs key `selfView2`), 👤 chip on the first friend's bubble; chat hides the controls.
+- `addonFirst`: quality lane never 4K (unless Quality › 4K) and never HDR (unless HDR mode); CNCVerse Rocky copies are
+  labelled VegaMovies / RogMovies; one merged pipeline: no Turbo / Classic (pluginMode() true, no first-start chooser).
+- `glassPlus`: the saved backdrop is decoded in MainActivity.onCreate (GlassBg.preload) on every start.
+- Bug fixes (both apps): PageRelay relays numbered VegaMovies / RogMovies mirrors and, for those sites, timeouts / aborts /
+  DNS failures; plugin search retries a non-Latin title once with TMDB's English name.

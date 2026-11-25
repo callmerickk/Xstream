@@ -36,8 +36,8 @@ android {
         minSdk = 24
         targetSdk = 34
         // 0.9.6: one code for both phone APKs (arm64 and arm32): a phone only ever installs the one for its own ABI.
-        versionCode = 68
-        versionName = "0.9.8"
+        versionCode = 69
+        versionName = "0.9.9"
         brand.forEach { (k, v) -> buildConfigField("String", k, "\"$v\"") }
         buildConfigField("boolean", "IS_BETA", brandBeta.toString())
         manifestPlaceholders["brandName"] = brand.getValue("BRAND_NAME")
@@ -155,7 +155,7 @@ androidComponents {
             v.packaging.jniLibs.excludes.addAll(listOf(
                 "**/libvlc.so", "**/libvlcjni.so",               // LibVLC
                 "**/libvosk.so", "**/libjnidispatch.so",         // Vosk + JNA ("Hey Aiden" uses Android's recogniser)
-                "**/libjingle_peerconnection_so.so",             // WebRTC: downloaded on first use (WebRtcLib.kt)
+                // 0.9.9: libjingle_peerconnection_so.so is packaged again (Feature.webrtcOnDemand off: the downloaded copy crashed).
             ))
         }
     }

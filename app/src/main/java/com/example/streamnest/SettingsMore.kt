@@ -67,7 +67,7 @@ internal fun QuickStartPage(vm: AppViewModel, onBack: () -> Unit) {
             ToggleRow("Quick Play", if (Public.dev) "Play from the addons below with the quality selector." else "Starts videos instantly from the fastest servers.", isOn(v("qsOn"))) { vm.setText("qsOn", if (it) "yes" else "no") }
         }
 
-        SourceModeCard(vm)
+        if (!Feature.addonFirst) SourceModeCard(vm)   // 0.9.9 (addonFirst): one merged pipeline, no mode to pick
         if (vm.pluginMode()) {
             QuickCsSection(vm, "qsCs", "Quick Play plugins",
                 "Tick the plugins Quick Play uses. Their links are ranked with your quality, audio and picture filters; the best one is opened in the background so Play starts at once.")

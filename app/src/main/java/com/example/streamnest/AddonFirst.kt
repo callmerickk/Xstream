@@ -25,6 +25,14 @@ object AddonFirst {
      *  isVegamovies() reads the same fields). Never matched on "rocky" (a film can be called that). */
     fun isRocky(s: StreamItem): Boolean = s.isVegamovies() || "rogmovies" in blob(s)
     fun isHdHub(s: StreamItem) = isHdHubName(s.addonName)
+    /** 0.9.9: a CNCVerse Rocky copy by the site it comes from ("VegaMovies · CNCVerse" / "RogMovies · CNCVerse"), so
+     *  Sources shows VegaMovies again while the VegaMovies plugin itself is blocked. Null for every other copy. */
+    fun rockyLabel(s: StreamItem): String? {
+        if (!Feature.addonFirst || !isCnc(s) || !isRocky(s)) return null
+        return if ("rogmovies" in blob(s)) "RogMovies · CNCVerse" else "VegaMovies · CNCVerse"
+    }
+    /** 0.9.9: the group a copy is listed under in the player's Sources (developers see Rocky copies as VegaMovies). */
+    fun shownGroup(s: StreamItem): String = if (Public.dev) rockyLabel(s) ?: s.addonName else s.addonName
     /** Quality-lane copies: they never take the start (they come later through the lane, or as backup). */
     fun qualityOnly(s: StreamItem) = isHdHub(s) || (isCnc(s) && isRocky(s))
 

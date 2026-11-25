@@ -563,6 +563,12 @@ fun langCodeOf(name: String): String? = mapOf("hindi" to "hi", "english" to "en"
 fun trackLang(f: androidx.media3.common.Format): String? =
     trackLabelLang(f) ?: f.language?.takeIf { it.isNotBlank() && it != "und" }?.let { langName(it) ?: it.lowercase() }
 
+/** 0.9.9: an audio track's language as a short code ("hi", "en", "te") for the Watch together room. */
+@OptIn(UnstableApi::class)
+fun roomLangCode(f: androidx.media3.common.Format): String? =
+    (trackLabelLang(f)?.let { langCodeOf(it) } ?: f.language?.takeIf { it.isNotBlank() && it != "und" }
+        ?.let { androidx.media3.common.util.Util.normalizeLanguageCode(it) })?.substringBefore('-')?.lowercase()?.takeIf { it.isNotBlank() }
+
 /** "2h 32min" / "152 min" / "PT2H32M" → minutes. */
 fun runtimeMinutes(r: String?): Int? {
     if (r.isNullOrBlank()) return null
@@ -1023,9 +1029,16 @@ fun PlayerScreen(
     }
     fun curBuffered(): Long = if (usingVlc) curPos() else player.bufferedPosition
     fun isPlayingNow(): Boolean = if (usingVlc) vlc?.isPlaying == true else player.isPlaying
-    /** What this player shows, for Watch together. */
+    /** 0.9.9: the audio language playing now (short code), for Watch together. */
+    fun audioLangNow(): String? = if (usingVlc) null else runCatching {
+        player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
+            ?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { roomLangCode(g.getTrackFormat(it)) } }
+    }.getOrNull()
+    /** What this player shows, for Watch together. 0.9.9: + the audio language: the host's own; a guest passes the room's
+     *  on unchanged (the room carries the host's language). */
     fun roomState(play: Boolean, pos: Long = curPos()) =
-        RoomState(url = now?.url.orEmpty(), key = p.key, title = p.title, image = p.image, type = type, pos = pos, playing = play)
+        RoomState(url = now?.url.orEmpty(), key = p.key, title = p.title, image = p.image, type = type, pos = pos, playing = play,
+            lang = (if (Together.isHost) audioLangNow() else Together.remote.value?.lang?.ifBlank { null } ?: audioLangNow()).orEmpty())
     /** Reopens what plays in VLC at [ms] (set up below, next to startWay). */
     var vlcJump: (Long) -> Unit = {}
     /** A link's file name (set below, once itemFor exists). */
@@ -1254,8 +1267,11 @@ fun PlayerScreen(
         else { Social.hostPlan = null; Snack.show(err) }
     }
     var appliedRev by remember { mutableLongStateOf(Together.remote.value?.rev ?: 0L) }
+    /** 0.9.9: bumps when the room's state arrives (the room-language step below follows it). */
+    var roomRev by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) {
         Together.remote.collect { st ->
+            if (st != null) roomRev = st.rev
             if (st == null || st.by == Together.me || st.rev <= appliedRev || !st.url.startsWith("http")) return@collect
             appliedRev = st.rev
             val expected = Together.expected(st)
@@ -1274,6 +1290,35 @@ fun PlayerScreen(
                 }
             }
         }
+    }
+    // 0.9.9: the room carries the host's audio language. A guest selects that track in whatever copy plays (once per
+    // copy, so a language you pick by hand afterwards stays); the host's language change goes out at once.
+    var langDoneFor by remember { mutableStateOf("") }
+    LaunchedEffect(tracks, roomRev) {
+        if (usingVlc || !firstFrame || !Together.active()) return@LaunchedEffect
+        val st = Together.remote.value ?: return@LaunchedEffect
+        val mine = audioLangNow()
+        if (Together.isHost) {
+            if (mine == null || mine == st.lang || st.url != now?.url) return@LaunchedEffect
+            // Someone else just changed something: let it settle first (as the host's 2 s clock does).
+            if (st.by != Together.me) delay(2600)
+            val r = Together.remote.value
+            if (r != null && r.url == now?.url && audioLangNow().let { it != null && it != r.lang }) Together.local(roomState(isPlayingNow()))
+            return@LaunchedEffect
+        }
+        val want = st.lang.ifBlank { null } ?: return@LaunchedEffect
+        val u = now?.url ?: return@LaunchedEffect
+        val key = "$u|$want"
+        if (langDoneFor == key || tracks.isEmpty) return@LaunchedEffect
+        langDoneFor = key
+        if (mine == want) return@LaunchedEffect
+        val hit = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.flatMap { g -> (0 until g.length).map { g to it } }
+            .firstOrNull { (g, i) -> g.isTrackSupported(i) && roomLangCode(g.getTrackFormat(i)) == want }
+        if (hit == null) { ActLog.add("TOGETHER", "room language $want: not in this copy (playing ${mine ?: "?"})"); return@LaunchedEffect }
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false).setOverrideForType(TrackSelectionOverride(hit.first.mediaTrackGroup, hit.second))
+            .setPreferredAudioLanguage(want).build()
+        ActLog.add("TOGETHER", "room language: $want (was ${mine ?: "?"})")
     }
     // Watch together, while playing: closer than 0.15 s to the room = fine; up to 1.5 s off = play 5 % faster / slower
     // for a moment (not noticeable); more = jump. Someone buffering: everyone waits, then starts together.
@@ -1455,7 +1500,10 @@ fun PlayerScreen(
         // The best remaining link by the Source Test ranking (dead and keeps-failing groups last resort only):
         // links that already sent video in the race first, then servers that haven't failed in this play, then the rest.
         // …never the same file again through another link (e.g. a re-signed storage link) after it failed to open.
-        val ranked = vm.rankedCandidates(candidates, quality, quickOnly = false)
+        val ranked0 = vm.rankedCandidates(candidates, quality, quickOnly = false)
+        // 0.9.9: in a Watch together room, copies in the room's audio language first (same order otherwise).
+        val roomLang = Together.remote.value?.lang?.ifBlank { null }?.takeIf { Together.active() }
+        val ranked = if (roomLang == null) ranked0 else ranked0.sortedBy { c -> if (c.languages().any { (langCodeOf(it) ?: it.take(2).lowercase()) == roomLang }) 0 else 1 }
         val next = ranked.firstOrNull { okNext(it) && hostOk(it) && it.stream.url in StreamCache.warm }
             ?: ranked.firstOrNull { okNext(it) && hostOk(it) }
             ?: ranked.firstOrNull { okNext(it) }
@@ -3421,6 +3469,11 @@ fun PlayerScreen(
         if (BuildConfig.IS_TV && auto && everPictured && why?.startsWith("the upgraded file failed") != true) {
             swLog(true, (why ?: label ?: "switch") + " — not done", st.stream.url, "TV: no automatic switch while watching"); return
         }
+        // 0.9.9: in a Watch together room nothing switches by itself (everyone stays on the host's copy and language);
+        // only ExoPlayer's own quality steps inside the same copy. Going back after an upgrade you chose failed is kept.
+        if (auto && Together.active() && why?.startsWith("the upgraded file failed") != true) {
+            swLog(true, (why ?: label ?: "switch") + " — not done", st.stream.url, "Watch together: no automatic switch in a room"); return
+        }
         if ((auto || upgrade) && HdrRule.banned(vm) && (HdrRule.named(st) || st.stream.url in hdrBlocked)) {
             swLog(auto, (why ?: label ?: "switch") + " — blocked", st.stream.url, "not switched: HDR isn't allowed"); return
         }
@@ -3500,12 +3553,15 @@ fun PlayerScreen(
      * Heavy files (60 fps, 4K): "freeze fade" — the old picture stops on its frame and the new one fades in over it,
      * so only one video is decoded at a time (no stutter).
      */
-    suspend fun ottSwapTo(c: StreamItem, asked: Boolean = false, why: String = if (asked) "Upgrade" else "OTT swap"): Boolean {
+    suspend fun ottSwapTo(c: StreamItem, asked: Boolean = false, why: String = if (asked) "Upgrade" else "OTT swap",
+                          laneHdr: Boolean = true, lane4k: Boolean = true): Boolean {
         swapFail = null
         val url = c.stream.url ?: return false
         val name = Public.streamName(c)
         val startUrl = now?.url
         val auto = !asked
+        // 0.9.9: no automatic fade to another copy in a Watch together room (see switchTo).
+        if (auto && Together.active()) { swLog(true, "$why — not done", url, "Watch together: no automatic switch in a room"); return false }
         if (HdrRule.banned(vm) && (HdrRule.named(c) || url in hdrBlocked)) { swLog(auto, "$why — blocked", url, "not switched: HDR isn't allowed"); hdrBlocked += url; return false }
         // A file you can't jump inside is never switched to (the picture went back to 0:01 after every jump).
         if (!isPlaylistLink(c, url) && StreamType.mimeFor(url, c.fileName()) == null) {
@@ -3556,6 +3612,9 @@ fun PlayerScreen(
         if (HdrRule.banned(vm) && HdrRule.isHdr(sp.videoFormat)) {
             hdrBlocked += url; swLog(auto, "$why — blocked", url, "not switched: the picture is HDR (its name didn't say so)"); drop(); return false
         }
+        // 0.9.9: the quality lane checks the real picture too: no HDR without HDR mode, no 4K unless you chose 4K.
+        if (!laneHdr && HdrRule.isHdr(sp.videoFormat)) { swLog(auto, "$why — skipped", url, "not switched: the picture is HDR (HDR mode is off)"); drop(); return false }
+        if (!lane4k && (sp.videoFormat?.height ?: 0) > 1200) { swLog(auto, "$why — skipped", url, "not switched: ${sp.videoFormat?.height}p (4K only when you choose it)"); drop(); return false }
         val dMain = curDur(); val dSh = sp.duration
         // Same length (the 0.8.1 fade): within 1.5 s for the automatic steps; when you tapped Upgrade, within 10 s (4K
         // copies are often a few seconds longer or shorter at the credits — they used to reload with "Resuming at").
@@ -3703,6 +3762,7 @@ fun PlayerScreen(
         if (runCatching { HdrRule.isHdr(player.videoFormat) }.getOrDefault(false)) return@LaunchedEffect
         if (hdrFrom != null) return@LaunchedEffect
         val asked = hdrTapped
+        if (!asked && Together.active()) { ActLog.add("SWITCH", "auto · HDR — not in a Watch together room"); return@LaunchedEffect }
         if (!asked) {
             // The remembered choice: never on slow or metered internet unless it is clearly fast; only once the regular
             // copy plays smoothly with some of it loaded ahead.
@@ -3785,6 +3845,8 @@ fun PlayerScreen(
                     if (usingVlc || byHand || cur.addonName == LiveServer.NAME) break
                     val here = rungNow(cur)
                     if (here >= 3) break
+                    // 0.9.9: no climbing while in a Watch together room (waits; climbs again after the room).
+                    if (Together.active()) { delay(2_000); continue }
                     // Never at the cost of the film you're watching: only while it plays smoothly with 30 s loaded ahead —
                     // unless this copy itself keeps buffering (8 s or more of the last minute): then a better copy is
                     // switched to straight away (Infinity War: MovieBox DASH kept stalling while VegaMovies was there).
@@ -3813,6 +3875,7 @@ fun PlayerScreen(
                     val ok = vm.rankedCandidates(pool.values.toList(), "auto", quickOnly = false).filter {
                         it.stream.url !in tried && (failsBy[it.addonName] ?: 0) < 2 && it.effectiveRes() in 1000..1199 && vm.langRank(it) <= vm.langRank(cur) && !it.unplayableHere() &&
                             !Ranker.knownUnseekable(it) && !Ranker.isDead(it) && !(hdrOff && (HdrRule.named(it) || it.stream.url in hdrBlocked)) && rung(it) > here &&
+                            !(Feature.addonFirst && !hdrWant && HdrRule.named(it)) &&   // 0.9.9: HDR only with HDR mode on
                             it.addonName !in wrongAddons && Ranker.groupKey(it) !in langMissGroups && hasLang(it, curAudio) &&
                             // Never one streaming service for another (Netflix ↔ Prime: different cuts, different shows).
                             !(cur.isOtt() && it.isOtt())
@@ -3854,29 +3917,31 @@ fun PlayerScreen(
             val weak = hlsCap > 0 || (lastSlowAt > 0 && SystemClock.uptimeMillis() - lastSlowAt < Rules.ms(Rules.WEAK_COOLDOWN)) ||
                 (bwNow[0] in 1 until (Rules.num(Rules.WEAK_MIN_BW) * 1_000_000).toLong())
             if (byHand || usingVlc) { laneState = 2; return@LaunchedEffect }
-            if (!buffering && !weak && shadow == null &&
+            if (!buffering && !weak && shadow == null && !Together.active() &&   // 0.9.9: never in a room
                 DataDiet.climbOk(SystemClock.elapsedRealtime() - t0, curBuffered() - curPos(), isOnWifi(ctx))) { ready = true; break }
             delay(1_000)
         }
         val cur = now?.url?.let { itemFor(it) }
-        if (!ready || cur == null) { laneState = 2; return@LaunchedEffect }
+        if (!ready || cur == null || Together.active()) { laneState = 2; return@LaunchedEffect }
         val found = QualityLane.fetch(vm, type, p.key)
         if (found.isEmpty()) { ActLog.add("SWITCH", "auto · quality lane — nothing from the addons"); laneState = 2; return@LaunchedEffect }
         val curAudio = runCatching { player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
             ?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it).language } } }.getOrNull()
-        val hdrOk = !HdrRule.banned(vm) && PicturePref.hdrScreen(ctx)
+        // 0.9.9: HDR only with HDR mode on; 4K only when you chose 4K (Quality › 4K) — never by the lane itself.
+        val hdrOk = hdrWant && !HdrRule.banned(vm) && PicturePref.hdrScreen(ctx)
+        val allow4k = quality == Quality4K.id
         val list = vm.filtered(found).list.filter { s ->
             val u = s.stream.url
             u != null && u != cur.stream.url && !s.unplayableHere() && !Ranker.knownUnseekable(s) && !Ranker.isDead(s) &&
                 vm.langRank(s) <= vm.langRank(cur) && hasLang(s, curAudio) && !TitleMatch.wrong(s, type, p.key) &&
                 s.addonName !in wrongAddons && Ranker.groupKey(s) !in langMissGroups && !(!hdrOk && (HdrRule.named(s) || u in hdrBlocked))
-        }.mapNotNull { s -> QualityLane.reason(cur, s, hdrOk)?.let { s to it } }
+        }.mapNotNull { s -> QualityLane.reason(cur, s, hdrOk, allow4k)?.let { s to it } }
             .sortedByDescending { QualityLane.score(it.first) }.take(2)
         if (list.isEmpty()) ActLog.add("SWITCH", "auto · quality lane — ${found.size} links, none clearly better")
         for ((c, why) in list) {
             if (byHand || now?.url != cur.stream.url) break
             withTimeoutOrNull(30_000) { while (shadow != null) delay(1_000) }   // another fade is running: wait for it
-            val ok = runCatching { ottSwapTo(c, asked = false, why = "quality lane · $why") }.getOrDefault(false)
+            val ok = runCatching { ottSwapTo(c, asked = false, why = "quality lane · $why", laneHdr = hdrOk, lane4k = allow4k) }.getOrDefault(false)
             if (ok && now?.url == c.stream.url) {
                 Snack.show("✨ Better quality found — switched to ${QualityLane.label(c)}")
                 ActLog.add("SWITCH", "auto · quality lane · $why → ${Public.streamName(c)}")
@@ -4983,7 +5048,12 @@ fun PlayerScreen(
             if (Feature.wt2 && roomCode != null && !inPip && !BuildConfig.IS_TV) {
                 val chatShown by Together.chatShown.collectAsState()
                 val chatUnread by Together.unread.collectAsState()
-                LaunchedEffect(chatShown) { if (chatShown) panel = null }   // the room panel closes when the chat opens
+                LaunchedEffect(chatShown) {
+                    if (!chatShown) return@LaunchedEffect
+                    panel = null   // the room panel closes when the chat opens
+                    // 0.9.9: the player controls hide at once and stay hidden while the chat is open.
+                    snapshotFlow { controls }.collect { if (it) controls = false }
+                }
                 if (!chatShown && (controls || chatUnread > 0))
                     WtChatButton(Modifier.align(Alignment.TopEnd).padding(top = topY + 52.dp, end = topEnd)) { Together.chatShown.value = true }
                 if (chatShown) WtChatPanel { Together.chatShown.value = false }
@@ -6872,12 +6942,12 @@ private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playing
     val slow by SlowAddons.links.collectAsStateWithLifecycle()
     val others = remember(all, slow[key], qs, csItems, nuItems) {
         val qUrls = qs.mapNotNull { it.stream.url }.toSet()
-        (all + slow[key].orEmpty() + csItems + nuItems).distinctBy { it.stream.url }.filter { it.stream.url !in qUrls }.groupBy { it.addonName }.toList()
+        (all + slow[key].orEmpty() + csItems + nuItems).distinctBy { it.stream.url }.filter { it.stream.url !in qUrls }.groupBy { AddonFirst.shownGroup(it) }.toList()   // 0.9.9: shownGroup
     }
     // Groups fold: the one holding what's playing starts open, the rest closed (tap a header to open it).
     var openGroups by remember(key) { mutableStateOf<Set<String>?>(null) }
     val playingGroup = remember(others, qs, playingUrl) {
-        (qs.firstOrNull { isNow(it) } ?: others.flatMap { it.second }.firstOrNull { isNow(it) })?.addonName
+        (qs.firstOrNull { isNow(it) } ?: others.flatMap { it.second }.firstOrNull { isNow(it) })?.let { AddonFirst.shownGroup(it) }
     }
     val opened = openGroups ?: setOfNotNull(playingGroup)
     fun toggle(g: String) { openGroups = if (g in opened) opened - g else opened + g }
@@ -6902,7 +6972,7 @@ private fun DevSourcesPanel(vm: AppViewModel, type: String, key: String, playing
                     }
                 }
                 if (qs.isEmpty()) item { Text(if (done) "Nothing from quick play" else "Asking…", Modifier.padding(8.dp), fontSize = 12.sp, color = Color(0xFF8A94A8)) }
-                qs.groupBy { it.addonName }.forEach { (addon, files) ->
+                qs.groupBy { AddonFirst.shownGroup(it) }.forEach { (addon, files) ->
                     item(key = "qh$addon") { DevGroupHeader(addon, files.size, addon in opened, files.any { isNow(it) }) { toggle(addon) } }
                     if (addon in opened) items(files, key = { "q" + it.stream.url }) { s -> DevFileCard(s, isNow(s), pack) { onSwitch(s, qs) } }
                 }
@@ -7014,7 +7084,7 @@ private fun QuickSourcesList(vm: AppViewModel, list: List<StreamItem>, playingUr
         Box(Modifier.fillMaxWidth().padding(30.dp), Alignment.Center) { CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp) }
         return
     }
-    val groups = remember(list) { list.groupBy { it.addonName } }
+    val groups = remember(list) { list.groupBy { AddonFirst.shownGroup(it) } }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         groups.forEach { (addon, links) ->
             item(key = "h:$addon") {

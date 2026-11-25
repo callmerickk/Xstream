@@ -48,8 +48,12 @@ jobs:
                         libs=$(unzip -l "$a" | grep "lib/" | awk '{print $1, $4}' | sort -rn | head -8 | awk '{printf "%s %.1fMB; ", $2, $1/1048576}')
             echo "::notice title=$n ($sz MB)::$libs"
             # 0.9.6: the slimmed-out libraries must really be gone (a Feature switch must never meet a missing .so).
-            if unzip -l "$a" | grep -E "lib/.*(libvlc|libvosk|libjnidispatch|libjingle)"; then
+            if unzip -l "$a" | grep -E "lib/.*(libvlc|libvosk|libjnidispatch)"; then
               echo "::error title=$n::a slimmed-out native library is still in the APK"; exit 1
+            fi
+            # 0.9.9: Watch together's WebRTC library is bundled again (the on-demand download crashed).
+            if ! unzip -l "$a" | grep -q "lib/.*/libjingle_peerconnection_so.so"; then
+              echo "::error title=$n::libjingle_peerconnection_so.so is missing (Watch together needs it in the APK)"; exit 1
             fi
             b=$(stat -c%s "$a")
             if [ "$b" -gt $((45*1024*1024)) ]; then echo "::warning title=$n::bigger than 45 MB ($((b/1048576)) MB)"; fi
@@ -58,6 +62,8 @@ jobs:
           if unzip -l out/Xstream-phone.apk | grep -q "lib/armeabi-v7a/"; then echo "::error::the arm64 APK holds 32-bit libraries"; exit 1; fi
           if unzip -l out/Xstream-phone-arm32.apk | grep -q "lib/arm64-v8a/"; then echo "::error::the arm32 APK holds 64-bit libraries"; exit 1; fi
       - name: WebRTC library for Watch together (assets branch + checksum)
+        # 0.9.9: only kept for a later on-demand try (Feature.webrtcOnDemand is off; the library is in the APK).
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: tools/webrtc-assets.sh "${{ github.repository }}" ${{ inputs.publish && 'strict' || '' }}

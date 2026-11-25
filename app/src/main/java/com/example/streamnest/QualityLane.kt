@@ -29,9 +29,12 @@ object QualityLane {
     private fun fps60(s: StreamItem) = Regex("(?i)\\b(50|59|60)\\s?fps\\b").containsMatchIn(listOfNotNull(s.stream.name, s.stream.title, s.stream.description, s.stream.behaviorHints?.filename).joinToString(" "))
     private fun size(s: StreamItem) = s.stream.behaviorHints?.videoSize ?: 0L
 
-    /** null = not clearly better. */
-    fun reason(cur: StreamItem, c: StreamItem, hdrOk: Boolean): String? {
+    /** null = not clearly better. 0.9.9: [allow4k] only when you chose 4K yourself, [hdrOk] only with HDR mode on —
+     *  otherwise the lane stays at 1080p and below (60 fps / higher bitrate / 1080p over 720p) and never picks HDR. */
+    fun reason(cur: StreamItem, c: StreamItem, hdrOk: Boolean, allow4k: Boolean = false): String? {
         val rc = c.effectiveRes(); val rn = cur.effectiveRes()
+        if (!allow4k && rc > 1200) return null
+        if (!hdrOk && HdrRule.named(c)) return null
         return when {
             rc >= 2160 && rn < 2160 -> "4K"
             rc > rn && rn > 0 && rc >= 1080 -> "${rc}p"

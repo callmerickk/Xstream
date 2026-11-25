@@ -1,3 +1,15 @@
+Xstream 0.9.9
+
+Watch together stays in sync:
+• Watch together stays in sync and in the same language for everyone.
+• Fixed a crash when starting a call.
+• 4K only when you choose it.
+• VegaMovies copies show up again.
+• Your own bubble stays hidden until you turn it on; opening the chat hides the player buttons.
+• Glass background shows at once on every start.
+• Simpler Sources & Extensions.
+• Better search for titles shown in Hindi and other languages.
+
 Xstream 0.9.8
 
 Watch together, all new:

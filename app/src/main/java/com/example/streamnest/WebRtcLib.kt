@@ -61,6 +61,21 @@ object WebRtcLib {
         cm.getNetworkCapabilities(cm.activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) == true
     }.getOrDefault(false)
 
+    /** 0.9.9: with webrtcOnDemand off the APK carries the library; a copy downloaded by 0.9.6–0.9.8 is deleted at start
+     *  (nothing loads it any more: Call.ensureFactory only sets the loader when the switch is on). */
+    fun forgetDownloaded(ctx: Context) {
+        if (Feature.webrtcOnDemand) return
+        runCatching {
+            val d = File(ctx.applicationContext.filesDir, "native")
+            val old = d.listFiles()?.filter { it.name.startsWith("libjingle_peerconnection_so") }.orEmpty()
+            if (old.isEmpty()) return
+            var kb = 0L
+            old.forEach { kb += it.length() / 1024; it.setWritable(true); it.delete() }
+            if (d.listFiles().isNullOrEmpty()) d.delete()
+            ActLog.add("ROOM", "webrtc lib: removed the downloaded copy ($kb KB) — the app carries it now")
+        }
+    }
+
     /** Optional: quiet pre-download on Wi-Fi only (e.g. when a room is opened), so the first call starts at once. */
     fun prefetchOnWifi(ctx: Context) {
         val app = ctx.applicationContext

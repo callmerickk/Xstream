@@ -52,8 +52,12 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         )
         // 0.9.7 (smartCache): the Glass backdrop to app storage + the video-cache keeper (before anything reads them).
         if (Feature.smartCache && !BuildConfig.IS_TV) { AppStore.migrate(applicationContext); CacheKeeper.start(applicationContext) }
+        // 0.9.9 (glassPlus): the saved Glass backdrop is on screen from the very first frame (every start).
+        if (savedInstanceState == null) GlassBg.preload(applicationContext)
         // 0.9.7: how this start came (the "Xstream icon opened Music" check): task, root, flags, entry.
         if (!BuildConfig.IS_TV) ActLog.add("APP", "launch · task $taskId · root $isTaskRoot · flags 0x${Integer.toHexString(intent?.flags ?: 0)} · ${intent?.component?.shortClassName ?: "?"}")
+        // 0.9.9: the WebRTC library is in the APK again; a copy downloaded by 0.9.6–0.9.8 is deleted (never loaded).
+        if (!BuildConfig.IS_TV && savedInstanceState == null) Thread({ WebRtcLib.forgetDownloaded(applicationContext) }, "webrtc-forget").apply { isDaemon = true }.start()
         // Live server (64-bit app): started a few seconds after the app opens, so it's ready before a title page asks.
         LiveServer.start(this, 2_500)
         // "Xstream Music" when the app icon is held.

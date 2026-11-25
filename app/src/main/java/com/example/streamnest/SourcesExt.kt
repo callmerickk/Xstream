@@ -164,7 +164,7 @@ fun ExtensionsPage(vm: AppViewModel, onBack: () -> Unit) {
                             Text(it, Modifier.clip(chip).background(Color(0x14FFFFFF)).padding(horizontal = 14.dp, vertical = 8.dp), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFD5D0DA))
                         }
                     }
-                    if (texts["srcMode"].let { !it.isNullOrEmpty() && it != "plugins" }) Text("Extensions play in Turbo mode. Switch in Sources & Extensions › How you watch.", fontSize = 13.sp, color = Color(0xFFFF8A9A))
+                    if (!Feature.addonFirst && texts["srcMode"].let { !it.isNullOrEmpty() && it != "plugins" }) Text("Extensions play in Turbo mode. Switch in Sources & Extensions › How you watch.", fontSize = 13.sp, color = Color(0xFFFF8A9A))
                     Text("Extensions are a backup: ${Brand.NAME} uses them when nothing else plays, or when you pick one of their streams yourself.", fontSize = 13.sp, color = Muted)
                 }
                 RowDivider(20.dp)

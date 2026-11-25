@@ -69,6 +69,8 @@ data class RoomState(
     val rev: Long = 0, val by: String = "", val url: String = "", val key: String = "", val title: String = "",
     val image: String? = null, val type: String = "", val pos: Long = 0, val playing: Boolean = false, val host: String = "",
     val sat: Long = 0,
+    /** 0.9.9: the host's audio language (short code, "" = unknown). Guests select it; older apps ignore it. */
+    val lang: String = "",
     @Transient val receivedAt: Long = 0,
 )
 

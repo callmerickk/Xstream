@@ -100,9 +100,11 @@ fun StreamItem.languages(): List<String> {
  * Plugin mode (StreamX phones, Settings › Sources: Addons / Plugins): every stream comes from CloudStream / Nuvio plugins
  * and no addon is asked. Addon mode (default): addons only, plugins are never loaded.
  */
-fun AppViewModel.pluginMode(): Boolean = texts.value["srcMode"].let { it.isNullOrEmpty() || it == "plugins" || (it == "live" && !BuildConfig.HAS_LIVE) }
+// 0.9.9 (addonFirst): one merged pipeline (plugins + CNCVerse / HdHub addons) — no Turbo / Classic choice any more, so a
+// stored srcMode ("addons" from an old choice) no longer changes anything. Off: the srcMode choice as before.
+fun AppViewModel.pluginMode(): Boolean = (Feature.addonFirst && !BuildConfig.IS_TV) || texts.value["srcMode"].let { it.isNullOrEmpty() || it == "plugins" || (it == "live" && !BuildConfig.HAS_LIVE) }
 /** Live mode (64-bit app): only the Live server's links. */
-fun AppViewModel.liveMode(): Boolean = !BuildConfig.IS_TV && texts.value["srcMode"] == "live" && LiveServer.available(appContext)
+fun AppViewModel.liveMode(): Boolean = !BuildConfig.IS_TV && !Feature.addonFirst && texts.value["srcMode"] == "live" && LiveServer.available(appContext)
 /** The name a CloudStream provider's links carry (StreamItem.addonName). */
 fun csDisplayName(provider: String) = "CloudStream · $provider"
 /** Quick Start: in plugin mode the picked CloudStream providers (by their link name), else the picked addons. */

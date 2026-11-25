@@ -118,7 +118,7 @@ private fun SettingsRootPage(vm: AppViewModel, onClose: () -> Unit, open: (Strin
             SettingsCard {
                 SettingRow(Icons.Default.Palette, "Layout", "Themes, home, posters and navigation bar.") { open("layout") }
                 RowDivider()
-                SettingRow(Icons.Default.Extension, "Sources & Extensions", "Turbo or Classic, your sources, extensions and filters.") { open("content") }
+                SettingRow(Icons.Default.Extension, "Sources & Extensions", if (Feature.addonFirst) "Your sources, extensions and filters." else "Turbo or Classic, your sources, extensions and filters.") { open("content") }
                 RowDivider()
                 SettingRow(Icons.Default.PlayArrow, "Playback", "Player, subtitles, and auto-play.") { open("playback") }
                 RowDivider()
@@ -749,10 +749,21 @@ private fun AppIconPicker() {
 private fun ContentPage(vm: AppViewModel, onBack: () -> Unit, open: (String) -> Unit) {
     Page("Sources & Extensions", onBack) {
         // 1 · How you watch (Turbo / Classic), 2 · Sources, Extensions and Filters, 3 · Recommendations — each its own card.
-        SectionLabel("How you watch")
-        WatchModeCard(vm)
+        // 0.9.9 (addonFirst): one merged pipeline — no "How you watch" card; Sources · Extensions · Filters once each.
+        if (!Feature.addonFirst) {
+            SectionLabel("How you watch")
+            WatchModeCard(vm)
+        }
         SectionLabel("Sources & extensions")
-        SettingsCard {
+        if (Feature.addonFirst) SettingsCard {
+            SettingRow(null, "Sources", "Install, remove, refresh and sort your add-ons.") { open("addons") }
+            if (!BuildConfig.IS_TV) {
+                RowDivider(20.dp)
+                SettingRow(null, "Extensions", "Add Nuvio extension repositories and switch providers on or off.") { open("extensions") }
+            }
+            RowDivider(20.dp)
+            SettingRow(null, "Filters", "Quality, audio language, what to hide — on top of ${Brand.NAME}'s own picks.") { open("quickPlay") }
+        } else SettingsCard {
             SettingRow(null, "Sources", "Install, remove, refresh and sort your add-ons.") { open("addons") }
             if (!BuildConfig.IS_TV) {
                 RowDivider(20.dp)

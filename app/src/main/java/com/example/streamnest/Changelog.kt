@@ -13,6 +13,16 @@ val Changelog: List<Release> = AllReleases.filter { it.version.startsWith("TV") 
 val UserLog: List<Release> get() = UserReleases.filter { it.version.startsWith("TV") == BuildConfig.IS_TV }.ifEmpty { UserReleases }
 
 private val UserReleases get() = listOf(
+    Release("0.9.9", "25 Nov 2026", "Watch together stays in sync", listOf(
+        "Watch together stays in sync and in the same language for everyone",
+        "Fixed a crash when starting a call",
+        "4K only when you choose it",
+        "VegaMovies copies show up again",
+        "Your own bubble stays hidden until you turn it on; opening the chat hides the player buttons",
+        "Glass background shows at once on every start",
+        "Simpler Sources & Extensions",
+        "Better search for titles shown in Hindi and other languages",
+    )),
     Release("0.9.8", "25 Nov 2026", "Watch together, all new", listOf(
         "Move friends' bubbles anywhere and pinch them bigger or smaller; they stay where you put them",
         "Frame yourself: double-tap your own bubble and everyone sees you the way you chose",
@@ -653,6 +663,19 @@ private val UserReleases get() = listOf(
 )
 
 private val AllReleases get() = listOf(
+    Release("0.9.9", "25 Nov 2026", "Fixes from the 0.9.8 log: WebRTC bundled, room sync + language, lane caps, VegaMovies relay, Glass start (versionCode 69)", listOf(
+        "Native crash after the on-demand WebRTC download (13:01:16 sha ok → 13:01:18 crash in native code): Feature.webrtcOnDemand = false, libjingle_peerconnection_so.so packaged again (jniLibs exclude removed; build.yml fails when it is missing), WebRtcLib.forgetDownloaded deletes filesDir/native copies at start; nothing calls System.load on a downloaded file",
+        "Watch together (bug fix): in a room (Together.active) no automatic copy switch — switchTo(auto) / ottSwapTo(!asked) refuse (logged \"Watch together: no automatic switch in a room\"), the ladder waits, the quality lane and remembered HDR don't run; only ExoPlayer's own steps inside the copy. Going back after a chosen upgrade failed is kept. The sync code itself (expected(), 0.15 / 1.5 s drift rule, 5 % rate nudge, pause on the same frame, buffering wait, 2 s host clock) is StreamX 0.9.79's word for word; the drift came from copies switching under the room (url differs → drift correction skipped, and the switch was sent to the room)",
+        "RoomState.lang: the host's audio language (roomLangCode: label, else normalised tag); guests pass it on unchanged, select that track once per copy (override + preferred language) and prefer copies in it in tryNextSource; the host's language change goes out at once",
+        "wt2: \"You\" bubble off by default (prefs selfView2), never shown because the controls came up; 👤 SelfChip on the first friend's bubble while the controls are up toggles it; the room-panel switch stays. Chat panel open = controls hidden (snapshotFlow keeps them hidden)",
+        "addonFirst: QualityLane.reason(allow4k, hdrOk) — no copy above 1200 lines unless Quality = 4K, no HDR unless HDR mode; ottSwapTo lane guards check the opened picture (HDR / height); ladder skips HDR-named copies without HDR mode",
+        "addonFirst: CNCVerse Rocky copies named \"VegaMovies · CNCVerse\" / \"RogMovies · CNCVerse\" (AddonFirst.rockyLabel; Public.streamName; player Sources grouped by AddonFirst.shownGroup for developers)",
+        "PageRelay (bug fix): [a-z0-9-]*vegamovies / rogmovies mirrors (1vegamovies.shop never matched); for those sites SocketTimeout (connect / read), abort, UnknownHost and HostDown's \"is down\" count as cut. Worker /p: same hosts, pages only, GET + POST ≤ 64 KB, 90 / min per address",
+        "Plugin search (bug fix): core() of a Hindi / Telugu name is \"\" (altOf and noTitle keys collided) → altKey; loadAltNames keeps TMDB's English name first for non-Latin names; linksFrom asks once more with it when the search failed or matched nothing (CNCVerse Netflix MissingKotlinParameterException on \"वाइब\")",
+        "glassPlus: GlassBg.preload decodes the saved backdrop in MainActivity.onCreate (every start); the backdrop's own disk read resets diskTried when it is dropped mid-read (it was dropped when the first screen went away, and never tried again)",
+        "addonFirst: one merged pipeline — pluginMode() true, liveMode() false, no FirstWatchChooser, no How you watch / Source mode cards, Extensions listed once; srcMode is no longer read to change anything",
+        "streamx-logs collect.yml: repository_dispatch (type collect) next to the schedule and workflow_dispatch",
+    )),
     Release("0.9.8", "25 Nov 2026", "Watch together 2 (wt2) + Music logs; single build with 0.9.7 (versionCode 68)", listOf(
         "wt2 Call.kt: CallBubbles → CallBubblesV2 (off = CallBubblesLegacy word for word): free drag + pinch 56–180 dp (one awaitEachGesture: slop = drag, 2 fingers = pinch, tap waits for a double-tap), gentle edge snap, BubbleSpots per bubble (prefs call_bubbles), glass ring, name pill, signal dots (Call.quality from RTT / loss window / fps in statsLoop), pulsing talking ring, talker grows with 3+ on camera (600 ms debounce)",
         "wt2 framing rule: Frames.at (server time per override, prefs call_frames_at), Frames.pick(published FrameMsg, override, at): the owner's newer frame wins and drops my override once (\"… changed their frame\"); my own frame = Together.publishFrame (members/<me>/frame, 250 ms debounce); FrameDialog starts from the frame shown",
