@@ -75,3 +75,10 @@ build in GitHub Actions, publish, tell owner. Big fixes go back as prompts. Xstr
 - Developer's Corner › Access: grouped by account email; inside, the list of devices (model, user-typed name, last seen,
   app + version) with Grant / Revoke per device, plus Revoke all for the account. A revoked device sees the access page
   on its next open ("Access paused — ask again", with the name box and a Request button).
+
+### Music icon on the phone home screen (26 Nov)
+- Small Xstream badge on the Music icon = Android's mark on pinned shortcuts (same as Brave). Fix: no pinned shortcut;
+  use a second launcher icon (activity-alias, own icon, category LAUNCHER), switched on with setComponentEnabledSetting
+  only when the user asks → no badge. Never auto-add on install.
+- Button to add it: creative idea needed later (e.g. Music logo on Music Home flips to "Add to home screen", open/collapse animation).
+  Show the owner a real-looking preview first, then build.
