@@ -73,7 +73,7 @@ import java.util.Date
 import java.util.Locale
 
 private val MpBg = Color(0xFF030303)
-private val MpCard = Color(0xFF1D1D1D)
+private val MpCardBg = Color(0xFF1D1D1D)
 private val MpSub = Color(0xFFAAAAAA)
 // Same red as the Elegant look. Fixed here so this page does not depend on the Look type.
 private val MpRed = Color(0xFFE50914)
@@ -102,7 +102,6 @@ fun MusicProfilePage(vm: AppViewModel, profileName: String, onClose: () -> Unit)
     val pid = profile?.id ?: "p1"
     val name = profile?.name ?: profileName
 
-    LaunchedEffect(pid) { MusicStats.open(ctx.applicationContext, pid) }
     val data by MusicStats.data.collectAsStateWithLifecycle()
     val liked = remember(pid) { likedCount() }
     val s = remember(data, liked) { summarize(data, liked) }
@@ -170,7 +169,7 @@ fun MusicProfilePage(vm: AppViewModel, profileName: String, onClose: () -> Unit)
             MpCard {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Your week", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Text(fmtTime(s.weekMs), color = MpSub, fontSize = 13.sp)
+                    Text(mpTime(s.weekMs), color = MpSub, fontSize = 13.sp)
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(Modifier.fillMaxWidth().height(150.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -189,7 +188,7 @@ fun MusicProfilePage(vm: AppViewModel, profileName: String, onClose: () -> Unit)
                 } else {
                     Text(song.title.ifBlank { "Unknown song" }, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
                     Text(
-                        listOf(song.artist, fmtTime(song.ms), if (song.finished > 0) "finished ${song.finished}×" else "").filter { it.isNotBlank() }.joinToString(" · "),
+                        listOf(song.artist, mpTime(song.ms), if (song.finished > 0) "finished ${song.finished}×" else "").filter { it.isNotBlank() }.joinToString(" · "),
                         color = MpSub, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -200,7 +199,7 @@ fun MusicProfilePage(vm: AppViewModel, profileName: String, onClose: () -> Unit)
                     Text("Nothing yet.", color = Color.White, fontSize = 16.sp, modifier = Modifier.padding(top = 4.dp))
                 } else {
                     Text(artist.first, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
-                    Text(fmtTime(artist.second), color = MpSub, fontSize = 13.sp)
+                    Text(mpTime(artist.second), color = MpSub, fontSize = 13.sp)
                 }
             }
 
@@ -240,7 +239,7 @@ private fun MpCard(modifier: Modifier = Modifier, content: @Composable ColumnSco
         modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(22.dp))
-            .background(MpCard)
+            .background(MpCardBg)
             .border(1.dp, Color(0x14FFFFFF), RoundedCornerShape(22.dp))
             .padding(16.dp),
         content = content,
@@ -295,7 +294,7 @@ private fun RowScope.MpBar(day: MpWeekDay, maxMs: Long, today: Boolean) {
 /** Songs liked comes from the profile's library, not from the stats file. */
 private fun likedCount(): Int = MusicLibraryStore.active().liked.size
 
-private fun fmtTime(ms: Long): String {
+private fun mpTime(ms: Long): String {
     val m = ms / 60_000L
     return if (m < 60) "$m min" else "${m / 60}h ${m % 60}m"
 }
@@ -314,7 +313,7 @@ private fun summarize(d: MusicStatsData, liked: Int): MpSummary {
     while (has(c) && streak < 400) { streak++; c.add(Calendar.DAY_OF_YEAR, -1) }
 
     return MpSummary(
-        total = fmtTime(d.totalMs),
+        total = mpTime(d.totalMs),
         finished = d.finished,
         liked = liked,
         streak = streak,
@@ -392,7 +391,7 @@ private fun weekCard(name: String, s: MpSummary): Bitmap {
 
     text("Xstream Music", 90f, 130f, 40f, red, bold = true)
     text("${name.cut(16)}'s week", 90f, 250f, 84f, white, bold = true)
-    text("${s.weekMs.let { fmtTime(it) }} listened", 90f, 330f, 52f, grey)
+    text("${s.weekMs.let { mpTime(it) }} listened", 90f, 330f, 52f, grey)
 
     val baseline = 930f
     val maxH = 380f
