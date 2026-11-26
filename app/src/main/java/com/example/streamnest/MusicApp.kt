@@ -231,6 +231,7 @@ fun MusicApp(
                         MusicLog.add("Orbit: switched profile, opening the Music home of \"$profileName\"")
                     }
                 }
+                MusicStatsTracker(profileId)
                 MusicOrbitBar(
                     tab = tab, profileOpen = profileOpen, nowOpen = nowOpen, vm = profileVm,
                     onTab = { stack.clear(); profileOpen = false; tab = it },
