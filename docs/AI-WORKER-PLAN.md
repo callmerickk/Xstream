@@ -41,3 +41,20 @@ answer → Claude checks, fixes, builds. No manual copy-paste.
   store; Xcoder hosts (PC/phone) poll the Worker for jobs; owner adds the URL in claude.ai › Settings › Connectors › Add custom
   connector → Claude gets tools directly (create_job, job_status, list_workers, get_result, retry, pause_worker, start_build).
   GitHub stays for code + builds + fallback mailbox.
+- Limits with a reset time: when a site says "limit reached, resets in 19 hours", save the reset time for that account, switch to the
+  next account/worker, and only try that account again after the saved time.
+
+## 26 Nov — managers, storage, non-techy users
+- Manager-light: Xcoder itself routes, retries, fails over, reviews (reviewer = another worker, supervisor = a cheap API model).
+  Manager only sees: goal → plan; final "review packet" (short summary + checklist + diff stats, ≤ ~2k tokens; full code only on request)
+  → approve or send a "missing things" prompt. So even a free-tier manager stays inside its limits.
+- Manager chain: ordered list; when one is out of usage, the next takes over (same job board, same rules).
+- Model policy lives IN the app (shared by every manager): catalog of all models from all sources with tags (long code, fast,
+  review, vision, cheap) + per-job-type order + fallback order; refreshed on a timer (OpenRouter model list, Arena leaderboard).
+- Account failover: same model on the next account of the same site, with the conversation (summary + last turns + "where we are").
+- Storage hub: Cloudflare Worker + D1 (chats, jobs, settings) + R2 (files); phone and Windows sync to it; works offline, syncs later.
+- Multi-user, plug-and-play: one shared Xcoder cloud (ours). User signs in with Google in the app → gets their own space and
+  their own connector link. In Claude / ChatGPT / Gemini: add connector → "Sign in" (OAuth) → done; no Firebase/Cloudflare for users.
+  Website account sessions (Arena etc.) stay on the user's own devices, never on our server.
+- Onboarding: Easy mode = sign in → add 2–3 Arena accounts → "Connect your AI manager" (step guide/QR) → starts.
+  Advanced = API keys, OmniRouter/OpenRouter/Groq base URLs, CLI workers, own self-hosted server.
