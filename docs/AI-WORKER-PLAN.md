@@ -24,3 +24,6 @@ answer → Claude checks, fixes, builds. No manual copy-paste.
   PencariMovie server app: foreground service + permanent notification + battery-optimisation exemption + auto-start prompt (realme).
 - Pipeline idea: job → worker → answer auto-applied on a branch → GitHub build → compile errors auto-sent back to the same worker
   (max 3 rounds) → only a green build reaches Claude for review. Same job to 2 workers for important parts; Claude picks the better.
+- Keep-alive reference: PencariMovie server (MIT). Its Android source is not public (only APK); its design: foreground service with a
+  notification whose indicator follows real activity, wake lock held only while work is active (markActive + timeout), not forever.
+  Xcoder phone worker: same — foreground service, wake lock only while a job runs, battery-optimisation exemption, auto-start guide.
