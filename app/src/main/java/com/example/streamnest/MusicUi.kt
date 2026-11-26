@@ -147,6 +147,7 @@ object MusicLook {
 /** "Xstream" with "Music" in a hand-written style under / beside it. */
 @Composable
 fun MusicWordmark(size: Float = 22f, accent: Color = BtnColor) {
+    if (Feature.musicLogo2) { XMusicLogo((size * 2.2f).dp); return }   // Music prompt 4: one logo instead of the text wordmark
     Row(verticalAlignment = Alignment.Bottom) {
         Text("X", fontSize = size.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFE50914))
         Text("stream", fontSize = size.sp, fontWeight = FontWeight.ExtraBold)
@@ -517,6 +518,10 @@ fun MusicHost(vm: AppViewModel, profileId: String, profileName: String) {
 /** Opening Xstream Music from its home-screen icon or widget: the app's name pops in with "Music" under it. */
 @Composable
 private fun MusicSplash(onDone: () -> Unit) {
+    if (Feature.musicLogo2) {   // Music prompt 4: same Xstream-style opening as the Music app start
+        Dialog({}, DialogProperties(usePlatformDefaultWidth = false)) { MusicLogoOpening(onDone) }
+        return
+    }
     val a = remember { androidx.compose.animation.core.Animatable(0f) }
     val b = remember { androidx.compose.animation.core.Animatable(0f) }
     LaunchedEffect(Unit) {

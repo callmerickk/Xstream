@@ -135,6 +135,7 @@ private fun DrawScope.note(c: Offset, h: Float, color: Color) {
 /** Xstream Music's mark: the Xstream logo as it is, with one music note under it (used in Music's header). */
 @Composable
 fun XMusicMark(size: Dp, withNote: Boolean = false, modifier: Modifier = Modifier) {
+    if (Feature.musicLogo2) { XMusicLogo(size, modifier); return }   // Music prompt 4: the new logo, ONE logo
     Canvas(modifier.size(size)) {
         xstreamMark()
         if (withNote) note(Offset(this.size.width * 0.47f, this.size.height * 0.95f), this.size.height * 0.2f, Color.White)
@@ -147,6 +148,7 @@ fun XMusicMark(size: Dp, withNote: Boolean = false, modifier: Modifier = Modifie
  */
 @Composable
 private fun MusicOpening(onDone: () -> Unit) {
+    if (Feature.musicLogo2) { MusicLogoOpening(onDone); return }   // Music prompt 4: Xstream-style opening with the new logo
     val mark = remember { Animatable(0f) }
     val word = remember { Animatable(0f) }
     val music = remember { Animatable(0f) }
@@ -239,7 +241,7 @@ private fun MusicProfilePicker(vm: AppViewModel, onPicked: () -> Unit) {
         // A faint navy light from the top and a red line low on the screen (the accent).
         Box(Modifier.fillMaxWidth().height(360.dp).background(Brush.verticalGradient(listOf(Color(0x33223A6E), Color.Transparent))))
         Column(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (Feature.musicLogo2) XMusicLogo(72.dp) else Row(verticalAlignment = Alignment.CenterVertically) {
                 XMusicMark(30.dp)
                 Text("X", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = XRed)
                 Text("stream", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)

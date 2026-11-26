@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="1024" android:viewportHeight="1024">
+    <group android:pivotX="512" android:pivotY="512" android:scaleX="0.68" android:scaleY="0.68">
+        <group android:pivotX="460" android:pivotY="500" android:scaleX="1.1" android:scaleY="1.1" android:translateX="52" android:translateY="-30">
+            <!-- headband -->
+            <path android:pathData="M230,500A230,230 0 0 1 690,500" android:strokeWidth="44" android:strokeLineCap="round">
+                <aapt:attr name="android:strokeColor"><gradient android:type="linear" android:startX="0" android:startY="270" android:endX="0" android:endY="500"><item android:offset="0" android:color="#D9D9DE"/><item android:offset="1" android:color="#5D5D66"/></gradient></aapt:attr>
+            </path>
+            <path android:pathData="M262,470A200,200 0 0 1 420,300" android:strokeColor="#FFFFFF" android:strokeAlpha="0.35" android:strokeWidth="10" android:strokeLineCap="round"/>
+            <!-- the X ribbon -->
+            <group android:translateX="460" android:translateY="505" android:scaleX="0.78" android:scaleY="0.78">
+                <group android:rotation="-45">
+                    <path android:pathData="M-146,-43H166A59,59 0 0 1 166,75H-146A59,59 0 0 1 -146,-43Z" android:fillColor="#000000" android:fillAlpha="0.35"/>
+                    <path android:pathData="M-156,-59H156A59,59 0 0 1 156,59H-156A59,59 0 0 1 -156,-59Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0" android:startY="-59" android:endX="0" android:endY="59"><item android:offset="0" android:color="#FF7A7F"/><item android:offset="0.3" android:color="#F01622"/><item android:offset="0.8" android:color="#B8060F"/><item android:offset="1" android:color="#6E0007"/></gradient></aapt:attr></path>
+                    <path android:pathData="M-163.2,-45H163.2A11.8,11.8 0 0 1 163.2,-21.4H-163.2A11.8,11.8 0 0 1 -163.2,-45Z" android:fillColor="#FFFFFF" android:fillAlpha="0.45"/>
+                </group>
+                <group android:rotation="45">
+                    <path android:pathData="M-146,-43H166A59,59 0 0 1 166,75H-146A59,59 0 0 1 -146,-43Z" android:fillColor="#000000" android:fillAlpha="0.35"/>
+                    <path android:pathData="M-156,-59H156A59,59 0 0 1 156,59H-156A59,59 0 0 1 -156,-59Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0" android:startY="-59" android:endX="0" android:endY="59"><item android:offset="0" android:color="#FF7A7F"/><item android:offset="0.3" android:color="#F01622"/><item android:offset="0.8" android:color="#B8060F"/><item android:offset="1" android:color="#6E0007"/></gradient></aapt:attr></path>
+                    <path android:pathData="M-163.2,-45H163.2A11.8,11.8 0 0 1 163.2,-21.4H-163.2A11.8,11.8 0 0 1 -163.2,-45Z" android:fillColor="#FFFFFF" android:fillAlpha="0.45"/>
+                </group>
+            </group>
+            <!-- ear cups -->
+            <path android:pathData="M212,420H220A44,44 0 0 1 264,464V576A44,44 0 0 1 220,620H212A44,44 0 0 1 168,576V464A44,44 0 0 1 212,420Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0" android:startY="420" android:endX="0" android:endY="620"><item android:offset="0" android:color="#FF7A7F"/><item android:offset="0.3" android:color="#F01622"/><item android:offset="0.8" android:color="#B8060F"/><item android:offset="1" android:color="#6E0007"/></gradient></aapt:attr></path>
+            <path android:pathData="M197,440A11,11 0 0 1 208,451V579A11,11 0 0 1 197,590A11,11 0 0 1 186,579V451A11,11 0 0 1 197,440Z" android:fillColor="#FFFFFF" android:fillAlpha="0.4"/>
+            <path android:pathData="M700,420H708A44,44 0 0 1 752,464V576A44,44 0 0 1 708,620H700A44,44 0 0 1 656,576V464A44,44 0 0 1 700,420Z"><aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0" android:startY="420" android:endX="0" android:endY="620"><item android:offset="0" android:color="#FF7A7F"/><item android:offset="0.3" android:color="#F01622"/><item android:offset="0.8" android:color="#B8060F"/><item android:offset="1" android:color="#6E0007"/></gradient></aapt:attr></path>
+            <path android:pathData="M685,440A11,11 0 0 1 696,451V579A11,11 0 0 1 685,590A11,11 0 0 1 674,579V451A11,11 0 0 1 685,440Z" android:fillColor="#FFFFFF" android:fillAlpha="0.4"/>
+            <!-- sound waves, two out of each cup -->
+            <group android:translateX="148" android:translateY="520" android:scaleX="-1">
+                <path android:pathData="M0,-50Q30,0 0,50" android:strokeWidth="26" android:strokeLineCap="round"><aapt:attr name="android:strokeColor"><gradient android:type="linear" android:startX="0" android:startY="-88" android:endX="90" android:endY="88"><item android:offset="0" android:color="#FFFFFF"/><item android:offset="1" android:color="#9B9BA3"/></gradient></aapt:attr></path>
+                <path android:pathData="M42,-88Q92,0 42,88" android:strokeWidth="26" android:strokeLineCap="round" android:strokeAlpha="0.75"><aapt:attr name="android:strokeColor"><gradient android:type="linear" android:startX="0" android:startY="-88" android:endX="90" android:endY="88"><item android:offset="0" android:color="#FFFFFF"/><item android:offset="1" android:color="#9B9BA3"/></gradient></aapt:attr></path>
+            </group>
+            <group android:translateX="772" android:translateY="520">
+                <path android:pathData="M0,-50Q30,0 0,50" android:strokeWidth="26" android:strokeLineCap="round"><aapt:attr name="android:strokeColor"><gradient android:type="linear" android:startX="0" android:startY="-88" android:endX="90" android:endY="88"><item android:offset="0" android:color="#FFFFFF"/><item android:offset="1" android:color="#9B9BA3"/></gradient></aapt:attr></path>
+                <path android:pathData="M42,-88Q92,0 42,88" android:strokeWidth="26" android:strokeLineCap="round" android:strokeAlpha="0.75"><aapt:attr name="android:strokeColor"><gradient android:type="linear" android:startX="0" android:startY="-88" android:endX="90" android:endY="88"><item android:offset="0" android:color="#FFFFFF"/><item android:offset="1" android:color="#9B9BA3"/></gradient></aapt:attr></path>
+            </group>
+        </group>
+        <!-- red MUSIC pill (letters are strokes: vector drawables have no text) -->
+        <path android:pathData="M398,806H626A46,46 0 0 1 626,898H398A46,46 0 0 1 398,806Z" android:strokeColor="#5A0006" android:strokeWidth="5">
+            <aapt:attr name="android:fillColor"><gradient android:type="linear" android:startX="0" android:startY="806" android:endX="0" android:endY="898"><item android:offset="0" android:color="#FF2A34"/><item android:offset="1" android:color="#B8050E"/></gradient></aapt:attr>
+        </path>
+        <path android:pathData="M391,852a13,13 0 1,0 26,0a13,13 0 1,0 -26,0Z" android:fillColor="#FFFFFF"/>
+        <path android:pathData="M456,870V840L473,858L490,840V870 M506,840V856A14,14 0 0 0 534,856V840 M572,845C570,838 552,838 552,848C552,858 572,855 572,864C572,874 554,874 551,865 M590,840V870 M634,848C630,838 606,838 606,855C606,872 630,872 634,862" android:strokeColor="#FFFFFF" android:strokeWidth="8" android:strokeLineCap="round" android:strokeLineJoin="round"/>
+    </group>
+</vector>

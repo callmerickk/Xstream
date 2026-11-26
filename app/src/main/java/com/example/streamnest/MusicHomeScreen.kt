@@ -27,7 +27,7 @@ object MusicShortcut {
     private const val ID = "xstream_music"
     private fun info(ctx: Context) = ShortcutInfoCompat.Builder(ctx, ID)
         .setShortLabel("Xstream Music").setLongLabel("Xstream Music")
-        .setIcon(IconCompat.createWithResource(ctx, R.drawable.ic_shortcut_music))
+        .setIcon(IconCompat.createWithResource(ctx, if (Feature.musicLogo2 && android.os.Build.VERSION.SDK_INT >= 26) R.mipmap.ic_music_x else R.drawable.ic_shortcut_music))
         .setIntent(musicIntent(ctx)).build()
 
     /** Listed when the Xstream icon is held (phones only). */
