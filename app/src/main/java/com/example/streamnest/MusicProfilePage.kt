@@ -203,6 +203,11 @@ fun MusicProfilePage(vm: AppViewModel, profileName: String, onClose: () -> Unit)
                 }
             }
 
+            if (Feature.musicOrbit) {
+                Spacer(Modifier.height(12.dp))
+                MusicAccountSettings(pid)
+            }
+
             // Share
             Spacer(Modifier.height(16.dp))
             Row(

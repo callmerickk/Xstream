@@ -94,12 +94,11 @@ class MusicActivity : ComponentActivity() {
                     }
                     else -> {
                         val current = profile
-                        MusicApp(
-                            profileId = current?.id ?: requestedProfile ?: "p1",
-                            profileName = current?.name ?: "Music",
-                            profileVm = vm,
-                            onClose = { finish() },
-                        )
+                        val gateId = current?.id ?: requestedProfile ?: "p1"
+                        val gateName = current?.name ?: "Music"
+                        MusicSignInGate(gateId, gateName) {   // musicOrbit: first time per profile, "Bring your YouTube Music"
+                            MusicApp(profileId = gateId, profileName = gateName, profileVm = vm, onClose = { finish() })
+                        }
                     }
                 }
             }

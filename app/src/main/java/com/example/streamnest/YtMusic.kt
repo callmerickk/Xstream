@@ -76,7 +76,8 @@ object YtMusic {
             .header("Origin", "https://music.youtube.com").header("Referer", "https://music.youtube.com/")
             .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .header("X-Goog-Visitor-Id", visitor.orEmpty())
-            .post(request.toString().toRequestBody("application/json; charset=utf-8".toMediaType())).build()
+            .post(request.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .also { if (Feature.musicOrbit) YtmAuth.apply(it, MusicAccount.activeCookie()) }.build()
         YtDirect.http.newCall(req).execute().use { r ->
             if (!r.isSuccessful) null else r.body?.string()?.let { json.parseToJsonElement(it).obj() }
         }
@@ -254,7 +255,8 @@ object YtMusic {
         return token
     }
 
-    private suspend fun cached(key: String, block: suspend () -> YtmPage): YtmPage {
+    private suspend fun cached(key0: String, block: suspend () -> YtmPage): YtmPage {
+        val key = (if (Feature.musicOrbit) YtmAuth.cacheScope() + "|" else "") + key0   // one copy per signed-in account
         cache[key]?.takeIf { System.currentTimeMillis() - it.at < TTL }?.let { MusicLog.add("page ${key.take(80)} (kept copy)"); return it.page }
         val t0 = System.currentTimeMillis()
         val page = block()

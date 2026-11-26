@@ -973,7 +973,7 @@ private fun NowPlaying(nav: MusicNav, onClose: () -> Unit, onFull: () -> Unit, o
             }
             LazyRow(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { Pill(if (liked) Icons.Default.ThumbUp else Icons.Default.ThumbUpOffAlt, if (liked) "Liked" else "Like") {
-                    item?.let { i -> kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch { liked = MusicLibraryStore.toggleLiked(ctx, i) } }
+                    item?.let { i -> kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch { liked = MusicLibraryStore.toggleLiked(ctx, i); if (Feature.musicOrbit) MusicSync.rate(i.id.let { if (it.startsWith("yt:")) it else "yt:$it" }, if (liked) 1 else 0) } }
                 } }
                 item { Pill(Icons.Default.ThumbDownOffAlt, null) { MusicPlayer.next(); Snack.show("You won't hear this one again for a while") } }
                 item { Pill(Icons.AutoMirrored.Filled.PlaylistAdd, "Save") { item?.let(nav.menu) } }
