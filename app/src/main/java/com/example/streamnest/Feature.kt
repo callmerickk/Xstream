@@ -25,6 +25,8 @@ object Feature {
     val detailTiming: Boolean = on("detailTiming")
     /** 0.9.1: invite-only access (Access.kt) and "Update required" from versions.json minPhone. */
     val accessGate: Boolean = on("accessGate")
+    /** Prompt 7: access per device (not per account), Grant / Revoke in Developer's Corner. Needs accessGate too. */
+    val accessDevices: Boolean = on("accessDevices")
     /** 0.9.1: links that started fast are remembered 4 h (LinkMemory.kt); Continue watching re-looked-up when idle on Wi-Fi. */
     val linkMemory: Boolean = on("linkMemory")
     /** 0.9.1: Music (its own launcher entry, background playback, widget). Also needs HAS_MUSIC and the brand manifest. */

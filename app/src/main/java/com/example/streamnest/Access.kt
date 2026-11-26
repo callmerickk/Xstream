@@ -71,6 +71,8 @@ object Access {
             else call("GET", "config/required")?.trim()?.let { it == "true" }?.also { p.edit().putBoolean("required", it).apply() } ?: p.getBoolean("required", false)
         if (!required || Public.dev) { state.value = "ok"; return }
         if (user == null) { state.value = "signin"; return }
+        // Prompt 7 (accessDevices): approval per device. Off = the account check below, exactly as before.
+        if (Feature.accessDevices) { refreshDevice(vm, user.uid, user.email); return }
         if (p.getString("allowedUid", null) == user.uid) {
             state.value = "ok"
             // Still allowed? Removed by the developer → asked again (only on a clear "no", never on a network error).
@@ -103,6 +105,84 @@ object Access {
         return ok
     }
 
+    // ── Prompt 7 (accessDevices): approval per device ──
+    /**
+     * Asks the database about THIS phone and sets the state: ok · waiting · paused (revoked) · request (new device).
+     * "Could not ask" never locks anyone out who was approved before, and never lets anyone in who was not.
+     */
+    private suspend fun refreshDevice(vm: AppViewModel, uid: String, email: String) {
+        val ctx = vm.appContext
+        val p = prefs(ctx)
+        val before = state.value
+        when (val m = AccessDevices.mine(uid)) {
+            is AccessDevices.Mine.Has -> when (m.rec.status) {
+                AccessDevices.Status.APPROVED -> {
+                    AccessDevices.remember(ctx, uid, true)
+                    state.value = "ok"
+                    AccessDevices.touch(ctx, uid)
+                }
+                AccessDevices.Status.REVOKED -> {
+                    // The old local approval goes too, or going offline would let a revoked phone back in.
+                    AccessDevices.remember(ctx, uid, false); p.edit().remove("allowedUid").apply()
+                    if (before != "paused") ActLog.add("APP", "access: this device was revoked, access paused")
+                    state.value = "paused"
+                }
+                AccessDevices.Status.WAITING -> {
+                    AccessDevices.remember(ctx, uid, false); p.edit().remove("allowedUid").apply()
+                    state.value = "waiting"
+                }
+            }
+            AccessDevices.Mine.None -> {
+                val fallback = vm.profiles.value.firstOrNull { it.id == vm.texts.value["lastProfile"] }?.name.orEmpty()
+                when {
+                    // First open after the update, and this phone already had the old account approval: move it to the device.
+                    AccessDevices.migrate(ctx, uid, email, fallback) -> {
+                        AccessDevices.remember(ctx, uid, true); p.edit().remove("allowedUid").apply()
+                        state.value = "ok"
+                    }
+                    // Could not move it yet (rules not deployed, or no network): the old approval keeps working,
+                    // unless the developer has removed it (a clear "null"; a network error never counts).
+                    p.getString("allowedUid", null) == uid -> {
+                        if (call("GET", "allowed/$uid")?.trim() == "null") {
+                            p.edit().remove("allowedUid").apply()
+                            ActLog.add("APP", "access: the old approval was removed, asking for a new request")
+                            state.value = "request"
+                        } else {
+                            state.value = "ok"
+                        }
+                    }
+                    else -> {
+                        AccessDevices.remember(ctx, uid, false)
+                        state.value = "request"
+                    }
+                }
+            }
+            AccessDevices.Mine.Unknown -> {
+                state.value = when {
+                    AccessDevices.rememberedApproved(ctx, uid) || p.getString("allowedUid", null) == uid -> "ok"
+                    before == "waiting" || before == "paused" -> before
+                    else -> "request"
+                }
+                if (state.value != before) ActLog.add("APP", "access: could not ask the database, state is now ${state.value}")
+            }
+        }
+    }
+    /** Sends the request for this device. [name] is required (the developer must recognise the person). */
+    suspend fun requestDevice(name: String): Boolean {
+        val u = Cloud.user.value ?: return false
+        val ok = AccessDevices.request(u.uid, u.email, name)
+        if (ok) state.value = "waiting"
+        return ok
+    }
+    /** Keeps listening for a Grant / Revoke of this device; re-checks at once. Only while approval is required. */
+    suspend fun watch(vm: AppViewModel) {
+        val ctx = vm.appContext
+        while (true) {
+            val u = Cloud.user.value
+            if (Feature.accessDevices && u != null && requiredKnown(ctx)) AccessWatch.run(u.uid) { refresh(vm) }
+            else kotlinx.coroutines.delay(60_000)
+        }
+    }
     // ── Developer side ──
     suspend fun requests(): List<Req> {
         val o = call("GET", "requests")?.let { runCatching { Api.json.parseToJsonElement(it) as? JsonObject }.getOrNull() } ?: return emptyList()
@@ -132,6 +212,8 @@ fun AccessGate(vm: AppViewModel) {
     LaunchedEffect(user?.uid) { runCatching { Access.refresh(vm) } }
     // Waiting: looked at again every 30 s, so an approval lets you in by itself.
     LaunchedEffect(st) { if (st == "waiting") while (true) { kotlinx.coroutines.delay(30_000); runCatching { Access.refresh(vm) } } }
+    // Prompt 7 (accessDevices): a Grant or Revoke shows at once. The 30 s check above stays as a fallback.
+    if (Feature.accessDevices) LaunchedEffect(user?.uid) { if (user != null) Access.watch(vm) }
     if (st == "ok") return
     val ctx = androidx.compose.ui.platform.LocalContext.current
     Box(Modifier.fillMaxSize().background(Color(0xFF0B0B0F)).clickable(enabled = true, onClick = {}), contentAlignment = Alignment.Center) {
@@ -141,7 +223,10 @@ fun AccessGate(vm: AppViewModel) {
             val (title, body) = when (st) {
                 "update" -> "Update required" to "This version no longer works. Update to keep watching."
                 "signin" -> "Sign in to continue" to "${Brand.NAME} is for invited people. Sign in, then ask for access."
-                "request" -> "Request access" to "Your account (${user?.email.orEmpty()}) isn't activated yet. Send a request — you'll get in as soon as it's approved."
+                "request" -> "Request access" to (if (Feature.accessDevices) "This phone isn't approved yet. Type your name so the developer knows it's you, then send the request."
+                    else "Your account (${user?.email.orEmpty()}) isn't activated yet. Send a request — you'll get in as soon as it's approved.")
+                // Prompt 7 (accessDevices): a revoked phone.
+                "paused" -> "Access paused — ask again" to "Access on this phone was paused. Type your name and ask again."
                 "waiting" -> "Waiting for approval" to "Your request was sent. This screen opens by itself once it's approved."
                 else -> "Access not approved" to "Your request wasn't approved. You can ask again."
             }
@@ -155,7 +240,9 @@ fun AccessGate(vm: AppViewModel) {
             when (st) {
                 "update" -> Btn("Update now") { scope.launch { Updater.check(ctx, force = true)?.let { Updater.downloadAndInstall(ctx, it) } } }
                 "signin" -> CloudAccountSection()
-                "request", "denied" -> Btn(if (st == "denied") "Ask again" else "Send request") { scope.launch { if (!Access.request(vm)) Snack.show("Couldn't send — check your connection") } }
+                // Prompt 7 (accessDevices): the form with the required name box. Off = the old button, as before.
+                "request", "paused", "denied" -> if (Feature.accessDevices) AccessRequestForm(user?.email.orEmpty(), paused = st == "paused") { Access.requestDevice(it) }
+                    else Btn(if (st == "denied") "Ask again" else "Send request") { scope.launch { if (!Access.request(vm)) Snack.show("Couldn't send — check your connection") } }
                 "waiting" -> Btn("Check now") { scope.launch { Access.refresh(vm) } }
             }
         }

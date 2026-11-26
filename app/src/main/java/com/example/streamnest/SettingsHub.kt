@@ -85,8 +85,8 @@ fun SettingsHost(vm: AppViewModel, start: String = "root", onClose: () -> Unit) 
         "extensions" -> ExtensionsPage(vm, back)
         "live" -> LiveServerPage(vm, back)
         "health" -> SourceHealthPage(back)
-        // 0.9.1 (accessGate): the developer's Access requests page.
-        "access" -> if (Feature.accessGate) Page("Access requests", back) { AccessAdmin() } else SettingsRootPage(vm, onClose, open, query) { query = it }
+        // 0.9.1 (accessGate): the developer's Access requests page. Prompt 7 (accessDevices): per device, grouped by account.
+        "access" -> if (Feature.accessGate) Page(if (Feature.accessDevices) "Access" else "Access requests", back) { if (Feature.accessDevices) AccessDevicesAdmin() else AccessAdmin() } else SettingsRootPage(vm, onClose, open, query) { query = it }
         "notifications" -> NotificationsPage(vm, back)
         "updates" -> UpdateLogPage(vm, back, open)
         "playback" -> PlaybackPage(vm, back)
