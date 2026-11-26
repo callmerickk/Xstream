@@ -102,6 +102,8 @@ object Feature {
     val bgCap: Boolean = on("bgCap")
     /** Music prompt 1: Roman lyrics, red seek dot, sharp covers, one-step Back, shuffled Up next, no Samples, rounded mini player. */
     val musicFix1: Boolean = on("musicFix1")
+    /** Music prompt 3: YouTube Music style search (recent covers, live suggestions, top result, mic), album and artist pages. */
+    val musicSearch2: Boolean = on("musicSearch2")
     /** Music prompt 2: orbit pill bar, profile page with stats, profile switcher, YouTube Music sign-in, Home top right = Search + Downloads. */
     val musicOrbit: Boolean = on("musicOrbit")
 

@@ -548,6 +548,25 @@ private fun BrowsePage(p: MPage.Browse, nav: MusicNav, onBack: () -> Unit) {
     val songs = pg?.items.orEmpty().filter { it.kind == YtmKind.SONG || it.kind == YtmKind.VIDEO }
     val title = head?.title?.ifBlank { null } ?: p.title
     val art = head?.thumb ?: p.item?.thumb
+    // Music prompt 3 (musicSearch2): YouTube Music style album and artist pages.
+    if (Feature.musicSearch2 && pg != null && (artist || p.id.startsWith("MPRE") || p.item?.kind == YtmKind.ALBUM || p.item?.kind == YtmKind.SINGLE)) {
+        val lib = MusicLibraryStore.active()
+        if (artist) MusicArtistPage(
+            page = pg, fallbackTitle = p.title, fallbackThumb = p.item?.thumb, onBack = onBack,
+            onPlay = { s, list -> nav.open(s, list, p.title) }, onRadio = { nav.open(it, emptyList(), null) },
+            onOpen = { nav.open(it, emptyList(), null) }, onMenu = { nav.menu(it) },
+            subscribed = lib.subscriptions.any { it.id == p.id },
+            onSubscribe = { p.item?.let { a -> kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch { MusicLibraryStore.toggleSubscription(ctx, a); Snack.show("Saved to your artists") } } },
+            currentId = now.track?.id, modifier = Modifier.statusBarsPadding(),
+        ) else MusicAlbumPage(
+            page = pg, fallbackTitle = p.title, fallbackThumb = p.item?.thumb, onBack = onBack,
+            onPlay = { s, list -> nav.open(s, list, title) }, onOpen = { nav.open(it, emptyList(), null) }, onMenu = { nav.menu(it) },
+            saved = lib.liked.any { it.id == p.item?.id },
+            onSave = { p.item?.let { i -> kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch { MusicLibraryStore.toggleLiked(ctx, i); Snack.show("Saved to library") } } },
+            currentId = now.track?.id, modifier = Modifier.statusBarsPadding(),
+        )
+        return
+    }
     LazyColumn(Modifier.fillMaxSize()) {
         if (artist) item {
             Box(Modifier.fillMaxWidth().height(330.dp)) {
@@ -624,6 +643,11 @@ private fun LocalPage(p: MPage.Local, nav: MusicNav, onBack: () -> Unit) {
 
 @Composable
 private fun SearchPage(nav: MusicNav, libVersion: Int, onBack: () -> Unit) {
+    // Music prompt 3 (musicSearch2): the YouTube Music style search screen.
+    if (Feature.musicSearch2) {
+        MusicSearchScreen(onBack, { i, l -> nav.open(i, l, null) }, { nav.menu(it) }, Modifier.statusBarsPadding())
+        return
+    }
     val ctx = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
     val now by MusicPlayer.now.collectAsStateWithLifecycle()

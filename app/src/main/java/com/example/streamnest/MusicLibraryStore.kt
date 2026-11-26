@@ -19,6 +19,8 @@ data class MusicProfileData(
     val playlists: List<MusicPlaylist> = emptyList(),
     val history: List<MusicHistoryItem> = emptyList(),
     val recentSearches: List<String> = emptyList(),
+    /** musicSearch2: songs, albums and artists opened from search (cover + title), newest first. */
+    val recentItems: List<YtmItem> = emptyList(),
     val subscriptions: List<YtmItem> = emptyList(),
     val pinned: List<YtmItem> = emptyList(),
     val playCounts: Map<String, Int> = emptyMap(),
@@ -99,6 +101,11 @@ object MusicLibraryStore {
         if (q.isBlank()) old else old.copy(recentSearches = (listOf(q) + old.recentSearches.filterNot { it.equals(q, true) }).take(20))
     }
 
+    /** musicSearch2: remembers an item opened from search, so it shows as a cover under "Recent searches". */
+    suspend fun addRecentItem(context: Context, item: YtmItem) = edit(context) { old ->
+        MusicLog.add("recent search item: \"${item.title.take(50)}\" (${item.kind.name.lowercase()})")
+        old.copy(recentItems = (listOf(item) + old.recentItems.filterNot { it.id == item.id && it.kind == item.kind }).take(20))
+    }
     suspend fun togglePinned(context: Context, item: YtmItem) = edit(context) { old ->
         MusicLog.add("${if (old.pinned.any { it.id == item.id }) "unpinned" else "pinned"} \"${item.title}\"")
         old.copy(pinned = if (old.pinned.any { it.id == item.id }) old.pinned.filterNot { it.id == item.id } else (listOf(item) + old.pinned).take(27))

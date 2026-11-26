@@ -294,6 +294,19 @@ object YtMusic {
         val r = endpoint("music/get_search_suggestions", buildJsonObject { put("input", q) }) ?: return@withContext emptyList()
         strings(r).filter { it.isNotBlank() }.distinct().take(8)
     }
+    /** musicSearch2: the text suggestions as whole lines (the search words of each, not its bold / plain pieces). */
+    suspend fun suggestionTexts(q: String): List<String> = withContext(Dispatchers.IO) {
+        val r = endpoint("music/get_search_suggestions", buildJsonObject { put("input", q) }) ?: return@withContext emptyList()
+        val out = LinkedHashSet<String>()
+        walk(r) { o ->
+            o.obj("searchSuggestionRenderer")?.let { s ->
+                val text = s.obj("navigationEndpoint")?.obj("searchEndpoint")?.str("query") ?: s.obj("suggestion")?.let(::textOf)
+                text?.trim()?.takeIf { it.isNotEmpty() }?.let { out += it }
+            }
+        }
+        if (out.isEmpty()) MusicLog.add("suggestions for \"${q.take(40)}\": no text rows in the answer")
+        out.toList().take(10)
+    }
     private val filters = mapOf("all" to null, "songs" to "EgWKAQIIAWoKEAkQBRAKEAMQBA%3D%3D",
         "videos" to "EgWKAQIQAWoKEAkQBRAKEAMQBA%3D%3D", "albums" to "EgWKAQIYAWoKEAkQBRAKEAMQBA%3D%3D",
         "artists" to "EgWKAQIgAWoKEAkQBRAKEAMQBA%3D%3D", "playlists" to "EgWKAQIoAWoKEAkQBRAKEAMQBA%3D%3D")
@@ -302,6 +315,40 @@ object YtMusic {
             put("query", q); filters[filter.lowercase()]?.let { put("params", it) }
         }) } ?: return@cached YtmPage(emptyList())
         YtmPage(extractShelves(r), extractItems(r), continuation(r), q)
+    }
+    /**
+     * musicSearch2: a search the way YouTube Music does it. [params] = the code of a chip (null = All). The answer's own
+     * chips (label → code) come back in `chips`, and the "Top result" card (a song, album, artist...) in `header`.
+     */
+    suspend fun searchFull(q: String, params: String? = null): YtmPage = cached("searchfull:" + (params ?: "all") + ":" + q.lowercase()) {
+        val r = withContext(Dispatchers.IO) { endpoint("search", buildJsonObject {
+            put("query", q); if (params != null) put("params", params)
+        }) } ?: return@cached YtmPage(emptyList())
+        val chipList = mutableListOf<Pair<String, String>>()
+        walk(r) { o ->
+            o.obj("chipCloudChipRenderer")?.let { c ->
+                val label = c.obj("text")?.let(::textOf) ?: return@let
+                val code = c.obj("navigationEndpoint")?.obj("searchEndpoint")?.str("params") ?: return@let
+                chipList += label to code
+            }
+        }
+        var top: YtmItem? = null
+        walk(r) { o ->
+            if (top == null) o.obj("musicCardShelfRenderer")?.let { c ->
+                // The card's own target is in its title; its song list (below the title) must not be mistaken for it.
+                val nav = c.obj("title")?.arr("runs")?.firstNotNullOfOrNull { it.obj()?.obj("navigationEndpoint") }
+                if (nav != null) {
+                    val own = buildJsonObject {
+                        c["title"]?.let { put("title", it) }; c["subtitle"]?.let { put("subtitle", it) }
+                        c["thumbnail"]?.let { put("thumbnail", it) }; put("navigationEndpoint", nav)
+                    }
+                    top = item(own)
+                }
+            }
+        }
+        MusicLog.add("search \"${q.take(40)}\" ${if (params == null) "all" else "chip"}: ${chipList.size} chips, top result " +
+            (top?.let { "\"${it.title.take(40)}\" (${it.kind.name.lowercase()})" } ?: "none"))
+        YtmPage(extractShelves(r), extractItems(r), continuation(r), q, chipList.distinctBy { it.first }, top)
     }
     suspend fun browse(browseId: String): YtmPage = cached("browse:" + browseId) {
         val r = withContext(Dispatchers.IO) { endpoint("browse", context(browseId)) } ?: return@cached YtmPage(emptyList())
@@ -351,6 +398,27 @@ object YtMusic {
             }
         }
         YtmNext(queue.values.toList(), continuation(r), lyrics, related, qchips.distinctBy { it.first }, counterparts, title)
+    }
+    /**
+     * musicSearch2: live suggestions for [q]: the text lines (whole search words) and the rich results (song, video,
+     * album, artist with cover, read by the same item() as every other list). The layout of this answer is not
+     * documented, so anything it can't read is skipped and the counts go to the log.
+     */
+    suspend fun suggestionsMixed(q: String): Pair<List<String>, List<YtmItem>> = withContext(Dispatchers.IO) {
+        val r = endpoint("music/get_search_suggestions", buildJsonObject { put("input", q) })
+            ?: return@withContext (emptyList<String>() to emptyList<YtmItem>())
+        val texts = LinkedHashSet<String>()
+        val rich = LinkedHashMap<String, YtmItem>()
+        walk(r) { o ->
+            o.obj("searchSuggestionRenderer")?.let { s ->
+                val text = s.obj("navigationEndpoint")?.obj("searchEndpoint")?.str("query") ?: s.obj("suggestion")?.let(::textOf)
+                text?.trim()?.takeIf { it.isNotEmpty() }?.let { texts += it }
+            }
+            o.obj("musicResponsiveListItemRenderer")?.let { x -> item(x)?.let { rich.putIfAbsent(it.kind.name + ":" + it.id, it) } }
+        }
+        MusicLog.add("suggestions for \"${q.take(40)}\": ${texts.size} text, ${rich.size} with cover" +
+            if (texts.isEmpty() && rich.isEmpty()) " · nothing could be read from the answer" else "")
+        texts.toList().take(8) to rich.values.toList().take(5)
     }
     suspend fun lyrics(browseId: String): String = withContext(Dispatchers.IO) {
         val r = endpoint("browse", context(browseId)) ?: return@withContext ""
