@@ -37,3 +37,7 @@ answer → Claude checks, fixes, builds. No manual copy-paste.
 - Two doors for managers: (1) GitHub mailbox (jobs repo) — for Claude in this app, Claude Code, Codex cloud, Jules, Copilot agent;
   (2) Xcoder as an MCP server behind a Cloudflare tunnel/Worker with the token — for ChatGPT (developer-mode connectors),
   Claude connectors, Gemini CLI, Cursor/Windsurf.
+- DECISION 26 Nov: MCP server = main door. Cloudflare Worker (free) as remote MCP server (Streamable HTTP, OAuth/secret) + D1 job
+  store; Xcoder hosts (PC/phone) poll the Worker for jobs; owner adds the URL in claude.ai › Settings › Connectors › Add custom
+  connector → Claude gets tools directly (create_job, job_status, list_workers, get_result, retry, pause_worker, start_build).
+  GitHub stays for code + builds + fallback mailbox.
