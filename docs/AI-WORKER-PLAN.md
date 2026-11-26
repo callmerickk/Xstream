@@ -27,3 +27,7 @@ answer → Claude checks, fixes, builds. No manual copy-paste.
 - Keep-alive reference: PencariMovie server (MIT). Its Android source is not public (only APK); its design: foreground service with a
   notification whose indicator follows real activity, wake lock held only while work is active (markActive + timeout), not forever.
   Xcoder phone worker: same — foreground service, wake lock only while a job runs, battery-optimisation exemption, auto-start guide.
+- Self-healing worker (supervisor = Gemini/OpenRouter API, Claude only when all fail): watchdog per job — "generating" but no new
+  text for 45 s, or an error message → read the page text + the site's network answers (status 429 = limit, 413/"too long" =
+  chat too long, 5xx = site down, captcha/login) → fix: limit → next account/worker; chat too long → new chat seeded with a
+  Gemini summary + the same prompt; site down → other worker; stuck → reload + retry once. Every case logged on the job board.
