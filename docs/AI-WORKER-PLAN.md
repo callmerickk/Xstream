@@ -58,3 +58,12 @@ answer → Claude checks, fixes, builds. No manual copy-paste.
   Website account sessions (Arena etc.) stay on the user's own devices, never on our server.
 - Onboarding: Easy mode = sign in → add 2–3 Arena accounts → "Connect your AI manager" (step guide/QR) → starts.
   Advanced = API keys, OmniRouter/OpenRouter/Groq base URLs, CLI workers, own self-hosted server.
+- Managers: add many; user picks the order. #1 = primary manager, the rest = supervisors. Primary out of usage → #2 becomes
+  primary, the rest stay supervisors. Gemini API + OpenRouter API = backup supervisors, and extra supervisors when many jobs run
+  at once and every manager/supervisor is busy.
+- A manager over its own usage limit can't work through the connector (no turns = no tool calls) → the next manager takes over.
+- Captcha / "verify you are human": the worker pauses, phone + Windows notify, the user opens that worker's live browser view inside
+  Xcoder and solves it; the session is kept. No automatic captcha solving.
+- Ideas: limits dashboard with reset timers per account; worker quality score from build results; project memory (style rules,
+  decisions, code words) added to every prompt; job recipes; FIND/REPLACE answers + auto-apply (tools/apply_fr.py) + rollback per
+  job; best-of-2 with a judge; worker writes tests, CI runs them; voice goals; privacy filter (tools/cw.py) built in.
