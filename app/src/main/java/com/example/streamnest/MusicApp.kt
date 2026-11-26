@@ -145,6 +145,9 @@ fun MusicApp(
     var nowOpen by remember { mutableStateOf(initiallyNowPlaying) }
     var fullVideo by remember { mutableStateOf(false) }
     var menuFor by remember { mutableStateOf<YtmItem?>(null) }
+    // musicFix1: Up next / Lyrics / Related is a layer of its own in the back stack. It resets once Now playing has slid away.
+    val nowSheet = remember { mutableStateOf<Int?>(null) }
+    if (Feature.musicFix1) LaunchedEffect(nowOpen) { if (!nowOpen) { delay(350); nowSheet.value = null } }
     var libVersion by remember { mutableIntStateOf(0) }
     LaunchedEffect(profileId) { MusicPlayer.init(ctx); MusicLibraryStore.open(ctx, profileId); libVersion++ }
     LaunchedEffect(Unit) { while (true) { MusicPlayer.publish(); delay(500) } }
@@ -158,18 +161,19 @@ fun MusicApp(
                         scope.launch { MusicLibraryStore.recordPlay(ctx, item); libVersion++ }
                         if (item.kind == YtmKind.VIDEO) nowOpen = true
                     }
-                    else -> stack.add(MPage.Browse(item.id, item.title, item, item.params))
+                    else -> { if (Feature.musicFix1 && nowOpen) nowOpen = false; stack.add(MPage.Browse(item.id, item.title, item, item.params)) }
                 }
             },
             menu = { menuFor = it },
-            push = { stack.add(it) },
+            push = { if (Feature.musicFix1 && nowOpen) nowOpen = false; stack.add(it) },
         )
     }
 
     BackHandler {
         when {
-            fullVideo -> fullVideo = false
+            fullVideo -> { fullVideo = false; if (Feature.musicFix1) MusicLog.add("back: full-screen video closed, now playing stays") }
             menuFor != null -> menuFor = null
+            Feature.musicFix1 && nowSheet.value != null -> { nowSheet.value = null; MusicLog.add("back: sheet closed, now playing stays") }
             nowOpen -> nowOpen = false
             stack.isNotEmpty() -> stack.removeAt(stack.lastIndex)
             tab != "home" -> tab = "home"
@@ -180,7 +184,29 @@ fun MusicApp(
     Box(Modifier.fillMaxSize().background(MBg)) {
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
-                when (val p = stack.lastOrNull()) {
+                if (Feature.musicFix1) {
+                    // The tab under the pages stays alive (not drawn), and so does every page under the top one:
+                    // Back finds Home, a playlist or the search results as they were.
+                    KeptTab(stack.isNotEmpty()) {
+                        when (tab) {
+                            "explore" -> ExploreTab(nav)
+                            "library" -> LibraryTab(nav, libVersion) { libVersion++ }
+                            else -> HomeTab(profileName, nav, libVersion)
+                        }
+                    }
+                    stack.forEachIndexed { i, p ->
+                        key(i) {
+                            KeptTab(i != stack.lastIndex) {
+                                when (p) {
+                                    is MPage.Browse -> BrowsePage(p, nav) { stack.removeAt(stack.lastIndex) }
+                                    is MPage.Search -> SearchPage(nav, libVersion) { stack.removeAt(stack.lastIndex) }
+                                    is MPage.Explore -> ExplorePage(p.which, nav) { stack.removeAt(stack.lastIndex) }
+                                    is MPage.Local -> LocalPage(p, nav) { stack.removeAt(stack.lastIndex) }
+                                }
+                            }
+                        }
+                    }
+                } else when (val p = stack.lastOrNull()) {
                     is MPage.Browse -> BrowsePage(p, nav) { stack.removeAt(stack.lastIndex) }
                     is MPage.Search -> SearchPage(nav, libVersion) { stack.removeAt(stack.lastIndex) }
                     is MPage.Explore -> ExplorePage(p.which, nav) { stack.removeAt(stack.lastIndex) }
@@ -202,7 +228,7 @@ fun MusicApp(
         // A dark band behind the clock and status icons, so lists never run under them unreadably.
         Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).background(Brush.verticalGradient(listOf(Color(0xF2000000), Color(0xB3000000)))))
         AnimatedVisibility(nowOpen, enter = slideInVertically(tween(320)) { it } + fadeIn(), exit = slideOutVertically(tween(280)) { it } + fadeOut()) {
-            NowPlaying(nav, onClose = { nowOpen = false }, onFull = { fullVideo = true }, onArtist = { name ->
+            NowPlaying(nav, onClose = { nowOpen = false }, onFull = { fullVideo = true }, sheetState = nowSheet, onArtist = { name ->
                 nowOpen = false
                 scope.launch {
                     val a = runCatching { YtMusic.search(name, "artists").items.firstOrNull { it.kind == YtmKind.ARTIST } }.getOrNull()
@@ -222,7 +248,7 @@ private fun Art(url: String?, size: Dp, round: Boolean = false, corner: Dp = 6.d
     val shape = if (round) CircleShape else RoundedCornerShape(corner)
     Box(modifier.size(size).clip(shape).background(MCard), Alignment.Center) {
         Icon(Icons.Default.MusicNote, null, Modifier.size(size * 0.35f), tint = Color(0x44FFFFFF))
-        if (!url.isNullOrBlank()) AsyncImage(url, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        if (!url.isNullOrBlank()) HdImage(url, null, Modifier.fillMaxSize(), px = if (size >= 200.dp) 1080 else 544)
     }
 }
 
@@ -279,7 +305,7 @@ private fun Shelf(shelf: YtmShelf, nav: MusicNav, currentId: String?) {
                         // Community / user playlists: a mosaic of four of their songs' covers (YouTube Music style),
                         // never the uploader's photo.
                         if (it.kind == YtmKind.PLAYLIST && (big || it.id.startsWith("VLPL") || it.id.startsWith("PL"))) PlaylistMosaic(it, Modifier.fillMaxSize())
-                        else if (it.thumb != null) AsyncImage(it.thumb, it.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        else if (it.thumb != null) HdImage(it.thumb, it.title, Modifier.fillMaxSize(), wide = wide, px = 544)
                         if (big) Box(Modifier.align(Alignment.BottomEnd).padding(12.dp).size(44.dp).clip(CircleShape).background(Color(0xCCFFFFFF)), Alignment.Center) {
                             Icon(Icons.Default.PlayArrow, "Play", tint = Color.Black)
                         }
@@ -398,7 +424,7 @@ private fun SpeedDial(profileName: String, items: List<YtmItem>, nav: MusicNav) 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         row.forEach { it ->
                             Box(Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(6.dp)).background(MCard).clickable { nav.open(it, pages[pi], null) }) {
-                                if (it.thumb != null) AsyncImage(it.thumb, it.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                if (it.thumb != null) HdImage(it.thumb, it.title, Modifier.fillMaxSize(), px = 544)
                                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Color(0xCC000000))))
                                 Text(it.title, Modifier.align(Alignment.BottomStart).padding(6.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
@@ -502,7 +528,7 @@ private fun BrowsePage(p: MPage.Browse, nav: MusicNav, onBack: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize()) {
         if (artist) item {
             Box(Modifier.fillMaxWidth().height(330.dp)) {
-                if (art != null) AsyncImage(art, title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                if (art != null) HdImage(art, title, Modifier.fillMaxSize(), wide = true)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.3f to Color(0x33000000), 1f to MBg)))
                 Box(Modifier.statusBarsPadding()) { IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) } }
                 Column(Modifier.align(Alignment.BottomStart).padding(16.dp)) {
@@ -707,7 +733,7 @@ private fun LibraryTab(nav: MusicNav, libVersion: Int, onChanged: () -> Unit) {
 private fun LibRow(title: String, sub: String, art: String?, icon: ImageVector, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)).background(Brush.linearGradient(listOf(Color(0xFF7C4DFF), Color(0xFFE040FB)))), Alignment.Center) {
-            if (art != null) AsyncImage(art, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) else Icon(icon, null, tint = Color.White)
+            if (art != null) HdImage(art, null, Modifier.fillMaxSize(), px = 544) else Icon(icon, null, tint = Color.White)
         }
         Column(Modifier.padding(start = 14.dp)) {
             Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -791,7 +817,7 @@ private fun shareSong(ctx: Context, id: String, title: String) = runCatching {
 private fun MiniPlayer(onOpen: () -> Unit) {
     val now by MusicPlayer.now.collectAsStateWithLifecycle()
     val t = now.track ?: return
-    Column(Modifier.fillMaxWidth().background(Color(0xFF212121)).pointerInput(t.id) {
+    Column(Modifier.fillMaxWidth().then(if (Feature.musicFix1) Modifier.miniPlayerCard() else Modifier).background(Color(0xFF212121)).pointerInput(t.id) {
         var total = 0f
         detectVerticalDragGestures(onDragEnd = { if (total < -30f) onOpen() else if (total > 30f) MusicPlayer.stop(); total = 0f }) { _, dy -> total += dy }
     }.clickable(onClick = onOpen)) {
@@ -813,8 +839,9 @@ private fun MiniPlayer(onOpen: () -> Unit) {
 @Composable
 private fun MusicBottomBar(tab: String, onTab: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().background(Color(0xFF0F0F0F)).navigationBarsPadding().height(60.dp), verticalAlignment = Alignment.CenterVertically) {
-        listOf(Triple("home", "Home", Icons.Default.Home), Triple("samples", "Samples", Icons.Default.Slideshow),
-            Triple("explore", "Explore", Icons.Default.Explore), Triple("library", "Library", Icons.Default.LibraryMusic)).forEach { (k, label, icon) ->
+        val items = listOf(Triple("home", "Home", Icons.Default.Home), Triple("samples", "Samples", Icons.Default.Slideshow),
+            Triple("explore", "Explore", Icons.Default.Explore), Triple("library", "Library", Icons.Default.LibraryMusic))
+        (if (Feature.musicFix1) items.filter { it.first != "samples" } else items).forEach { (k, label, icon) ->
             val on = tab == k
             Column(Modifier.weight(1f).clickable { onTab(k) }, horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(icon, label, tint = if (on) Color.White else MSub)
@@ -856,7 +883,8 @@ private suspend fun coverColor(ctx: Context, url: String?): Color = withContext(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun NowPlaying(nav: MusicNav, onClose: () -> Unit, onFull: () -> Unit, onArtist: (String) -> Unit) {
+private fun NowPlaying(nav: MusicNav, onClose: () -> Unit, onFull: () -> Unit, onArtist: (String) -> Unit,
+    sheetState: MutableState<Int?> = remember { mutableStateOf(null) }) {
     val ctx = LocalContext.current
     val now by MusicPlayer.now.collectAsStateWithLifecycle()
     val videoMode by MusicPlayer.videoMode.collectAsStateWithLifecycle()
@@ -866,7 +894,7 @@ private fun NowPlaying(nav: MusicNav, onClose: () -> Unit, onFull: () -> Unit, o
     val counterpart = vid?.let { MusicPlayer.counterparts[it] }
     val videoAvailable = isVideo || counterpart != null
     val showVideo = videoMode && isVideo
-    var sheet by remember { mutableStateOf<Int?>(null) }
+    var sheet by (if (Feature.musicFix1) sheetState else remember { mutableStateOf<Int?>(null) })
     var drag by remember { mutableStateOf<Float?>(null) }
     var liked by remember(vid) { mutableStateOf(MusicLibraryStore.active().liked.any { it.id == vid }) }
     val base by produceState(Color(0xFF2A2A2A), t?.artworkURL) { value = coverColor(ctx, t?.artworkURL) }
@@ -908,7 +936,7 @@ private fun NowPlaying(nav: MusicNav, onClose: () -> Unit, onFull: () -> Unit, o
                     }
                 } else {
                     Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(MCard)) {
-                        if (t?.artworkURL != null) AsyncImage(t.artworkURL, t.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        if (t?.artworkURL != null) HdImage(t.artworkURL, t.title, Modifier.fillMaxSize(), px = 1080)
                     }
                 }
             }
@@ -993,8 +1021,15 @@ private fun HeartbeatBar(value: Float, playing: Boolean, modifier: Modifier = Mo
             lineTo(x, mid)
         }
         drawPath(path, Color.White, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
-        drawCircle(Color.White.copy(alpha = 0.25f * amp), 10.dp.toPx(), androidx.compose.ui.geometry.Offset(x, mid))
-        drawCircle(Color.White, 6.dp.toPx(), androidx.compose.ui.geometry.Offset(x, mid))
+        if (Feature.musicFix1) {
+            // The dot is the accent colour with a thin white 30 % ring; the heartbeat line stays white.
+            val c = androidx.compose.ui.geometry.Offset(x, mid)
+            drawCircle(MusicFix1.accent, 6.dp.toPx(), c)
+            drawCircle(Color.White.copy(alpha = 0.3f), 7.dp.toPx(), c, style = Stroke(1.5.dp.toPx()))
+        } else {
+            drawCircle(Color.White.copy(alpha = 0.25f * amp), 10.dp.toPx(), androidx.compose.ui.geometry.Offset(x, mid))
+            drawCircle(Color.White, 6.dp.toPx(), androidx.compose.ui.geometry.Offset(x, mid))
+        }
     }
 }
 
@@ -1117,8 +1152,19 @@ private fun Lyrics(vid: String?, t: LiveServer.Track?) {
     val l = lines
     val ctx = LocalContext.current
     // Translate: English under every line (Google's free translation), remembered while the app is open.
-    var tr by remember { mutableStateOf(LyricsTr.on) }
+    var mode by remember { mutableStateOf(if (Feature.musicFix1) LyricsRoman.savedMode(ctx) else "orig") }
+    var tr by remember { mutableStateOf(if (Feature.musicFix1) mode == "en" else LyricsTr.on) }
     val texts = l?.map { it.second }?.takeIf { it.isNotEmpty() } ?: plain?.lines()
+    val roman by produceState<List<String>?>(null, mode, vid, texts?.size) {
+        value = null
+        if (Feature.musicFix1 && mode == "roman" && !texts.isNullOrEmpty()) value = withContext(Dispatchers.IO) { LyricsRoman.lines(vid ?: "", texts) }
+    }
+    val scriptLabel = remember(texts?.size, vid) { if (Feature.musicFix1) LyricsRoman.scriptLabel(texts) else null }
+    fun pick(m: String) { mode = m; tr = m == "en"; LyricsTr.on = tr; LyricsRoman.saveMode(ctx, m) }
+    fun shown(i: Int, orig: String): String {
+        val r = roman
+        return if (mode == "roman" && r != null && r.size == texts?.size) (r.getOrNull(i)?.takeIf { it.isNotBlank() } ?: orig) else orig
+    }
     val english by produceState<List<String>?>(null, tr, vid, texts?.size) {
         value = if (tr && !texts.isNullOrEmpty()) withContext(Dispatchers.IO) { LyricsTr.english(vid ?: "", texts) } else null
     }
@@ -1130,25 +1176,26 @@ private fun Lyrics(vid: String?, t: LiveServer.Track?) {
                 val cur = l.indexOfLast { it.first <= now.posMs }.coerceAtLeast(0)
                 val list = rememberLazyListState()
                 LaunchedEffect(cur) { list.animateScrollToItem((cur - 2).coerceAtLeast(0)) }
-                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = list, contentPadding = PaddingValues(top = 20.dp, bottom = 96.dp)) {
+                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = list, contentPadding = PaddingValues(top = if (Feature.musicFix1) 64.dp else 20.dp, bottom = 96.dp)) {
                     itemsIndexed(l) { i, (at, text) ->
                         Column(Modifier.fillMaxWidth().clickable { MusicPlayer.seekTo(at) }.padding(vertical = 9.dp)) {
-                            Text(text.ifBlank { "♪" }, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = if (i == cur) Color.White else Color(0x66FFFFFF))
+                            Text(shown(i, text).ifBlank { "♪" }, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = if (i == cur) Color.White else Color(0x66FFFFFF))
                             under(i, text)?.let { e -> Text(e, Modifier.padding(top = 3.dp), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = if (i == cur) Color(0xFFFFE0D8) else Color(0x55FFFFFF)) }
                         }
                     }
                 }
             }
-            !plain.isNullOrBlank() -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 20.dp, bottom = 96.dp)) {
+            !plain.isNullOrBlank() -> LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), contentPadding = PaddingValues(top = if (Feature.musicFix1) 64.dp else 20.dp, bottom = 96.dp)) {
                 itemsIndexed(plain!!.lines()) { i, line ->
                     Column(Modifier.padding(vertical = 3.dp)) {
-                        Text(line, fontSize = 18.sp, color = Color(0xFFDDDDDD))
+                        Text(shown(i, line), fontSize = 18.sp, color = Color(0xFFDDDDDD))
                         under(i, line)?.let { e -> Text(e, fontSize = 15.sp, color = Color(0x99FFE0D8)) }
                     }
                 }
             }
             else -> Text("Lyrics aren't available for this song.", Modifier.padding(24.dp), color = MSub)
         }
+        if (Feature.musicFix1 && (!l.isNullOrEmpty() || !plain.isNullOrBlank())) LyricsModeBar(mode, scriptLabel, Modifier.align(Alignment.TopCenter)) { pick(it) }
         if (!l.isNullOrEmpty() || !plain.isNullOrBlank()) Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.clip(RoundedCornerShape(50)).background(Color(0x33FFFFFF)).clickable {
                 val body = (l?.joinToString("\n") { it.second } ?: plain.orEmpty()).take(1500)
@@ -1156,7 +1203,7 @@ private fun Lyrics(vid: String?, t: LiveServer.Track?) {
             }.padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Share, null, Modifier.size(18.dp), tint = Color.White); Text("Share", Modifier.padding(start = 8.dp), fontWeight = FontWeight.SemiBold)
             }
-            Row(Modifier.clip(RoundedCornerShape(50)).background(if (tr) Color.White else Color(0x33FFFFFF)).clickable { tr = !tr; LyricsTr.on = tr }
+            Row(Modifier.clip(RoundedCornerShape(50)).background(if (tr) Color.White else Color(0x33FFFFFF)).clickable { if (Feature.musicFix1) pick(if (tr) "roman" else "en") else { tr = !tr; LyricsTr.on = tr } }
                 .padding(horizontal = 18.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Translate, null, Modifier.size(18.dp), tint = if (tr) Color.Black else Color.White)
                 Text(if (tr && english == null) "Translating…" else "Translate", Modifier.padding(start = 8.dp), fontWeight = FontWeight.SemiBold, color = if (tr) Color.Black else Color.White)
@@ -1328,7 +1375,7 @@ private fun FullVideo(onExit: () -> Unit) {
     LaunchedEffect(quality) { MusicPlayer.setVideo(true, quality) }
     LaunchedEffect(controls, now.playing) { if (controls && now.playing) { delay(3500); controls = false } }
     LaunchedEffect(hint) { if (hint != null) { delay(900); hint = null } }
-    BackHandler { onExit() }
+    BackHandler(enabled = !Feature.musicFix1) { onExit() }   // musicFix1: MusicApp's one BackHandler does this
     val audio = remember { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val transform = rememberTransformableState { z, _, _ -> if (!locked) { zoom = (zoom * z).coerceIn(1f, 3f); fill = zoom > 1.05f } }
     val vs = MusicPlayer.videoSize()

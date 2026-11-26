@@ -99,6 +99,7 @@ object YtMusic {
 
     private fun hd(url: String?, wide: Boolean = false): String? {
         if (url.isNullOrBlank()) return null
+        if (Feature.musicFix1) return ytHd(url, wide)
         // Video frames: the 1280×720 picture (was a broken link: the old code kept "?sqp" in the path).
         if (url.contains("ytimg.com/vi/")) { val id = url.substringAfter("/vi/").substringBefore('/'); return "https://i.ytimg.com/vi/$id/hq720.jpg" }
         if (url.contains("lh3.googleusercontent.com") || url.contains("yt3.ggpht.com"))
@@ -106,7 +107,26 @@ object YtMusic {
         return url
     }
 
+    // musicFix1: only the item's own picture (never artist avatars or badges), and the largest one in it.
+    private val ownThumbKeys = listOf("thumbnail", "thumbnailRenderer", "musicThumbnailRenderer", "croppedSquareThumbnailRenderer")
+    private fun ownThumbArray(el: JsonElement?, depth: Int = 0): JsonArray? {
+        val o = el as? JsonObject ?: return null
+        o.arr("thumbnails")?.takeIf { it.isNotEmpty() }?.let { return it }
+        if (depth >= 4) return null
+        for (k in ownThumbKeys) ownThumbArray(o[k], depth + 1)?.let { return it }
+        return null
+    }
+    private fun largestUrl(arr: JsonArray): String? {
+        val all = arr.mapNotNull { it.obj() }.filter { !it.str("url").isNullOrBlank() }
+        fun area(t: JsonObject) = ((t["width"] as? JsonPrimitive)?.longOrNull ?: 0L) * ((t["height"] as? JsonPrimitive)?.longOrNull ?: 0L)
+        val best = all.filter { area(it) > 0 }.maxByOrNull { area(it) } ?: all.lastOrNull()
+        return best?.str("url")
+    }
     private fun thumb(o: JsonObject, wide: Boolean = false): String? {
+        if (Feature.musicFix1) {
+            val arr = ownThumbKeys.firstNotNullOfOrNull { k -> ownThumbArray(o[k], 1) }
+            return hd(arr?.let { largestUrl(it) }, wide)
+        }
         var result: String? = null
         walk(o) { x -> x.arr("thumbnails")?.forEach { t -> t.obj()?.str("url")?.let { result = it } } }
         return hd(result, wide)
@@ -344,7 +364,8 @@ object YtMusic {
 
 
 /** Any YouTube / YouTube Music picture at its sharp size (the first song of a radio used the small one). */
-fun ytHd(url: String?, wide: Boolean = false): String? {
+fun ytHd(url: String?, wide: Boolean = false, px: Int = 1080): String? {
+    if (Feature.musicFix1) return MusicImages.hd(url, wide, px)
     if (url.isNullOrBlank()) return url
     if (url.contains("ytimg.com/vi/")) { val id = url.substringAfter("/vi/").substringBefore('/'); return "https://i.ytimg.com/vi/$id/hq720.jpg" }
     if (url.contains("lh3.googleusercontent.com") || url.contains("yt3.ggpht.com")) return url.substringBefore("=") + if (wide) "=w1280-h720" else "=w1080-h1080-l90-rj"

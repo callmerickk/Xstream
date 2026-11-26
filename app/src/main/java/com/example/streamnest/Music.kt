@@ -292,7 +292,14 @@ object MusicPlayer {
             counterparts.putAll(n.counterparts)
             radioChips.value = n.chips; radioChip.value = n.chips.firstOrNull()?.first
             n.title?.let { radioLabel.value = it }
-            replaceRadio(ctx, n.queue.filter { it.id != i.id }.map { ytTrack(it) })
+            if (Feature.musicFix1) {
+                val mix = RadioMix.build(i.id, n)
+                mix.extra?.let { counterparts.putAll(it.counterparts) }
+                MusicLog.add("radio: ${mix.songs.size} songs, shuffled from #4, flavour: ${mix.flavour}")
+                replaceRadio(ctx, mix.songs.map { ytTrack(it) })
+            } else {
+                replaceRadio(ctx, n.queue.filter { it.id != i.id }.map { ytTrack(it) })
+            }
         }
     }
 
@@ -332,9 +339,14 @@ object MusicPlayer {
         val last = queue.value.lastOrNull()?.id?.removePrefix("yt:") ?: return
         radioJob = scope.launch {
             val n = runCatching { YtMusic.next(last, "RDAMVM$last") }.getOrNull() ?: run { MusicLog.add("radio: more songs failed (no answer)"); return@launch }
-            MusicLog.add("radio: ${n.queue.size} more songs added")
+            // this list starts with the last queued song (position 1), so keep 3 and shuffle from #4
+            val more = if (Feature.musicFix1) RadioMix.shuffleFrom(n.queue, 3) else n.queue
+            MusicLog.add(
+                if (Feature.musicFix1) "radio: ${more.size} more songs, shuffled from #4, flavour: none"
+                else "radio: ${n.queue.size} more songs added"
+            )
             counterparts.putAll(n.counterparts)
-            appendRadio(ctx, n.queue.map { ytTrack(it) })
+            appendRadio(ctx, more.map { ytTrack(it) })
         }
     }
 

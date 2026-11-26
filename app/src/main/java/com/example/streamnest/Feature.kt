@@ -100,6 +100,8 @@ object Feature {
     val burstPlan: Boolean = on("burstPlan")
     val prepRescue: Boolean = on("prepRescue")
     val bgCap: Boolean = on("bgCap")
+    /** Music prompt 1: Roman lyrics, red seek dot, sharp covers, one-step Back, shuffled Up next, no Samples, rounded mini player. */
+    val musicFix1: Boolean = on("musicFix1")
 
     // 0.9.6: the slim build. These four are NOT named switches: they follow BuildConfig.SLIM_LIBS (Xstream phone only),
     // the same value that leaves the native libraries out of the APK (app/build.gradle.kts), so a switch can never be on
