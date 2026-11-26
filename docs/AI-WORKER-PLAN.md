@@ -31,3 +31,9 @@ answer → Claude checks, fixes, builds. No manual copy-paste.
   text for 45 s, or an error message → read the page text + the site's network answers (status 429 = limit, 413/"too long" =
   chat too long, 5xx = site down, captcha/login) → fix: limit → next account/worker; chat too long → new chat seeded with a
   Gemini summary + the same prompt; site down → other worker; stuck → reload + retry once. Every case logged on the job board.
+- Managers: "Connected manager" switch (off = only the owner, managers locked out). Manager section: add managers (Claude Opus,
+  ChatGPT, Gemini…), each with its own revocable token + scopes (view board / create jobs / pick workers / build / change settings),
+  mode Auto or Approve-first, audit log, one active manager at a time (others read-only).
+- Two doors for managers: (1) GitHub mailbox (jobs repo) — for Claude in this app, Claude Code, Codex cloud, Jules, Copilot agent;
+  (2) Xcoder as an MCP server behind a Cloudflare tunnel/Worker with the token — for ChatGPT (developer-mode connectors),
+  Claude connectors, Gemini CLI, Cursor/Windsurf.
