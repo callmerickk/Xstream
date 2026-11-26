@@ -150,6 +150,8 @@ fun MusicApp(
     if (Feature.musicFix1) LaunchedEffect(nowOpen) { if (!nowOpen) { delay(350); nowSheet.value = null } }
     var libVersion by remember { mutableIntStateOf(0) }
     LaunchedEffect(profileId) { MusicPlayer.init(ctx); MusicLibraryStore.open(ctx, profileId); libVersion++ }
+    // Music prompt 5 (musicLook2): this profile's colour look, Glass and Follow the song.
+    if (Feature.musicLook2) LaunchedEffect(profileId) { MusicLook2.load(ctx, profileId) }
     LaunchedEffect(Unit) { while (true) { MusicPlayer.publish(); delay(500) } }
 
     val nav = remember {
@@ -181,7 +183,10 @@ fun MusicApp(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(MBg)) {
+    // Music prompt 5 (musicLook2): page colour from the look (or the cover with Follow the song) + Glass backdrop.
+    val theme = if (Feature.musicLook2) rememberMusicTheme(now.track?.artworkURL) else null
+    Box(Modifier.fillMaxSize().background(theme?.bg ?: MBg)) {
+        if (theme?.glass == true) MusicGlassBackdrop(now.track?.artworkURL, theme.bg)
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f)) {
                 if (Feature.musicFix1) {
@@ -405,6 +410,16 @@ private fun HomeTab(profileName: String, nav: MusicNav, libVersion: Int) {
     val curId = now.track?.id?.removePrefix("yt:")
     LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(bottom = 16.dp)) {
         item { TopBar(null, null, nav, profileName) }
+        // Music prompt 5 (musicLook2): "For you now" hero mix from this time of day's plays.
+        if (Feature.musicLook2 && chip == null) item {
+            val ctxH = LocalContext.current
+            val slot by rememberHeroSlot()
+            val songs = remember(slot, libVersion) {
+                heroPick(MusicLibraryStore.active().history.filter { it.item.kind == YtmKind.SONG || it.item.kind == YtmKind.VIDEO }, { it.playedAt }, { it.item.id }, slot).map { it.item }
+            }
+            if (songs.isNotEmpty()) MusicHeroCard(slot, songs.first().thumb, heroArtistLine(songs.map { it.subtitle.substringBefore(" • ") }),
+                onPlay = { nav.open(songs.first(), songs, slot.title) }, onOpen = { nav.open(songs.first(), songs, slot.title) })
+        }
         if (chips.isNotEmpty()) item {
             LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(chips) { _, (label, params) ->
@@ -960,6 +975,7 @@ private fun NowPlaying(nav: MusicNav, onClose: () -> Unit, onFull: () -> Unit, o
 
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(color, color.copy(alpha = 0.55f).compositeOverBlack(), MBg)))
         .pointerInput(Unit) { var total = 0f; detectVerticalDragGestures(onDragEnd = { if (total > 120f) onClose() else if (total < -120f && showVideo) onFull(); total = 0f }) { _, dy -> total += dy } }) {
+        if (Feature.musicLook2) MusicNowBackdrop(t?.artworkURL, MBg)   // Music prompt 5: slow blurred cover behind Now playing
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp)) {
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClose) { Icon(Icons.Default.KeyboardArrowDown, "Close", Modifier.size(30.dp), tint = Color.White) }
@@ -1226,7 +1242,8 @@ private fun Lyrics(vid: String?, t: LiveServer.Track?) {
                 LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), state = list, contentPadding = PaddingValues(top = if (Feature.musicFix1) 64.dp else 20.dp, bottom = 96.dp)) {
                     itemsIndexed(l) { i, (at, text) ->
                         Column(Modifier.fillMaxWidth().clickable { MusicPlayer.seekTo(at) }.padding(vertical = 9.dp)) {
-                            Text(shown(i, text).ifBlank { "♪" }, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = if (i == cur) Color.White else Color(0x66FFFFFF))
+                            if (Feature.musicLook2) MusicLyricLine(shown(i, text).ifBlank { "♪" }, lit = i == cur, distance = i - cur, synced = true, accent = MusicLook.current.value.accent)
+                            else Text(shown(i, text).ifBlank { "♪" }, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = if (i == cur) Color.White else Color(0x66FFFFFF))
                             under(i, text)?.let { e -> Text(e, Modifier.padding(top = 3.dp), fontSize = 16.sp, fontWeight = FontWeight.Medium, color = if (i == cur) Color(0xFFFFE0D8) else Color(0x55FFFFFF)) }
                         }
                     }

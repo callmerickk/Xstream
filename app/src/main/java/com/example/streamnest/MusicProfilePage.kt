@@ -206,6 +206,7 @@ fun MusicProfilePage(vm: AppViewModel, profileName: String, onClose: () -> Unit)
             if (Feature.musicOrbit) {
                 Spacer(Modifier.height(12.dp))
                 MusicAccountSettings(pid)
+                if (Feature.musicLook2) { Spacer(Modifier.height(12.dp)); MusicLookCard() }
             }
 
             // Share

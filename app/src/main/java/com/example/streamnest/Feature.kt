@@ -106,6 +106,9 @@ object Feature {
     val musicSearch2: Boolean = on("musicSearch2")
     /** Music prompt 2: orbit pill bar, profile page with stats, profile switcher, YouTube Music sign-in, Home top right = Search + Downloads. */
     val musicOrbit: Boolean = on("musicOrbit")
+    /** Music prompt 5: premium Home (hero card, section titles with a reason line), Music look setting per profile (5 colour looks,
+     *  Glass, Follow the song), Now playing glow / backdrop / canvas clip, lit lyrics, tinted pill. */
+    val musicLook2: Boolean = on("musicLook2")
 
     // 0.9.6: the slim build. These four are NOT named switches: they follow BuildConfig.SLIM_LIBS (Xstream phone only),
     // the same value that leaves the native libraries out of the APK (app/build.gradle.kts), so a switch can never be on
