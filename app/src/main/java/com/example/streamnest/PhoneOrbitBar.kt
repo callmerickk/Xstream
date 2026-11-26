@@ -52,7 +52,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * Settings › Layout › Bottom bar switches between StreamX bar, Capsule and Orbit.
  */
 @Composable
-fun PhoneOrbitBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> Unit, modifier: Modifier = Modifier) {
+fun PhoneOrbitBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int) -> Unit, modifier: Modifier = Modifier,
+    content: (@Composable RowScope.() -> Unit)? = null) {
     val haptics = LocalHapticFeedback.current
     val items = listOf(
         Triple(0, Icons.Default.Home, t("navHome")),
@@ -81,7 +82,7 @@ fun PhoneOrbitBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int
                 .padding(horizontal = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
         ) {
-            items.forEach { (idx, icon, label) ->
+            if (content != null) content() else items.forEach { (idx, icon, label) ->
                 if (idx == 3) PxMeItem(tab == 3, vm, onTab) else
                 PxOrbitItem(tab == idx, icon, label) {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -93,7 +94,7 @@ fun PhoneOrbitBar(tab: Int, vm: AppViewModel, compact: State<Float>, onTab: (Int
 }
 
 @Composable
-private fun RowScope.PxOrbitItem(selected: Boolean, icon: ImageVector?, label: String, gesture: Modifier? = null,
+internal fun RowScope.PxOrbitItem(selected: Boolean, icon: ImageVector?, label: String, gesture: Modifier? = null,
     iconContent: (@Composable () -> Unit)? = null, onClick: () -> Unit) {
     val springy = spring<Float>(dampingRatio = 0.62f, stiffness = Spring.StiffnessMediumLow)
     val grow by animateFloatAsState(if (selected) 1f else 0f, springy, label = "orbitGrow")
@@ -138,7 +139,7 @@ private fun RowScope.PxOrbitItem(selected: Boolean, icon: ImageVector?, label: S
  * slide up and let go on one to switch (like StreamX).
  */
 @Composable
-private fun RowScope.PxMeItem(selected: Boolean, vm: AppViewModel, onTab: (Int) -> Unit) {
+internal fun RowScope.PxMeItem(selected: Boolean, vm: AppViewModel, onTab: (Int) -> Unit) {
     val haptics = LocalHapticFeedback.current
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val current by vm.current.collectAsStateWithLifecycle()

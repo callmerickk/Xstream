@@ -220,10 +220,30 @@ fun MusicApp(
                 }
             }
             // Shown while music plays (opening Music with a paused song keeps it hidden until something plays).
-            var showMini by remember { mutableStateOf(now.playing) }
-            LaunchedEffect(now.playing) { if (now.playing) showMini = true }
-            if (now.track != null && showMini) MiniPlayer(onOpen = { nowOpen = true })
-            MusicBottomBar(tab) { stack.clear(); tab = it }
+            if (Feature.musicOrbit && profileVm != null) {
+                var profileOpen by rememberSaveable { mutableStateOf(false) }
+                var shownProfile by rememberSaveable { mutableStateOf(profileId) }
+                // A different profile was picked from the avatar's switcher: open that profile's Music home.
+                LaunchedEffect(profileId) {
+                    if (shownProfile != profileId) {
+                        shownProfile = profileId
+                        stack.clear(); tab = "home"; profileOpen = false
+                        MusicLog.add("Orbit: switched profile, opening the Music home of \"$profileName\"")
+                    }
+                }
+                MusicOrbitBar(
+                    tab = tab, profileOpen = profileOpen, nowOpen = nowOpen, vm = profileVm,
+                    onTab = { stack.clear(); profileOpen = false; tab = it },
+                    onMe = { profileOpen = true },
+                    onOpenNow = { nowOpen = true },
+                )
+                if (profileOpen) MusicProfilePage(profileVm, profileName) { profileOpen = false }
+            } else {
+                var showMini by remember { mutableStateOf(now.playing) }
+                LaunchedEffect(now.playing) { if (now.playing) showMini = true }
+                if (now.track != null && showMini) MiniPlayer(onOpen = { nowOpen = true })
+                MusicBottomBar(tab) { stack.clear(); tab = it }
+            }
         }
         // A dark band behind the clock and status icons, so lists never run under them unreadably.
         Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).background(Brush.verticalGradient(listOf(Color(0xF2000000), Color(0xB3000000)))))
@@ -345,7 +365,9 @@ private fun TopBar(title: String?, onBack: (() -> Unit)?, nav: MusicNav, avatar:
         } else Text(title, Modifier.padding(start = 4.dp), fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.weight(1f))
         IconButton({ nav.push(MPage.Search) }) { Icon(Icons.Default.Search, "Search", tint = Color.White) }
-        if (avatar != null) Box(Modifier.padding(start = 4.dp).size(30.dp).clip(CircleShape).background(Color(0xFF7C4DFF)), Alignment.Center) {
+        // Music prompt 2 (musicOrbit): the profile lives in the orbit pill; top right = Search + Downloads.
+        if (Feature.musicOrbit && title == null) IconButton({ nav.push(MPage.Local("Downloads", emptyList())) }) { Icon(Icons.Default.Download, "Downloads", tint = Color.White) }
+        else if (avatar != null) Box(Modifier.padding(start = 4.dp).size(30.dp).clip(CircleShape).background(Color(0xFF7C4DFF)), Alignment.Center) {
             Text(avatar.take(1).uppercase(), fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
     }
